@@ -183,20 +183,13 @@ impl<'a> RequestExecutionParams<'a> {
                     };
 
                     let request_runner_generator = |is_speculative: bool| {
-                        let history_data: Option<HistoryData> = history_listener_and_id
-                            .as_ref()
-                            .map(|(history_listener, request_id)| {
-                                let speculative_id: Option<history::SpeculativeId> =
-                                    if is_speculative {
-                                        Some(
-                                            history_listener.log_new_speculative_fiber(*request_id),
-                                        )
-                                    } else {
-                                        None
-                                    };
+                        let history_data: Option<HistoryData> =
+                            history_listener_and_id.map(|(listener, request_id)| {
+                                let speculative_id: Option<history::SpeculativeId> = is_speculative
+                                    .then(|| listener.log_new_speculative_fiber(request_id));
                                 HistoryData {
-                                    listener: *history_listener,
-                                    request_id: *request_id,
+                                    listener,
+                                    request_id,
                                     speculative_id,
                                 }
                             });
@@ -226,13 +219,11 @@ impl<'a> RequestExecutionParams<'a> {
                 }
                 _ => {
                     let history_data: Option<HistoryData> =
-                        history_listener_and_id
-                            .as_ref()
-                            .map(|(history_listener, request_id)| HistoryData {
-                                listener: *history_listener,
-                                request_id: *request_id,
-                                speculative_id: None,
-                            });
+                        history_listener_and_id.map(|(listener, request_id)| HistoryData {
+                            listener,
+                            request_id,
+                            speculative_id: None,
+                        });
                     self.run_request_speculative_fiber(
                         request_plan,
                         &run_request_once,
@@ -274,9 +265,7 @@ impl<'a> RequestExecutionParams<'a> {
 
         result
     }
-}
 
-impl<'a> RequestExecutionParams<'a> {
     /// A single execution fiber.
     ///
     /// Iterates the execution plan, picking a connection for each target and attempt,
@@ -363,7 +352,7 @@ impl<'a> RequestExecutionParams<'a> {
                     }
                 };
 
-                // Use retry policy to decide what to do next
+                // Use retry policy to decide what to do next.
                 let request_info = RequestInfo {
                     error: &request_error,
                     is_idempotent: self.is_idempotent,
@@ -392,7 +381,6 @@ impl<'a> RequestExecutionParams<'a> {
                         continue 'nodes_in_plan;
                     }
                     RetryDecision::DontRetry => break 'nodes_in_plan,
-
                     RetryDecision::IgnoreWriteError => {
                         return Some(Ok((RunRequestResult::IgnoredWriteError, coordinator)));
                     }
