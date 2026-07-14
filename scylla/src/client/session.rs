@@ -9,6 +9,7 @@ use crate::authentication::AuthenticatorProvider;
 use crate::client::client_routes::ClientRoutesConfig;
 use crate::client::execution::{
     NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RunRequestResult,
+    choose_tablet_block_hint,
 };
 use crate::cluster::control_connection::MetadataRequestTimeouts;
 use crate::cluster::metadata::{SchemaMetadataFetchLevel, SchemaMetadataFetchMode};
@@ -1826,13 +1827,15 @@ impl Session {
             serialized_values.buffer_size(),
         );
 
+        let cluster_state = self.get_cluster_state();
         if !span.span().is_disabled()
             && let (Some(table_spec), Some(token)) = (routing_info.table, token)
         {
-            let cluster_state = self.get_cluster_state();
             let replicas = cluster_state.get_token_endpoints_iter(table_spec, token);
             span.record_replicas(replicas)
         }
+
+        let tablet_block_hint = choose_tablet_block_hint(&cluster_state, table_spec, token);
 
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
@@ -1850,7 +1853,7 @@ impl Session {
                             serial_consistency,
                             page_size,
                             paging_state_ref.clone(),
-                            0,
+                            tablet_block_hint,
                         )
                         .await
                         .and_then(QueryResponse::into_non_error_query_response)
