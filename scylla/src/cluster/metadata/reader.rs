@@ -109,7 +109,7 @@ impl MetadataReader {
 
         let cc_cache = Arc::new(ControlConnectionCache::new());
 
-        let control_connection_state = Self::make_control_connection(
+        let control_connection_state = Self::make_control_connection_state(
             control_connection_endpoint,
             connection_config.clone(),
             request_serverside_timeout,
@@ -281,7 +281,7 @@ impl MetadataReader {
                 peer.address()
             );
 
-            self.control_connection_state = Self::make_control_connection(
+            self.control_connection_state = Self::make_control_connection_state(
                 peer,
                 self.control_connection_config.clone(),
                 self.request_serverside_timeout,
@@ -393,7 +393,7 @@ impl MetadataReader {
                     .expect("known_peers is empty - should be impossible")
                     .clone();
 
-                self.control_connection_state = Self::make_control_connection(
+                self.control_connection_state = Self::make_control_connection_state(
                     control_connection_endpoint,
                     self.control_connection_config.clone(),
                     self.request_serverside_timeout,
@@ -405,13 +405,40 @@ impl MetadataReader {
         }
     }
 
+    /// Opens a control connection to `endpoint`, wrapping the outcome in a
+    /// [`ControlConnectionState`] (either `Working` or `Broken`).
+    async fn make_control_connection_state(
+        endpoint: UntranslatedEndpoint,
+        config: ConnectionConfig,
+        request_serverside_timeout: Option<Duration>,
+        cache: Arc<ControlConnectionCache>,
+        client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
+    ) -> ControlConnectionState {
+        let last_endpoint = endpoint.clone();
+        match Self::make_control_connection(
+            endpoint,
+            config,
+            request_serverside_timeout,
+            cache,
+            client_routes_subscriber,
+        )
+        .await
+        {
+            Ok(cc) => ControlConnectionState::Working(cc),
+            Err(last_error) => ControlConnectionState::Broken {
+                last_error,
+                last_endpoint,
+            },
+        }
+    }
+
     async fn make_control_connection(
         endpoint: UntranslatedEndpoint,
         mut config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
         cache: Arc<ControlConnectionCache>,
         client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
-    ) -> ControlConnectionState {
+    ) -> Result<ControlConnection, MetadataError> {
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
         // setting event_sender field in connection config will cause control connection to
         // - send REGISTER message to receive server events
@@ -434,23 +461,20 @@ impl MetadataReader {
         .await;
 
         match open_result {
-            Ok((con, recv)) => ControlConnectionState::Working(
-                ControlConnection::new(
-                    Arc::new(con),
-                    endpoint,
-                    cache,
-                    client_routes_subscriber,
-                    recv,
-                    receiver,
-                )
-                .override_serverside_timeout(request_serverside_timeout),
-            ),
-            Err(conn_err) => ControlConnectionState::Broken {
-                last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken {
+            Ok((con, recv)) => Ok(ControlConnection::new(
+                Arc::new(con),
+                endpoint,
+                cache,
+                client_routes_subscriber,
+                recv,
+                receiver,
+            )
+            .override_serverside_timeout(request_serverside_timeout)),
+            Err(conn_err) => Err(MetadataError::ConnectionPoolError(
+                ConnectionPoolError::Broken {
                     last_connection_error: conn_err,
-                }),
-                last_endpoint: endpoint,
-            },
+                },
+            )),
         }
     }
 
