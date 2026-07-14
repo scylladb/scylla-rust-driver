@@ -60,12 +60,8 @@ pub(crate) struct RequestExecutionParams<'a> {
     /// Whether the request is idempotent (gates speculative execution and is
     /// passed to the retry policy).
     pub(crate) is_idempotent: bool,
-    /// Consistency explicitly set on the statement, if any. When `None`,
-    /// [`Self::default_consistency`] is used.
-    pub(crate) consistency_set_on_statement: Option<Consistency>,
-    /// Consistency to use when the statement does not set one explicitly
-    /// (i.e. the execution profile's consistency).
-    pub(crate) default_consistency: Consistency,
+    /// Consistency to use.
+    pub(crate) consistency: Consistency,
     /// Retry policy used to start a fresh retry session per fiber.
     pub(crate) retry_policy: &'a dyn RetryPolicy,
     /// Load balancing policy used to order targets for the execution.
@@ -298,9 +294,7 @@ impl<'a> RequestExecutionParams<'a> {
     {
         let mut retry_session = self.retry_policy.new_session();
         let mut last_error: Option<RequestError> = None;
-        let mut current_consistency: Consistency = self
-            .consistency_set_on_statement
-            .unwrap_or(self.default_consistency);
+        let mut current_consistency: Consistency = self.consistency;
 
         'nodes_in_plan: for (node, shard) in request_plan {
             let span = trace_span!("Executing request", node = %node.address, shard = %shard);

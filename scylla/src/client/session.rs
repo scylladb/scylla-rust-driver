@@ -2085,6 +2085,10 @@ impl Session {
     where
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
+        let consistency = statement_config
+            .consistency
+            .unwrap_or(execution_profile.consistency);
+
         let load_balancer = statement_config
             .load_balancing_policy
             .as_deref()
@@ -2101,8 +2105,7 @@ impl Session {
 
         let exec_params = RequestExecutionParams {
             is_idempotent: statement_config.is_idempotent,
-            consistency_set_on_statement: statement_config.consistency,
-            default_consistency: execution_profile.consistency,
+            consistency,
             retry_policy,
             load_balancing_policy: load_balancer,
             metrics: &self.metrics,
