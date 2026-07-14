@@ -160,10 +160,10 @@ enum ShouldFetchMorePages {
 // QueryPager receives them through a channel
 struct PagerWorker {
     load_balancing_policy: Arc<dyn LoadBalancingPolicy>,
-    query_is_idempotent: bool,
-    query_consistency: Consistency,
     retry_session: Box<dyn RetrySession>,
     timeouter: Option<PageQueryTimeouter>,
+    is_idempotent: bool,
+    consistency: Consistency,
     metrics: Metrics,
 
     paging_state: PagingState,
@@ -205,7 +205,7 @@ impl PagerWorker {
         'paging: loop {
             let query_plan =
                 load_balancing::Plan::new(load_balancer.as_ref(), &routing_info, &cluster_state);
-            let mut current_consistency: Consistency = self.query_consistency;
+            let mut current_consistency: Consistency = self.consistency;
 
             self.timeouter.as_mut().map(PageQueryTimeouter::reset);
 
@@ -332,7 +332,7 @@ impl PagerWorker {
 
                     let request_info = RequestInfo {
                         error: &request_error,
-                        is_idempotent: self.query_is_idempotent,
+                        is_idempotent: self.is_idempotent,
                         consistency: current_consistency,
                     };
 
@@ -398,7 +398,7 @@ impl PagerWorker {
             load_balancing::Plan::new(load_balancer.as_ref(), routing_info, cluster_state);
 
         let mut last_error: RequestError = RequestError::EmptyPlan;
-        let mut current_consistency: Consistency = self.query_consistency;
+        let mut current_consistency: Consistency = self.consistency;
 
         self.log_request_start();
         self.timeouter.as_mut().map(PageQueryTimeouter::reset);
@@ -481,7 +481,7 @@ impl PagerWorker {
                 // Use retry policy to decide what to do next
                 let request_info = RequestInfo {
                     error: &request_error,
-                    is_idempotent: self.query_is_idempotent,
+                    is_idempotent: self.is_idempotent,
                     consistency: current_consistency,
                 };
 
@@ -1176,11 +1176,11 @@ If you are using this API, you are probably doing something wrong."
         };
 
         let mut worker = PagerWorker {
-            query_is_idempotent: statement.config.is_idempotent,
-            query_consistency: consistency,
             load_balancing_policy,
             retry_session,
             timeouter,
+            is_idempotent: statement.config.is_idempotent,
+            consistency,
             metrics,
             paging_state: PagingState::start(),
             history_listener: statement.config.history_listener.as_ref().map(Arc::clone),
@@ -1382,11 +1382,11 @@ If you are using this API, you are probably doing something wrong."
         };
 
         let mut worker = PagerWorker {
-            query_is_idempotent: config.prepared.config.is_idempotent,
-            query_consistency: consistency,
             load_balancing_policy,
             retry_session,
             timeouter,
+            is_idempotent: config.prepared.config.is_idempotent,
+            consistency,
             metrics: config.metrics,
             paging_state: PagingState::start(),
             history_listener: config
