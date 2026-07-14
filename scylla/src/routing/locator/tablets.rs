@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::cluster::Node;
 use crate::routing::{Shard, Token};
 use crate::utils::safe_format::IteratorSafeFormatExt;
+use rand::Rng as _;
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
@@ -41,6 +42,10 @@ pub(crate) struct RawTablet {
     /// Last token belonging to the tablet, inclusive
     last_token: Token,
     replicas: RawTabletReplicas,
+    /// Tablet version, present only when the tablet was learned via the
+    /// TABLETS_ROUTING_V2 extension. Used to keep the driver's routing cache fresh -
+    /// see [`choose_tablet_version_block`].
+    tablet_version: Option<u64>,
 }
 
 type RawTabletPayload<'frame, 'metadata> =
@@ -61,6 +66,28 @@ static RAW_TABLETS_CQL_TYPE: LazyLock<ColumnType<'static>> = LazyLock::new(|| {
 });
 
 const CUSTOM_PAYLOAD_TABLETS_V1_KEY: &str = "tablets-routing-v1";
+
+/// Chooses a tablet-version "block" byte to send with an `EXECUTE` on a
+/// TABLETS_ROUTING_V2 connection.
+///
+/// The byte encodes `(index << 4) | nibble`, where `index` (high nibble) selects one of the
+/// 16 nibbles of `tablet_version` and `nibble` (low nibble) is the value of that nibble. The
+/// server compares this against its own tablet version and only returns fresh routing
+/// information in the response custom payload when they differ. The index is randomized so
+/// that, over successive requests, the driver eventually probes every nibble and detects any
+/// version change.
+pub(crate) fn choose_tablet_version_block(tablet_version: u64) -> u8 {
+    let index: u8 = rand::rng().random::<u8>() & 0x0F; // 0..=15
+    let nibble = ((tablet_version >> (index * 4)) & 0xF) as u8;
+    (index << 4) | nibble
+}
+
+/// Returns a random tablet-version block byte, used when the driver has no cached tablet
+/// version for the target token. A random block maximizes the chance of a mismatch, which
+/// prompts the server to return fresh routing information.
+pub(crate) fn random_tablet_version_block() -> u8 {
+    rand::rng().random::<u8>()
+}
 
 impl RawTablet {
     pub(crate) fn from_custom_payload(
@@ -116,6 +143,7 @@ impl RawTablet {
             first_token: Token::new(first_token + 1),
             last_token: Token::new(last_token),
             replicas: RawTabletReplicas { replicas },
+            tablet_version: None,
         }))
     }
 }
@@ -237,6 +265,9 @@ pub(crate) struct Tablet {
     /// Last token belonging to the tablet, inclusive
     last_token: Token,
     replicas: TabletReplicas,
+    /// Tablet version, present only when the tablet was learned via the
+    /// TABLETS_ROUTING_V2 extension.
+    tablet_version: Option<u64>,
     /// If any of the replicas failed to resolve to a Node,
     /// then this field will contain the original list of replicas.
     failed: Option<RawTabletReplicas>,
@@ -260,6 +291,7 @@ impl Tablet {
                 first_token: raw_tablet.first_token,
                 last_token: raw_tablet.last_token,
                 replicas,
+                tablet_version: raw_tablet.tablet_version,
                 failed: None,
             }),
             Err((replicas, failed_replicas)) => Err((
@@ -267,6 +299,7 @@ impl Tablet {
                     first_token: raw_tablet.first_token,
                     last_token: raw_tablet.last_token,
                     replicas,
+                    tablet_version: raw_tablet.tablet_version,
                     failed: Some(raw_tablet.replicas),
                 },
                 failed_replicas,
@@ -329,6 +362,7 @@ impl Tablet {
             first_token: Token::new(token),
             last_token: Token::new(token),
             replicas: TabletReplicas::new_for_test(replicas),
+            tablet_version: None,
             failed: failed.map(|vec| RawTabletReplicas {
                 replicas: vec.into_iter().map(|id| (id, 0)).collect::<Vec<_>>(),
             }),
@@ -392,6 +426,15 @@ impl TableTablets {
                 .map(|x| x.as_slice())
                 .unwrap_or(&[])
         })
+    }
+
+    /// Returns the tablet version for the tablet owning `token`, if known.
+    ///
+    /// `None` means either no tablet is cached for the token, or the cached tablet was
+    /// learned via TABLETS_ROUTING_V1 (which carries no version).
+    pub(crate) fn tablet_version_for_token(&self, token: Token) -> Option<u64> {
+        self.tablet_for_token(token)
+            .and_then(|tablet| tablet.tablet_version)
     }
 
     /// This method:
@@ -679,7 +722,7 @@ mod tests {
     use crate::routing::Token;
     use crate::routing::locator::tablets::{
         CUSTOM_PAYLOAD_TABLETS_V1_KEY, RAW_TABLETS_CQL_TYPE, RawTablet, RawTabletReplicas,
-        TabletParsingError,
+        TabletParsingError, choose_tablet_version_block,
     };
     use crate::test_utils::setup_tracing;
     use crate::value::CqlValue;
@@ -836,9 +879,46 @@ mod tests {
                         (Uuid::from_u64_pair(1, 2), 15),
                         (Uuid::from_u64_pair(3, 4), 19)
                     ]
-                }
+                },
+                tablet_version: None,
             }
         );
+    }
+
+    #[test]
+    fn test_choose_tablet_version_block_encoding() {
+        // The block byte encodes `(index << 4) | nibble`, where `index` (high nibble)
+        // selects one of the 16 nibbles of the version and `nibble` (low nibble) is that
+        // nibble's value. This must match ScyllaDB's `compare_tablet_version_block`.
+        let versions = [
+            0x0000_0000_0000_0000u64,
+            0x0123_4567_89AB_CDEFu64,
+            0xFFFF_FFFF_FFFF_FFFFu64,
+            0xDEAD_BEEF_CAFE_BABEu64,
+        ];
+        for version in versions {
+            let mut seen_indices = HashSet::new();
+            for _ in 0..1000 {
+                let block = choose_tablet_version_block(version);
+                let index = block >> 4;
+                let nibble = block & 0x0F;
+                // This invariant holds for every possible RNG outcome, so the assertion
+                // is deterministic regardless of which index happened to be drawn.
+                let expected_nibble = ((version >> (index * 4)) & 0xF) as u8;
+                assert_eq!(
+                    nibble, expected_nibble,
+                    "version={version:#018x} index={index} block={block:#04x}"
+                );
+                seen_indices.insert(index);
+            }
+            // Liveness: confirm the index is actually randomized. With 1000 draws over 16
+            // possible indices, seeing only one is impossible in practice
+            // (probability < 16 * (1/16)^999).
+            assert!(
+                seen_indices.len() >= 2,
+                "index did not vary across draws for version {version:#018x}"
+            );
+        }
     }
 
     #[test]
@@ -958,6 +1038,7 @@ mod tests {
                 first_token: Token::new(*first),
                 last_token: Token::new(*last),
                 replicas: Default::default(),
+                tablet_version: None,
                 failed: None,
             });
         }
