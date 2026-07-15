@@ -2,6 +2,7 @@
 //! as well as conversion between them and other types.
 
 use std::net::IpAddr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 use uuid::Uuid;
@@ -759,6 +760,61 @@ impl TryInto<chrono_04::NaiveDate> for CqlDate {
 }
 
 impl CqlTimestamp {
+    /// The earliest representable `CqlTimestamp` (milliseconds = `i64::MIN`).
+    pub const MIN: CqlTimestamp = CqlTimestamp(i64::MIN);
+
+    /// The latest representable `CqlTimestamp` (milliseconds = `i64::MAX`).
+    pub const MAX: CqlTimestamp = CqlTimestamp(i64::MAX);
+
+    /// Returns the current wall-clock time as a `CqlTimestamp`.
+    ///
+    /// The returned value holds the number of milliseconds since the Unix epoch
+    /// (1970-01-01 00:00:00 UTC), matching the CQL `timestamp` type semantics.
+    ///
+    /// This is implemented in terms of [`std::time::SystemTime::now`]
+    /// and is therefore **not monotonic**.
+    /// Because of OS/NTP clock adjustments, a later call to `now()` can return
+    /// a smaller value than an earlier call.
+    /// Do not use `now()` to measure elapsed time;
+    /// use [`std::time::Instant`] for that purpose instead.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the system clock is so far removed from the Unix epoch
+    /// (in either direction) that it cannot be represented as `i64` milliseconds.
+    pub fn now() -> Self {
+        match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(d) => Self(
+                i64::try_from(d.as_millis())
+                    .expect("system clock is too far past the Unix epoch to fit in a CqlTimestamp"),
+            ),
+            Err(e) => {
+                let ms = i64::try_from(e.duration().as_millis()).expect(
+                    "system clock is too far before the Unix epoch to fit in a CqlTimestamp",
+                );
+                // `ms` is the result of converting a `u128` (always non-negative) into `i64`,
+                // so it is in the range [0, i64::MAX]. Negating it therefore cannot overflow.
+                Self(-ms)
+            }
+        }
+    }
+
+    /// Returns the amount of time elapsed from `earlier` to `self`.
+    ///
+    /// Mirrors [`std::time::Instant::checked_duration_since`].
+    /// Returns `None` if `earlier` is actually later than `self`,
+    /// instead of silently saturating at zero, since it is easy to swap
+    /// the operands by mistake.
+    pub fn checked_duration_since(self, earlier: CqlTimestamp) -> Option<std::time::Duration> {
+        if self.0 < earlier.0 {
+            return None;
+        }
+        // The ordering check above guarantees `self.0 >= earlier.0`,
+        // so `abs_diff` gives the correct non-negative `u64` difference even
+        // when it wouldn't fit in `i64` (e.g. MAX - MIN).
+        Some(std::time::Duration::from_millis(self.0.abs_diff(earlier.0)))
+    }
+
     fn try_to_chrono_04_datetime_utc(
         &self,
     ) -> Result<chrono_04::DateTime<chrono_04::Utc>, ValueOverflow> {
@@ -767,6 +823,52 @@ impl CqlTimestamp {
             chrono_04::LocalResult::Single(datetime) => Ok(datetime),
             _ => Err(ValueOverflow),
         }
+    }
+}
+
+impl std::ops::Add<std::time::Duration> for CqlTimestamp {
+    type Output = CqlTimestamp;
+
+    /// # Panics
+    ///
+    /// Panics if the resulting timestamp would overflow `i64` milliseconds.
+    fn add(self, rhs: std::time::Duration) -> CqlTimestamp {
+        let rhs_ms = i128::try_from(rhs.as_millis()).unwrap_or(i128::MAX);
+        let result = i128::from(self.0) + rhs_ms;
+        CqlTimestamp(i64::try_from(result).expect("overflow when adding Duration to CqlTimestamp"))
+    }
+}
+
+impl std::ops::AddAssign<std::time::Duration> for CqlTimestamp {
+    /// # Panics
+    ///
+    /// Panics if the resulting timestamp would overflow `i64` milliseconds.
+    fn add_assign(&mut self, rhs: std::time::Duration) {
+        *self = *self + rhs;
+    }
+}
+
+impl std::ops::Sub<std::time::Duration> for CqlTimestamp {
+    type Output = CqlTimestamp;
+
+    /// # Panics
+    ///
+    /// Panics if the resulting timestamp would overflow `i64` milliseconds.
+    fn sub(self, rhs: std::time::Duration) -> CqlTimestamp {
+        let rhs_ms = i128::try_from(rhs.as_millis()).unwrap_or(i128::MAX);
+        let result = i128::from(self.0) - rhs_ms;
+        CqlTimestamp(
+            i64::try_from(result).expect("overflow when subtracting Duration from CqlTimestamp"),
+        )
+    }
+}
+
+impl std::ops::SubAssign<std::time::Duration> for CqlTimestamp {
+    /// # Panics
+    ///
+    /// Panics if the resulting timestamp would overflow `i64` milliseconds.
+    fn sub_assign(&mut self, rhs: std::time::Duration) {
+        *self = *self - rhs;
     }
 }
 
@@ -1392,6 +1494,7 @@ pub struct Row {
 #[cfg(test)]
 mod tests {
     use std::str::FromStr as _;
+    use std::time::Duration;
 
     use super::*;
 
@@ -1532,5 +1635,97 @@ mod tests {
             ),
             "{foo:123,bar:321}"
         );
+    }
+
+    #[test]
+    fn cql_timestamp_sentinels() {
+        assert_eq!(CqlTimestamp::MIN.0, i64::MIN);
+        assert_eq!(CqlTimestamp::MAX.0, i64::MAX);
+    }
+
+    #[test]
+    fn cql_timestamp_add_duration() {
+        let epoch = CqlTimestamp(0);
+        assert_eq!(epoch + Duration::from_millis(1_000), CqlTimestamp(1_000));
+        assert_eq!(epoch + Duration::from_secs(1), CqlTimestamp(1_000));
+
+        let t = CqlTimestamp(1_000);
+        assert_eq!(t + Duration::from_millis(500), CqlTimestamp(1_500));
+    }
+
+    #[test]
+    #[should_panic]
+    fn cql_timestamp_add_duration_panics_on_overflow() {
+        let _ = CqlTimestamp::MAX + Duration::from_millis(1);
+    }
+
+    #[test]
+    fn cql_timestamp_add_duration_does_not_panic_when_result_fits() {
+        assert_eq!(
+            CqlTimestamp::MIN + Duration::from_millis(u64::MAX),
+            CqlTimestamp::MAX
+        );
+    }
+
+    #[test]
+    fn cql_timestamp_sub_duration() {
+        let t = CqlTimestamp(2_000);
+        assert_eq!(t - Duration::from_millis(500), CqlTimestamp(1_500));
+        assert_eq!(t - Duration::from_secs(1), CqlTimestamp(1_000));
+        assert_eq!(t - Duration::from_millis(2_000), CqlTimestamp(0));
+    }
+
+    #[test]
+    #[should_panic]
+    fn cql_timestamp_sub_duration_panics_on_overflow() {
+        let _ = CqlTimestamp::MIN - Duration::from_millis(1);
+    }
+
+    #[test]
+    fn cql_timestamp_sub_duration_does_not_panic_when_result_fits() {
+        assert_eq!(
+            CqlTimestamp::MAX - Duration::from_millis(u64::MAX),
+            CqlTimestamp::MIN
+        );
+    }
+
+    #[test]
+    fn cql_timestamp_add_assign_and_sub_assign() {
+        let mut t = CqlTimestamp(1_000);
+        t += Duration::from_millis(500);
+        assert_eq!(t, CqlTimestamp(1_500));
+        t -= Duration::from_millis(1_500);
+        assert_eq!(t, CqlTimestamp(0));
+    }
+
+    #[test]
+    fn cql_timestamp_checked_duration_since() {
+        let later = CqlTimestamp(3_000);
+        let earlier = CqlTimestamp(1_000);
+        assert_eq!(
+            later.checked_duration_since(earlier),
+            Some(Duration::from_millis(2_000))
+        );
+        assert_eq!(
+            later.checked_duration_since(CqlTimestamp(0)),
+            Some(Duration::from_millis(3_000))
+        );
+    }
+
+    #[test]
+    fn cql_timestamp_checked_duration_since_none_when_earlier_is_later() {
+        let earlier = CqlTimestamp(1_000);
+        let later = CqlTimestamp(3_000);
+        assert_eq!(earlier.checked_duration_since(later), None);
+    }
+
+    #[test]
+    fn cql_timestamp_checked_duration_since_no_overflow_on_extreme_range() {
+        let diff = CqlTimestamp::MAX
+            .checked_duration_since(CqlTimestamp::MIN)
+            .unwrap();
+        // MAX - MIN = i64::MAX - i64::MIN = u64::MAX, which is the full
+        // non-negative range and must not be truncated to i64::MAX.
+        assert_eq!(diff, Duration::from_millis(u64::MAX));
     }
 }
