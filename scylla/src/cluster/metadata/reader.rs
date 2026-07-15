@@ -149,10 +149,6 @@ impl MetadataReader {
                     debug!("Fetched new metadata");
                     self.update_known_peers(&metadata);
                     self.control_connection = Some(cc);
-                    if initial {
-                        self.handle_unaccepted_host_in_control_connection(&metadata)
-                            .await;
-                    }
                     return Ok(metadata);
                 }
                 Err(_err) => {
@@ -170,8 +166,6 @@ impl MetadataReader {
         match self.establish_cc_and_fetch_metadata(initial).await {
             Ok((cc, metadata)) => {
                 self.control_connection = cc;
-                self.handle_unaccepted_host_in_control_connection(&metadata)
-                    .await;
                 Ok(metadata)
             }
             Err(err) => {
@@ -190,9 +184,13 @@ impl MetadataReader {
     /// On success, updates `known_peers` and returns the fetched metadata together
     /// with a control connection to use going forward. The returned control
     /// connection is `None` when metadata was obtained but no usable control
-    /// connection remains: on an `initial` read whose metadata query failed, dummy
-    /// metadata is returned so the session can still start, and the caller is
-    /// expected to re-establish the control connection at the repair cadence.
+    /// connection remains:
+    /// - on an `initial` read whose metadata query failed (dummy metadata is
+    ///   returned so the session can still start), or
+    /// - when every node that yielded metadata is rejected by the host filter.
+    ///
+    /// In both of these cases the caller is expected to re-establish the control
+    /// connection at the repair cadence.
     async fn establish_cc_and_fetch_metadata(
         &mut self,
         initial: bool,
@@ -258,12 +256,15 @@ impl MetadataReader {
     }
 
     /// Tries to establish a control connection and fetch metadata on each node from
-    /// the given iterator, returning the first success.
+    /// the given iterator.
     ///
-    /// If `initial` is true and a connection was established but its metadata query
-    /// failed, dummy metadata is returned so the session can still start, together
-    /// with no control connection (`Ok((None, metadata))`); the caller is expected
-    /// to re-establish the control connection at the repair cadence.
+    /// Returns the first working, host-filter-accepted control connection together
+    /// with its metadata. Two situations yield metadata but no control connection
+    /// (`Ok((None, metadata))`):
+    /// - every node that could be queried is rejected by the host filter — the
+    ///   metadata is valid cluster-wide, but none of the connections may be kept;
+    /// - `initial` is true and a connection was established but its metadata query
+    ///   failed — dummy metadata is returned so the session can still start.
     ///
     /// Returns `Err(None)` if the iterator was empty (no connection was ever
     /// attempted), or `Err(Some(err))` with the most recent error otherwise.
@@ -273,6 +274,10 @@ impl MetadataReader {
         nodes: impl Iterator<Item = UntranslatedEndpoint>,
     ) -> Result<(Option<ControlConnection>, Metadata), Option<MetadataError>> {
         let mut last_err: Option<MetadataError> = None;
+        // Metadata fetched from a host-filter-rejected node. It is valid cluster-wide,
+        // so it is kept as a fallback in case no accepted node can be reached, while we
+        // keep looking for an accepted node to host the control connection on.
+        let mut rejected_metadata: Option<Metadata> = None;
 
         for peer in nodes {
             let peer_address = peer.address();
@@ -299,26 +304,29 @@ impl MetadataReader {
                 }
             };
 
-            match self.query_metadata_on_cc(&cc).await {
-                Ok(metadata) => {
-                    debug!("Fetched new metadata");
-                    self.update_known_peers(&metadata);
-                    return Ok((Some(cc), metadata));
-                }
+            let metadata = match self.query_metadata_on_cc(&cc).await {
+                Ok(metadata) => metadata,
                 Err(err) => {
                     if initial {
                         // The control connection was established, but the initial
-                        // metadata query failed. Fall back to dummy metadata so the
-                        // session can still start. Drop the control connection so it is
-                        // re-established at the repair cadence.
-                        warn!(
-                            error = ?err,
-                            "Initial metadata read failed, proceeding with metadata \
-                            consisting only of the initial peer list and dummy tokens. \
-                            This might result in suboptimal performance and schema \
-                            information not being available."
-                        );
-                        return Ok((None, Metadata::new_dummy(&self.known_peers)));
+                        // metadata query failed. Prefer any valid metadata already
+                        // obtained from a rejected node; otherwise fall back to dummy
+                        // metadata so the session can still start. Either way, drop the
+                        // control connection so it is re-established at the repair cadence.
+                        let metadata = match rejected_metadata.take() {
+                            Some(metadata) => metadata,
+                            None => {
+                                warn!(
+                                    error = ?err,
+                                    "Initial metadata read failed, proceeding with metadata \
+                                    consisting only of the initial peer list and dummy tokens. \
+                                    This might result in suboptimal performance and schema \
+                                    information not being available."
+                                );
+                                Metadata::new_dummy(&self.known_peers)
+                            }
+                        };
+                        return Ok((None, metadata));
                     }
                     warn!(
                         control_connection_address = %peer_address,
@@ -326,12 +334,29 @@ impl MetadataReader {
                         "Failed to fetch metadata using current control connection"
                     );
                     last_err = Some(err);
-                    // CC is dropped here, we continue to next peer.
+                    // CC is dropped here, we continue to the next peer.
+                    continue;
                 }
+            };
+
+            debug!("Fetched new metadata");
+            self.update_known_peers(&metadata);
+
+            if self.is_cc_endpoint_rejected(cc.endpoint(), &metadata) {
+                // The node hosting this control connection is rejected by the host
+                // filter. The metadata is valid cluster-wide, so remember it, but drop
+                // the connection and keep looking for a host-filter-accepted node.
+                rejected_metadata = Some(metadata);
+                continue;
             }
+
+            return Ok((Some(cc), metadata));
         }
 
-        Err(last_err)
+        match rejected_metadata {
+            Some(metadata) => Ok((None, metadata)),
+            None => Err(last_err),
+        }
     }
 
     /// Queries metadata on the given control connection.
@@ -375,33 +400,6 @@ impl MetadataReader {
                 no connections that can serve user queries have been \
                 established. The session cannot serve any queries!"
             )
-        }
-    }
-
-    async fn handle_unaccepted_host_in_control_connection(&mut self, metadata: &Metadata) {
-        let Some(working_connection) = &self.control_connection else {
-            return;
-        };
-        let endpoint = working_connection.endpoint().clone();
-        if self.is_cc_endpoint_rejected(&endpoint, metadata) {
-            // Assuming here that known_peers are up-to-date
-            if !self.known_peers.is_empty() {
-                let control_connection_endpoint = self
-                    .known_peers
-                    .choose(&mut rng())
-                    .expect("known_peers is empty - should be impossible")
-                    .clone();
-
-                self.control_connection = Self::make_control_connection(
-                    control_connection_endpoint,
-                    self.control_connection_config.clone(),
-                    self.request_serverside_timeout,
-                    Arc::clone(&self.cc_cache),
-                    self.client_routes_subscriber.as_ref().map(Arc::clone),
-                )
-                .await
-                .ok();
-            }
         }
     }
 
