@@ -20,6 +20,48 @@
 //! The tablet version is an opaque 64-bit hash of the tablet's ordered replica list (not a
 //! monotonic counter); only its bit pattern is meaningful. Because V2 is experimental its wire
 //! name and payload are subject to change.
+//!
+//! # Leader-aware routing for strongly-consistent tables
+//!
+//! For a strongly-consistent (Raft-based) keyspace — one created with `consistency = 'global'`,
+//! reflected in [`Keyspace::consistency_mode`] as [`ConsistencyMode::Global`] — one replica of
+//! each tablet is the Raft leader that coordinates its writes and its linearizable reads.
+//!
+//! The server does not publish which replica that is: it is absent from schema and from
+//! `system.tablets`, and it can change at any time through a Raft re-election. The one place it
+//! surfaces is the `tablets-routing-v2` payload, which lists the leader first. The driver stores
+//! the replicas in that payload order, so `replicas[0]` of a cached tablet is the leader, and the
+//! built-in load balancing policy uses it to route leader-requiring requests straight there,
+//! saving the extra coordinator-to-leader hop.
+//!
+//! A request to such a keyspace is routed to the leader whenever its consistency level is
+//! anything other than `ONE` or `LOCAL_ONE`:
+//!
+//! - writes to such a keyspace must use `QUORUM`/`LOCAL_QUORUM` (the server rejects
+//!   `ONE`/`LOCAL_ONE` writes), so they always reach the leader — and a write sent to a follower
+//!   would only be bounced to it anyway;
+//! - reads at `ONE`/`LOCAL_ONE` may be served by any replica, so they keep the normal
+//!   load-spreading routing;
+//! - all other reads go to the leader.
+//!
+//! The leader outranks *distance*: it is targeted ahead of nearer replicas, a leader in a remote
+//! datacenter ahead of one in the preferred rack. Every write and every linearizable read on such
+//! a table has to be coordinated by the leader anyway, so contacting a nearer replica only adds a
+//! forwarding hop -- and because the table is globally consistent, keeping the request inside one
+//! datacenter buys no consistency either.
+//!
+//! It does not override the policy's own filter, though. A leader the policy would never contact
+//! is left alone: with a preferred datacenter and datacenter failover disabled, a leader elsewhere
+//! is skipped, the request goes to a local replica, and the server forwards it to the leader --
+//! exactly as it would without the extension. Only the leader is promoted; the remaining replicas
+//! keep their usual ordering, so retries after it still spread.
+//!
+//! This mirrors the Python driver's `TokenAwarePolicy` behavior, so the two drivers agree on how
+//! leader awareness interacts with locality preferences. The decision itself lives in the load
+//! balancing policy.
+//!
+//! [`Keyspace::consistency_mode`]: crate::cluster::metadata::Keyspace::consistency_mode
+//! [`ConsistencyMode::Global`]: crate::cluster::metadata::ConsistencyMode::Global
 
 use crate::cluster::metadata::Keyspace;
 use crate::deserialize::value::{DeserializeValue, ListlikeIterator};
