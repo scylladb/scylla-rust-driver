@@ -7,13 +7,18 @@
 //! suite. The V1 test deliberately does not skip: it hides the extension from every node, so it
 //! exercises the V1 path either way.
 
+use std::cell::Cell;
 use std::sync::Arc;
 
 use futures::future::try_join_all;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
+use scylla::cluster::metadata::{CollectionType, ColumnType, NativeType};
+use scylla::deserialize::FrameSlice;
+use scylla::deserialize::value::{DeserializeValue, ListlikeIterator};
 use scylla::routing::Shard;
 use scylla::serialize::row::SerializeRow;
+use scylla::statement::Consistency;
 use scylla::statement::prepared::PreparedStatement;
 use uuid::Uuid;
 
@@ -51,8 +56,17 @@ const TABLETS_ROUTING_V2_EXTENSION: &str = "TABLETS_ROUTING_V2_EXPERIMENTAL";
 /// invalidates a measurement is precisely *the driver's view changing mid-flight* -- and that is
 /// what this observes directly.
 ///
-/// It changes whenever the driver learns a new mapping for the tablet, i.e. whenever the tablet
-/// migrated and its replica set moved.
+/// It changes whenever the driver learns a new mapping for the tablet, which covers both events
+/// that matter and which are largely independent of each other:
+///
+/// - the tablet migrated, changing its replica set;
+/// - a strongly-consistent tablet elected a new Raft leader. A re-election alone is enough: the
+///   tablet version stays the same only as long as *both* the replica set and the leader do, so
+///   a new leader (very probably) changes the version, and the server then hands the driver a
+///   freshly ordered list.
+///
+/// A snapshot of the replica set read from `system.tablets` would have caught only the first of
+/// those -- the leader appears nowhere in that table.
 async fn cached_tablet_routing(session: &Session, ks: &str, pk: i32) -> Vec<(Uuid, Shard)> {
     session
         .get_cluster_state()
@@ -63,8 +77,9 @@ async fn cached_tablet_routing(session: &Session, ks: &str, pk: i32) -> Vec<(Uui
         .collect()
 }
 
-/// Creates a keyspace and a single-partition table that use tablets.
-async fn create_tablet_table(session: &Session, ks: &str) {
+/// Creates a keyspace and a single-partition table that use tablets, appending
+/// `extra_ks_options` to the `CREATE KEYSPACE` statement.
+async fn create_tablet_table_with_ks_options(session: &Session, ks: &str, extra_ks_options: &str) {
     let supports_table_tablet_options = supports_feature(session, "TABLET_OPTIONS").await;
     let (ks_tablet_opts, table_tablet_opts) = if supports_table_tablet_options {
         (
@@ -78,7 +93,8 @@ async fn create_tablet_table(session: &Session, ks: &str) {
     session
         .ddl(format!(
             "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = \
-             {{'class': 'NetworkTopologyStrategy', 'replication_factor': 2}} {ks_tablet_opts}"
+             {{'class': 'NetworkTopologyStrategy', 'replication_factor': 2}} \
+             {ks_tablet_opts} {extra_ks_options}"
         ))
         .await
         .unwrap();
@@ -88,6 +104,11 @@ async fn create_tablet_table(session: &Session, ks: &str) {
         ))
         .await
         .unwrap();
+}
+
+/// Creates a keyspace and a single-partition table that use tablets.
+async fn create_tablet_table(session: &Session, ks: &str) {
+    create_tablet_table_with_ks_options(session, ks, "").await
 }
 
 /// Decodes a captured `EXECUTE` request frame with the given negotiated `features` and returns
@@ -127,6 +148,52 @@ fn response_carries_tablets_payload(frame: ResponseFrame, payload_key: &str) -> 
 type ExecuteFeedback = mpsc::UnboundedReceiver<(RequestFrame, Option<TargetShard>)>;
 /// The receiving end of a proxy feedback channel carrying captured `RESULT` responses.
 type ResultFeedback = mpsc::UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>;
+
+/// The replica list of a captured `tablets-routing-v2` payload, in the order the server sent it,
+/// or `None` if the response carries no such payload.
+///
+/// `replicas[0]` is the tablet's Raft leader. This is decoded straight from the captured frame
+/// rather than read back from the driver, on purpose: the leader is what these tests assert
+/// about, so taking it from the driver's own cache would make the assertion circular -- a driver
+/// that mis-parsed the payload's replica order would agree with itself and the test would pass.
+///
+/// It is also the only way to learn the leader at all. The server publishes it nowhere else: not
+/// in schema, not in `system.tablets`; it only lists it first in this payload, and a Raft
+/// re-election can move it at any time.
+fn decode_v2_payload_replicas(frame: ResponseFrame) -> Option<Vec<(Uuid, i32)>> {
+    type V2Payload<'frame, 'metadata> = (
+        i64,
+        i64,
+        ListlikeIterator<'frame, 'metadata, (Uuid, i32)>,
+        i64,
+    );
+
+    let response = parse_response_body_extensions(frame.params.flags, None, frame.body).unwrap();
+    let payload = response
+        .custom_payload?
+        .remove(CUSTOM_PAYLOAD_TABLETS_V2_KEY)?;
+
+    // The same shape the driver expects: (first_token, last_token, [(host, shard)], version).
+    let typ = ColumnType::Tuple(vec![
+        ColumnType::Native(NativeType::BigInt),
+        ColumnType::Native(NativeType::BigInt),
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Tuple(vec![
+                ColumnType::Native(NativeType::Uuid),
+                ColumnType::Native(NativeType::Int),
+            ]))),
+        },
+        ColumnType::Native(NativeType::BigInt),
+    ]);
+
+    <V2Payload as DeserializeValue<'_, '_>>::type_check(&typ).unwrap();
+    let (_first_token, _last_token, replicas, _version) =
+        <V2Payload as DeserializeValue<'_, '_>>::deserialize(&typ, Some(FrameSlice::new(&payload)))
+            .unwrap();
+
+    Some(replicas.map(|replica| replica.unwrap()).collect())
+}
 
 /// Installs proxy rules capturing every `EXECUTE` request and every `RESULT` response on every
 /// node, and returns the receiving ends.
@@ -487,6 +554,188 @@ async fn test_tablets_routing_v2_mixed_feature_connections() {
 
             session
                 .ddl(format!("DROP KEYSPACE IF EXISTS {ks}"))
+                .await
+                .unwrap();
+            running_proxy
+        },
+    )
+    .await;
+
+    // A `DriverDisconnected` error is benign here (the session is dropped as the proxy shuts
+    // down). Any other error is a real failure.
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+}
+
+// -- strongly-consistent (leader-aware) routing -----------------------------
+
+/// Creates a strongly-consistent (Raft-based) keyspace and a single-partition table.
+async fn create_strongly_consistent_tablet_table(session: &Session, ks: &str) {
+    create_tablet_table_with_ks_options(session, ks, "AND consistency = 'global'").await
+}
+
+/// For a table in a strongly-consistent (Raft-based) keyspace, every leader-requiring request
+/// (here a `LOCAL_QUORUM` read) must be coordinated by the tablet's Raft leader, saving the extra
+/// coordinator->leader hop.
+///
+/// This also covers, indirectly, that the driver discovered the keyspace's consistency mode from
+/// `system_schema.scylla_keyspaces` at all: leader-aware routing only engages for a keyspace the
+/// driver believes is strongly consistent, so a mode that failed to be read would show up here as
+/// requests spreading across replicas. The mode itself is crate-private, and the mapping from the
+/// raw `consistency` column value to it is unit-tested next to the code that does it.
+///
+/// A read at `ONE`/`LOCAL_ONE` is intentionally *not* pinned to the leader (any single replica
+/// satisfies it); that carve-out is covered by the policy unit tests.
+#[tokio::test]
+async fn test_leader_aware_routing_targets_the_raft_leader() {
+    setup_tracing();
+
+    let features = fetch_negotiated_features(None).await;
+    if !features.tablets_v2_supported {
+        tracing::warn!(
+            "Skipping test because the server did not negotiate TABLETS_ROUTING_V2_EXPERIMENTAL"
+        );
+        return;
+    }
+
+    let res = test_with_3_node_cluster(
+        ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map))
+                .build()
+                .await
+                .unwrap();
+
+            if !scylla_supports_tablets(&session).await {
+                tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
+                return running_proxy;
+            }
+
+            let sc_ks = unique_keyspace_name();
+            create_strongly_consistent_tablet_table(&session, &sc_ks).await;
+
+            // A single fixed partition key, so every request targets the same tablet.
+            const PK: i32 = 2;
+
+            // Writes to a strongly-consistent (Raft) table are rejected unless they use
+            // QUORUM/LOCAL_QUORUM, so pin the insert to LOCAL_QUORUM.
+            let mut insert = session
+                .prepare(format!("INSERT INTO {sc_ks}.t (pk, v) VALUES (?, ?)"))
+                .await
+                .unwrap();
+            insert.set_consistency(Consistency::LocalQuorum);
+
+            // A strong read (LOCAL_QUORUM) is a leader-requiring request.
+            let mut select = session
+                .prepare(format!("SELECT v FROM {sc_ks}.t WHERE pk = ?"))
+                .await
+                .unwrap();
+            select.set_consistency(Consistency::LocalQuorum);
+
+            // Capture must be installed before the *first* request that routes by this tablet.
+            // The server sends routing information only when the tablet-version block it
+            // receives disagrees with its own version, so only requests made while the driver's
+            // tablet cache is still cold provoke a payload. The very first such request -- the
+            // insert below -- is what fills that cache.
+            let (mut rx_exec, mut rx_resp) = capture_executes_and_results(&mut running_proxy);
+
+            session.execute_unpaged(&insert, (PK, 1)).await.unwrap();
+
+            // Warm the cache, and in doing so learn who leads this tablet. While the cache is
+            // cold the driver sends a random tablet-version block, so the server answers with
+            // routing information -- and that payload is the only place it says which replica
+            // leads the Raft group. The insert above is what provokes it; these reads then leave
+            // the cache warm for the measured phase.
+            //
+            // One batch and one drain is enough, with no retry: the proxy queues its feedback
+            // copy of a response before forwarding that response to the driver, so every frame
+            // the driver has seen is already in `rx_resp` by the time this batch resolves.
+            const WARMUP: usize = 32;
+            execute_concurrently(&session, &select, &(PK,), WARMUP)
+                .await
+                .unwrap();
+
+            let mut leader = None;
+            while let Ok((frame, _shard)) = rx_resp.try_recv() {
+                if let Some(replicas) = decode_v2_payload_replicas(frame) {
+                    leader = replicas.first().map(|(host, _shard)| *host);
+                }
+            }
+            let leader = Cell::new(leader.expect(
+                "server never sent a tablets-routing-v2 payload during warm-up, so the tablet's \
+                 leader could not be determined",
+            ));
+
+            // A migration or a Raft re-election can move the leader while the batch below is in
+            // flight, which would fail the check through no fault of the driver. Either shows up
+            // as the server re-sending routing information, so a measurement that sees a payload
+            // is discarded and repeated against the leader that payload just reported.
+            //
+            // That is handled here rather than by returning `Err` to `with_migration_retry`,
+            // because that helper decides "did anything move?" by re-reading the driver's cached
+            // routing. The driver applies tablet feedback asynchronously, so right after a
+            // payload lands on the wire its cache may still hold the old mapping -- the snapshot
+            // would compare equal and the helper would panic instead of retrying. The outer
+            // retry still covers migrations that make the *assertion* fail without any payload
+            // reaching this test.
+            with_migration_retry(
+                async || cached_tablet_routing(&session, &sc_ks, PK).await,
+                async |_| {
+                    // Bounded, so that a tablet that keeps churning fails the test rather than
+                    // spinning forever.
+                    const MAX_MEASUREMENTS: usize = 5;
+                    const ITERATIONS: usize = 20;
+
+                    for _ in 0..MAX_MEASUREMENTS {
+                        drain(&mut rx_exec);
+                        drain(&mut rx_resp);
+
+                        let coordinators =
+                            execute_concurrently(&session, &select, &(PK,), ITERATIONS).await?;
+
+                        let mut moved = false;
+                        while let Ok((frame, _shard)) = rx_resp.try_recv() {
+                            if let Some(replicas) = decode_v2_payload_replicas(frame) {
+                                if let Some((host, _shard)) = replicas.first() {
+                                    leader.set(*host);
+                                }
+                                moved = true;
+                            }
+                        }
+                        if moved {
+                            // The tablet migrated or re-elected mid-measurement. Measure again,
+                            // now expecting the leader the server just reported.
+                            continue;
+                        }
+
+                        // With the cache warm and the mapping stable, every strong read for this
+                        // tablet must be coordinated by the leader.
+                        let expected = leader.get();
+                        if let Some(other) = coordinators.iter().find(|c| **c != expected) {
+                            return Err(format!(
+                                "strong read coordinated by {other} but the tablet's Raft leader \
+                                 is {expected}; leader-aware routing did not target the leader"
+                            ));
+                        }
+                        return Ok(());
+                    }
+
+                    Err(format!(
+                        "the server re-sent routing information in each of the \
+                         {MAX_MEASUREMENTS} measurements, so the tablet never stayed put long \
+                         enough to check where requests landed"
+                    ))
+                },
+            )
+            .await;
+
+            session
+                .ddl(format!("DROP KEYSPACE IF EXISTS {sc_ks}"))
                 .await
                 .unwrap();
             running_proxy
