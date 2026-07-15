@@ -36,11 +36,6 @@ use crate::network::{ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
-enum ControlConnectionState {
-    Working(ControlConnection),
-    Broken { last_error: MetadataError },
-}
-
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
     // =======================================================================================
@@ -60,7 +55,9 @@ pub(crate) struct MetadataReader {
     // ====================================================================
     // Mutable state of MetadataReader. It will change during its lifetime.
     // ====================================================================
-    control_connection_state: ControlConnectionState,
+    // `None` means the control connection is currently broken (or was never
+    // established) and needs to be re-established during the next metadata read.
+    control_connection: Option<ControlConnection>,
     // when control connection fails, MetadataReader tries to connect to one of known_peers
     known_peers: Vec<UntranslatedEndpoint>,
     cc_cache: Arc<ControlConnectionCache>,
@@ -97,18 +94,19 @@ impl MetadataReader {
 
         let cc_cache = Arc::new(ControlConnectionCache::new());
 
-        let control_connection_state = Self::make_control_connection_state(
+        let control_connection = Self::make_control_connection(
             control_connection_endpoint,
             connection_config.clone(),
             request_serverside_timeout,
             Arc::clone(&cc_cache),
             client_routes_subscriber.as_ref().map(Arc::clone),
         )
-        .await;
+        .await
+        .ok();
 
         Ok(MetadataReader {
             control_connection_config: connection_config,
-            control_connection_state,
+            control_connection,
             request_serverside_timeout,
             hostname_resolution_timeout,
             known_peers: initial_peers
@@ -125,18 +123,12 @@ impl MetadataReader {
     }
 
     pub(crate) async fn wait_for_control_connection_event(&mut self) -> ControlConnectionEvent {
-        match &mut self.control_connection_state {
-            ControlConnectionState::Broken { .. } => std::future::pending().await,
-            ControlConnectionState::Working(working_connection) => {
+        match &mut self.control_connection {
+            None => std::future::pending().await,
+            Some(working_connection) => {
                 let event = working_connection.wait_for_event().await;
-                if let ControlConnectionEvent::Broken(err) = &event {
-                    self.control_connection_state = ControlConnectionState::Broken {
-                        last_error: MetadataError::ConnectionPoolError(
-                            ConnectionPoolError::Broken {
-                                last_connection_error: err.clone(),
-                            },
-                        ),
-                    };
+                if let ControlConnectionEvent::Broken(_) = &event {
+                    self.control_connection = None;
                 }
 
                 event
@@ -145,46 +137,55 @@ impl MetadataReader {
     }
 
     pub(crate) fn control_connection_works(&self) -> bool {
-        matches!(
-            self.control_connection_state,
-            ControlConnectionState::Working(_)
-        )
+        self.control_connection.is_some()
     }
 
     /// Fetches current metadata from the cluster
     pub(crate) async fn read_metadata(&mut self, initial: bool) -> Result<Metadata, MetadataError> {
-        // First, try to fetch metadata on the current control connection.
-        match self.fetch_metadata(initial).await {
-            Ok(metadata) => {
-                debug!("Fetched new metadata");
-                self.update_known_peers(&metadata);
-                if initial {
-                    self.handle_unaccepted_host_in_control_connection(&metadata)
-                        .await;
+        // First, try to fetch metadata on the current control connection, if we have one.
+        if let Some(cc) = self.control_connection.take() {
+            match self.query_metadata_on_cc(&cc).await {
+                Ok(metadata) => {
+                    debug!("Fetched new metadata");
+                    self.update_known_peers(&metadata);
+                    self.control_connection = Some(cc);
+                    if initial {
+                        self.handle_unaccepted_host_in_control_connection(&metadata)
+                            .await;
+                    }
+                    return Ok(metadata);
                 }
-                return Ok(metadata);
-            }
-            Err(_prev_err) => {
-                // Fetching metadata on the current control connection failed.
-                // Establish a fresh control connection below.
+                Err(err) => {
+                    // The current control connection is considered broken; it has
+                    // been taken out of `self.control_connection` and is dropped here.
+                    if initial {
+                        warn!(
+                            error = ?err,
+                            "Initial metadata read failed, proceeding with metadata \
+                            consisting only of the initial peer list and dummy tokens. \
+                            This might result in suboptimal performance and schema \
+                            information not being available."
+                        );
+                        return Ok(Metadata::new_dummy(&self.known_peers));
+                    }
+                    // Establish a fresh control connection below.
+                }
             }
         }
 
         // Establish a fresh control connection (iterating over known peers and, as a
         // last resort, the initial contact points) and fetch metadata on it. Update
-        // the control connection state to reflect the outcome: `Working` on success,
-        // `Broken` on failure (so that subsequent refreshes keep trying to reconnect).
+        // the control connection to reflect the outcome: `Some` on success, `None`
+        // on failure (so that subsequent refreshes keep trying to reconnect).
         match self.establish_cc_and_fetch_metadata(initial).await {
             Ok((cc, metadata)) => {
-                self.control_connection_state = ControlConnectionState::Working(cc);
+                self.control_connection = Some(cc);
                 self.handle_unaccepted_host_in_control_connection(&metadata)
                     .await;
                 Ok(metadata)
             }
             Err(err) => {
-                self.control_connection_state = ControlConnectionState::Broken {
-                    last_error: err.clone(),
-                };
+                self.control_connection = None;
                 Err(err)
             }
         }
@@ -318,37 +319,6 @@ impl MetadataReader {
         Err(last_err)
     }
 
-    async fn fetch_metadata(&mut self, initial: bool) -> Result<Metadata, MetadataError> {
-        let res = match &self.control_connection_state {
-            ControlConnectionState::Working(working_connection) => {
-                self.query_metadata_on_cc(working_connection).await
-            }
-            ControlConnectionState::Broken { last_error: e } => {
-                return Err(e.clone());
-            }
-        };
-
-        // If metadata fetch failed, we consider the connection broken.
-        if let Err(err) = &res {
-            self.control_connection_state = ControlConnectionState::Broken {
-                last_error: err.clone(),
-            }
-        }
-
-        if initial && let Err(err) = res {
-            warn!(
-                error = ?err,
-                "Initial metadata read failed, proceeding with metadata \
-                consisting only of the initial peer list and dummy tokens. \
-                This might result in suboptimal performance and schema \
-                information not being available."
-            );
-            return Ok(Metadata::new_dummy(&self.known_peers));
-        }
-
-        res
-    }
-
     /// Queries metadata on the given control connection.
     ///
     /// This is a thin wrapper over [`ControlConnection::query_metadata`] that fills in
@@ -394,8 +364,7 @@ impl MetadataReader {
     }
 
     async fn handle_unaccepted_host_in_control_connection(&mut self, metadata: &Metadata) {
-        let ControlConnectionState::Working(working_connection) = &self.control_connection_state
-        else {
+        let Some(working_connection) = &self.control_connection else {
             return;
         };
         let endpoint = working_connection.endpoint().clone();
@@ -408,14 +377,15 @@ impl MetadataReader {
                     .expect("known_peers is empty - should be impossible")
                     .clone();
 
-                self.control_connection_state = Self::make_control_connection_state(
+                self.control_connection = Self::make_control_connection(
                     control_connection_endpoint,
                     self.control_connection_config.clone(),
                     self.request_serverside_timeout,
                     Arc::clone(&self.cc_cache),
                     self.client_routes_subscriber.as_ref().map(Arc::clone),
                 )
-                .await;
+                .await
+                .ok();
             }
         }
     }
@@ -453,29 +423,6 @@ impl MetadataReader {
             return true;
         }
         false
-    }
-
-    /// Opens a control connection to `endpoint`, wrapping the outcome in a
-    /// [`ControlConnectionState`] (either `Working` or `Broken`).
-    async fn make_control_connection_state(
-        endpoint: UntranslatedEndpoint,
-        config: ConnectionConfig,
-        request_serverside_timeout: Option<Duration>,
-        cache: Arc<ControlConnectionCache>,
-        client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
-    ) -> ControlConnectionState {
-        match Self::make_control_connection(
-            endpoint,
-            config,
-            request_serverside_timeout,
-            cache,
-            client_routes_subscriber,
-        )
-        .await
-        {
-            Ok(cc) => ControlConnectionState::Working(cc),
-            Err(last_error) => ControlConnectionState::Broken { last_error },
-        }
     }
 
     async fn make_control_connection(
@@ -533,11 +480,10 @@ impl MetadataReader {
         &mut self,
         evt: &ClientRoutesChangeEvent,
     ) -> Result<HashSet<Uuid>, MetadataError> {
-        let working_connection = match &self.control_connection_state {
-            ControlConnectionState::Working(working_connection) => working_connection,
-            ControlConnectionState::Broken { last_error: e } => {
-                return Err(e.clone());
-            }
+        let Some(working_connection) = &self.control_connection else {
+            // We received this event on the control connection, so it must be present.
+            warn!("BUG: Received a ClientRoutesChange event without a control connection!");
+            return Ok(HashSet::new());
         };
 
         let Some(subscriber) = &self.client_routes_subscriber else {
