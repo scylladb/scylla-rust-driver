@@ -17,7 +17,6 @@ use tracing::{Instrument, warn};
 use uuid::Uuid;
 
 use crate::client::execution::{RequestExecutionParams, RequestPaging, RunRequestResult};
-use crate::client::execution_profile::ExecutionProfileInner;
 use crate::client::session::Session;
 use crate::cluster::{ClusterState, Node};
 use crate::deserialize::DeserializeOwnedRow;
@@ -40,7 +39,7 @@ use crate::policies::retry::RetryPolicy;
 use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
-use crate::routing::{NodeLocationPreference, Shard, Token};
+use crate::routing::{Shard, Token};
 use crate::serialize::row::SerializedValues;
 use crate::statement::prepared::{PartitionKey, PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
@@ -685,11 +684,12 @@ If you are using this API, you are probably doing something wrong."
     pub(crate) async fn new_for_query(
         session: &Session,
         statement: Statement,
-        execution_profile: Arc<ExecutionProfileInner>,
-        cluster_state: Arc<ClusterState>,
-        metrics: Arc<Metrics>,
-        node_location_preference: Arc<NodeLocationPreference>,
     ) -> Result<Self, PagerExecutionError> {
+        let execution_profile = statement
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| session.get_default_execution_profile_handle())
+            .access();
+
         let consistency = statement
             .config
             .consistency
@@ -721,6 +721,9 @@ If you are using this API, you are probably doing something wrong."
             .speculative_execution_policy
             .as_ref()
             .map(Arc::clone);
+
+        let cluster_state = session.get_cluster_state();
+        let metrics = session.get_metrics_priv();
 
         fn create_span(statement_contents: &str) -> RequestSpan {
             let span = RequestSpan::new_query(statement_contents);
@@ -766,7 +769,7 @@ If you are using this API, you are probably doing something wrong."
                 token: None,
                 table: None,
                 is_confirmed_lwt: false,
-                node_location_preference: &node_location_preference,
+                node_location_preference: session.get_node_location_preference(),
             };
 
             let request_span = create_span(&statement.contents);
@@ -786,6 +789,7 @@ If you are using this API, you are probably doing something wrong."
             }
             ShouldFetchMorePages::MorePages => {
                 /* REMAINING PAGES */
+                let node_location_preference = Arc::clone(session.get_node_location_preference());
                 let worker_task = async move {
                     let routing_info = RoutingInfo {
                         consistency,

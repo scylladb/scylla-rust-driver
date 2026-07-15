@@ -1475,20 +1475,7 @@ impl Session {
         &self,
         statement: Statement,
     ) -> Result<QueryPager, PagerExecutionError> {
-        let execution_profile = statement
-            .get_execution_profile_handle()
-            .unwrap_or_else(|| self.get_default_execution_profile_handle())
-            .access();
-
-        QueryPager::new_for_query(
-            self,
-            statement,
-            execution_profile,
-            self.cluster.get_state(),
-            Arc::clone(&self.metrics),
-            Arc::clone(&self.node_location_preference),
-        )
-        .await
+        QueryPager::new_for_query(self, statement).await
     }
 
     /// Prepares a statement on the server side and returns a prepared statement,
