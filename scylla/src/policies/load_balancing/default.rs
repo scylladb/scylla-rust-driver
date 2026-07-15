@@ -1464,6 +1464,7 @@ mod tests {
                 keyspaces: HashMap::new(),
                 client_routes_updated_hosts: Default::default(),
                 cluster_name: Some("TestCluster".into()),
+                consistency_modes: None,
             };
 
             let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();

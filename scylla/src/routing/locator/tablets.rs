@@ -772,7 +772,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
 
-    use crate::cluster::metadata::{Keyspace, Strategy, Table};
+    use crate::cluster::metadata::{ConsistencyMode, Keyspace, Strategy, Table};
     use crate::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
     use crate::serialize::value::SerializeValue;
     use crate::serialize::writers::CellWriter;
@@ -1713,6 +1713,7 @@ mod tests {
                     strategy: Strategy::LocalStrategy,
                     durable_writes: false,
                     tablet_based: true,
+                    consistency_mode: ConsistencyMode::Eventual,
                     tables: HashMap::from([(
                         spec.table_name().to_owned(),
                         Table {

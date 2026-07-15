@@ -1927,6 +1927,10 @@ impl Connection {
             || proto_features.scylla_metadata_id_supported
     }
 
+    pub(crate) fn tablets_v2_supported(&self) -> bool {
+        self.features.protocol_features.tablets_v2_supported
+    }
+
     pub(crate) fn get_connect_address(&self) -> SocketAddr {
         self.connect_address
     }
