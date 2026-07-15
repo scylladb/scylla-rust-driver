@@ -2192,7 +2192,7 @@ fn apply_socket_options(
 
     let sf = SockRef::from(&socket);
     if let Some(linger) = options.linger {
-        #[expect(deprecated)]
+        #[allow(deprecated)]
         socket.set_linger(Some(linger))?;
     }
     if let Some(keepalive_interval) = options.keepalive_interval {
