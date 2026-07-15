@@ -12,8 +12,7 @@ Available speculative execution strategies:
 * [Simple](simple.md)
 * [Latency Percentile](percentile.md)
 
-Speculative execution is not enabled by default, and currently only
-non-iter session methods use it.
+Speculative execution is not enabled by default.
 
 ### When does speculative execution actually fire?
 
@@ -23,7 +22,7 @@ speculative fibers only start if **the statement is marked idempotent**
 For non-idempotent statements the policy is bypassed and only the original
 execution runs - this avoids duplicating side-effecting writes when several
 fibers race to the same coordinator. Use `Statement::set_is_idempotent(true)`
-or `PreparedStatement::set_is_idempotent(true)` on queries that are safe to
+or `PreparedStatement::set_is_idempotent(true)` on statements that are safe to
 re-run.
 
 ### Errors from running fibers
