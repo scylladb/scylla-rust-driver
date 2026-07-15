@@ -133,6 +133,7 @@ struct PagingExecutor {
     request_timeout: Option<Duration>,
     is_idempotent: bool,
     consistency: Consistency,
+    serial_consistency: Option<SerialConsistency>,
     metrics: Arc<Metrics>,
     history_listener: Option<Arc<dyn HistoryListener>>,
     paging_state: PagingState,
@@ -171,6 +172,9 @@ impl PagingExecutor {
             consistency: statement
                 .consistency
                 .unwrap_or(execution_profile.consistency),
+            serial_consistency: statement
+                .serial_consistency
+                .unwrap_or(execution_profile.serial_consistency),
             metrics: session.get_metrics_priv(),
             history_listener: statement.history_listener.as_ref().map(Arc::clone),
             paging_state: PagingState::start(),
@@ -730,10 +734,9 @@ If you are using this API, you are probably doing something wrong."
             .unwrap_or_else(|| session.get_default_execution_profile_handle())
             .access();
 
-        let serial_consistency = statement
-            .config
-            .serial_consistency
-            .unwrap_or(execution_profile.serial_consistency);
+        let mut executor = PagingExecutor::new(session, &statement.config, &execution_profile);
+        let consistency = executor.consistency;
+        let serial_consistency = executor.serial_consistency;
 
         fn create_span(statement_contents: &str) -> RequestSpan {
             let span = RequestSpan::new_query(statement_contents);
@@ -758,9 +761,6 @@ If you are using this API, you are probably doing something wrong."
                     .await
             }
         };
-
-        let mut executor = PagingExecutor::new(session, &statement.config, &execution_profile);
-        let consistency = executor.consistency;
 
         let (first_page, should_fetch_more_pages) = {
             let routing_info = RoutingInfo {
@@ -842,11 +842,7 @@ If you are using this API, you are probably doing something wrong."
         let mut executor = PagingExecutor::new(session, &prepared.config, &execution_profile);
 
         let consistency = executor.consistency;
-
-        let serial_consistency = prepared
-            .config
-            .serial_consistency
-            .unwrap_or(execution_profile.serial_consistency);
+        let serial_consistency = executor.serial_consistency;
 
         type Replicas = smallvec::SmallVec<[(Arc<Node>, Shard); 8]>;
 
