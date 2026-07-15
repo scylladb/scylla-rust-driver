@@ -38,19 +38,7 @@ use crate::utils::safe_format::IteratorSafeFormatExt;
 
 enum ControlConnectionState {
     Working(ControlConnection),
-    Broken {
-        last_error: MetadataError,
-        last_endpoint: UntranslatedEndpoint,
-    },
-}
-
-impl ControlConnectionState {
-    fn endpoint(&self) -> &UntranslatedEndpoint {
-        match self {
-            ControlConnectionState::Working(c) => c.endpoint(),
-            ControlConnectionState::Broken { last_endpoint, .. } => last_endpoint,
-        }
-    }
+    Broken { last_error: MetadataError },
 }
 
 /// Allows to read current metadata from the cluster
@@ -148,7 +136,6 @@ impl MetadataReader {
                                 last_connection_error: err.clone(),
                             },
                         ),
-                        last_endpoint: working_connection.endpoint().clone(),
                     };
                 }
 
@@ -281,19 +268,17 @@ impl MetadataReader {
     async fn fetch_metadata(&mut self, initial: bool) -> Result<Metadata, MetadataError> {
         let working_connection = match &self.control_connection_state {
             ControlConnectionState::Working(working_connection) => working_connection,
-            ControlConnectionState::Broken { last_error: e, .. } => {
+            ControlConnectionState::Broken { last_error: e } => {
                 return Err(e.clone());
             }
         };
 
-        let endpoint = working_connection.endpoint().clone();
         let res = self.query_metadata_on_cc(working_connection).await;
 
         // If metadata fetch failed, we consider the connection broken.
         if let Err(err) = &res {
             self.control_connection_state = ControlConnectionState::Broken {
                 last_error: err.clone(),
-                last_endpoint: endpoint,
             }
         }
 
@@ -356,7 +341,12 @@ impl MetadataReader {
     }
 
     async fn handle_unaccepted_host_in_control_connection(&mut self, metadata: &Metadata) {
-        let endpoint = self.control_connection_state.endpoint();
+        // We only care about the endpoint of a working control connection here.
+        let ControlConnectionState::Working(working_connection) = &self.control_connection_state
+        else {
+            return;
+        };
+        let endpoint = working_connection.endpoint();
         // Assuming here that known_peers are up-to-date
         if self.is_cc_endpoint_rejected(endpoint, metadata) && !self.known_peers.is_empty() {
             let control_connection_endpoint = self
@@ -420,7 +410,6 @@ impl MetadataReader {
         cache: Arc<ControlConnectionCache>,
         client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
     ) -> ControlConnectionState {
-        let last_endpoint = endpoint.clone();
         match Self::make_control_connection(
             endpoint,
             config,
@@ -431,10 +420,7 @@ impl MetadataReader {
         .await
         {
             Ok(cc) => ControlConnectionState::Working(cc),
-            Err(last_error) => ControlConnectionState::Broken {
-                last_error,
-                last_endpoint,
-            },
+            Err(last_error) => ControlConnectionState::Broken { last_error },
         }
     }
 
@@ -495,7 +481,7 @@ impl MetadataReader {
     ) -> Result<HashSet<Uuid>, MetadataError> {
         let working_connection = match &self.control_connection_state {
             ControlConnectionState::Working(working_connection) => working_connection,
-            ControlConnectionState::Broken { last_error: e, .. } => {
+            ControlConnectionState::Broken { last_error: e } => {
                 return Err(e.clone());
             }
         };
