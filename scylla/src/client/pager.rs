@@ -110,7 +110,7 @@ type ResultNextPage = Result<NextReceivedPage, NextPageError>;
 
 enum ShouldFetchMorePages {
     NoMorePages,
-    MorePages { successful_coordinator: Coordinator },
+    MorePages,
 }
 
 /// Drives paged execution by repeatedly invoking the unified request-execution
@@ -134,6 +134,7 @@ struct PagingExecutor {
     metrics: Arc<Metrics>,
     history_listener: Option<Arc<dyn HistoryListener>>,
     paging_state: PagingState,
+    stable_coordinator: Option<Coordinator>,
 }
 
 impl PagingExecutor {
@@ -153,7 +154,6 @@ impl PagingExecutor {
         page_query: QueryFunc,
         routing_info: RoutingInfo<'_>,
         span_creator: SpanCreator,
-        mut last_successful_page_coordinator: Coordinator,
     ) where
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
@@ -164,13 +164,7 @@ impl PagingExecutor {
             let page_span = span_creator();
 
             let page_res = self
-                .fetch_one_page(
-                    &cluster_state,
-                    &routing_info,
-                    Some(&last_successful_page_coordinator),
-                    &page_span,
-                    &page_query,
-                )
+                .fetch_one_page(&cluster_state, &routing_info, &page_span, &page_query)
                 .instrument(page_span.span().clone())
                 .await;
 
@@ -195,11 +189,7 @@ impl PagingExecutor {
                             // Reached the last page, shutdown.
                             return;
                         }
-                        ShouldFetchMorePages::MorePages {
-                            successful_coordinator,
-                        } => {
-                            last_successful_page_coordinator = successful_coordinator;
-                        }
+                        ShouldFetchMorePages::MorePages => {}
                     }
                 }
                 Err(err) => {
@@ -224,7 +214,7 @@ impl PagingExecutor {
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
         let fetch_result = self
-            .fetch_one_page(cluster_state, routing_info, None, request_span, &page_query)
+            .fetch_one_page(cluster_state, routing_info, request_span, &page_query)
             .instrument(request_span.span().clone())
             .await;
 
@@ -253,14 +243,13 @@ impl PagingExecutor {
 
     /// Fetches exactly one page by delegating to [`run_request_no_side_effects`].
     ///
-    /// `paging_state` is injected into each attempt. If `stability` is set, the
-    /// given coordinator is tried first (and filtered out of the
-    /// fresh load balancing plan so it is not attempted twice).
+    /// `self.paging_state` is injected into each attempt.
+    /// If `self.stable_coordinator` is set, it is tried first (and filtered out
+    /// of the fresh load balancing plan so it is not attempted twice).
     async fn fetch_one_page<PageQuery, QueryFut>(
         &self,
         cluster_state: &ClusterState,
         routing_info: &RoutingInfo<'_>,
-        stable_coordinator: Option<&Coordinator>,
         page_span: &RequestSpan,
         page_query: &PageQuery,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), RequestError>
@@ -294,7 +283,7 @@ impl PagingExecutor {
             load_balancing::Plan::new(load_balancing_policy, routing_info, cluster_state);
 
         // Coordinator stability: try the previous page's coordinator first.
-        let stability_target = stable_coordinator.map(|coordinator| {
+        let stability_target = self.stable_coordinator.as_ref().map(|coordinator| {
             // `Coordinator` gets its shard from `Connection`. If `Connection` believes it has `Shard` `None`,
             // then it means that the connection pool to that connection is not sharded.
             // In such case, shard is ignored in `connection_for_shard()`.
@@ -307,7 +296,7 @@ impl PagingExecutor {
             .into_iter()
             .chain(base_plan.filter(|&(node, shard)| {
                 // Filter out the preselected coordinator - it is tried first.
-                stable_coordinator.is_none_or(|coordinator| {
+                self.stable_coordinator.as_ref().is_none_or(|coordinator| {
                     // If the previous attempt targeted an unsharded node (such as
                     // Cassandra), filter out all targets to that node regardless
                     // of shard.
@@ -343,9 +332,8 @@ impl PagingExecutor {
                 let should_fetch_more_pages = match paging_state_response {
                     PagingStateResponse::HasMorePages { state } => {
                         self.paging_state = state;
-                        ShouldFetchMorePages::MorePages {
-                            successful_coordinator: coordinator.clone(),
-                        }
+                        self.stable_coordinator = Some(coordinator.clone());
+                        ShouldFetchMorePages::MorePages
                     }
                     PagingStateResponse::NoMorePages => ShouldFetchMorePages::NoMorePages,
                 };
@@ -434,9 +422,8 @@ impl PagingExecutor {
                 let should_fetch_more_pages = match paging_state_response {
                     PagingStateResponse::HasMorePages { state } => {
                         self.paging_state = state;
-                        ShouldFetchMorePages::MorePages {
-                            successful_coordinator: coordinator,
-                        }
+                        self.stable_coordinator = Some(coordinator);
+                        ShouldFetchMorePages::MorePages
                     }
                     PagingStateResponse::NoMorePages => ShouldFetchMorePages::NoMorePages,
                 };
@@ -777,8 +764,9 @@ If you are using this API, you are probably doing something wrong."
             is_idempotent: statement.config.is_idempotent,
             consistency,
             metrics,
-            paging_state: PagingState::start(),
             history_listener: statement.config.history_listener.as_ref().map(Arc::clone),
+            paging_state: PagingState::start(),
+            stable_coordinator: None,
         };
 
         let (first_page, should_fetch_more_pages) = {
@@ -806,9 +794,7 @@ If you are using this API, you are probably doing something wrong."
                 // No more pages - we are done, return the first page and an empty receiver.
                 std::mem::drop(sender);
             }
-            ShouldFetchMorePages::MorePages {
-                successful_coordinator: first_page_coordinator,
-            } => {
+            ShouldFetchMorePages::MorePages => {
                 /* REMAINING PAGES */
                 let worker_task = async move {
                     let routing_info = RoutingInfo {
@@ -845,7 +831,6 @@ If you are using this API, you are probably doing something wrong."
                             page_query,
                             routing_info,
                             span_creator,
-                            first_page_coordinator,
                         )
                         .await;
                 };
@@ -983,13 +968,14 @@ If you are using this API, you are probably doing something wrong."
             is_idempotent: config.prepared.config.is_idempotent,
             consistency,
             metrics: config.metrics,
-            paging_state: PagingState::start(),
             history_listener: config
                 .prepared
                 .config
                 .history_listener
                 .as_ref()
                 .map(Arc::clone),
+            paging_state: PagingState::start(),
+            stable_coordinator: None,
         };
 
         let (first_page, should_fetch_more_pages) = executor
@@ -1012,9 +998,7 @@ If you are using this API, you are probably doing something wrong."
                 // No more pages - we are done, return the first page and an empty receiver.
                 std::mem::drop(sender);
             }
-            ShouldFetchMorePages::MorePages {
-                successful_coordinator: first_page_coordinator,
-            } => {
+            ShouldFetchMorePages::MorePages => {
                 /* REMAINING PAGES */
                 let worker_task = async move {
                     let partition_key = if config.prepared.is_token_aware() {
@@ -1077,7 +1061,6 @@ If you are using this API, you are probably doing something wrong."
                             page_query,
                             routing_info,
                             span_creator,
-                            first_page_coordinator,
                         )
                         .await;
                 };
