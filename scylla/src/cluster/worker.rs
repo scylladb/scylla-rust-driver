@@ -2,7 +2,7 @@ use crate::client::client_routes::{
     ClientRoutesAddressTranslator, ClientRoutesConfig, ClientRoutesSubscriber,
 };
 use crate::client::session::TABLET_CHANNEL_SIZE;
-use crate::cluster::control_connection::ControlConnectionEvent;
+use crate::cluster::control_connection::{ControlConnection, ControlConnectionEvent};
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::EventV2 as Event;
@@ -25,6 +25,7 @@ use std::time::Duration;
 use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
+use super::metadata::Metadata;
 use super::metadata::reader::MetadataReader;
 use super::state::ClusterState;
 
@@ -106,7 +107,9 @@ impl Cluster {
 
         let mut node_status = HashMap::new();
 
-        let metadata = metadata_reader.read_metadata(true).await?;
+        let (cc, metadata) = metadata_reader
+            .establish_cc_and_fetch_metadata(true)
+            .await?;
 
         let cluster_state = ClusterState::new(
             metadata,
@@ -155,7 +158,7 @@ impl Cluster {
             metrics,
         };
 
-        let (fut, worker_handle) = worker.work().remote_handle();
+        let (fut, worker_handle) = worker.work(cc).remote_handle();
         tokio::spawn(fut);
 
         let result = Cluster {
@@ -277,18 +280,23 @@ struct UseKeyspaceRequest {
 }
 
 impl ClusterWorker {
-    pub(crate) async fn work(mut self) {
+    pub(crate) async fn work(mut self, initial_cc: Option<ControlConnection>) {
         use tokio::time::Instant;
 
         let control_connection_repair_duration = Duration::from_secs(1); // Attempt control connection repair every second
         let mut last_refresh_time = Instant::now();
+
+        // The control connection is now owned by the worker. `None` means it is
+        // currently broken (or was never established) and needs to be re-established,
+        // which happens during the next metadata refresh.
+        let mut control_connection: Option<ControlConnection> = initial_cc;
 
         loop {
             let mut cur_request: Option<RefreshRequest> = None;
 
             // Wait until it's time for the next refresh
             let sleep_until: Instant = last_refresh_time
-                .checked_add(if self.metadata_reader.control_connection_works() {
+                .checked_add(if control_connection.is_some() {
                     self.cluster_metadata_refresh_interval
                 } else {
                     control_connection_repair_duration
@@ -344,7 +352,7 @@ impl ClusterWorker {
                     continue;
                 }
 
-                control_connection_event = self.metadata_reader.wait_for_control_connection_event() => {
+                control_connection_event = Self::wait_for_control_connection_event(&mut control_connection) => {
                     match control_connection_event {
                         ControlConnectionEvent::Shutdown => {
                             // The runtime is shutting down. We can stop working.
@@ -352,17 +360,25 @@ impl ClusterWorker {
                             return;
                         },
                         ControlConnectionEvent::Broken(_err) => {
-                            // The control connection was broken. Acknowledge that and start attempting to reconnect.
+                            // The control connection was broken. Drop it and start attempting to reconnect.
                             // The first reconnect attempt will be immediate (by attempting metadata refresh below),
-                            // and if it does not succeed, then `ControlConnectionState` will be set to `Broken`, so
+                            // and if it does not succeed, then the control connection will stay `None`, so
                             // subsequent attempts will be issued every second.
+                            control_connection = None;
                         },
                         ControlConnectionEvent::ServerEvent(event) => {
                             debug!("Received server event: {:?}", event);
                             match event {
                                 Event::TopologyChange(_) => (), // Refresh immediately
                                 Event::ClientRoutesChange(evt) => {
-                                    let res = self.metadata_reader.fetch_client_route_updates_on_event(&evt).await;
+                                    // We received this event on the control connection, so it must be present.
+                                    let res = match control_connection.as_ref() {
+                                        Some(cc) => self.metadata_reader.fetch_client_route_updates_on_event(cc, &evt).await,
+                                        None => {
+                                            error!("BUG: Received a server event without a control connection.");
+                                            continue;
+                                        }
+                                    };
                                     match res {
                                         Ok(updated_hosts) => {
                                             self.cluster_state.load().trigger_pool_refills_for_hosts(updated_hosts.iter().copied());
@@ -450,7 +466,7 @@ impl ClusterWorker {
             // Perform the refresh
             debug!("Requesting metadata refresh");
             last_refresh_time = Instant::now();
-            let refresh_res = self.perform_refresh().await;
+            let refresh_res = self.perform_refresh(&mut control_connection).await;
 
             // Send refresh result if there was a request
             if let Some(request) = cur_request {
@@ -484,9 +500,60 @@ impl ClusterWorker {
         use_keyspace_result(use_keyspace_results.into_iter())
     }
 
-    async fn perform_refresh(&mut self) -> Result<(), MetadataError> {
+    /// Waits for the next control connection event.
+    ///
+    /// If there is no working control connection (it is broken and awaiting
+    /// re-establishment), this never resolves — the worker will rely on the
+    /// periodic refresh timer to attempt re-establishment instead.
+    async fn wait_for_control_connection_event(
+        control_connection: &mut Option<ControlConnection>,
+    ) -> ControlConnectionEvent {
+        match control_connection {
+            None => std::future::pending().await,
+            Some(cc) => cc.wait_for_event().await,
+        }
+    }
+
+    /// Fetches the latest metadata, (re-)establishing the control connection if needed.
+    ///
+    /// If a working control connection is present, metadata is fetched on it. If that
+    /// fails, the connection is dropped and a fresh one is established (iterating over
+    /// known peers and, as a last resort, the initial contact points). The (possibly
+    /// new) working control connection is stored back into `control_connection`.
+    async fn read_metadata(
+        &mut self,
+        control_connection: &mut Option<ControlConnection>,
+    ) -> Result<Metadata, MetadataError> {
+        if let Some(cc) = control_connection.as_ref() {
+            match self.metadata_reader.fetch_metadata_on_cc(cc).await {
+                Ok(metadata) => return Ok(metadata),
+                Err(err) => {
+                    debug!(
+                        error = %err,
+                        "Failed to fetch metadata on the current control connection. \
+                        Will try to establish a new one."
+                    );
+                    // The control connection is considered defunct - drop it.
+                    *control_connection = None;
+                }
+            }
+        }
+
+        // We have no working control connection - establish a new one and fetch metadata on it.
+        let (cc, metadata) = self
+            .metadata_reader
+            .establish_cc_and_fetch_metadata(false)
+            .await?;
+        *control_connection = cc;
+        Ok(metadata)
+    }
+
+    async fn perform_refresh(
+        &mut self,
+        control_connection: &mut Option<ControlConnection>,
+    ) -> Result<(), MetadataError> {
         // Read latest Metadata
-        let metadata = self.metadata_reader.read_metadata(false).await?;
+        let metadata = self.read_metadata(control_connection).await?;
         let client_routes_updated_hosts = metadata.client_routes_updated_hosts.clone();
 
         let cluster_state: Arc<ClusterState> = self.cluster_state.load_full();
