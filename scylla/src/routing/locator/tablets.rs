@@ -612,31 +612,39 @@ impl TabletsInfo {
                 return false;
             }
 
+            // Materialized views are tablet-based too, but they live in a
+            // separate `views` map, so we must check both.
             keyspace.tables.contains_key(k.table_name())
+                || keyspace.views.contains_key(k.table_name())
         });
 
         // Now we add empty entries for all tables in tablet-based keyspaces
         // that don't already have an entry. This prevents ReplicaLocator
-        // from returning VNode-based replicas for such tables.
+        // from returning VNode-based replicas for such tables. Materialized
+        // views are tablet-based too, so we include them as well.
         keyspaces
             .iter()
             .filter(|(_, ks)| ks.tablet_based)
             .for_each(|(ks_name, ks)| {
-                ks.tables.iter().for_each(|(table_name, _table)| {
-                    let borrowed_spec = TableSpec::borrowed(ks_name.as_str(), table_name.as_str());
-                    let query_key = TableSpecQueryKey {
-                        table_spec: &borrowed_spec,
-                    };
-                    self.tablets
-                        .raw_entry_mut()
-                        .from_key(&query_key)
-                        .or_insert_with(|| {
-                            (
-                                borrowed_spec.to_owned(),
-                                TableTablets::new(borrowed_spec.to_owned()),
-                            )
-                        });
-                })
+                ks.tables
+                    .keys()
+                    .chain(ks.views.keys())
+                    .for_each(|table_name| {
+                        let borrowed_spec =
+                            TableSpec::borrowed(ks_name.as_str(), table_name.as_str());
+                        let query_key = TableSpecQueryKey {
+                            table_spec: &borrowed_spec,
+                        };
+                        self.tablets
+                            .raw_entry_mut()
+                            .from_key(&query_key)
+                            .or_insert_with(|| {
+                                (
+                                    borrowed_spec.to_owned(),
+                                    TableTablets::new(borrowed_spec.to_owned()),
+                                )
+                            });
+                    })
             });
 
         if !removed_nodes.is_empty() || !recreated_nodes.is_empty() || self.has_unknown_replicas {
