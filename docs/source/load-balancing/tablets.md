@@ -75,3 +75,71 @@ upgrade a session can hold V2 connections to some nodes and V1 connections to
 others at the same time. Both are handled correctly and no configuration
 changes when this happens.
 ```
+
+## Leader-aware routing for strongly-consistent tables
+
+A keyspace created with `consistency = 'global'` is *strongly consistent*: its
+tablets are replicated through Raft, and one replica of each tablet is the Raft
+leader that coordinates the tablet's writes and its linearizable reads. A
+request that has to go through the leader but arrives elsewhere is forwarded
+there by the receiving node, which costs an extra network hop.
+
+On a `TABLETS_ROUTING_V2` connection, the driver knows which replica leads each
+tablet it has cached and sends such requests to the leader directly. Nothing
+needs to be configured; as with tablet awareness in general, a token-aware
+`DefaultPolicy` suffices.
+
+Which requests are routed to the leader follows from how ScyllaDB serves each
+operation on a strongly-consistent table:
+
+| Operation | Consistency level        | Served by                       | Routed to the leader |
+| --------- | ------------------------ | ------------------------------- | -------------------- |
+| Read      | `ONE`, `LOCAL_ONE`       | any replica, no read barrier    | no                   |
+| Read      | anything else            | the Raft leader (linearizable)  | yes                  |
+| Write     | `QUORUM`, `LOCAL_QUORUM` | the Raft leader, through Raft   | yes                  |
+| Write     | anything else            | rejected by the server          | –                    |
+
+A read at `ONE` or `LOCAL_ONE` is not linearizable: any replica may serve it
+without taking a Raft read barrier, so there is nothing to gain from preferring
+the leader and these keep normal token-aware routing, spread across the
+replicas. Everything else has to be coordinated by the leader, so the driver
+targets it directly. Writes are restricted to `QUORUM` and `LOCAL_QUORUM`;
+the server rejects the rest regardless of routing.
+
+Eventually-consistent tables are unaffected and keep their usual token-aware
+(optionally shuffled) replica ordering.
+
+### Interaction with datacenter and rack preferences
+
+For a leader-requiring request, the leader outranks *distance*: it is tried
+ahead of nearer replicas, including a leader in a remote datacenter ahead of a
+replica in the preferred rack. A nearer replica would only forward the request
+to the leader anyway, and since the table is globally consistent — there is one
+leader for the whole cluster, not one per datacenter — keeping the request
+inside a single datacenter buys no consistency either.
+
+Leader awareness does not, however, override the policy's own restrictions. The
+leader is only targeted if the policy would contact it at all:
+
+- with a preferred datacenter and datacenter failover disabled
+  (`permit_dc_failover: false`, the default), a leader in another datacenter is
+  not contacted. The request goes to a local replica and the server forwards it
+  to the leader, exactly as it would without V2. **Leader awareness never
+  introduces cross-datacenter traffic that the policy would otherwise forbid.**
+- a leader that is down, or excluded by the policy's own predicate, is skipped
+  and the request is routed normally.
+
+Rack preference does not restrict the leader: a leader elsewhere in the
+preferred datacenter is still targeted directly.
+
+Only the leader is promoted. The remaining replicas keep their normal ordering,
+so if the leader cannot be reached, retries still spread across the others
+rather than piling onto one node.
+
+```{note}
+Because the leader is only reported over `TABLETS_ROUTING_V2`, and because that
+extension is experimental, leader-aware routing is active only against a
+cluster that negotiates it. Elsewhere the requests are routed by plain tablet
+awareness and the server does the forwarding — correct either way, just with
+the extra hop.
+```

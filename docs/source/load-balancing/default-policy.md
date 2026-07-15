@@ -178,6 +178,11 @@ let policy = DefaultPolicy::builder()
 
 The DefaultPolicy prefers to return nodes in the following order:
 
+0. The tablet's Raft leader, for a leader-requiring request against a
+   strongly-consistent table — see [Tablet awareness](tablets.md). This
+   position outranks the ones below, but only among the nodes the policy would
+   contact anyway: a leader in a remote datacenter is skipped unless datacenter
+   failover is permitted.
 1. Alive local replicas (if token is available & token awareness is enabled)
 2. Alive remote replicas (if datacenter failover is permitted & possible due to consistency constraints)
 3. Alive local nodes
@@ -196,3 +201,8 @@ to the replicas in the ring order (as it prevents contention due to Paxos confli
 The optimisation is applied in two cases:
 1. when an LWT statement (containing an `IF` clause) is prepared — ScyllaDB sets a flag that the driver uses for routing;
 2. when a statement is executed with `Serial` or `LocalSerial` consistency (this is the only way to execute `SELECT` as LWT, since it may not contain an `IF` clause), the driver detects it automatically.
+
+Leader-aware routing (see [Tablet awareness](tablets.md)) is a separate
+mechanism and does not change this: it moves one replica — the tablet's Raft
+leader — to the front of the plan and leaves the ordering of the rest untouched,
+so the remaining replicas are still shuffled as described above.
