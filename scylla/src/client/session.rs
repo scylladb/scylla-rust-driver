@@ -988,10 +988,7 @@ impl Session {
             RequestPaging::Unpaged,
         );
 
-        let serial_consistency = batch
-            .config
-            .serial_consistency
-            .unwrap_or(execution_profile.serial_consistency);
+        let serial_consistency = exec_params.serial_consistency;
 
         let (first_value_token, values) =
             batch_values::peek_first_token(values, batch.statements.first())?;
@@ -1306,10 +1303,7 @@ impl Session {
             request_paging,
         );
 
-        let serial_consistency = statement
-            .config
-            .serial_consistency
-            .unwrap_or(execution_profile.serial_consistency);
+        let serial_consistency = exec_params.serial_consistency;
 
         let routing_info = RoutingInfo {
             consistency: exec_params.consistency,
@@ -1693,10 +1687,7 @@ impl Session {
             request_paging,
         );
 
-        let serial_consistency = prepared
-            .config
-            .serial_consistency
-            .unwrap_or(execution_profile.serial_consistency);
+        let serial_consistency = exec_params.serial_consistency;
 
         let table_spec = prepared.get_table_spec();
 

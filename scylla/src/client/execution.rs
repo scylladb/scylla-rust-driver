@@ -6,7 +6,7 @@ use tracing::{Instrument as _, trace, trace_span};
 
 use crate::client::execution_profile::ExecutionProfileInner;
 use crate::errors::{RequestAttemptError, RequestError};
-use crate::frame::types::Consistency;
+use crate::frame::types::{Consistency, SerialConsistency};
 
 use crate::network::Connection;
 use crate::observability::driver_tracing::RequestSpan;
@@ -63,6 +63,8 @@ pub(crate) struct RequestExecutionParams<'a> {
     pub(crate) is_idempotent: bool,
     /// Consistency to use.
     pub(crate) consistency: Consistency,
+    /// Serial consistency to use, if any.
+    pub(crate) serial_consistency: Option<SerialConsistency>,
     /// Retry policy used to start a fresh retry session per fiber.
     pub(crate) retry_policy: &'a dyn RetryPolicy,
     /// Load balancing policy used to order targets for the execution.
@@ -91,6 +93,9 @@ impl<'a> RequestExecutionParams<'a> {
         let consistency = statement_config
             .consistency
             .unwrap_or(execution_profile.consistency);
+        let serial_consistency = statement_config
+            .serial_consistency
+            .unwrap_or(execution_profile.serial_consistency);
         let retry_policy = statement_config
             .retry_policy
             .as_deref()
@@ -108,6 +113,7 @@ impl<'a> RequestExecutionParams<'a> {
         Self {
             is_idempotent,
             consistency,
+            serial_consistency,
             retry_policy,
             load_balancing_policy,
             metrics,
