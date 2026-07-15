@@ -231,14 +231,8 @@ impl MetadataReader {
                 debug!("Fetched new metadata");
             }
             Err(error) => {
-                let target = self
-                    .control_connection_state
-                    .endpoint()
-                    .address()
-                    .into_inner();
                 error!(
                     error = %error,
-                    target = %target,
                     "Could not fetch metadata"
                 )
             }
@@ -253,25 +247,10 @@ impl MetadataReader {
         nodes: impl Iterator<Item = UntranslatedEndpoint>,
         prev_err: MetadataError,
     ) -> Result<Metadata, MetadataError> {
-        let mut result = Err(prev_err);
+        let mut last_err = prev_err;
         for peer in nodes {
-            let err = match result {
-                Ok(_) => break,
-                Err(err) => err,
-            };
-
-            warn!(
-                control_connection_address = tracing::field::display(self
-                    .control_connection_state.endpoint()
-                    .address()),
-                error = %err,
-                "Failed to fetch metadata using current control connection"
-            );
-
-            debug!(
-                "Retrying to establish the control connection on {}",
-                peer.address()
-            );
+            let peer_address = peer.address();
+            debug!("Retrying to establish the control connection on {peer_address}");
 
             self.control_connection_state = Self::make_control_connection_state(
                 peer,
@@ -282,9 +261,21 @@ impl MetadataReader {
             )
             .await;
 
-            result = self.fetch_metadata(initial).await;
+            let err = match self.fetch_metadata(initial).await {
+                Ok(metadata) => return Ok(metadata),
+                Err(err) => err,
+            };
+
+            warn!(
+                control_connection_address = %peer_address,
+                error = %err,
+                "Failed to fetch metadata using current control connection"
+            );
+
+            last_err = err;
         }
-        result
+
+        Err(last_err)
     }
 
     async fn fetch_metadata(&mut self, initial: bool) -> Result<Metadata, MetadataError> {
