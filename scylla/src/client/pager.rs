@@ -125,6 +125,7 @@ enum ShouldFetchMorePages {
 /// - turning each successful page into a [`NextReceivedPage`] sent over the
 ///   channel, and stopping once the server reports no more pages.
 struct PagingExecutor {
+    cluster_state: Arc<ClusterState>,
     load_balancing_policy: Arc<dyn LoadBalancingPolicy>,
     retry_policy: Arc<dyn RetryPolicy>,
     speculative_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
@@ -149,7 +150,6 @@ impl PagingExecutor {
     /// for retry.
     async fn query_remaining_pages<QueryFunc, QueryFut, SpanCreator>(
         mut self,
-        cluster_state: Arc<ClusterState>,
         sender: mpsc::Sender<ResultNextPage>,
         page_query: QueryFunc,
         routing_info: RoutingInfo<'_>,
@@ -164,7 +164,7 @@ impl PagingExecutor {
             let page_span = span_creator();
 
             let page_res = self
-                .fetch_one_page(&cluster_state, &routing_info, &page_span, &page_query)
+                .fetch_one_page(&routing_info, &page_span, &page_query)
                 .instrument(page_span.span().clone())
                 .await;
 
@@ -204,7 +204,6 @@ impl PagingExecutor {
     /// Returns the first page and whether more pages should be fetched.
     async fn query_first_page<QueryFunc, QueryFut>(
         &mut self,
-        cluster_state: &ClusterState,
         request_span: &RequestSpan,
         routing_info: &RoutingInfo<'_>,
         page_query: QueryFunc,
@@ -214,7 +213,7 @@ impl PagingExecutor {
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
         let fetch_result = self
-            .fetch_one_page(cluster_state, routing_info, request_span, &page_query)
+            .fetch_one_page(routing_info, request_span, &page_query)
             .instrument(request_span.span().clone())
             .await;
 
@@ -248,7 +247,6 @@ impl PagingExecutor {
     /// of the fresh load balancing plan so it is not attempted twice).
     async fn fetch_one_page<PageQuery, QueryFut>(
         &self,
-        cluster_state: &ClusterState,
         routing_info: &RoutingInfo<'_>,
         page_span: &RequestSpan,
         page_query: &PageQuery,
@@ -280,7 +278,7 @@ impl PagingExecutor {
 
         let load_balancing_policy = self.load_balancing_policy.as_ref();
         let base_plan =
-            load_balancing::Plan::new(load_balancing_policy, routing_info, cluster_state);
+            load_balancing::Plan::new(load_balancing_policy, routing_info, &self.cluster_state);
 
         // Coordinator stability: try the previous page's coordinator first.
         let stability_target = self.stable_coordinator.as_ref().map(|coordinator| {
@@ -757,6 +755,7 @@ If you are using this API, you are probably doing something wrong."
         };
 
         let mut executor = PagingExecutor {
+            cluster_state,
             load_balancing_policy,
             retry_policy,
             speculative_policy,
@@ -782,7 +781,7 @@ If you are using this API, you are probably doing something wrong."
             let request_span = create_span(&statement.contents);
 
             executor
-                .query_first_page(&cluster_state, &request_span, &routing_info, page_query)
+                .query_first_page(&request_span, &routing_info, page_query)
                 .await
                 .map_err(NextPageError::RequestFailure)?
         };
@@ -825,13 +824,7 @@ If you are using this API, you are probably doing something wrong."
                     let span_creator = move || create_span(&statement_ref.contents);
 
                     executor
-                        .query_remaining_pages(
-                            cluster_state,
-                            sender,
-                            page_query,
-                            routing_info,
-                            span_creator,
-                        )
+                        .query_remaining_pages(sender, page_query, routing_info, span_creator)
                         .await;
                 };
                 let _worker_handle = tokio::task::spawn(worker_task);
@@ -961,6 +954,7 @@ If you are using this API, you are probably doing something wrong."
         );
 
         let mut executor = PagingExecutor {
+            cluster_state: config.cluster_state,
             load_balancing_policy,
             retry_policy,
             speculative_policy,
@@ -979,12 +973,7 @@ If you are using this API, you are probably doing something wrong."
         };
 
         let (first_page, should_fetch_more_pages) = executor
-            .query_first_page(
-                &config.cluster_state,
-                &request_span,
-                &routing_info,
-                page_query,
-            )
+            .query_first_page(&request_span, &routing_info, page_query)
             .await
             .map_err(NextPageError::RequestFailure)?;
 
@@ -1055,13 +1044,7 @@ If you are using this API, you are probably doing something wrong."
                     };
 
                     executor
-                        .query_remaining_pages(
-                            config.cluster_state,
-                            sender,
-                            page_query,
-                            routing_info,
-                            span_creator,
-                        )
+                        .query_remaining_pages(sender, page_query, routing_info, span_creator)
                         .await;
                 };
                 let _worker_handle = tokio::task::spawn(worker_task);
