@@ -155,19 +155,9 @@ impl MetadataReader {
                     }
                     return Ok(metadata);
                 }
-                Err(err) => {
+                Err(_err) => {
                     // The current control connection is considered broken; it has
                     // been taken out of `self.control_connection` and is dropped here.
-                    if initial {
-                        warn!(
-                            error = ?err,
-                            "Initial metadata read failed, proceeding with metadata \
-                            consisting only of the initial peer list and dummy tokens. \
-                            This might result in suboptimal performance and schema \
-                            information not being available."
-                        );
-                        return Ok(Metadata::new_dummy(&self.known_peers));
-                    }
                     // Establish a fresh control connection below.
                 }
             }
@@ -179,7 +169,7 @@ impl MetadataReader {
         // on failure (so that subsequent refreshes keep trying to reconnect).
         match self.establish_cc_and_fetch_metadata(initial).await {
             Ok((cc, metadata)) => {
-                self.control_connection = Some(cc);
+                self.control_connection = cc;
                 self.handle_unaccepted_host_in_control_connection(&metadata)
                     .await;
                 Ok(metadata)
@@ -197,12 +187,16 @@ impl MetadataReader {
     /// on each. If `initial` is false and all known peers are exhausted, falls back
     /// to re-resolving the initial contact points.
     ///
-    /// On success, updates `known_peers` and returns the working control connection
-    /// together with the fetched metadata.
+    /// On success, updates `known_peers` and returns the fetched metadata together
+    /// with a control connection to use going forward. The returned control
+    /// connection is `None` when metadata was obtained but no usable control
+    /// connection remains: on an `initial` read whose metadata query failed, dummy
+    /// metadata is returned so the session can still start, and the caller is
+    /// expected to re-establish the control connection at the repair cadence.
     async fn establish_cc_and_fetch_metadata(
         &mut self,
         initial: bool,
-    ) -> Result<(ControlConnection, Metadata), MetadataError> {
+    ) -> Result<(Option<ControlConnection>, Metadata), MetadataError> {
         // shuffle known_peers to iterate through them in random order
         self.known_peers.shuffle(&mut rng());
         debug!(
@@ -215,10 +209,10 @@ impl MetadataReader {
         // failed to resolve). We carry the most recent error across attempts and only
         // synthesize a fallback error if no connection was ever attempted.
         let known_peers_err = match self
-            .try_establish_on_nodes(self.known_peers.clone().into_iter())
+            .try_establish_on_nodes(initial, self.known_peers.clone().into_iter())
             .await
         {
-            Ok((cc, metadata)) => return Ok((cc, metadata)),
+            Ok(result) => return Ok(result),
             Err(err) => err,
         };
 
@@ -242,13 +236,14 @@ impl MetadataReader {
                 .await;
         match self
             .try_establish_on_nodes(
+                initial,
                 initial_peers
                     .into_iter()
                     .map(UntranslatedEndpoint::ContactPoint),
             )
             .await
         {
-            Ok((cc, metadata)) => Ok((cc, metadata)),
+            Ok(result) => Ok(result),
             Err(fallback_err) => {
                 let err = fallback_err
                     .or(known_peers_err)
@@ -265,12 +260,18 @@ impl MetadataReader {
     /// Tries to establish a control connection and fetch metadata on each node from
     /// the given iterator, returning the first success.
     ///
+    /// If `initial` is true and a connection was established but its metadata query
+    /// failed, dummy metadata is returned so the session can still start, together
+    /// with no control connection (`Ok((None, metadata))`); the caller is expected
+    /// to re-establish the control connection at the repair cadence.
+    ///
     /// Returns `Err(None)` if the iterator was empty (no connection was ever
     /// attempted), or `Err(Some(err))` with the most recent error otherwise.
     async fn try_establish_on_nodes(
         &mut self,
+        initial: bool,
         nodes: impl Iterator<Item = UntranslatedEndpoint>,
-    ) -> Result<(ControlConnection, Metadata), Option<MetadataError>> {
+    ) -> Result<(Option<ControlConnection>, Metadata), Option<MetadataError>> {
         let mut last_err: Option<MetadataError> = None;
 
         for peer in nodes {
@@ -302,9 +303,23 @@ impl MetadataReader {
                 Ok(metadata) => {
                     debug!("Fetched new metadata");
                     self.update_known_peers(&metadata);
-                    return Ok((cc, metadata));
+                    return Ok((Some(cc), metadata));
                 }
                 Err(err) => {
+                    if initial {
+                        // The control connection was established, but the initial
+                        // metadata query failed. Fall back to dummy metadata so the
+                        // session can still start. Drop the control connection so it is
+                        // re-established at the repair cadence.
+                        warn!(
+                            error = ?err,
+                            "Initial metadata read failed, proceeding with metadata \
+                            consisting only of the initial peer list and dummy tokens. \
+                            This might result in suboptimal performance and schema \
+                            information not being available."
+                        );
+                        return Ok((None, Metadata::new_dummy(&self.known_peers)));
+                    }
                     warn!(
                         control_connection_address = %peer_address,
                         error = %err,
