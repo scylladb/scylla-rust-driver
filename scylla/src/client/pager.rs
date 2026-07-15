@@ -548,15 +548,6 @@ where
     }
 }
 
-pub(crate) struct PreparedPagerConfig {
-    pub(crate) prepared: PreparedStatement,
-    pub(crate) values: SerializedValues,
-    pub(crate) execution_profile: Arc<ExecutionProfileInner>,
-    pub(crate) cluster_state: Arc<ClusterState>,
-    pub(crate) metrics: Arc<Metrics>,
-    pub(crate) location_preference: Arc<NodeLocationPreference>,
-}
-
 /// An intermediate object that allows to construct a stream over a query
 /// that is asynchronously paged in the background.
 ///
@@ -836,45 +827,48 @@ If you are using this API, you are probably doing something wrong."
 
     pub(crate) async fn new_for_prepared_statement(
         session: &Session,
-        config: PreparedPagerConfig,
+        prepared: PreparedStatement,
+        values: SerializedValues,
     ) -> Result<Self, PagerExecutionError> {
-        let consistency = config
-            .prepared
+        let execution_profile = prepared
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| session.get_default_execution_profile_handle())
+            .access();
+
+        let consistency = prepared
             .config
             .consistency
-            .unwrap_or(config.execution_profile.consistency);
-        let serial_consistency = config
-            .prepared
+            .unwrap_or(execution_profile.consistency);
+        let serial_consistency = prepared
             .config
             .serial_consistency
-            .unwrap_or(config.execution_profile.serial_consistency);
+            .unwrap_or(execution_profile.serial_consistency);
 
-        let request_timeout = config
-            .prepared
+        let request_timeout = prepared
             .get_request_timeout()
-            .or(config.execution_profile.request_timeout);
+            .or(execution_profile.request_timeout);
 
-        let page_size = config.prepared.get_validated_page_size();
+        let page_size = prepared.get_validated_page_size();
 
         let load_balancing_policy = Arc::clone(
-            config
-                .prepared
+            prepared
                 .get_load_balancing_policy()
-                .unwrap_or(&config.execution_profile.load_balancing_policy),
+                .unwrap_or(&execution_profile.load_balancing_policy),
         );
 
         let retry_policy = Arc::clone(
-            config
-                .prepared
+            prepared
                 .get_retry_policy()
-                .unwrap_or(&config.execution_profile.retry_policy),
+                .unwrap_or(&execution_profile.retry_policy),
         );
 
-        let speculative_policy = config
-            .execution_profile
+        let speculative_policy = execution_profile
             .speculative_execution_policy
             .as_ref()
             .map(Arc::clone);
+
+        let metrics = session.get_metrics_priv();
+        let cluster_state = session.get_cluster_state();
 
         type Replicas = smallvec::SmallVec<[(Arc<Node>, Shard); 8]>;
 
@@ -895,31 +889,29 @@ If you are using this API, you are probably doing something wrong."
             span
         }
 
-        let (partition_key, token) =
-            match config.prepared.extract_partition_key_and_calculate_token(
-                config.prepared.get_partitioner_name(),
-                &config.values,
-            ) {
-                Ok(res) => res.unzip(),
-                Err(err) => {
-                    return Err(PagerExecutionError::NextPageError(
-                        NextPageError::PartitionKeyError(err),
-                    ));
-                }
-            };
+        let (partition_key, token) = match prepared
+            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), &values)
+        {
+            Ok(res) => res.unzip(),
+            Err(err) => {
+                return Err(PagerExecutionError::NextPageError(
+                    NextPageError::PartitionKeyError(err),
+                ));
+            }
+        };
 
-        let table_spec = config.prepared.get_table_spec();
+        let table_spec = prepared.get_table_spec();
         let routing_info = RoutingInfo {
             consistency,
             serial_consistency,
             token,
             table: table_spec,
-            is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
-            node_location_preference: &config.location_preference,
+            is_confirmed_lwt: prepared.is_confirmed_lwt(),
+            node_location_preference: session.get_node_location_preference(),
         };
 
-        let prepared_ref = &config.prepared;
-        let values_ref = &config.values;
+        let prepared_ref = &prepared;
+        let values_ref = &values;
         let page_query = |connection: Arc<Connection>,
                           consistency: Consistency,
                           paging_state: PagingState| async move {
@@ -935,12 +927,11 @@ If you are using this API, you are probably doing something wrong."
                 .await
         };
 
-        let serialized_values_size = config.values.buffer_size();
+        let serialized_values_size = values.buffer_size();
 
         let replicas: Option<Replicas> =
             Option::zip(routing_info.table, routing_info.token).map(|(table_spec, token)| {
-                config
-                    .cluster_state
+                cluster_state
                     .get_token_endpoints_iter(table_spec, token)
                     .map(|(node, shard)| (node.clone(), shard))
                     .collect()
@@ -954,20 +945,15 @@ If you are using this API, you are probably doing something wrong."
         );
 
         let mut executor = PagingExecutor {
-            cluster_state: config.cluster_state,
+            cluster_state,
             load_balancing_policy,
             retry_policy,
             speculative_policy,
             request_timeout,
-            is_idempotent: config.prepared.config.is_idempotent,
+            is_idempotent: prepared.config.is_idempotent,
             consistency,
-            metrics: config.metrics,
-            history_listener: config
-                .prepared
-                .config
-                .history_listener
-                .as_ref()
-                .map(Arc::clone),
+            metrics,
+            history_listener: prepared.config.history_listener.as_ref().map(Arc::clone),
             paging_state: PagingState::start(),
             stable_coordinator: None,
         };
@@ -989,9 +975,10 @@ If you are using this API, you are probably doing something wrong."
             }
             ShouldFetchMorePages::MorePages => {
                 /* REMAINING PAGES */
+                let node_location_preference = Arc::clone(session.get_node_location_preference());
                 let worker_task = async move {
-                    let partition_key = if config.prepared.is_token_aware() {
-                        match config.prepared.extract_partition_key(&config.values) {
+                    let partition_key = if prepared.is_token_aware() {
+                        match prepared.extract_partition_key(&values) {
                             Ok(res) => Some(res),
                             Err(err) => {
                                 let _ = sender
@@ -1006,18 +993,18 @@ If you are using this API, you are probably doing something wrong."
                         None
                     };
 
-                    let table_spec = config.prepared.get_table_spec();
+                    let table_spec = prepared.get_table_spec();
                     let routing_info = RoutingInfo {
                         consistency,
                         serial_consistency,
                         token,
                         table: table_spec,
-                        is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
-                        node_location_preference: &config.location_preference,
+                        is_confirmed_lwt: prepared.is_confirmed_lwt(),
+                        node_location_preference: &node_location_preference,
                     };
 
-                    let prepared = &config.prepared;
-                    let values_ref = &config.values;
+                    let prepared = &prepared;
+                    let values_ref = &values;
                     let page_query =
                         |connection: Arc<Connection>,
                          consistency: Consistency,
