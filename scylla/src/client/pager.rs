@@ -17,7 +17,6 @@ use tracing::{Instrument, warn};
 use uuid::Uuid;
 
 use crate::client::execution::{RequestExecutionParams, RequestPaging, RunRequestResult};
-use crate::client::execution_profile::ExecutionProfileInner;
 use crate::client::session::Session;
 use crate::cluster::{ClusterState, Node};
 use crate::deserialize::DeserializeOwnedRow;
@@ -141,11 +140,13 @@ struct PagingExecutor {
 }
 
 impl PagingExecutor {
-    fn new(
-        session: &Session,
-        statement: &StatementConfig,
-        execution_profile: &ExecutionProfileInner,
-    ) -> Self {
+    fn new(session: &Session, statement: &StatementConfig) -> Self {
+        let execution_profile = statement
+            .execution_profile_handle
+            .as_ref()
+            .unwrap_or_else(|| session.get_default_execution_profile_handle())
+            .access();
+
         Self {
             cluster_state: session.get_cluster_state(),
             load_balancing_policy: Arc::clone(
@@ -729,12 +730,7 @@ If you are using this API, you are probably doing something wrong."
         session: &Session,
         statement: Statement,
     ) -> Result<Self, PagerExecutionError> {
-        let execution_profile = statement
-            .get_execution_profile_handle()
-            .unwrap_or_else(|| session.get_default_execution_profile_handle())
-            .access();
-
-        let mut executor = PagingExecutor::new(session, &statement.config, &execution_profile);
+        let mut executor = PagingExecutor::new(session, &statement.config);
         let consistency = executor.consistency;
         let serial_consistency = executor.serial_consistency;
 
@@ -834,12 +830,7 @@ If you are using this API, you are probably doing something wrong."
         prepared: PreparedStatement,
         values: SerializedValues,
     ) -> Result<Self, PagerExecutionError> {
-        let execution_profile = prepared
-            .get_execution_profile_handle()
-            .unwrap_or_else(|| session.get_default_execution_profile_handle())
-            .access();
-
-        let mut executor = PagingExecutor::new(session, &prepared.config, &execution_profile);
+        let mut executor = PagingExecutor::new(session, &prepared.config);
 
         let consistency = executor.consistency;
         let serial_consistency = executor.serial_consistency;
