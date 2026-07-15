@@ -21,6 +21,8 @@ use std::sync::Arc;
 
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
+use scylla::cluster::metadata::ConsistencyMode;
+use scylla::statement::Consistency;
 
 use scylla_cql::frame::parse_response_body_extensions;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
@@ -38,9 +40,9 @@ use scylla_proxy::{
 use tokio::sync::mpsc;
 
 use crate::utils::{
-    PerformDDL, execute_prepared_statement_everywhere, fetch_negotiated_features,
-    scylla_supports_tablets, setup_tracing, supports_feature, test_with_3_node_cluster,
-    unique_keyspace_name,
+    PerformDDL, create_new_session_builder, execute_prepared_statement_everywhere,
+    fetch_negotiated_features, scylla_supports_tablets, setup_tracing, supports_feature,
+    test_with_3_node_cluster, unique_keyspace_name,
 };
 
 /// The custom-payload key under which the server returns fresh V2 routing information.
@@ -386,4 +388,183 @@ async fn test_tablets_routing_v2_mixed_feature_connections() {
         Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
         Err(err) => panic!("{}", err),
     }
+}
+
+// -- strongly-consistent (leader-aware) routing -----------------------------
+
+/// Creates a strongly-consistent (Raft-based) keyspace and a single-partition table.
+///
+/// The `consistency = 'global'` clause is what the driver reads from
+/// `system_schema.scylla_keyspaces` and exposes as [`ConsistencyMode::Global`] on
+/// [`Keyspace::consistency_mode`], and it is what makes the load balancing policy route the
+/// table's requests to the tablet leader.
+async fn create_strongly_consistent_tablet_table(session: &Session, ks: &str) {
+    let supports_table_tablet_options = supports_feature(session, "TABLET_OPTIONS").await;
+    let (ks_tablet_opts, table_tablet_opts) = if supports_table_tablet_options {
+        (
+            "AND tablets = { 'enabled': true }".to_string(),
+            "WITH tablets = { 'min_tablet_count': 8 }".to_string(),
+        )
+    } else {
+        ("AND tablets = { 'initial': 8 }".to_string(), String::new())
+    };
+
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = \
+             {{'class': 'NetworkTopologyStrategy', 'replication_factor': 2}} \
+             {ks_tablet_opts} AND consistency = 'global'"
+        ))
+        .await
+        .unwrap();
+    session
+        .ddl(format!(
+            "CREATE TABLE IF NOT EXISTS {ks}.t (pk int PRIMARY KEY, v int) {table_tablet_opts}"
+        ))
+        .await
+        .unwrap();
+}
+
+/// The driver must learn from `system_schema.scylla_keyspaces` which keyspaces are strongly
+/// consistent: a keyspace declared with `consistency = 'global'` is reported with
+/// [`ConsistencyMode::Global`], while a plain tablet keyspace stays [`ConsistencyMode::Eventual`].
+/// That mode is the precondition for leader-aware routing.
+#[tokio::test]
+async fn test_strongly_consistent_keyspace_metadata() {
+    setup_tracing();
+
+    let features = fetch_negotiated_features(None).await;
+    if !features.tablets_v2_supported {
+        tracing::warn!(
+            "Skipping test because the server did not negotiate TABLETS_ROUTING_V2_EXPERIMENTAL"
+        );
+        return;
+    }
+
+    let session: Session = create_new_session_builder().build().await.unwrap();
+    if !scylla_supports_tablets(&session).await {
+        tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
+        return;
+    }
+
+    let ec_ks = unique_keyspace_name();
+    let sc_ks = unique_keyspace_name();
+    // Eventually consistent (no `consistency` clause) vs strongly consistent
+    // (`consistency = 'global'`).
+    create_tablet_table(&session, &ec_ks).await;
+    create_strongly_consistent_tablet_table(&session, &sc_ks).await;
+
+    session.refresh_metadata().await.unwrap();
+    let cluster_state = session.get_cluster_state();
+
+    assert_eq!(
+        cluster_state
+            .get_keyspace(&sc_ks)
+            .expect("strongly-consistent keyspace missing from metadata")
+            .consistency_mode,
+        ConsistencyMode::Global,
+        "keyspace declared with consistency='global' must be reported as ConsistencyMode::Global"
+    );
+    assert_eq!(
+        cluster_state
+            .get_keyspace(&ec_ks)
+            .expect("eventually-consistent keyspace missing from metadata")
+            .consistency_mode,
+        ConsistencyMode::Eventual,
+        "plain tablet keyspace must be reported as ConsistencyMode::Eventual"
+    );
+
+    session
+        .ddl(format!("DROP KEYSPACE IF EXISTS {ec_ks}"))
+        .await
+        .unwrap();
+    session
+        .ddl(format!("DROP KEYSPACE IF EXISTS {sc_ks}"))
+        .await
+        .unwrap();
+}
+
+/// For a strongly-consistent table, the server orders the tablet's replica list with the Raft
+/// leader first. Once that mapping is cached (via a `TABLETS_ROUTING_V2` payload), the load
+/// balancing policy must route every leader-requiring request (here a `LOCAL_QUORUM` read) for
+/// the tablet to `replicas[0]` (the leader), saving the extra coordinator->leader hop.
+///
+/// A read at `ONE`/`LOCAL_ONE` is intentionally *not* pinned to the leader (any single replica
+/// satisfies it); that carve-out is covered by the policy unit tests.
+#[tokio::test]
+async fn test_leader_aware_routing_targets_the_raft_leader() {
+    setup_tracing();
+
+    let features = fetch_negotiated_features(None).await;
+    if !features.tablets_v2_supported {
+        tracing::warn!(
+            "Skipping test because the server did not negotiate TABLETS_ROUTING_V2_EXPERIMENTAL"
+        );
+        return;
+    }
+
+    let session: Session = create_new_session_builder().build().await.unwrap();
+    if !scylla_supports_tablets(&session).await {
+        tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
+        return;
+    }
+
+    let ks = unique_keyspace_name();
+
+    create_strongly_consistent_tablet_table(&session, &ks).await;
+
+    // A single fixed partition key, so every request targets the same tablet.
+    const PK: i32 = 2;
+
+    // Writes to a strongly-consistent (Raft) table are rejected unless they use
+    // QUORUM/LOCAL_QUORUM, so pin the insert to LOCAL_QUORUM.
+    let mut insert = session
+        .prepare(format!("INSERT INTO {ks}.t (pk, v) VALUES (?, ?)"))
+        .await
+        .unwrap();
+    insert.set_consistency(Consistency::LocalQuorum);
+    session.execute_unpaged(&insert, (PK, 1)).await.unwrap();
+
+    // A strong read (LOCAL_QUORUM) is a leader-requiring request.
+    let mut select = session
+        .prepare(format!("SELECT v FROM {ks}.t WHERE pk = ?"))
+        .await
+        .unwrap();
+    select.set_consistency(Consistency::LocalQuorum);
+
+    // Warm the V2 routing cache for this tablet. On a cold start the driver sends a random
+    // tablet-version block that almost always mismatches, so the server returns the routing
+    // payload and the driver caches the leader-first replica list. Leader-aware routing then
+    // sends the request to `replicas[0]`, so this warm-up is what makes the leader observable
+    // as the coordinator below.
+    const WARMUP: usize = 32;
+    for _ in 0..WARMUP {
+        session.execute_unpaged(&select, (PK,)).await.unwrap();
+    }
+
+    // The leader is the first replica of the cached tablet (the server sends it leader-first).
+    let cluster_state = session.get_cluster_state();
+    let replicas = cluster_state.get_endpoints(&ks, "t", &(PK,)).unwrap();
+    let leader = replicas
+        .first()
+        .expect("strongly-consistent tablet has no replicas")
+        .0
+        .host_id;
+
+    // With the cache warm, every strong read for this tablet must be coordinated by the leader.
+    const ITERATIONS: usize = 10;
+    for _ in 0..ITERATIONS {
+        let result = session.execute_unpaged(&select, (PK,)).await.unwrap();
+        let coordinator = result.request_coordinator().node().host_id;
+        assert_eq!(
+            coordinator, leader,
+            "strong read coordinated by {coordinator} but the Raft leader is replicas[0]={leader}; \
+             leader-aware routing did not target the leader"
+        );
+    }
+
+    session
+        .ddl(format!("DROP KEYSPACE IF EXISTS {ks}"))
+        .await
+        .unwrap();
 }
