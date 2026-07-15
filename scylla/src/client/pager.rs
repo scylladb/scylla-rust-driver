@@ -17,6 +17,7 @@ use tracing::{Instrument, warn};
 use uuid::Uuid;
 
 use crate::client::execution::{RequestExecutionParams, RequestPaging, RunRequestResult};
+use crate::client::execution_profile::ExecutionProfileInner;
 use crate::client::session::Session;
 use crate::cluster::{ClusterState, Node};
 use crate::deserialize::DeserializeOwnedRow;
@@ -41,6 +42,7 @@ use crate::response::query_result::ColumnSpecs;
 use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
 use crate::routing::{Shard, Token};
 use crate::serialize::row::SerializedValues;
+use crate::statement::StatementConfig;
 use crate::statement::prepared::{PartitionKey, PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
 
@@ -138,6 +140,44 @@ struct PagingExecutor {
 }
 
 impl PagingExecutor {
+    fn new(
+        session: &Session,
+        statement: &StatementConfig,
+        execution_profile: &ExecutionProfileInner,
+    ) -> Self {
+        Self {
+            cluster_state: session.get_cluster_state(),
+            load_balancing_policy: Arc::clone(
+                statement
+                    .load_balancing_policy
+                    .as_ref()
+                    .unwrap_or(&execution_profile.load_balancing_policy),
+            ),
+            retry_policy: Arc::clone(
+                statement
+                    .retry_policy
+                    .as_ref()
+                    .unwrap_or(&execution_profile.retry_policy),
+            ),
+            speculative_policy: execution_profile
+                .speculative_execution_policy
+                .as_ref()
+                .map(Arc::clone),
+
+            request_timeout: statement
+                .request_timeout
+                .or(execution_profile.request_timeout),
+            is_idempotent: statement.is_idempotent,
+            consistency: statement
+                .consistency
+                .unwrap_or(execution_profile.consistency),
+            metrics: session.get_metrics_priv(),
+            history_listener: statement.history_listener.as_ref().map(Arc::clone),
+            paging_state: PagingState::start(),
+            stable_coordinator: None,
+        }
+    }
+
     /// Fetches remaining pages (pages 2+) in a background task.
     /// Sends each page through the mpsc channel.
     ///
@@ -685,45 +725,16 @@ If you are using this API, you are probably doing something wrong."
         session: &Session,
         statement: Statement,
     ) -> Result<Self, PagerExecutionError> {
+        let page_size = statement.get_validated_page_size();
         let execution_profile = statement
             .get_execution_profile_handle()
             .unwrap_or_else(|| session.get_default_execution_profile_handle())
             .access();
 
-        let consistency = statement
-            .config
-            .consistency
-            .unwrap_or(execution_profile.consistency);
         let serial_consistency = statement
             .config
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
-
-        let request_timeout = statement
-            .get_request_timeout()
-            .or(execution_profile.request_timeout);
-
-        let page_size = statement.get_validated_page_size();
-
-        let load_balancing_policy = Arc::clone(
-            statement
-                .get_load_balancing_policy()
-                .unwrap_or(&execution_profile.load_balancing_policy),
-        );
-
-        let retry_policy = Arc::clone(
-            statement
-                .get_retry_policy()
-                .unwrap_or(&execution_profile.retry_policy),
-        );
-
-        let speculative_policy = execution_profile
-            .speculative_execution_policy
-            .as_ref()
-            .map(Arc::clone);
-
-        let cluster_state = session.get_cluster_state();
-        let metrics = session.get_metrics_priv();
 
         fn create_span(statement_contents: &str) -> RequestSpan {
             let span = RequestSpan::new_query(statement_contents);
@@ -748,19 +759,8 @@ If you are using this API, you are probably doing something wrong."
             }
         };
 
-        let mut executor = PagingExecutor {
-            cluster_state,
-            load_balancing_policy,
-            retry_policy,
-            speculative_policy,
-            request_timeout,
-            is_idempotent: statement.config.is_idempotent,
-            consistency,
-            metrics,
-            history_listener: statement.config.history_listener.as_ref().map(Arc::clone),
-            paging_state: PagingState::start(),
-            stable_coordinator: None,
-        };
+        let mut executor = PagingExecutor::new(session, &statement.config, &execution_profile);
+        let consistency = executor.consistency;
 
         let (first_page, should_fetch_more_pages) = {
             let routing_info = RoutingInfo {
@@ -839,40 +839,16 @@ If you are using this API, you are probably doing something wrong."
             .unwrap_or_else(|| session.get_default_execution_profile_handle())
             .access();
 
-        let consistency = prepared
-            .config
-            .consistency
-            .unwrap_or(execution_profile.consistency);
+        let mut executor = PagingExecutor::new(session, &prepared.config, &execution_profile);
+
+        let consistency = executor.consistency;
+
         let serial_consistency = prepared
             .config
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
-        let request_timeout = prepared
-            .get_request_timeout()
-            .or(execution_profile.request_timeout);
-
         let page_size = prepared.get_validated_page_size();
-
-        let load_balancing_policy = Arc::clone(
-            prepared
-                .get_load_balancing_policy()
-                .unwrap_or(&execution_profile.load_balancing_policy),
-        );
-
-        let retry_policy = Arc::clone(
-            prepared
-                .get_retry_policy()
-                .unwrap_or(&execution_profile.retry_policy),
-        );
-
-        let speculative_policy = execution_profile
-            .speculative_execution_policy
-            .as_ref()
-            .map(Arc::clone);
-
-        let metrics = session.get_metrics_priv();
-        let cluster_state = session.get_cluster_state();
 
         type Replicas = smallvec::SmallVec<[(Arc<Node>, Shard); 8]>;
 
@@ -935,7 +911,8 @@ If you are using this API, you are probably doing something wrong."
 
         let replicas: Option<Replicas> =
             Option::zip(routing_info.table, routing_info.token).map(|(table_spec, token)| {
-                cluster_state
+                executor
+                    .cluster_state
                     .get_token_endpoints_iter(table_spec, token)
                     .map(|(node, shard)| (node.clone(), shard))
                     .collect()
@@ -947,20 +924,6 @@ If you are using this API, you are probably doing something wrong."
             serialized_values_size,
             replicas.as_ref(),
         );
-
-        let mut executor = PagingExecutor {
-            cluster_state,
-            load_balancing_policy,
-            retry_policy,
-            speculative_policy,
-            request_timeout,
-            is_idempotent: prepared.config.is_idempotent,
-            consistency,
-            metrics,
-            history_listener: prepared.config.history_listener.as_ref().map(Arc::clone),
-            paging_state: PagingState::start(),
-            stable_coordinator: None,
-        };
 
         let (first_page, should_fetch_more_pages) = executor
             .query_first_page(&request_span, &routing_info, page_query)
