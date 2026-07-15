@@ -153,8 +153,8 @@ impl MetadataReader {
 
     /// Fetches current metadata from the cluster
     pub(crate) async fn read_metadata(&mut self, initial: bool) -> Result<Metadata, MetadataError> {
-        let mut result = self.fetch_metadata(initial).await;
-        let prev_err = match result {
+        // First, try to fetch metadata on the current control connection.
+        match self.fetch_metadata(initial).await {
             Ok(metadata) => {
                 debug!("Fetched new metadata");
                 self.update_known_peers(&metadata);
@@ -164,102 +164,155 @@ impl MetadataReader {
                 }
                 return Ok(metadata);
             }
-            Err(err) => err,
-        };
+            Err(_prev_err) => {
+                // Fetching metadata on the current control connection failed.
+                // Establish a fresh control connection below.
+            }
+        }
 
-        // At this point, we known that fetching metadata on current control connection failed.
-        // Therefore, we try to fetch metadata from other known peers, in order.
+        // Establish a fresh control connection (iterating over known peers and, as a
+        // last resort, the initial contact points) and fetch metadata on it. Update
+        // the control connection state to reflect the outcome: `Working` on success,
+        // `Broken` on failure (so that subsequent refreshes keep trying to reconnect).
+        match self.establish_cc_and_fetch_metadata(initial).await {
+            Ok((cc, metadata)) => {
+                self.control_connection_state = ControlConnectionState::Working(cc);
+                self.handle_unaccepted_host_in_control_connection(&metadata)
+                    .await;
+                Ok(metadata)
+            }
+            Err(err) => {
+                self.control_connection_state = ControlConnectionState::Broken {
+                    last_error: err.clone(),
+                };
+                Err(err)
+            }
+        }
+    }
 
-        // shuffle known_peers to iterate through them in random order later
+    /// Establishes a control connection and fetches metadata in one go.
+    ///
+    /// Iterates over known peers (shuffled), trying to connect and fetch metadata
+    /// on each. If `initial` is false and all known peers are exhausted, falls back
+    /// to re-resolving the initial contact points.
+    ///
+    /// On success, updates `known_peers` and returns the working control connection
+    /// together with the fetched metadata.
+    async fn establish_cc_and_fetch_metadata(
+        &mut self,
+        initial: bool,
+    ) -> Result<(ControlConnection, Metadata), MetadataError> {
+        // shuffle known_peers to iterate through them in random order
         self.known_peers.shuffle(&mut rng());
         debug!(
             "Known peers: {:?}",
             self.known_peers.iter().safe_format(", ")
         );
 
-        // if fetching metadata on current control connection failed,
-        // try to fetch metadata from other known peer
-        result = self
-            .retry_fetch_metadata_on_nodes(initial, self.known_peers.clone().into_iter(), prev_err)
-            .await;
+        // `try_establish_on_nodes` returns `Err(None)` if the node iterator was empty
+        // (e.g. all known peers were rejected by the host filter, or contact points
+        // failed to resolve). We carry the most recent error across attempts and only
+        // synthesize a fallback error if no connection was ever attempted.
+        let known_peers_err = match self
+            .try_establish_on_nodes(self.known_peers.clone().into_iter())
+            .await
+        {
+            Ok((cc, metadata)) => return Ok((cc, metadata)),
+            Err(err) => err,
+        };
 
-        if let Err(prev_err) = result {
-            if !initial {
-                // If no known peer is reachable, try falling back to initial contact points, in hope that
-                // there are some hostnames there which will resolve to reachable new addresses.
-                warn!(
-                    "Failed to establish control connection and fetch metadata on all known peers. Falling back to initial contact points."
-                );
-                let (initial_peers, _hostnames) = resolve_contact_points(
-                    &self.initial_known_nodes,
-                    self.hostname_resolution_timeout,
-                )
+        if initial {
+            // No point in falling back as this is an initial connection attempt.
+            let err = known_peers_err.unwrap_or_else(no_nodes_available_error);
+            error!(
+                error = ?err,
+                "Could not establish control connection and fetch metadata"
+            );
+            return Err(err);
+        }
+
+        // If no known peer is reachable, try falling back to initial contact points, in hope that
+        // there are some hostnames there which will resolve to reachable new addresses.
+        warn!(
+            "Failed to establish control connection and fetch metadata on all known peers. Falling back to initial contact points."
+        );
+        let (initial_peers, _hostnames) =
+            resolve_contact_points(&self.initial_known_nodes, self.hostname_resolution_timeout)
                 .await;
-                result = self
-                    .retry_fetch_metadata_on_nodes(
-                        initial,
-                        initial_peers
-                            .into_iter()
-                            .map(UntranslatedEndpoint::ContactPoint),
-                        prev_err,
-                    )
-                    .await;
-            } else {
-                // No point in falling back as this is an initial connection attempt.
-                result = Err(prev_err);
-            }
-        }
-
-        match &result {
-            Ok(metadata) => {
-                self.update_known_peers(metadata);
-                self.handle_unaccepted_host_in_control_connection(metadata)
-                    .await;
-                debug!("Fetched new metadata");
-            }
-            Err(error) => {
+        match self
+            .try_establish_on_nodes(
+                initial_peers
+                    .into_iter()
+                    .map(UntranslatedEndpoint::ContactPoint),
+            )
+            .await
+        {
+            Ok((cc, metadata)) => Ok((cc, metadata)),
+            Err(fallback_err) => {
+                let err = fallback_err
+                    .or(known_peers_err)
+                    .unwrap_or_else(no_nodes_available_error);
                 error!(
-                    error = %error,
-                    "Could not fetch metadata"
-                )
+                    error = ?err,
+                    "Could not establish control connection and fetch metadata"
+                );
+                Err(err)
             }
         }
-
-        result
     }
 
-    async fn retry_fetch_metadata_on_nodes(
+    /// Tries to establish a control connection and fetch metadata on each node from
+    /// the given iterator, returning the first success.
+    ///
+    /// Returns `Err(None)` if the iterator was empty (no connection was ever
+    /// attempted), or `Err(Some(err))` with the most recent error otherwise.
+    async fn try_establish_on_nodes(
         &mut self,
-        initial: bool,
         nodes: impl Iterator<Item = UntranslatedEndpoint>,
-        prev_err: MetadataError,
-    ) -> Result<Metadata, MetadataError> {
-        let mut last_err = prev_err;
+    ) -> Result<(ControlConnection, Metadata), Option<MetadataError>> {
+        let mut last_err: Option<MetadataError> = None;
+
         for peer in nodes {
             let peer_address = peer.address();
-            debug!("Retrying to establish the control connection on {peer_address}");
+            debug!("Trying to establish control connection on {peer_address}");
 
-            self.control_connection_state = Self::make_control_connection_state(
+            let cc = match Self::make_control_connection(
                 peer,
                 self.control_connection_config.clone(),
                 self.request_serverside_timeout,
                 Arc::clone(&self.cc_cache),
                 self.client_routes_subscriber.as_ref().map(Arc::clone),
             )
-            .await;
-
-            let err = match self.fetch_metadata(initial).await {
-                Ok(metadata) => return Ok(metadata),
-                Err(err) => err,
+            .await
+            {
+                Ok(cc) => cc,
+                Err(err) => {
+                    warn!(
+                        control_connection_address = %peer_address,
+                        error = %err,
+                        "Failed to establish control connection"
+                    );
+                    last_err = Some(err);
+                    continue;
+                }
             };
 
-            warn!(
-                control_connection_address = %peer_address,
-                error = %err,
-                "Failed to fetch metadata using current control connection"
-            );
-
-            last_err = err;
+            match self.query_metadata_on_cc(&cc).await {
+                Ok(metadata) => {
+                    debug!("Fetched new metadata");
+                    self.update_known_peers(&metadata);
+                    return Ok((cc, metadata));
+                }
+                Err(err) => {
+                    warn!(
+                        control_connection_address = %peer_address,
+                        error = %err,
+                        "Failed to fetch metadata using current control connection"
+                    );
+                    last_err = Some(err);
+                    // CC is dropped here, we continue to next peer.
+                }
+            }
         }
 
         Err(last_err)
@@ -341,7 +394,6 @@ impl MetadataReader {
     }
 
     async fn handle_unaccepted_host_in_control_connection(&mut self, metadata: &Metadata) {
-        // We only care about the endpoint of a working control connection here.
         let ControlConnectionState::Working(working_connection) = &self.control_connection_state
         else {
             return;
@@ -533,4 +585,11 @@ impl MetadataReader {
 
         Ok(updated_hosts)
     }
+}
+
+/// Error to report when there was not a single node to even attempt a control
+/// connection on (e.g. all known peers were rejected by the host filter and the
+/// initial contact points failed to resolve to any address).
+fn no_nodes_available_error() -> MetadataError {
+    MetadataError::ConnectionPoolError(ConnectionPoolError::NodeDisabledByHostFilter)
 }
