@@ -215,7 +215,7 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::{
-        cluster::metadata::{Keyspace, Strategy},
+        cluster::metadata::{ConsistencyMode, Keyspace, Strategy},
         routing::Token,
         routing::locator::test::{
             A, C, D, E, F, G, create_ring, mock_metadata_for_token_aware_tests,
@@ -237,6 +237,7 @@ mod tests {
                 },
                 durable_writes: true,
                 tablet_based: false,
+                consistency_mode: ConsistencyMode::Eventual,
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),

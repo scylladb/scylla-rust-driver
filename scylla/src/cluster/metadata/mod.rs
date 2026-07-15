@@ -181,6 +181,25 @@ impl Peer {
     }
 }
 
+/// The consistency mode of a keyspace, as reported by the `consistency` column of
+/// `system_schema.scylla_keyspaces`.
+///
+/// Deliberately crate-private. Strong consistency is an experimental server-side feature and
+/// these mode names come straight from it, so making the type public would freeze names we may
+/// yet have to change - and an enum's variants cannot be renamed without a major release. Should
+/// this ever become public, it needs `#[non_exhaustive]`, which is pointless until then.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ConsistencyMode {
+    /// Eventual consistency. Covers every non-tablet keyspace and every keyspace
+    /// on a server that does not report a consistency mode.
+    Eventual,
+    /// Reserved for a future per-datacenter strong-consistency mode (`consistency = 'local'`).
+    Local,
+    /// Global strong consistency (`consistency = 'global'`): the keyspace uses
+    /// strongly-consistent (Raft-based) tablets.
+    Global,
+}
+
 /// Describes a keyspace in the cluster.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -195,6 +214,10 @@ pub struct Keyspace {
     /// `system_schema.scylla_keyspaces`. On Cassandra and old ScyllaDB versions,
     /// where this table or column is not present, this is always `false`.
     pub tablet_based: bool,
+    /// The consistency mode of the keyspace.
+    ///
+    /// Crate-private along with [`ConsistencyMode`] itself; see that type for why.
+    pub(crate) consistency_mode: ConsistencyMode,
     /// Tables in the keyspace.
     ///
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
