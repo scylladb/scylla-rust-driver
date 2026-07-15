@@ -2060,38 +2060,19 @@ impl Session {
     where
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
-        let consistency = statement_config
-            .consistency
-            .unwrap_or(execution_profile.consistency);
-
-        let load_balancer = statement_config
-            .load_balancing_policy
-            .as_deref()
-            .unwrap_or(execution_profile.load_balancing_policy.as_ref());
-
-        let retry_policy = statement_config
-            .retry_policy
-            .as_deref()
-            .unwrap_or(&*execution_profile.retry_policy);
-
-        let request_timeout = statement_config
-            .request_timeout
-            .or(execution_profile.request_timeout);
-
-        let exec_params = RequestExecutionParams {
-            is_idempotent: statement_config.is_idempotent,
-            consistency,
-            retry_policy,
-            load_balancing_policy: load_balancer,
-            metrics: &self.metrics,
-            speculative_policy: execution_profile.speculative_execution_policy.as_deref(),
-            request_timeout,
-            history_listener: statement_config.history_listener.as_deref(),
+        let exec_params = RequestExecutionParams::new_for_session_apis(
+            statement_config,
+            &execution_profile,
+            &self.metrics,
             request_kind,
-        };
+        );
 
         let cluster_state = self.cluster.get_state();
-        let request_plan = load_balancing::Plan::new(load_balancer, &routing_info, &cluster_state);
+        let request_plan = load_balancing::Plan::new(
+            exec_params.load_balancing_policy,
+            &routing_info,
+            &cluster_state,
+        );
 
         let result = exec_params
             .run_request_no_side_effects(
