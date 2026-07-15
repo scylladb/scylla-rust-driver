@@ -20,3 +20,34 @@ protocol extensions:
 The tablet version is an opaque 64-bit hash of the tablet's ordered replica list (not a
 monotonic counter); only its bit pattern is meaningful. Because V2 is experimental its wire
 name and payload are subject to change.
+
+# Leader-aware routing for strongly-consistent tables
+
+For a strongly-consistent (Raft-based) keyspace — one created with `consistency = 'global'`,
+reflected in [`Keyspace::consistency_mode`] as [`ConsistencyMode::Global`] — the server orders
+each tablet's V2 replica list with the Raft leader first. The driver stores the replicas in
+payload order, so `replicas[0]` is the leader. The built-in load balancing policy uses this to
+route leader-requiring requests straight to the leader, saving the extra coordinator-to-leader
+hop.
+
+A request is routed to the leader only once the tablet's V2 replica mapping has been cached
+(so `replicas[0]` really is the leader), and then whenever its consistency level is anything
+other than `ONE` or `LOCAL_ONE`:
+
+- writes to such a keyspace must use `QUORUM`/`LOCAL_QUORUM` (the server rejects `ONE`/`LOCAL_ONE`
+  writes), so they always reach the leader — and a write sent to a follower would only be bounced
+  to it anyway;
+- reads at `ONE`/`LOCAL_ONE` may be served by any replica, so they keep the normal
+  load-spreading routing;
+- all other reads go to the leader.
+
+This mirrors the Python driver's behavior. The cached-version requirement matters because
+`replicas[0]` is leader-ordered only for a mapping learned from a `TABLETS_ROUTING_V2` payload;
+a tablet with no cached version — one sourced from the older `TABLETS_ROUTING_V1` path, or left
+over from before a consistency-mode change — is not leader-ordered, so such a request is routed
+normally instead of being treated as a leader hint. The same holds until a versioned mapping
+arrives, and for eventually-consistent keyspaces. The decision itself lives in the load balancing
+policy.
+
+[`Keyspace::consistency_mode`]: crate::cluster::metadata::Keyspace::consistency_mode
+[`ConsistencyMode::Global`]: crate::cluster::metadata::ConsistencyMode::Global
