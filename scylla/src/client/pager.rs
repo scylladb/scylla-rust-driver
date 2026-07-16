@@ -725,7 +725,6 @@ If you are using this API, you are probably doing something wrong."
         session: &Session,
         statement: Statement,
     ) -> Result<Self, PagerExecutionError> {
-        let page_size = statement.get_validated_page_size();
         let execution_profile = statement
             .get_execution_profile_handle()
             .unwrap_or_else(|| session.get_default_execution_profile_handle())
@@ -742,6 +741,7 @@ If you are using this API, you are probably doing something wrong."
             span
         }
 
+        let page_size = statement.get_validated_page_size();
         let statement_ref = &statement;
         let page_query = |connection: Arc<Connection>,
                           consistency: Consistency,
@@ -848,8 +848,6 @@ If you are using this API, you are probably doing something wrong."
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
-        let page_size = prepared.get_validated_page_size();
-
         type Replicas = smallvec::SmallVec<[(Arc<Node>, Shard); 8]>;
 
         fn create_span(
@@ -890,6 +888,7 @@ If you are using this API, you are probably doing something wrong."
             node_location_preference: session.get_node_location_preference(),
         };
 
+        let page_size = prepared.get_validated_page_size();
         let prepared_ref = &prepared;
         let values_ref = &values;
         let page_query = |connection: Arc<Connection>,
