@@ -302,6 +302,7 @@ impl PagingExecutor {
         let exec_params = RequestExecutionParams {
             is_idempotent: self.is_idempotent,
             consistency: self.consistency,
+            serial_consistency: self.serial_consistency,
             retry_policy: self.retry_policy.as_ref(),
             load_balancing_policy: self.load_balancing_policy.as_ref(),
             metrics: &self.metrics,

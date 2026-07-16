@@ -4,8 +4,9 @@ use std::time::Duration;
 
 use tracing::{Instrument as _, trace, trace_span};
 
+use crate::client::execution_profile::ExecutionProfileInner;
 use crate::errors::{RequestAttemptError, RequestError};
-use crate::frame::types::Consistency;
+use crate::frame::types::{Consistency, SerialConsistency};
 
 use crate::network::Connection;
 use crate::observability::driver_tracing::RequestSpan;
@@ -15,6 +16,7 @@ use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy};
 use crate::policies::speculative_execution::{self, SpeculativeExecutionPolicy};
 use crate::response::{Coordinator, NonErrorQueryResponse};
+use crate::statement::StatementConfig;
 use crate::{cluster::NodeRef, routing::Shard};
 
 /// Result of running a request, before side effects are handled.
@@ -61,6 +63,8 @@ pub(crate) struct RequestExecutionParams<'a> {
     pub(crate) is_idempotent: bool,
     /// Consistency to use.
     pub(crate) consistency: Consistency,
+    /// Serial consistency to use, if any.
+    pub(crate) serial_consistency: Option<SerialConsistency>,
     /// Retry policy used to start a fresh retry session per fiber.
     pub(crate) retry_policy: &'a dyn RetryPolicy,
     /// Load balancing policy used to order targets for the execution.
@@ -75,6 +79,50 @@ pub(crate) struct RequestExecutionParams<'a> {
     pub(crate) history_listener: Option<&'a dyn HistoryListener>,
     /// Paged vs non-paged, for metrics.
     pub(crate) request_kind: RequestPaging,
+}
+
+/// Constructor(s) for [`RequestExecutionParams`].
+impl<'a> RequestExecutionParams<'a> {
+    pub(crate) fn new_for_session_apis(
+        statement_config: &'a StatementConfig,
+        execution_profile: &'a ExecutionProfileInner,
+        metrics: &'a Arc<Metrics>,
+        request_kind: RequestPaging,
+    ) -> Self {
+        let is_idempotent = statement_config.is_idempotent;
+        let consistency = statement_config
+            .consistency
+            .unwrap_or(execution_profile.consistency);
+        let serial_consistency = statement_config
+            .serial_consistency
+            .unwrap_or(execution_profile.serial_consistency);
+        let retry_policy = statement_config
+            .retry_policy
+            .as_deref()
+            .unwrap_or(execution_profile.retry_policy.as_ref());
+        let load_balancing_policy = statement_config
+            .load_balancing_policy
+            .as_deref()
+            .unwrap_or(execution_profile.load_balancing_policy.as_ref());
+        let request_timeout = statement_config
+            .request_timeout
+            .or(execution_profile.request_timeout);
+        let history_listener = statement_config.history_listener.as_deref();
+        let speculative_policy = execution_profile.speculative_execution_policy.as_deref();
+
+        Self {
+            is_idempotent,
+            consistency,
+            serial_consistency,
+            retry_policy,
+            load_balancing_policy,
+            metrics,
+            speculative_policy,
+            request_timeout,
+            history_listener,
+            request_kind,
+        }
+    }
 }
 
 /// History data threaded through a single fiber.

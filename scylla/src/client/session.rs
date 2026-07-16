@@ -2,7 +2,7 @@
 //! It manages all connections to the cluster and allows to execute CQL requests.
 
 use super::execution::RequestPaging;
-use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
+use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle};
 use super::pager::QueryPager;
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
@@ -45,7 +45,7 @@ use crate::statement::batch::batch_values;
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
-use crate::statement::{Consistency, PageSize, StatementConfig};
+use crate::statement::{Consistency, PageSize};
 use arc_swap::ArcSwapOption;
 use futures::future::join_all;
 use futures::future::try_join_all;
@@ -980,15 +980,15 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        let consistency = batch
-            .config
-            .consistency
-            .unwrap_or(execution_profile.consistency);
+        let exec_params = RequestExecutionParams::new_for_session_apis(
+            &batch.config,
+            &execution_profile,
+            &self.metrics,
+            // Batch statements are always unpaged, because they can't contain SELECTs.
+            RequestPaging::Unpaged,
+        );
 
-        let serial_consistency = batch
-            .config
-            .serial_consistency
-            .unwrap_or(execution_profile.serial_consistency);
+        let serial_consistency = exec_params.serial_consistency;
 
         let (first_value_token, values) =
             batch_values::peek_first_token(values, batch.statements.first())?;
@@ -1002,7 +1002,7 @@ impl Session {
             };
 
         let routing_info = RoutingInfo {
-            consistency,
+            consistency: exec_params.consistency,
             serial_consistency,
             token: first_value_token,
             table: table_spec,
@@ -1018,10 +1018,7 @@ impl Session {
         ) = self
             .run_request(
                 routing_info,
-                &batch.config,
-                execution_profile,
-                // Batch statements are always unpaged, because they can't contain SELECTs.
-                RequestPaging::Unpaged,
+                exec_params,
                 |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
                         .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
@@ -1299,18 +1296,17 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        let consistency = statement
-            .config
-            .consistency
-            .unwrap_or(execution_profile.consistency);
+        let exec_params = RequestExecutionParams::new_for_session_apis(
+            &statement.config,
+            &execution_profile,
+            &self.metrics,
+            request_paging,
+        );
 
-        let serial_consistency = statement
-            .config
-            .serial_consistency
-            .unwrap_or(execution_profile.serial_consistency);
+        let serial_consistency = exec_params.serial_consistency;
 
         let routing_info = RoutingInfo {
-            consistency,
+            consistency: exec_params.consistency,
             serial_consistency,
             token: None,
             table: None,
@@ -1326,9 +1322,7 @@ impl Session {
         ) = self
             .run_request(
                 routing_info,
-                &statement.config,
-                execution_profile,
-                request_paging,
+                exec_params,
                 |connection: Arc<Connection>, consistency: Consistency| {
                     // Needed to avoid moving query and values into async move block
                     let values_ref = &values;
@@ -1721,20 +1715,19 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        let consistency = prepared
-            .config
-            .consistency
-            .unwrap_or(execution_profile.consistency);
+        let exec_params = RequestExecutionParams::new_for_session_apis(
+            &prepared.config,
+            &execution_profile,
+            &self.metrics,
+            request_paging,
+        );
 
-        let serial_consistency = prepared
-            .config
-            .serial_consistency
-            .unwrap_or(execution_profile.serial_consistency);
+        let serial_consistency = exec_params.serial_consistency;
 
         let table_spec = prepared.get_table_spec();
 
         let routing_info = RoutingInfo {
-            consistency,
+            consistency: exec_params.consistency,
             serial_consistency,
             token,
             table: table_spec,
@@ -1762,9 +1755,7 @@ impl Session {
         ) = self
             .run_request(
                 routing_info,
-                &prepared.config,
-                execution_profile,
-                request_paging,
+                exec_params,
                 |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
                         .execute_raw_with_consistency(
@@ -2086,47 +2077,19 @@ impl Session {
     async fn run_request<'a, QueryFut>(
         &'a self,
         routing_info: RoutingInfo<'a>,
-        statement_config: &'a StatementConfig,
-        execution_profile: Arc<ExecutionProfileInner>,
-        request_kind: RequestPaging,
+        exec_params: RequestExecutionParams<'a>,
         run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), ExecutionError>
     where
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
-        let consistency = statement_config
-            .consistency
-            .unwrap_or(execution_profile.consistency);
-
-        let load_balancer = statement_config
-            .load_balancing_policy
-            .as_deref()
-            .unwrap_or(execution_profile.load_balancing_policy.as_ref());
-
-        let retry_policy = statement_config
-            .retry_policy
-            .as_deref()
-            .unwrap_or(&*execution_profile.retry_policy);
-
-        let request_timeout = statement_config
-            .request_timeout
-            .or(execution_profile.request_timeout);
-
-        let exec_params = RequestExecutionParams {
-            is_idempotent: statement_config.is_idempotent,
-            consistency,
-            retry_policy,
-            load_balancing_policy: load_balancer,
-            metrics: &self.metrics,
-            speculative_policy: execution_profile.speculative_execution_policy.as_deref(),
-            request_timeout,
-            history_listener: statement_config.history_listener.as_deref(),
-            request_kind,
-        };
-
         let cluster_state = self.cluster.get_state();
-        let request_plan = load_balancing::Plan::new(load_balancer, &routing_info, &cluster_state);
+        let request_plan = load_balancing::Plan::new(
+            exec_params.load_balancing_policy,
+            &routing_info,
+            &cluster_state,
+        );
 
         let result = exec_params
             .run_request_no_side_effects(
