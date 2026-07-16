@@ -17,7 +17,6 @@ use tracing::{Instrument, warn};
 use uuid::Uuid;
 
 use crate::client::execution::{RequestExecutionParams, RequestPaging, RunRequestResult};
-use crate::client::execution_profile::ExecutionProfileInner;
 use crate::client::session::Session;
 use crate::cluster::{ClusterState, Node};
 use crate::deserialize::DeserializeOwnedRow;
@@ -40,8 +39,9 @@ use crate::policies::retry::RetryPolicy;
 use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
-use crate::routing::{NodeLocationPreference, Shard, Token};
+use crate::routing::{Shard, Token};
 use crate::serialize::row::SerializedValues;
+use crate::statement::StatementConfig;
 use crate::statement::prepared::{PartitionKey, PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
 
@@ -110,7 +110,7 @@ type ResultNextPage = Result<NextReceivedPage, NextPageError>;
 
 enum ShouldFetchMorePages {
     NoMorePages,
-    MorePages { successful_coordinator: Coordinator },
+    MorePages,
 }
 
 /// Drives paged execution by repeatedly invoking the unified request-execution
@@ -125,18 +125,64 @@ enum ShouldFetchMorePages {
 /// - turning each successful page into a [`NextReceivedPage`] sent over the
 ///   channel, and stopping once the server reports no more pages.
 struct PagingExecutor {
+    cluster_state: Arc<ClusterState>,
     load_balancing_policy: Arc<dyn LoadBalancingPolicy>,
     retry_policy: Arc<dyn RetryPolicy>,
     speculative_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
     request_timeout: Option<Duration>,
     is_idempotent: bool,
     consistency: Consistency,
+    serial_consistency: Option<SerialConsistency>,
     metrics: Arc<Metrics>,
     history_listener: Option<Arc<dyn HistoryListener>>,
     paging_state: PagingState,
+    stable_coordinator: Option<Coordinator>,
 }
 
 impl PagingExecutor {
+    fn new(session: &Session, statement: &StatementConfig) -> Self {
+        let execution_profile = statement
+            .execution_profile_handle
+            .as_ref()
+            .unwrap_or_else(|| session.get_default_execution_profile_handle())
+            .access();
+
+        Self {
+            cluster_state: session.get_cluster_state(),
+            load_balancing_policy: Arc::clone(
+                statement
+                    .load_balancing_policy
+                    .as_ref()
+                    .unwrap_or(&execution_profile.load_balancing_policy),
+            ),
+            retry_policy: Arc::clone(
+                statement
+                    .retry_policy
+                    .as_ref()
+                    .unwrap_or(&execution_profile.retry_policy),
+            ),
+            speculative_policy: execution_profile
+                .speculative_execution_policy
+                .as_ref()
+                .map(Arc::clone),
+
+            request_timeout: statement
+                .request_timeout
+                .or(execution_profile.request_timeout),
+            is_idempotent: statement.is_idempotent,
+            consistency: statement
+                .consistency
+                .unwrap_or(execution_profile.consistency),
+            serial_consistency: statement
+                .serial_consistency
+                .unwrap_or(execution_profile.serial_consistency),
+            metrics: session.get_metrics_priv(),
+            history_listener: statement.history_listener.as_ref().map(Arc::clone),
+            paging_state: PagingState::start(),
+            stable_coordinator: None,
+        }
+    }
+
     /// Fetches remaining pages (pages 2+) in a background task.
     /// Sends each page through the mpsc channel.
     ///
@@ -148,12 +194,10 @@ impl PagingExecutor {
     /// for retry.
     async fn query_remaining_pages<QueryFunc, QueryFut, SpanCreator>(
         mut self,
-        cluster_state: Arc<ClusterState>,
         sender: mpsc::Sender<ResultNextPage>,
         page_query: QueryFunc,
         routing_info: RoutingInfo<'_>,
         span_creator: SpanCreator,
-        mut last_successful_page_coordinator: Coordinator,
     ) where
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
@@ -164,13 +208,7 @@ impl PagingExecutor {
             let page_span = span_creator();
 
             let page_res = self
-                .fetch_one_page(
-                    &cluster_state,
-                    &routing_info,
-                    Some(&last_successful_page_coordinator),
-                    &page_span,
-                    &page_query,
-                )
+                .fetch_one_page(&routing_info, &page_span, &page_query)
                 .instrument(page_span.span().clone())
                 .await;
 
@@ -195,11 +233,7 @@ impl PagingExecutor {
                             // Reached the last page, shutdown.
                             return;
                         }
-                        ShouldFetchMorePages::MorePages {
-                            successful_coordinator,
-                        } => {
-                            last_successful_page_coordinator = successful_coordinator;
-                        }
+                        ShouldFetchMorePages::MorePages => {}
                     }
                 }
                 Err(err) => {
@@ -214,7 +248,6 @@ impl PagingExecutor {
     /// Returns the first page and whether more pages should be fetched.
     async fn query_first_page<QueryFunc, QueryFut>(
         &mut self,
-        cluster_state: &ClusterState,
         request_span: &RequestSpan,
         routing_info: &RoutingInfo<'_>,
         page_query: QueryFunc,
@@ -224,7 +257,7 @@ impl PagingExecutor {
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
         let fetch_result = self
-            .fetch_one_page(cluster_state, routing_info, None, request_span, &page_query)
+            .fetch_one_page(routing_info, request_span, &page_query)
             .instrument(request_span.span().clone())
             .await;
 
@@ -253,14 +286,12 @@ impl PagingExecutor {
 
     /// Fetches exactly one page by delegating to [`run_request_no_side_effects`].
     ///
-    /// `paging_state` is injected into each attempt. If `stability` is set, the
-    /// given coordinator is tried first (and filtered out of the
-    /// fresh load balancing plan so it is not attempted twice).
+    /// `self.paging_state` is injected into each attempt.
+    /// If `self.stable_coordinator` is set, it is tried first (and filtered out
+    /// of the fresh load balancing plan so it is not attempted twice).
     async fn fetch_one_page<PageQuery, QueryFut>(
         &self,
-        cluster_state: &ClusterState,
         routing_info: &RoutingInfo<'_>,
-        stable_coordinator: Option<&Coordinator>,
         page_span: &RequestSpan,
         page_query: &PageQuery,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), RequestError>
@@ -291,10 +322,10 @@ impl PagingExecutor {
 
         let load_balancing_policy = self.load_balancing_policy.as_ref();
         let base_plan =
-            load_balancing::Plan::new(load_balancing_policy, routing_info, cluster_state);
+            load_balancing::Plan::new(load_balancing_policy, routing_info, &self.cluster_state);
 
         // Coordinator stability: try the previous page's coordinator first.
-        let stability_target = stable_coordinator.map(|coordinator| {
+        let stability_target = self.stable_coordinator.as_ref().map(|coordinator| {
             // `Coordinator` gets its shard from `Connection`. If `Connection` believes it has `Shard` `None`,
             // then it means that the connection pool to that connection is not sharded.
             // In such case, shard is ignored in `connection_for_shard()`.
@@ -307,7 +338,7 @@ impl PagingExecutor {
             .into_iter()
             .chain(base_plan.filter(|&(node, shard)| {
                 // Filter out the preselected coordinator - it is tried first.
-                stable_coordinator.is_none_or(|coordinator| {
+                self.stable_coordinator.as_ref().is_none_or(|coordinator| {
                     // If the previous attempt targeted an unsharded node (such as
                     // Cassandra), filter out all targets to that node regardless
                     // of shard.
@@ -343,9 +374,8 @@ impl PagingExecutor {
                 let should_fetch_more_pages = match paging_state_response {
                     PagingStateResponse::HasMorePages { state } => {
                         self.paging_state = state;
-                        ShouldFetchMorePages::MorePages {
-                            successful_coordinator: coordinator.clone(),
-                        }
+                        self.stable_coordinator = Some(coordinator.clone());
+                        ShouldFetchMorePages::MorePages
                     }
                     PagingStateResponse::NoMorePages => ShouldFetchMorePages::NoMorePages,
                 };
@@ -434,9 +464,8 @@ impl PagingExecutor {
                 let should_fetch_more_pages = match paging_state_response {
                     PagingStateResponse::HasMorePages { state } => {
                         self.paging_state = state;
-                        ShouldFetchMorePages::MorePages {
-                            successful_coordinator: coordinator,
-                        }
+                        self.stable_coordinator = Some(coordinator);
+                        ShouldFetchMorePages::MorePages
                     }
                     PagingStateResponse::NoMorePages => ShouldFetchMorePages::NoMorePages,
                 };
@@ -561,15 +590,6 @@ where
             }
         }
     }
-}
-
-pub(crate) struct PreparedPagerConfig {
-    pub(crate) prepared: PreparedStatement,
-    pub(crate) values: SerializedValues,
-    pub(crate) execution_profile: Arc<ExecutionProfileInner>,
-    pub(crate) cluster_state: Arc<ClusterState>,
-    pub(crate) metrics: Arc<Metrics>,
-    pub(crate) location_preference: Arc<NodeLocationPreference>,
 }
 
 /// An intermediate object that allows to construct a stream over a query
@@ -706,45 +726,13 @@ If you are using this API, you are probably doing something wrong."
         TypedRowStream::<RowT>::new(self)
     }
 
-    pub(crate) async fn new_for_query(
+    pub(crate) async fn new_for_unprepared_statement_without_values(
         session: &Session,
         statement: Statement,
-        execution_profile: Arc<ExecutionProfileInner>,
-        cluster_state: Arc<ClusterState>,
-        metrics: Arc<Metrics>,
-        node_location_preference: Arc<NodeLocationPreference>,
     ) -> Result<Self, PagerExecutionError> {
-        let consistency = statement
-            .config
-            .consistency
-            .unwrap_or(execution_profile.consistency);
-        let serial_consistency = statement
-            .config
-            .serial_consistency
-            .unwrap_or(execution_profile.serial_consistency);
-
-        let request_timeout = statement
-            .get_request_timeout()
-            .or(execution_profile.request_timeout);
-
-        let page_size = statement.get_validated_page_size();
-
-        let load_balancing_policy = Arc::clone(
-            statement
-                .get_load_balancing_policy()
-                .unwrap_or(&execution_profile.load_balancing_policy),
-        );
-
-        let retry_policy = Arc::clone(
-            statement
-                .get_retry_policy()
-                .unwrap_or(&execution_profile.retry_policy),
-        );
-
-        let speculative_policy = execution_profile
-            .speculative_execution_policy
-            .as_ref()
-            .map(Arc::clone);
+        let mut executor = PagingExecutor::new(session, &statement.config);
+        let consistency = executor.consistency;
+        let serial_consistency = executor.serial_consistency;
 
         fn create_span(statement_contents: &str) -> RequestSpan {
             let span = RequestSpan::new_query(statement_contents);
@@ -752,6 +740,7 @@ If you are using this API, you are probably doing something wrong."
             span
         }
 
+        let page_size = statement.get_validated_page_size();
         let statement_ref = &statement;
         let page_query = |connection: Arc<Connection>,
                           consistency: Consistency,
@@ -769,18 +758,6 @@ If you are using this API, you are probably doing something wrong."
             }
         };
 
-        let mut executor = PagingExecutor {
-            load_balancing_policy,
-            retry_policy,
-            speculative_policy,
-            request_timeout,
-            is_idempotent: statement.config.is_idempotent,
-            consistency,
-            metrics,
-            paging_state: PagingState::start(),
-            history_listener: statement.config.history_listener.as_ref().map(Arc::clone),
-        };
-
         let (first_page, should_fetch_more_pages) = {
             let routing_info = RoutingInfo {
                 consistency,
@@ -788,13 +765,13 @@ If you are using this API, you are probably doing something wrong."
                 token: None,
                 table: None,
                 is_confirmed_lwt: false,
-                node_location_preference: &node_location_preference,
+                node_location_preference: session.get_node_location_preference(),
             };
 
             let request_span = create_span(&statement.contents);
 
             executor
-                .query_first_page(&cluster_state, &request_span, &routing_info, page_query)
+                .query_first_page(&request_span, &routing_info, page_query)
                 .await
                 .map_err(NextPageError::RequestFailure)?
         };
@@ -806,10 +783,9 @@ If you are using this API, you are probably doing something wrong."
                 // No more pages - we are done, return the first page and an empty receiver.
                 std::mem::drop(sender);
             }
-            ShouldFetchMorePages::MorePages {
-                successful_coordinator: first_page_coordinator,
-            } => {
+            ShouldFetchMorePages::MorePages => {
                 /* REMAINING PAGES */
+                let node_location_preference = Arc::clone(session.get_node_location_preference());
                 let worker_task = async move {
                     let routing_info = RoutingInfo {
                         consistency,
@@ -839,14 +815,7 @@ If you are using this API, you are probably doing something wrong."
                     let span_creator = move || create_span(&statement_ref.contents);
 
                     executor
-                        .query_remaining_pages(
-                            cluster_state,
-                            sender,
-                            page_query,
-                            routing_info,
-                            span_creator,
-                            first_page_coordinator,
-                        )
+                        .query_remaining_pages(sender, page_query, routing_info, span_creator)
                         .await;
                 };
                 let _worker_handle = tokio::task::spawn(worker_task);
@@ -858,45 +827,13 @@ If you are using this API, you are probably doing something wrong."
 
     pub(crate) async fn new_for_prepared_statement(
         session: &Session,
-        config: PreparedPagerConfig,
+        prepared: PreparedStatement,
+        values: SerializedValues,
     ) -> Result<Self, PagerExecutionError> {
-        let consistency = config
-            .prepared
-            .config
-            .consistency
-            .unwrap_or(config.execution_profile.consistency);
-        let serial_consistency = config
-            .prepared
-            .config
-            .serial_consistency
-            .unwrap_or(config.execution_profile.serial_consistency);
+        let mut executor = PagingExecutor::new(session, &prepared.config);
 
-        let request_timeout = config
-            .prepared
-            .get_request_timeout()
-            .or(config.execution_profile.request_timeout);
-
-        let page_size = config.prepared.get_validated_page_size();
-
-        let load_balancing_policy = Arc::clone(
-            config
-                .prepared
-                .get_load_balancing_policy()
-                .unwrap_or(&config.execution_profile.load_balancing_policy),
-        );
-
-        let retry_policy = Arc::clone(
-            config
-                .prepared
-                .get_retry_policy()
-                .unwrap_or(&config.execution_profile.retry_policy),
-        );
-
-        let speculative_policy = config
-            .execution_profile
-            .speculative_execution_policy
-            .as_ref()
-            .map(Arc::clone);
+        let consistency = executor.consistency;
+        let serial_consistency = executor.serial_consistency;
 
         type Replicas = smallvec::SmallVec<[(Arc<Node>, Shard); 8]>;
 
@@ -917,31 +854,30 @@ If you are using this API, you are probably doing something wrong."
             span
         }
 
-        let (partition_key, token) =
-            match config.prepared.extract_partition_key_and_calculate_token(
-                config.prepared.get_partitioner_name(),
-                &config.values,
-            ) {
-                Ok(res) => res.unzip(),
-                Err(err) => {
-                    return Err(PagerExecutionError::NextPageError(
-                        NextPageError::PartitionKeyError(err),
-                    ));
-                }
-            };
+        let (partition_key, token) = match prepared
+            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), &values)
+        {
+            Ok(res) => res.unzip(),
+            Err(err) => {
+                return Err(PagerExecutionError::NextPageError(
+                    NextPageError::PartitionKeyError(err),
+                ));
+            }
+        };
 
-        let table_spec = config.prepared.get_table_spec();
+        let table_spec = prepared.get_table_spec();
         let routing_info = RoutingInfo {
             consistency,
             serial_consistency,
             token,
             table: table_spec,
-            is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
-            node_location_preference: &config.location_preference,
+            is_confirmed_lwt: prepared.is_confirmed_lwt(),
+            node_location_preference: session.get_node_location_preference(),
         };
 
-        let prepared_ref = &config.prepared;
-        let values_ref = &config.values;
+        let page_size = prepared.get_validated_page_size();
+        let prepared_ref = &prepared;
+        let values_ref = &values;
         let page_query = |connection: Arc<Connection>,
                           consistency: Consistency,
                           paging_state: PagingState| async move {
@@ -957,11 +893,11 @@ If you are using this API, you are probably doing something wrong."
                 .await
         };
 
-        let serialized_values_size = config.values.buffer_size();
+        let serialized_values_size = values.buffer_size();
 
         let replicas: Option<Replicas> =
             Option::zip(routing_info.table, routing_info.token).map(|(table_spec, token)| {
-                config
+                executor
                     .cluster_state
                     .get_token_endpoints_iter(table_spec, token)
                     .map(|(node, shard)| (node.clone(), shard))
@@ -975,30 +911,8 @@ If you are using this API, you are probably doing something wrong."
             replicas.as_ref(),
         );
 
-        let mut executor = PagingExecutor {
-            load_balancing_policy,
-            retry_policy,
-            speculative_policy,
-            request_timeout,
-            is_idempotent: config.prepared.config.is_idempotent,
-            consistency,
-            metrics: config.metrics,
-            paging_state: PagingState::start(),
-            history_listener: config
-                .prepared
-                .config
-                .history_listener
-                .as_ref()
-                .map(Arc::clone),
-        };
-
         let (first_page, should_fetch_more_pages) = executor
-            .query_first_page(
-                &config.cluster_state,
-                &request_span,
-                &routing_info,
-                page_query,
-            )
+            .query_first_page(&request_span, &routing_info, page_query)
             .await
             .map_err(NextPageError::RequestFailure)?;
 
@@ -1012,13 +926,12 @@ If you are using this API, you are probably doing something wrong."
                 // No more pages - we are done, return the first page and an empty receiver.
                 std::mem::drop(sender);
             }
-            ShouldFetchMorePages::MorePages {
-                successful_coordinator: first_page_coordinator,
-            } => {
+            ShouldFetchMorePages::MorePages => {
                 /* REMAINING PAGES */
+                let node_location_preference = Arc::clone(session.get_node_location_preference());
                 let worker_task = async move {
-                    let partition_key = if config.prepared.is_token_aware() {
-                        match config.prepared.extract_partition_key(&config.values) {
+                    let partition_key = if prepared.is_token_aware() {
+                        match prepared.extract_partition_key(&values) {
                             Ok(res) => Some(res),
                             Err(err) => {
                                 let _ = sender
@@ -1033,18 +946,18 @@ If you are using this API, you are probably doing something wrong."
                         None
                     };
 
-                    let table_spec = config.prepared.get_table_spec();
+                    let table_spec = prepared.get_table_spec();
                     let routing_info = RoutingInfo {
                         consistency,
                         serial_consistency,
                         token,
                         table: table_spec,
-                        is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
-                        node_location_preference: &config.location_preference,
+                        is_confirmed_lwt: prepared.is_confirmed_lwt(),
+                        node_location_preference: &node_location_preference,
                     };
 
-                    let prepared = &config.prepared;
-                    let values_ref = &config.values;
+                    let prepared = &prepared;
+                    let values_ref = &values;
                     let page_query =
                         |connection: Arc<Connection>,
                          consistency: Consistency,
@@ -1071,14 +984,7 @@ If you are using this API, you are probably doing something wrong."
                     };
 
                     executor
-                        .query_remaining_pages(
-                            config.cluster_state,
-                            sender,
-                            page_query,
-                            routing_info,
-                            span_creator,
-                            first_page_coordinator,
-                        )
+                        .query_remaining_pages(sender, page_query, routing_info, span_creator)
                         .await;
                 };
                 let _worker_handle = tokio::task::spawn(worker_task);

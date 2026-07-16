@@ -3,7 +3,7 @@
 
 use super::execution::RequestPaging;
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
-use super::pager::{PreparedPagerConfig, QueryPager};
+use super::pager::QueryPager;
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
 use crate::client::client_routes::ClientRoutesConfig;
@@ -1475,20 +1475,7 @@ impl Session {
         &self,
         statement: Statement,
     ) -> Result<QueryPager, PagerExecutionError> {
-        let execution_profile = statement
-            .get_execution_profile_handle()
-            .unwrap_or_else(|| self.get_default_execution_profile_handle())
-            .access();
-
-        QueryPager::new_for_query(
-            self,
-            statement,
-            execution_profile,
-            self.cluster.get_state(),
-            Arc::clone(&self.metrics),
-            Arc::clone(&self.node_location_preference),
-        )
-        .await
+        QueryPager::new_for_unprepared_statement_without_values(self, statement).await
     }
 
     /// Prepares a statement on the server side and returns a prepared statement,
@@ -1797,23 +1784,7 @@ impl Session {
         prepared: PreparedStatement,
         values: SerializedValues,
     ) -> Result<QueryPager, PagerExecutionError> {
-        let execution_profile = prepared
-            .get_execution_profile_handle()
-            .unwrap_or_else(|| self.get_default_execution_profile_handle())
-            .access();
-
-        QueryPager::new_for_prepared_statement(
-            self,
-            PreparedPagerConfig {
-                prepared,
-                values,
-                execution_profile,
-                cluster_state: self.cluster.get_state(),
-                metrics: Arc::clone(&self.metrics),
-                location_preference: Arc::clone(&self.node_location_preference),
-            },
-        )
-        .await
+        QueryPager::new_for_prepared_statement(self, prepared, values).await
     }
 
     /// This is essentially the same as `execute_iter_nongeneric`, but it is *public*
@@ -1956,6 +1927,10 @@ impl Session {
     /// They can be read using this method
     #[cfg(feature = "metrics")]
     pub fn get_metrics(&self) -> Arc<Metrics> {
+        self.get_metrics_priv()
+    }
+
+    pub(crate) fn get_metrics_priv(&self) -> Arc<Metrics> {
         Arc::clone(&self.metrics)
     }
 
@@ -2444,6 +2419,12 @@ impl Session {
     /// by default, i.e. when an executed statement does not define its own handle.
     pub fn get_default_execution_profile_handle(&self) -> &ExecutionProfileHandle {
         &self.default_execution_profile_handle
+    }
+
+    /// Retrieves the node location preference that is used by this session
+    /// by default, i.e. when the used LBP does not define its own preference.
+    pub(crate) fn get_node_location_preference(&self) -> &Arc<NodeLocationPreference> {
+        &self.node_location_preference
     }
 }
 
