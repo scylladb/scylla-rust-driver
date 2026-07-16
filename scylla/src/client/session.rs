@@ -1653,6 +1653,41 @@ impl Session {
             .as_deref()
     }
 
+    /// Executes a prepared statement with already-serialized values.
+    ///
+    /// This method is made public for the python-rs driver, which pre-serializes
+    /// values on the Python side and passes raw serialized bytes directly.
+    ///
+    /// If `paged` is `true`, paging is enabled using the prepared statement's
+    /// validated page size.
+    #[cfg(all(scylla_unstable, feature = "unstable-python-rs"))]
+    pub async fn execute_unstable(
+        &self,
+        prepared: &PreparedStatement,
+        serialized_values: &SerializedValues,
+        paged: bool,
+        paging_state: PagingState,
+    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
+        let page_size;
+        let request_paging;
+        if paged {
+            page_size = Some(prepared.get_validated_page_size());
+            request_paging = RequestPaging::Manual;
+        } else {
+            page_size = None;
+            request_paging = RequestPaging::Unpaged;
+        }
+
+        self.execute(
+            prepared,
+            serialized_values,
+            page_size,
+            paging_state,
+            request_paging,
+        )
+        .await
+    }
+
     /// Sends a prepared request to the database, optionally continuing from a saved point.
     ///
     /// This is now an internal method only.
