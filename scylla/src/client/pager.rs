@@ -726,7 +726,7 @@ If you are using this API, you are probably doing something wrong."
         TypedRowStream::<RowT>::new(self)
     }
 
-    pub(crate) async fn new_for_query(
+    pub(crate) async fn new_for_unprepared_statement_without_values(
         session: &Session,
         statement: Statement,
     ) -> Result<Self, PagerExecutionError> {

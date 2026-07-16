@@ -1475,7 +1475,7 @@ impl Session {
         &self,
         statement: Statement,
     ) -> Result<QueryPager, PagerExecutionError> {
-        QueryPager::new_for_query(self, statement).await
+        QueryPager::new_for_unprepared_statement_without_values(self, statement).await
     }
 
     /// Prepares a statement on the server side and returns a prepared statement,
