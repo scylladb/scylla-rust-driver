@@ -661,6 +661,17 @@ impl PreparedStatement {
         self.config.execution_profile_handle.as_ref()
     }
 
+    /// Serializes the given values according to this prepared statement's column specifications.
+    ///
+    /// This method is made public for use by the python-rs driver for serialization.
+    #[cfg(all(scylla_unstable, feature = "unstable-python-rs"))]
+    pub fn serialize_values_unstable(
+        &self,
+        values: &impl SerializeRow,
+    ) -> Result<SerializedValues, SerializationError> {
+        self.serialize_values(values)
+    }
+
     pub(crate) fn serialize_values(
         &self,
         values: &impl SerializeRow,
