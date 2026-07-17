@@ -54,7 +54,14 @@ impl<'result> CustomTypeParser<'result> {
 
     pub(crate) fn parse(input: &'result str) -> Result<ColumnType<'result>, CustomTypeParseError> {
         let mut parser = CustomTypeParser::new(input);
-        parser.do_parse()
+        let typ = parser.do_parse()?;
+        if parser.parser.is_at_eof() {
+            Ok(typ)
+        } else {
+            Err(CustomTypeParseError::UnexpectedTrailingCharacters(
+                parser.parser.s.to_owned(),
+            ))
+        }
     }
 
     fn is_identifier_char(c: char) -> bool {
@@ -379,12 +386,16 @@ impl<'result> CustomTypeParser<'result> {
                 .map_err(|_| CustomTypeParseError::BadHexString(name.to_owned()))?;
             name = self.read_next_identifier();
         }
+        let parser_before_params = self.parser;
         self.skip_blank();
         let result = self.parser.accept("(");
         match result {
             // Here we do not change the parser state, because we want to keep the state as it was before the accept.
             Ok(_) => self.get_complex_abstract_type(name),
-            Err(_) => CustomTypeParser::get_simple_abstract_type(name),
+            Err(_) => {
+                self.parser = parser_before_params;
+                CustomTypeParser::get_simple_abstract_type(name)
+            }
         }
     }
 }
@@ -598,6 +609,32 @@ mod tests {
         assert_eq!(
             CustomTypeParser::parse("zz:org.apache.cassandra.db.marshal.Int32Type"),
             Err(CustomTypeParseError::BadHexString("zz".to_string()))
+        );
+
+        assert_eq!(
+            CustomTypeParser::parse("org.apache.cassandra.db.marshal.Int32Type garbage"),
+            Err(CustomTypeParseError::UnexpectedTrailingCharacters(
+                " garbage".to_string()
+            ))
+        );
+
+        assert_eq!(
+            CustomTypeParser::parse(
+                "org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)garbage"
+            ),
+            Err(CustomTypeParseError::UnexpectedTrailingCharacters(
+                "garbage".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn custom_cassandra_type_parser_rejects_trailing_whitespace() {
+        assert_eq!(
+            CustomTypeParser::parse("org.apache.cassandra.db.marshal.Int32Type \t\n"),
+            Err(CustomTypeParseError::UnexpectedTrailingCharacters(
+                " \t\n".to_string()
+            ))
         );
     }
 }
