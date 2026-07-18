@@ -107,25 +107,47 @@ impl NodeChain {
     async fn start(real_addr: SocketAddr, node_id: u16) -> Result<Self, Error> {
         let proxy_ip = get_exclusive_local_address();
         let proxy_addr = SocketAddr::new(proxy_ip, 9042);
+        let nlb_listen_addr = "127.0.0.1:0".parse().unwrap();
 
+        Self::start_with_config(
+            real_addr,
+            node_id,
+            proxy_addr,
+            nlb_listen_addr,
+            ShardAwareness::QueryNode,
+        )
+        .await
+    }
+
+    async fn start_with_config(
+        real_addr: SocketAddr,
+        node_id: u16,
+        proxy_addr: SocketAddr,
+        nlb_listen_addr: SocketAddr,
+        shard_awareness: ShardAwareness,
+    ) -> Result<Self, Error> {
         let node = ProxyNode::builder()
             .real_address(real_addr)
             .proxy_address(proxy_addr)
-            .shard_awareness(ShardAwareness::QueryNode)
+            .shard_awareness(shard_awareness)
             .build();
 
-        let running_proxy = Proxy::new([node])
-            .run()
-            .await
-            .with_context(|| format!("Failed to start proxy for real node {}", real_addr))?;
-
         let nlb = NlbFrontend::builder()
-            .listen_addr("127.0.0.1:0".parse().unwrap())
+            .listen_addr(nlb_listen_addr)
             .backend(proxy_addr)
             .build()
             .run()
             .await
             .with_context(|| format!("Failed to start NLB for proxy {}", proxy_addr))?;
+
+        let running_proxy = match Proxy::new([node]).run().await {
+            Ok(running_proxy) => running_proxy,
+            Err(proxy_error) => {
+                nlb.finish().await;
+                return Err(proxy_error)
+                    .with_context(|| format!("Failed to start proxy for real node {}", real_addr));
+            }
+        };
 
         Ok(NodeChain {
             node_id,
@@ -1465,5 +1487,64 @@ where
 
     if let Err(err) = result {
         std::panic::resume_unwind(err);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn start_shuts_down_proxy_when_nlb_start_fails() {
+        let reserved_proxy_addr = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_addr = reserved_proxy_addr.local_addr().unwrap();
+        drop(reserved_proxy_addr);
+        let occupied_nlb = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let nlb_addr = occupied_nlb.local_addr().unwrap();
+        let real_addr = "127.0.0.1:9042".parse().unwrap();
+
+        let result = NodeChain::start_with_config(
+            real_addr,
+            1,
+            proxy_addr,
+            nlb_addr,
+            ShardAwareness::Unaware,
+        )
+        .await;
+
+        assert!(result.is_err(), "occupied NLB address should fail to bind");
+        assert!(
+            TcpListener::bind(proxy_addr).await.is_ok(),
+            "proxy address should be released when NLB startup fails"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_shuts_down_nlb_when_proxy_start_fails() {
+        let occupied_proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_addr = occupied_proxy.local_addr().unwrap();
+        let reserved_nlb_addr = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let nlb_addr = reserved_nlb_addr.local_addr().unwrap();
+        drop(reserved_nlb_addr);
+        let real_addr = "127.0.0.1:9042".parse().unwrap();
+
+        let result = NodeChain::start_with_config(
+            real_addr,
+            1,
+            proxy_addr,
+            nlb_addr,
+            ShardAwareness::Unaware,
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "occupied proxy address should fail to bind"
+        );
+        assert!(
+            TcpListener::bind(nlb_addr).await.is_ok(),
+            "NLB address should be released when proxy startup fails"
+        );
     }
 }
