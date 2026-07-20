@@ -6,7 +6,7 @@ version = "0.0.0"
 build = "build.rs"
 
 [build-dependencies]
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
 
 [dependencies]
 scylla = { path = "../../scylla" }
