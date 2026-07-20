@@ -102,8 +102,8 @@ impl NodeChain {
     /// Start a proxy + NLB chain for a single Scylla node (plaintext).
     ///
     /// 1. Allocate a unique proxy address via `get_exclusive_local_address()`
-    /// 2. Build and run a single-node `Proxy` (proxy_addr →  real_addr)
-    /// 3. Build and run an NLB frontend (OS-assigned port →  proxy_addr)
+    /// 2. Start the NLB frontend first so a bind failure cannot leak a proxy
+    /// 3. Start the single-node `Proxy`, shutting down the NLB if startup fails
     async fn start(real_addr: SocketAddr, node_id: u16) -> Result<Self, Error> {
         let proxy_ip = get_exclusive_local_address();
         let proxy_addr = SocketAddr::new(proxy_ip, 9042);
@@ -1496,7 +1496,7 @@ mod tests {
     use tokio::net::TcpListener;
 
     #[tokio::test]
-    async fn start_shuts_down_proxy_when_nlb_start_fails() {
+    async fn start_does_not_leave_proxy_running_when_nlb_start_fails() {
         let reserved_proxy_addr = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_addr = reserved_proxy_addr.local_addr().unwrap();
         drop(reserved_proxy_addr);
@@ -1513,10 +1513,16 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err(), "occupied NLB address should fail to bind");
+        let error = result
+            .err()
+            .expect("occupied NLB address should fail to bind");
+        assert!(
+            format!("{error:#}").contains("Failed to start NLB for proxy"),
+            "expected NLB startup context, got: {error:#}"
+        );
         assert!(
             TcpListener::bind(proxy_addr).await.is_ok(),
-            "proxy address should be released when NLB startup fails"
+            "proxy should not start when NLB startup fails"
         );
     }
 
