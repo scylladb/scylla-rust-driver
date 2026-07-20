@@ -33,3 +33,6 @@ claude_config.json
 CLAUDE.md
 .opencode
 .ocx
+
+# Python compile cache
+*.pyc
