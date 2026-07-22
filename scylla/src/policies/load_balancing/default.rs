@@ -47,20 +47,6 @@ enum ReplicaOrder {
     Deterministic,
 }
 
-/// Statement kind, used to enable specific load balancing patterns for certain cases.
-///
-/// Currently, there is a distinguished case of LWT statements, which should always be routed
-/// to replicas in a deterministic order to avoid Paxos conflicts. Other statements
-/// are routed to random replicas to balance the load.
-#[derive(Clone, Copy)]
-enum StatementType {
-    /// The statement is a confirmed LWT. It's to be routed specifically.
-    Lwt,
-
-    /// The statement is not a confirmed LWT. It's to be routed in a default way.
-    NonLwt,
-}
-
 /// A result of `pick_replica`.
 enum PickedReplica<'a> {
     /// A replica that could be computed cheaply.
@@ -169,10 +155,10 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         }
 
         /* LWT statements need to be routed differently: always to the same replica, to avoid Paxos contention. */
-        let statement_type = if query.should_route_as_lwt() {
-            StatementType::Lwt
+        let replica_order = if query.should_route_as_lwt() {
+            ReplicaOrder::Deterministic
         } else {
-            StatementType::NonLwt
+            ReplicaOrder::Arbitrary
         };
 
         /* Token-aware logic - if routing info is available, we know what are the replicas
@@ -185,7 +171,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     NodeLocationCriteria::DatacenterAndRack(dc, rack),
                     |node, shard| (self.pick_predicate)(node, Some(shard)),
                     cluster,
-                    statement_type,
+                    replica_order,
                     table_spec,
                 );
 
@@ -209,7 +195,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     NodeLocationCriteria::Datacenter(dc),
                     |node, shard| (self.pick_predicate)(node, Some(shard)),
                     cluster,
-                    statement_type,
+                    replica_order,
                     table_spec,
                 );
 
@@ -234,7 +220,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     NodeLocationCriteria::Any,
                     |node, shard| (self.pick_predicate)(node, Some(shard)),
                     cluster,
-                    statement_type,
+                    replica_order,
                     table_spec,
                 );
                 if let Some(picked) = picked {
@@ -325,10 +311,10 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         let routing_info = self.routing_info(query, cluster);
 
         /* LWT statements need to be routed differently: always to the same replica, to avoid Paxos contention. */
-        let statement_type = if query.should_route_as_lwt() {
-            StatementType::Lwt
+        let replica_order = if query.should_route_as_lwt() {
+            ReplicaOrder::Deterministic
         } else {
-            StatementType::NonLwt
+            ReplicaOrder::Arbitrary
         };
 
         /* Token-aware logic - if routing info is available, we know what are the replicas for the statement.
@@ -350,7 +336,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     NodeLocationCriteria::DatacenterAndRack(dc, rack),
                     |node, shard| Self::is_alive(node, Some(shard)),
                     cluster,
-                    statement_type,
+                    replica_order,
                     table_spec,
                 );
                 Either::Left(local_rack_replicas)
@@ -369,7 +355,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     NodeLocationCriteria::Datacenter(dc),
                     |node, shard| Self::is_alive(node, Some(shard)),
                     cluster,
-                    statement_type,
+                    replica_order,
                     table_spec,
                 );
                 Either::Left(local_replicas)
@@ -388,7 +374,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     NodeLocationCriteria::Any,
                     |node, shard| Self::is_alive(node, Some(shard)),
                     cluster,
-                    statement_type,
+                    replica_order,
                     table_spec,
                 );
                 Either::Left(remote_replicas)
@@ -693,23 +679,23 @@ impl DefaultPolicy {
 
     /// Picks a replica for given token and table spec which meets the provided location criteria
     /// and the predicate.
-    /// The replica is chosen randomly over all candidates that meet the criteria
-    /// unless the query is LWT; if so, the first replica meeting the criteria is chosen
-    /// to avoid Paxos contention.
+    /// The replica is chosen from all candidates that meet the criteria.
+    /// It's picked at random unless ordering is enforced, in which case
+    /// the first such replica is returned instead.
     fn pick_replica<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterState,
-        statement_type: StatementType,
+        order: ReplicaOrder,
         table_spec: &TableSpec,
     ) -> Option<PickedReplica<'a>> {
-        match statement_type {
-            StatementType::Lwt => {
+        match order {
+            ReplicaOrder::Deterministic => {
                 self.pick_first_replica(ts, replica_location, predicate, cluster, table_spec)
             }
-            StatementType::NonLwt => self
+            ReplicaOrder::Arbitrary => self
                 .pick_random_replica(ts, replica_location, predicate, cluster, table_spec)
                 .map(PickedReplica::Computed),
         }
@@ -810,30 +796,22 @@ impl DefaultPolicy {
 
     /// Returns iterator over replicas for given token and table spec, filtered
     /// by provided location criteria and predicate.
-    /// By default, the replicas are shuffled.
-    /// For LWTs, though, the replicas are instead returned in a deterministic order.
+    /// By default, the replicas are shuffled unless ordering is enforced.
     fn maybe_shuffled_replicas<'a, PredicateT: Fn(NodeRef<'a>, Shard) -> bool + 'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: PredicateT,
         cluster: &'a ClusterState,
-        statement_type: StatementType,
+        order: ReplicaOrder,
         table_spec: &TableSpec,
     ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> + use<'a, PredicateT> {
-        let order = match statement_type {
-            StatementType::Lwt => ReplicaOrder::Deterministic,
-            StatementType::NonLwt => ReplicaOrder::Arbitrary,
-        };
-
         let replicas =
             self.filtered_replicas(ts, replica_location, predicate, cluster, order, table_spec);
 
-        match statement_type {
-            // As an LWT optimisation: in order to reduce contention caused by Paxos conflicts,
-            // we always try to query replicas in the same order.
-            StatementType::Lwt => Either::Left(replicas),
-            StatementType::NonLwt => Either::Right(self.shuffle(replicas)),
+        match order {
+            ReplicaOrder::Deterministic => Either::Left(replicas),
+            ReplicaOrder::Arbitrary => Either::Right(self.shuffle(replicas)),
         }
     }
 
