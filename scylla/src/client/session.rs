@@ -1002,6 +1002,16 @@ impl Session {
                 None
             };
 
+        // Look up the cached tablet version once so the load balancing policy can apply
+        // leader-aware routing without repeating the lookup (mirrors the prepared-statement
+        // paths). Batches do not carry a tablet-version block, so this feeds routing only.
+        let cluster_state = self.get_cluster_state();
+        let tablet_version = table_spec
+            .zip(first_value_token)
+            .and_then(|(table_spec, token)| {
+                cluster_state.tablet_version_for_token(table_spec, token)
+            });
+
         let routing_info = RoutingInfo {
             consistency: exec_params.consistency,
             serial_consistency,
@@ -1009,6 +1019,7 @@ impl Session {
             table: table_spec,
             is_confirmed_lwt: false,
             node_location_preference: &self.node_location_preference,
+            tablet_version,
         };
 
         let span = RequestSpan::new_batch();
@@ -1313,6 +1324,7 @@ impl Session {
             table: None,
             is_confirmed_lwt: false,
             node_location_preference: &self.node_location_preference,
+            tablet_version: None,
         };
 
         let span = RequestSpan::new_query(&statement.contents);
@@ -1728,6 +1740,14 @@ impl Session {
 
         let table_spec = prepared.get_table_spec();
 
+        let cluster_state = self.get_cluster_state();
+        // Look up the cached tablet version once per request (it does not depend on the
+        // connection). It feeds both leader-aware routing (via `RoutingInfo::tablet_version`) and
+        // the `TABLETS_ROUTING_V2` tablet-version block below, so we must not look it up twice.
+        let tablet_version = table_spec.zip(token).and_then(|(table_spec, token)| {
+            cluster_state.tablet_version_for_token(table_spec, token)
+        });
+
         let routing_info = RoutingInfo {
             consistency: exec_params.consistency,
             serial_consistency,
@@ -1735,6 +1755,7 @@ impl Session {
             table: table_spec,
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
             node_location_preference: &self.node_location_preference,
+            tablet_version,
         };
 
         let span = RequestSpan::new_prepared(
@@ -1743,7 +1764,6 @@ impl Session {
             serialized_values.buffer_size(),
         );
 
-        let cluster_state = self.get_cluster_state();
         if !span.span().is_disabled()
             && let (Some(table_spec), Some(token)) = (routing_info.table, token)
         {
@@ -1751,7 +1771,7 @@ impl Session {
             span.record_replicas(replicas)
         }
 
-        // Choose the tablet-version block once per request (it does not depend on the
+        // The tablet-version block is chosen once per request (it does not depend on the
         // connection, and is chosen once rather than per attempt): the block is a randomly
         // chosen probe of the cached tablet version, used by the server for staleness
         // detection, and there is no benefit to re-rolling it on retries. `None` means there
@@ -1760,8 +1780,7 @@ impl Session {
         // only on a TABLETS_ROUTING_V2 connection, so we compute it unconditionally here.
         let tablet_block_hint = table_spec
             .zip(token)
-            .map(|(table_spec, token)| cluster_state.tablet_version_for_token(table_spec, token))
-            .map(tablet_version_block_for);
+            .map(|_| tablet_version_block_for(tablet_version));
 
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,

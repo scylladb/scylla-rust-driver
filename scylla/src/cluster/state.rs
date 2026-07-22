@@ -539,7 +539,7 @@ impl ClusterState {
         &self.known_nodes
     }
 
-    pub(super) fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec<'static>, RawTablet)>) {
+    pub(crate) fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec<'static>, RawTablet)>) {
         let replica_translator = |uuid: Uuid| self.known_nodes.get(&uuid).cloned();
 
         for (table, raw_tablet) in raw_tablets.into_iter() {

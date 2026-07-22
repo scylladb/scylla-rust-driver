@@ -50,6 +50,25 @@ pub(crate) struct RawTablet {
     tablet_version: Option<u64>,
 }
 
+#[cfg(test)]
+impl RawTablet {
+    /// Builds a raw tablet directly, for tests that need to inject tablet mappings
+    /// (with a chosen replica order and version) into a `ClusterState`.
+    pub(crate) fn new_for_test(
+        first_token: i64,
+        last_token: i64,
+        replicas: Vec<(Uuid, Shard)>,
+        tablet_version: Option<u64>,
+    ) -> Self {
+        Self {
+            first_token: Token::new(first_token),
+            last_token: Token::new(last_token),
+            replicas: RawTabletReplicas { replicas },
+            tablet_version,
+        }
+    }
+}
+
 type RawTabletPayloadV1<'frame, 'metadata> =
     (i64, i64, ListlikeIterator<'frame, 'metadata, (Uuid, i32)>);
 
