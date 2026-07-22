@@ -71,6 +71,27 @@ pub(crate) struct RawTablet {
     tablet_version: Option<TabletVersion>,
 }
 
+#[cfg(test)]
+impl RawTablet {
+    /// Builds a raw tablet directly, for tests that need to inject tablet mappings
+    /// (with a chosen replica order and version) into a `ClusterState`.
+    ///
+    /// `tablet_version` is given as the signed `bigint` the server would have sent.
+    pub(crate) fn new_for_test(
+        first_token: i64,
+        last_token: i64,
+        replicas: Vec<(Uuid, Shard)>,
+        tablet_version: Option<i64>,
+    ) -> Self {
+        Self {
+            first_token: Token::new(first_token),
+            last_token: Token::new(last_token),
+            replicas: RawTabletReplicas { replicas },
+            tablet_version: tablet_version.map(TabletVersion::from_server_value),
+        }
+    }
+}
+
 type RawTabletPayloadV1<'frame, 'metadata> =
     (i64, i64, ListlikeIterator<'frame, 'metadata, (Uuid, i32)>);
 
@@ -381,6 +402,26 @@ pub(crate) struct Tablet {
 }
 
 impl Tablet {
+    /// The replica leading this tablet's Raft group, if it is known.
+    ///
+    /// Precondition: the tablet is strongly-consistent.
+    pub(crate) fn known_leader(&self) -> Option<(&Arc<Node>, Shard)> {
+        let leader = self.replicas.all.first()?;
+
+        // `failed` holds the *original* replica list, so its first entry is the
+        // leader the payload named. If that host is the one `replicas` starts
+        // with, the leader resolved fine and the unresolved replicas are all
+        // followers; otherwise the leader itself is missing and we know of none.
+        if let Some(failed) = self.failed.as_ref() {
+            let named_leader = failed.replicas.first()?;
+            if named_leader.0 != leader.0.host_id {
+                return None;
+            }
+        }
+
+        Some((&leader.0, leader.1))
+    }
+
     // Ignore clippy lints here. Clippy suggests to
     // Box<> `Err` variant, because it's too large. It does not
     // make much sense to do so, looking at the caller of this function.
@@ -542,6 +583,13 @@ impl TableTablets {
     pub(crate) fn tablet_version_for_token(&self, token: Token) -> Option<TabletVersion> {
         self.tablet_for_token(token)
             .and_then(|tablet| tablet.tablet_version)
+    }
+
+    /// Returns the replica leading the Raft group of the tablet owning `token`, if it is known.
+    ///
+    /// The caller must ensure the tablet is strongly-consistent.
+    pub(crate) fn leader_for_token(&self, token: Token) -> Option<(&Arc<Node>, Shard)> {
+        self.tablet_for_token(token)?.known_leader()
     }
 
     /// This method:
@@ -1848,5 +1896,77 @@ mod tests {
         );
 
         assert_eq!(pre, expected_after);
+    }
+
+    /// Builds a tablet whose payload lists `replica_ids` in order -- the first being the
+    /// leader, as TABLETS_ROUTING_V2 does -- resolving every id except those in `unresolvable`.
+    fn tablet_with_unresolvable(
+        replica_ids: &[Uuid],
+        unresolvable: &[Uuid],
+        tablet_version: Option<i64>,
+    ) -> Tablet {
+        let nodes: HashMap<Uuid, Arc<Node>> = replica_ids
+            .iter()
+            .filter(|id| !unresolvable.contains(id))
+            .map(|id| {
+                let node = Node::new_for_test(Some(*id), None, Some(DC1.to_string()), None);
+                (node.host_id, Arc::new(node))
+            })
+            .collect();
+
+        let raw = RawTablet::new_for_test(
+            0,
+            100,
+            replica_ids.iter().map(|id| (*id, 0)).collect(),
+            tablet_version,
+        );
+
+        match Tablet::from_raw_tablet(raw, |uuid| nodes.get(&uuid).cloned()) {
+            Ok(tablet) => tablet,
+            Err((tablet, _failed)) => tablet,
+        }
+    }
+
+    /// A follower that cannot be resolved must not cost us the leader: the leader is still
+    /// the first replica of the payload, and it resolved.
+    #[test]
+    fn known_leader_survives_a_follower_failing_to_resolve() {
+        let leader = Uuid::from_u64_pair(1, 1);
+        let follower = Uuid::from_u64_pair(1, 2);
+
+        let tablet = tablet_with_unresolvable(&[leader, follower], &[follower], Some(7));
+
+        let (node, shard) = tablet
+            .known_leader()
+            .expect("the leader resolved, so it is known");
+        assert_eq!(node.host_id, leader);
+        assert_eq!(shard, 0);
+    }
+
+    /// If the leader itself is the replica that could not be resolved, the first *remaining*
+    /// replica is a follower -- it must not be mistaken for the leader.
+    #[test]
+    fn known_leader_is_unknown_when_the_leader_fails_to_resolve() {
+        let leader = Uuid::from_u64_pair(1, 1);
+        let follower = Uuid::from_u64_pair(1, 2);
+
+        let tablet = tablet_with_unresolvable(&[leader, follower], &[leader], Some(7));
+
+        // The follower did resolve, so the replica list is non-empty ...
+        assert_eq!(tablet.replicas.all.len(), 1);
+        assert_eq!(tablet.replicas.all[0].0.host_id, follower);
+        // ... but it is not the leader, so no leader is known.
+        assert!(tablet.known_leader().is_none());
+    }
+
+    #[test]
+    fn known_leader_is_the_first_replica_when_all_resolve() {
+        let leader = Uuid::from_u64_pair(1, 1);
+        let follower = Uuid::from_u64_pair(1, 2);
+
+        let tablet = tablet_with_unresolvable(&[leader, follower], &[], Some(7));
+
+        let (node, _) = tablet.known_leader().expect("nothing failed to resolve");
+        assert_eq!(node.host_id, leader);
     }
 }

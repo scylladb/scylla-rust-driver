@@ -210,6 +210,22 @@ impl ReplicaLocator {
             .and_then(|tablets| tablets.tablet_version_for_token(token))
     }
 
+    /// Returns the replica leading the Raft group of the tablet owning `token`, if it is known.
+    ///
+    /// The caller must ensure the tablet is strongly-consistent.
+    ///
+    /// `None` means the table does not use tablets, no tablet is cached for the token, or the
+    /// cached tablet does not identify its leader. See [`Tablet::known_leader`].
+    pub(crate) fn tablet_leader_for_token(
+        &self,
+        table_spec: &TableSpec,
+        token: Token,
+    ) -> Option<(&Arc<Node>, Shard)> {
+        self.tablets
+            .tablets_for_table(table_spec)
+            .and_then(|tablets| tablets.leader_for_token(token))
+    }
+
     /// Gives access to the token ring, based on which all token ranges/replica sets are computed.
     pub fn ring(&self) -> &TokenRing<Arc<Node>> {
         self.replication_data.get_global_ring()
