@@ -31,9 +31,9 @@ use tracing::{debug, trace, warn};
 use uuid::Uuid;
 
 use super::{
-    CollectionType, Column, ColumnKind, ColumnType, Keyspace, MaterializedView, Metadata,
-    MissingUserDefinedType, NativeType, Peer, SingleKeyspaceMetadataError, Strategy, Table,
-    UserDefinedType,
+    CollectionType, Column, ColumnKind, ColumnType, ConsistencyMode, Keyspace, MaterializedView,
+    Metadata, MissingUserDefinedType, NativeType, Peer, SingleKeyspaceMetadataError, Strategy,
+    Table, UserDefinedType,
 };
 
 use crate::DeserializeRow;
@@ -171,13 +171,33 @@ impl ControlConnection {
             let connection_ids = subscriber.get_connection_ids();
             self.query_client_routes(connection_ids, &[]).await
         };
+        // The per-keyspace consistency mode lives in cluster-wide schema
+        // (`system_schema.scylla_keyspaces`) and is only observable over a control connection
+        // that negotiated TABLETS_ROUTING_V2. `query_keyspaces_consistency` returns `None` when
+        // this connection cannot report it, which `ClusterState::new` resolves by keeping the
+        // previously cached value instead of downgrading every keyspace to eventual consistency.
+        let consistency_query = async {
+            self.query_keyspaces_consistency(keyspace_to_fetch)
+                .await
+                .map_err(MetadataError::from)
+        };
 
         let peers_and_cluster_name;
         let client_routes: ClientRoutes;
         let keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>;
+        let consistency_modes: Option<HashMap<String, ConsistencyMode>>;
 
-        (peers_and_cluster_name, client_routes, keyspaces) =
-            tokio::try_join!(peers_query, client_routes_query, keyspaces_query)?;
+        (
+            peers_and_cluster_name,
+            client_routes,
+            keyspaces,
+            consistency_modes,
+        ) = tokio::try_join!(
+            peers_query,
+            client_routes_query,
+            keyspaces_query,
+            consistency_query
+        )?;
 
         let (peers, cluster_name) = peers_and_cluster_name;
 
@@ -203,6 +223,7 @@ impl ControlConnection {
             keyspaces,
             cluster_name,
             client_routes_updated_hosts,
+            consistency_modes,
         })
     }
 }
@@ -678,6 +699,11 @@ impl ControlConnection {
                 strategy,
                 durable_writes,
                 tablet_based: tablets_keyspaces.contains(&keyspace_name),
+                // Resolved later in `ClusterState::new`: the per-keyspace consistency mode lives
+                // in cluster-wide schema and is only observable over a TABLETS_ROUTING_V2
+                // connection, so it is applied there (falling back to the previously known value
+                // when the current control connection cannot report it).
+                consistency_mode: ConsistencyMode::default(),
                 tables,
                 views,
                 user_defined_types,
@@ -1669,6 +1695,88 @@ impl ControlConnection {
                 ..
             }) => Ok(HashSet::new()),
             result => result,
+        }
+    }
+
+    /// Fetches the (possibly filtered) per-keyspace consistency modes.
+    ///
+    /// A keyspace's mode comes from the `consistency` column of `system_schema.scylla_keyspaces`:
+    /// `"global"` maps to [`ConsistencyMode::Global`] and `"local"` to [`ConsistencyMode::Local`].
+    /// Both are strongly-consistent modes. Anything else is eventually consistent and is omitted
+    /// from the returned map (callers default missing keyspaces to [`ConsistencyMode::Eventual`]).
+    ///
+    /// This is intentionally kept as a separate query from [`Self::query_keyspaces_tablets`].
+    /// The `consistency` column was introduced later than `initial_tablets`, so on ScyllaDB
+    /// versions that have tablets but not strong consistency the column is absent. Querying it
+    /// separately ensures that a resulting `DbError::Invalid` (missing column or table) only
+    /// disables consistency detection, without also disabling tablet detection.
+    ///
+    /// Returns `None` ("unknown") -- as opposed to `Some(empty map)` ("every keyspace is
+    /// eventually consistent") -- when this control connection cannot observe the modes at all:
+    /// either it did not negotiate the `TABLETS_ROUTING_V2` extension (which makes it likely
+    /// that the column `consistency` doesn't exist), or the table/column is absent. On `None`
+    /// the caller keeps the previously cached modes; on `Some` it applies them verbatim.
+    ///
+    /// Error handling is deliberately narrow: only a `DbError::Invalid` (the missing
+    /// table/column, e.g. on Cassandra or older ScyllaDB) is swallowed and turned into `None`.
+    /// Every other error is propagated, which fails the whole metadata refresh and leaves the
+    /// previously cached consistency modes untouched -- an unrelated transient error can never
+    /// selectively purge them.
+    async fn query_keyspaces_consistency(
+        &self,
+        keyspaces_to_fetch: &[String],
+    ) -> Result<Option<HashMap<String, ConsistencyMode>>, MetadataFetchError> {
+        // If the control connection doesn't support TABLETS_ROUTING_V2, it might be a sign
+        // that the node doesn't have the table/column. Skip the request to reduce the latency.
+        if !self.tablets_v2_supported() {
+            return Ok(None);
+        }
+
+        let rows = self
+            .query_filter_keyspace_name::<(String, Option<String>)>(
+                "SELECT keyspace_name, consistency FROM system_schema.scylla_keyspaces",
+                keyspaces_to_fetch,
+            )
+            .map_err(|error| MetadataFetchError {
+                error,
+                table: "system_schema.scylla_keyspaces",
+            });
+
+        let result = rows
+            .filter_map(|row_result| {
+                let result = match row_result {
+                    Ok((keyspace_name, consistency)) => {
+                        let mode = match consistency.as_deref() {
+                            Some("global") => ConsistencyMode::Global,
+                            Some("local") => ConsistencyMode::Local,
+                            _ => ConsistencyMode::Eventual,
+                        };
+                        // Only non-eventual modes are stored; missing entries default to eventual.
+                        (mode != ConsistencyMode::Eventual).then_some(Ok((keyspace_name, mode)))
+                    }
+                    Err(e) => Some(Err(e)),
+                };
+                future::ready(result)
+            })
+            .try_collect::<HashMap<_, _>>()
+            .await;
+
+        match result {
+            // FIXME: This match catches all database errors with this error code despite the fact
+            // that we are only interested in the ones resulting from a non-existent
+            // system_schema.scylla_keyspaces table or consistency column.
+            // For more information, please refer to:
+            // https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262.
+            Err(MetadataFetchError {
+                error:
+                    MetadataFetchErrorKind::NextRowError(NextRowError::NextPageError(
+                        NextPageError::RequestFailure(RequestError::LastAttemptError(
+                            RequestAttemptError::DbError(DbError::Invalid, _),
+                        )),
+                    )),
+                ..
+            }) => Ok(None),
+            result => result.map(Some),
         }
     }
 }

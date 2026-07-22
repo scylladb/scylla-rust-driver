@@ -921,6 +921,7 @@ impl Connection {
             prepared.config.serial_consistency.flatten(),
             None,
             PagingState::start(),
+            None,
         )
         .await
     }
@@ -1033,6 +1034,7 @@ impl Connection {
         }
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn execute_raw_with_consistency(
         &self,
         prepared_statement: &PreparedStatement,
@@ -1041,6 +1043,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
+        tablet_block_hint: Option<u8>,
     ) -> Result<QueryResponse, RequestAttemptError> {
         let get_timestamp_from_gen = || {
             self.config
@@ -1056,6 +1059,19 @@ impl Connection {
         let cached_metadata_params =
             self.calculate_cached_metadata_params(prepared_statement, &current_result_metadata);
 
+        // On a connection that negotiated TABLETS_ROUTING_V2 the server reads exactly one
+        // tablet-version block byte after the query parameters for every EXECUTE. Enforce
+        // that invariant here, at the single chokepoint through which all EXECUTE frames
+        // pass: append the caller's hint (or 0 when absent) on V2 connections, and never
+        // append a byte otherwise. This mirrors how `result_metadata_id` is gated on
+        // `scylla_metadata_id_supported`, and keeps mixed-feature connections correct
+        // regardless of what the caller computed.
+        let tablet_version_block = self
+            .features
+            .protocol_features
+            .tablets_v2_supported
+            .then(|| tablet_block_hint.unwrap_or(0));
+
         let execute_frame = execute::ExecuteV2 {
             id: prepared_statement.get_id().as_ref().into(),
             result_metadata_id: cached_metadata_params.result_metadata_id.map(Into::into),
@@ -1068,6 +1084,7 @@ impl Connection {
                 skip_metadata: cached_metadata_params.skip_metadata,
                 paging_state,
             },
+            tablet_version_block,
         };
 
         let query_response = self
@@ -1906,7 +1923,12 @@ impl Connection {
             || features.shard_aware_port.is_some()
             || proto_features.rate_limit_error.is_some()
             || proto_features.tablets_v1_supported
+            || proto_features.tablets_v2_supported
             || proto_features.scylla_metadata_id_supported
+    }
+
+    pub(crate) fn tablets_v2_supported(&self) -> bool {
+        self.features.protocol_features.tablets_v2_supported
     }
 
     pub(crate) fn get_connect_address(&self) -> SocketAddr {

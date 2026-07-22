@@ -62,6 +62,16 @@ pub struct RoutingInfo<'a> {
 
     /// The session-level node location preference to pass to load balancing policies.
     pub node_location_preference: &'a NodeLocationPreference,
+
+    /// The cached tablet version for the request's (table, token), if known.
+    ///
+    /// The driver looks this up once per request and passes it here so the load balancing
+    /// policy need not repeat the lookup. `Some` means the tablet mapping was learned from a
+    /// `TABLETS_ROUTING_V2` payload, whose replica list is leader-first; the built-in policy uses
+    /// this to route requests for strongly-consistent keyspaces to the leader. `None` (no token,
+    /// no cached tablet, or a mapping learned via the older `TABLETS_ROUTING_V1` path) means the
+    /// replica list is not known to be leader-ordered, so leader-aware routing is not applied.
+    pub tablet_version: Option<u64>,
 }
 
 impl Default for RoutingInfo<'_> {
@@ -73,6 +83,7 @@ impl Default for RoutingInfo<'_> {
             table: None,
             is_confirmed_lwt: false,
             node_location_preference: &NodeLocationPreference::Any,
+            tablet_version: None,
         }
     }
 }
@@ -119,6 +130,9 @@ impl<'a> RoutingInfo<'a> {
             table,
             is_confirmed_lwt,
             node_location_preference,
+            // Leader-aware routing is not wired through the Python constructor yet; a `None`
+            // tablet version simply means the built-in policy will not apply leader routing.
+            tablet_version: None,
         }
     }
 }

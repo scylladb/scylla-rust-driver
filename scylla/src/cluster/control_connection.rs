@@ -64,6 +64,11 @@ impl ControlConnection {
         self.conn.is_to_scylladb()
     }
 
+    /// Returns true iff this control connection negotiated the `TABLETS_ROUTING_V2` extension.
+    pub(super) fn tablets_v2_supported(&self) -> bool {
+        self.conn.tablets_v2_supported()
+    }
+
     /// Appends the custom server-side timeout to the statement string, if such custom timeout
     /// is provided and we are connected to ScyllaDB (since custom timeouts is ScyllaDB-only feature).
     fn maybe_append_timeout_override(&self, statement: &mut Statement) {

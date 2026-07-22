@@ -201,7 +201,7 @@ impl ClusterState {
 
         handle_topology_changes(known_nodes, &new_known_nodes);
 
-        let keyspaces: HashMap<String, Keyspace> = metadata
+        let mut keyspaces: HashMap<String, Keyspace> = metadata
             .keyspaces
             .into_iter()
             .filter_map(|(ks_name, ks)| match ks {
@@ -226,6 +226,26 @@ impl ClusterState {
                 }
             })
             .collect();
+
+        // If the current connection could report the consistency modes of keyspaces (`Some`),
+        // apply them (absent keyspaces are eventually-consisstent).
+        // If it could not (e.g. because the system table doesn't exist), keep the previously
+        // known values instead of downgrading every keyspace to eventual consistency.
+        match metadata.consistency_modes {
+            Some(consistency_modes) => {
+                for (ks_name, ks) in keyspaces.iter_mut() {
+                    ks.consistency_mode =
+                        consistency_modes.get(ks_name).copied().unwrap_or_default();
+                }
+            }
+            None => {
+                for (ks_name, ks) in keyspaces.iter_mut() {
+                    if let Some(old_ks) = old_keyspaces.get(ks_name) {
+                        ks.consistency_mode = old_ks.consistency_mode;
+                    }
+                }
+            }
+        }
 
         // Tablets maintenance.
         {
@@ -388,6 +408,22 @@ impl ClusterState {
         replica_set.into_iter()
     }
 
+    /// Returns the cached tablet version for the tablet owning `token` in `table_spec`, if
+    /// known via the TABLETS_ROUTING_V2 protocol extension.
+    ///
+    /// `None` means either no tablet is cached for the token, or the cached tablet was
+    /// learned via TABLETS_ROUTING_V1 (which carries no version).
+    pub(crate) fn tablet_version_for_token(
+        &self,
+        table_spec: &TableSpec,
+        token: Token,
+    ) -> Option<u64> {
+        self.locator
+            .tablets
+            .tablets_for_table(table_spec)
+            .and_then(|tablets| tablets.tablet_version_for_token(token))
+    }
+
     /// Access to replicas owning a given partition key (similar to `nodetool getendpoints`)
     ///
     /// `partition_key` argument contains the values of all partition key
@@ -503,7 +539,7 @@ impl ClusterState {
         &self.known_nodes
     }
 
-    pub(super) fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec<'static>, RawTablet)>) {
+    pub(crate) fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec<'static>, RawTablet)>) {
         let replica_translator = |uuid: Uuid| self.known_nodes.get(&uuid).cloned();
 
         for (table, raw_tablet) in raw_tablets.into_iter() {
@@ -652,6 +688,7 @@ mod tests {
             keyspaces: HashMap::new(),
             client_routes_updated_hosts: HashSet::new(),
             cluster_name: Some("Test Cluster".into()),
+            consistency_modes: None,
         }
     }
 

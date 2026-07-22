@@ -39,6 +39,7 @@ use crate::policies::retry::RetryPolicy;
 use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
+use crate::routing::locator::tablets::tablet_version_block_for;
 use crate::routing::{Shard, Token};
 use crate::serialize::row::SerializedValues;
 use crate::statement::StatementConfig;
@@ -767,6 +768,7 @@ If you are using this API, you are probably doing something wrong."
                 table: None,
                 is_confirmed_lwt: false,
                 node_location_preference: session.get_node_location_preference(),
+                tablet_version: None,
             };
 
             let request_span = create_span(&statement.contents);
@@ -795,6 +797,7 @@ If you are using this API, you are probably doing something wrong."
                         table: None,
                         is_confirmed_lwt: false,
                         node_location_preference: &node_location_preference,
+                        tablet_version: None,
                     };
 
                     let statement_ref = &statement;
@@ -867,6 +870,14 @@ If you are using this API, you are probably doing something wrong."
         };
 
         let table_spec = prepared.get_table_spec();
+        // Look up the cached tablet version once per request (it does not depend on the
+        // connection). It feeds both leader-aware routing (via `RoutingInfo::tablet_version`) and
+        // the `TABLETS_ROUTING_V2` tablet-version block below, so we must not look it up twice.
+        let tablet_version = table_spec.zip(token).and_then(|(table_spec, token)| {
+            executor
+                .cluster_state
+                .tablet_version_for_token(table_spec, token)
+        });
         let routing_info = RoutingInfo {
             consistency,
             serial_consistency,
@@ -874,11 +885,20 @@ If you are using this API, you are probably doing something wrong."
             table: table_spec,
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
             node_location_preference: session.get_node_location_preference(),
+            tablet_version,
         };
 
         let page_size = prepared.get_validated_page_size();
         let prepared_ref = &prepared;
         let values_ref = &values;
+        // The tablet-version block is chosen once per request (not per attempt): the block is a
+        // randomly chosen probe of the cached tablet version used by the server for staleness
+        // detection, and there is no benefit to re-rolling it on retries. The connection
+        // appends it only on a V2 connection, so we compute it unconditionally here.
+        // See `Session::execute` for the rationale.
+        let tablet_block_hint = table_spec
+            .zip(token)
+            .map(|_| tablet_version_block_for(tablet_version));
         let page_query = |connection: Arc<Connection>,
                           consistency: Consistency,
                           paging_state: PagingState| async move {
@@ -890,6 +910,7 @@ If you are using this API, you are probably doing something wrong."
                     serial_consistency,
                     Some(page_size),
                     paging_state,
+                    tablet_block_hint,
                 )
                 .await
         };
@@ -948,6 +969,15 @@ If you are using this API, you are probably doing something wrong."
                     };
 
                     let table_spec = prepared.get_table_spec();
+                    // Look up the cached tablet version once per request (it does not depend on
+                    // the connection). It feeds both leader-aware routing (via
+                    // `RoutingInfo::tablet_version`) and the `TABLETS_ROUTING_V2` tablet-version
+                    // block below, so we must not look it up twice.
+                    let tablet_version = table_spec.zip(token).and_then(|(table_spec, token)| {
+                        executor
+                            .cluster_state
+                            .tablet_version_for_token(table_spec, token)
+                    });
                     let routing_info = RoutingInfo {
                         consistency,
                         serial_consistency,
@@ -955,10 +985,19 @@ If you are using this API, you are probably doing something wrong."
                         table: table_spec,
                         is_confirmed_lwt: prepared.is_confirmed_lwt(),
                         node_location_preference: &node_location_preference,
+                        tablet_version,
                     };
 
                     let prepared = &prepared;
                     let values_ref = &values;
+                    // The tablet-version block is chosen once per request (not per attempt): the
+                    // block is a randomly chosen probe of the cached tablet version used by the
+                    // server for staleness detection, and there is no benefit to re-rolling it
+                    // on retries. The connection appends it only on a V2 connection, so we
+                    // compute it unconditionally here.
+                    let tablet_block_hint = table_spec
+                        .zip(token)
+                        .map(|_| tablet_version_block_for(tablet_version));
                     let page_query =
                         |connection: Arc<Connection>,
                          consistency: Consistency,
@@ -971,6 +1010,7 @@ If you are using this API, you are probably doing something wrong."
                                     serial_consistency,
                                     Some(page_size),
                                     paging_state,
+                                    tablet_block_hint,
                                 )
                                 .await
                         };
@@ -1020,6 +1060,7 @@ If you are using this API, you are probably doing something wrong."
                         serial_consistency,
                         Some(page_size),
                         paging_state,
+                        None,
                     )
                     .await
             },

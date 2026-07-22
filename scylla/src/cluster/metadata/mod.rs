@@ -58,6 +58,16 @@ pub(crate) struct Metadata {
     /// Used to trigger immediate pool refills for nodes that may have been in backoff
     /// due to `TranslationError::NoRuleForHost`.
     pub(crate) client_routes_updated_hosts: HashSet<Uuid>,
+
+    /// Per-keyspace consistency mode, read from cluster-wide schema
+    /// (`system_schema.scylla_keyspaces`).
+    ///
+    /// `None` means the current control connection could not report it (the table/column
+    /// is absent on older ScyllaDB / Cassandra). In that case `ClusterState::new` keeps
+    /// the previously known modes rather than downgrading every keyspace to eventual
+    /// consistency. When it is `Some`, a keyspace missing from the map is eventually
+    /// consistent.
+    pub(crate) consistency_modes: Option<HashMap<String, ConsistencyMode>>,
 }
 
 /// Represents a node in the cluster, as fetched from the `system.{peers,local}` tables.
@@ -139,6 +149,27 @@ impl Peer {
     }
 }
 
+/// The consistency mode of a keyspace, as reported by the `consistency` column of
+/// `system_schema.scylla_keyspaces`.
+///
+/// ScyllaDB currently only supports [`Global`](ConsistencyMode::Global) strong consistency
+/// (Raft-based); [`Local`](ConsistencyMode::Local) is reserved for a future per-datacenter
+/// strong-consistency mode. On Cassandra and older ScyllaDB versions, the column is absent,
+/// so keyspaces default to [`Eventual`](ConsistencyMode::Eventual).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ConsistencyMode {
+    /// Eventual consistency. Covers every non-tablet keyspace and every keyspace
+    /// on a server that does not report a consistency mode.
+    #[default]
+    Eventual,
+    /// Reserved for a future per-datacenter strong-consistency mode (`consistency = 'local'`).
+    Local,
+    /// Global strong consistency (`consistency = 'global'`): the keyspace uses
+    /// strongly-consistent (Raft-based) tablets.
+    Global,
+}
+
 /// Describes a keyspace in the cluster.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -153,6 +184,12 @@ pub struct Keyspace {
     /// `system_schema.scylla_keyspaces`. On Cassandra and old ScyllaDB versions,
     /// where this table or column is not present, this is always `false`.
     pub tablet_based: bool,
+    /// The consistency mode of the keyspace.
+    ///
+    /// This is determined by the `consistency` column in `system_schema.scylla_keyspaces`.
+    /// A missing column/table (on Cassandra and older ScyllaDB versions) results in
+    /// [`ConsistencyMode::Eventual`].
+    pub consistency_mode: ConsistencyMode,
     /// Tables in the keyspace.
     ///
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
@@ -355,6 +392,7 @@ impl Metadata {
             keyspaces: HashMap::new(),
             cluster_name: None,
             client_routes_updated_hosts: HashSet::new(),
+            consistency_modes: None,
         }
     }
 }

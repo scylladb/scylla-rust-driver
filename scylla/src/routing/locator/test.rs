@@ -6,7 +6,7 @@ use uuid::Uuid;
 use super::tablets::TabletsInfo;
 use super::{ReplicaLocator, ReplicaSet};
 use crate::cluster::Node;
-use crate::cluster::metadata::{Keyspace, Metadata, Peer, Strategy};
+use crate::cluster::metadata::{ConsistencyMode, Keyspace, Metadata, Peer, Strategy};
 use crate::cluster::{NodeAddr, NodeRef};
 use crate::network::PoolConfig;
 use crate::routing::Token;
@@ -124,6 +124,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
                 },
                 durable_writes: true,
                 tablet_based: false,
+                consistency_mode: ConsistencyMode::Eventual,
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
@@ -139,6 +140,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
                 },
                 durable_writes: true,
                 tablet_based: false,
+                consistency_mode: ConsistencyMode::Eventual,
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
@@ -154,6 +156,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
                 },
                 durable_writes: true,
                 tablet_based: false,
+                consistency_mode: ConsistencyMode::Eventual,
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
@@ -169,6 +172,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
         keyspaces,
         cluster_name: Some("TestCluster".into()),
         client_routes_updated_hosts: Default::default(),
+        consistency_modes: None,
     }
 }
 
