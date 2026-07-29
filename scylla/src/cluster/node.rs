@@ -323,12 +323,12 @@ async fn lookup_host_with_timeout(
 }
 
 // Resolve the given hostname using a DNS lookup if necessary.
-// The resolution may return multiple IPs and the function returns one of them.
-// It prefers to return IPv4s first, and only if there are none, IPv6s.
+// The resolution may return multiple IPs, all of which are returned in the
+// order provided by the resolver (without deduplication or reordering).
 pub(crate) async fn resolve_hostname(
     hostname: &str,
     hostname_resolution_timeout: Option<Duration>,
-) -> Result<SocketAddr, DnsLookupError> {
+) -> Result<Vec<SocketAddr>, DnsLookupError> {
     // When passing String to `lookup_host`, it expects it to be in the form "hostname:port".
     // If it is not, error will be returned immediately. In this case, we want to perform
     // check with (hostname, default_port) with the same timeout.
@@ -348,9 +348,26 @@ pub(crate) async fn resolve_hostname(
         }
     };
 
+    let addrs: Vec<SocketAddr> = addrs.collect();
+    if addrs.is_empty() {
+        Err(DnsLookupError::EmptyAddressListForHost(hostname.into()))
+    } else {
+        Ok(addrs)
+    }
+}
+
+/// Selects a single address from a resolved address list, preserving the
+/// historical behavior of preferring the first IPv4 address, or the last
+/// address if none are IPv4.
+///
+/// This is a temporary shim kept while call sites migrate to consuming the
+/// full address list; it will be removed once all callers handle multiple
+/// addresses.
+pub(crate) fn select_one(addrs: &[SocketAddr]) -> Option<SocketAddr> {
     addrs
+        .iter()
+        .copied()
         .find_or_last(|addr| matches!(addr, SocketAddr::V4(_)))
-        .ok_or_else(|| DnsLookupError::EmptyAddressListForHost(hostname.into()))
 }
 
 /// Transforms the given [`InternalKnownNode`]s into [`ContactPoint`]s.
@@ -380,7 +397,7 @@ pub(crate) async fn resolve_contact_points(
     }
     let resolve_futures = to_resolve.into_iter().map(|hostname| async move {
         match resolve_hostname(hostname, hostname_resolution_timeout).await {
-            Ok(address) => Some(ResolvedContactPoint { address }),
+            Ok(addresses) => select_one(&addresses).map(|address| ResolvedContactPoint { address }),
             Err(e) => {
                 warn!("Hostname resolution failed for {}: {}", hostname, &e);
                 None

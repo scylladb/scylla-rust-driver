@@ -13,8 +13,8 @@ use tracing::debug;
 use uuid::Uuid;
 
 use crate::cluster::metadata::{ClientRoute, ClientRoutes};
-use crate::cluster::node::resolve_hostname;
-use crate::errors::TranslationError;
+use crate::cluster::node::{resolve_hostname, select_one};
+use crate::errors::{DnsLookupError, TranslationError};
 use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 
@@ -434,9 +434,14 @@ impl AddressTranslator for ClientRoutesAddressTranslator {
             format!("{}:{}", hostname, port)
         };
 
-        let addr = resolve_hostname(&hostport, self.hostname_resolution_timeout)
+        let addrs = resolve_hostname(&hostport, self.hostname_resolution_timeout)
             .await
             .map_err(TranslationError::DnsLookupFailed)?;
+        let addr = select_one(&addrs).ok_or_else(|| {
+            TranslationError::DnsLookupFailed(DnsLookupError::EmptyAddressListForHost(
+                hostport.as_str().into(),
+            ))
+        })?;
 
         debug!(
             "ClientRoutesAddressTranslator: translated host_id {} to address {}",
