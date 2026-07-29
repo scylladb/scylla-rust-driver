@@ -907,6 +907,11 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// to tell ScyllaDB which shard to assign). However, the driver is designed to behave in a robust
     /// way if those conditions are not met - if the driver fails to connect to the port or gets
     /// a connection to the wrong shard, it will re-attempt the connection to the regular transport port.
+    /// Moreover, a connection landing on a shard other than the requested one proves that the source
+    /// port did not reach the node intact, so the driver stops choosing source ports for that node
+    /// for the next few minutes - further attempts would have virtually no chance of succeeding and
+    /// would only waste connections. It retries afterwards, so that a repaired network setup is
+    /// picked up without restarting the application.
     ///
     /// The only cost of misconfigured shard-aware port should be a slightly longer reconnection time.
     /// If it is unacceptable to you or suspect that it causes you some other problems,
