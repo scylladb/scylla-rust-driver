@@ -443,10 +443,10 @@ impl AddressTranslator for ClientRoutesAddressTranslator {
         // Randomly selects one of the resolved addresses of a client route.
         //
         // Client-route resolution happens on every connection attempt and the chosen
-        // address is never persisted, so picking at random lets successive attempts
-        // cycle through the available addresses. This helps in transient scenarios
-        // where DNS returns both a soon-to-be-invalid old address and the
-        // soon-to-be-valid new one.
+        // address is never persisted, so picking at random gives successive  attempts
+        // a chance to select another available address. This helps in transient
+        // scenarios where DNS returns both a soon-to-be-invalid old address
+        // and the soon-to-be-valid new one.
         let addr = *addrs.choose(&mut rng()).ok_or_else(|| {
             TranslationError::DnsLookupFailed(DnsLookupError::EmptyAddressListForHost(
                 hostport.as_str().into(),

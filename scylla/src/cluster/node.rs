@@ -298,7 +298,7 @@ pub enum KnownNode {
 }
 
 /// Describes a database server known on Session startup, with already resolved address.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ResolvedContactPoint {
     pub(crate) address: SocketAddr,
 }
@@ -355,6 +355,22 @@ pub(crate) async fn resolve_hostname(
     }
 }
 
+/// Removes duplicate contact points that share the same socket address.
+///
+/// The same address may be reached via multiple hostnames, or via both a
+/// literal [`KnownNode::Address`] and a hostname. Deduplication avoids creating
+/// redundant control-connection endpoints, which would otherwise waste retry
+/// attempts and bias the random initial-endpoint choice.
+///
+/// Note that the obtained order (sorted by address) is irrelevant,
+/// because the driver randomizes the order of contact points before trying to connect.
+fn dedup_contact_points(mut peers: Vec<ResolvedContactPoint>) -> Vec<ResolvedContactPoint> {
+    peers.sort_unstable();
+    peers.dedup();
+
+    peers
+}
+
 /// Transforms the given [`KnownNode`]s into [`ResolvedContactPoint`]s.
 ///
 /// In case of a hostname, resolves it using a DNS lookup, producing one
@@ -375,6 +391,8 @@ pub(crate) async fn resolve_contact_points(
 ///
 /// Each hostname is expanded to *all* of its resolved addresses, so a single
 /// [`KnownNode::Hostname`] may produce multiple [`ResolvedContactPoint`]s.
+/// The resulting contact points are deduplicated by address
+/// (see [`dedup_contact_points`]).
 async fn resolve_contact_points_inner(
     known_nodes: &[KnownNode],
     // This is generic only to allow mocking in unit tests; the real resolver is `resolve_hostname`.
@@ -412,6 +430,8 @@ async fn resolve_contact_points_inner(
             });
     let resolved: Vec<Vec<ResolvedContactPoint>> = futures::future::join_all(resolve_futures).await;
     initial_peers.extend(resolved.into_iter().flatten());
+
+    let initial_peers = dedup_contact_points(initial_peers);
 
     (initial_peers, hostnames)
 }
@@ -456,12 +476,13 @@ mod tests {
     }
 
     // A single hostname resolving to multiple addresses must produce one
-    // ResolvedContactPoint per address, preserving the resolver's order.
+    // ResolvedContactPoint per address. Duplicate addresses are removed.
     #[tokio::test]
     async fn contact_points_expand_hostname_to_all_addresses() {
         let known = vec![KnownNode::Hostname("multi.example:9042".to_string())];
-        let addrs = vec![v4(1, 9042), v6(9042), v4(2, 9042)];
-        let resolved_addrs = addrs.clone();
+        // Resolver returns a duplicate and mixed families in arbitrary order.
+        let resolved = vec![v4(1, 9042), v6(9042), v4(1, 9042), v4(2, 9042)];
+        let resolved_addrs = resolved.clone();
 
         let (peers, hostnames) = resolve_contact_points_inner(&known, |_host| {
             let resolved_addrs = resolved_addrs.clone();
@@ -469,11 +490,15 @@ mod tests {
         })
         .await;
 
-        assert_eq!(peers.iter().map(|p| p.address).collect::<Vec<_>>(), addrs);
+        let expected = [v4(1, 9042), v6(9042), v4(2, 9042)];
+        assert_eq!(peers.len(), expected.len());
+        for ex in expected {
+            assert!(peers.contains(&ResolvedContactPoint { address: ex }));
+        }
         assert_eq!(hostnames, vec!["multi.example:9042".to_string()]);
     }
 
-    // Literal addresses are used as-is and come before hostname-resolved ones.
+    // Literal addresses are used as-is.
     // The `hostnames` output must list only the hostnames.
     #[tokio::test]
     async fn contact_points_mix_addresses_and_hostnames() {
@@ -491,13 +516,41 @@ mod tests {
         })
         .await;
 
-        let mut expected = vec![literal];
-        expected.extend(host_addrs);
-        assert_eq!(
-            peers.iter().map(|p| p.address).collect::<Vec<_>>(),
-            expected
-        );
+        let expected = [literal, v4(1, 9042), v6(9042)];
+        assert_eq!(peers.len(), expected.len());
+        for ex in expected {
+            assert!(peers.contains(&ResolvedContactPoint { address: ex }))
+        }
         assert_eq!(hostnames, vec!["host.example:9042".to_string()]);
+    }
+
+    // The same address reached via a literal contact point and via multiple
+    // hostnames must appear only once.
+    #[tokio::test]
+    async fn contact_points_dedup_across_sources() {
+        let shared = v4(1, 9042);
+        let a_only = v6(9042);
+        let b_only = v4(2, 9042);
+        let known = vec![
+            KnownNode::Address(shared),
+            KnownNode::Hostname("a.example:9042".to_string()),
+            KnownNode::Hostname("b.example:9042".to_string()),
+        ];
+
+        let (peers, _hostnames) = resolve_contact_points_inner(&known, async |host| {
+            if host.starts_with('a') {
+                Ok(vec![shared, a_only])
+            } else {
+                Ok(vec![shared, b_only])
+            }
+        })
+        .await;
+
+        let expected = [shared, a_only, b_only];
+        assert_eq!(peers.len(), expected.len());
+        for ex in expected {
+            assert!(peers.contains(&ResolvedContactPoint { address: ex }))
+        }
     }
 
     // A hostname whose resolution fails is skipped, while others are kept.
@@ -518,10 +571,11 @@ mod tests {
         })
         .await;
 
-        assert_eq!(
-            peers.iter().map(|p| p.address).collect::<Vec<_>>(),
-            vec![good]
-        );
+        let expected = [good];
+        assert_eq!(peers.len(), expected.len());
+        for ex in expected {
+            assert!(peers.contains(&ResolvedContactPoint { address: ex }))
+        }
         assert_eq!(
             hostnames,
             vec![
@@ -552,5 +606,32 @@ mod tests {
             hostnames,
             vec!["a.example:9042".to_string(), "b.example:9042".to_string()]
         );
+    }
+
+    // Duplicate addresses are removed.
+    #[test]
+    fn dedup_contact_points_removes_duplicate_addresses() {
+        let a = v4(1, 9042);
+        let b = v6(9042);
+        let c = v4(2, 9042);
+        let peers = vec![
+            ResolvedContactPoint { address: a },
+            ResolvedContactPoint { address: b },
+            ResolvedContactPoint { address: a }, // duplicate of `a`
+            ResolvedContactPoint { address: c },
+            ResolvedContactPoint { address: b }, // duplicate of `b`
+        ];
+
+        let dedupped = dedup_contact_points(peers);
+        assert_eq!(dedupped.len(), [a, b, c].len());
+        for addr in [a, b, c] {
+            assert!(dedupped.contains(&ResolvedContactPoint { address: addr }));
+        }
+    }
+
+    // An empty input yields an empty output.
+    #[test]
+    fn dedup_contact_points_empty() {
+        assert!(dedup_contact_points(Vec::new()).is_empty());
     }
 }
