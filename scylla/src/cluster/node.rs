@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use tokio::net::{ToSocketAddrs, lookup_host};
 use tracing::warn;
 use uuid::Uuid;
@@ -354,20 +353,6 @@ pub(crate) async fn resolve_hostname(
     } else {
         Ok(addrs)
     }
-}
-
-/// Selects a single address from a resolved address list, preserving the
-/// historical behavior of preferring the first IPv4 address, or the last
-/// address if none are IPv4.
-///
-/// This is a temporary shim kept while call sites migrate to consuming the
-/// full address list; it will be removed once all callers handle multiple
-/// addresses.
-pub(crate) fn select_one(addrs: &[SocketAddr]) -> Option<SocketAddr> {
-    addrs
-        .iter()
-        .copied()
-        .find_or_last(|addr| matches!(addr, SocketAddr::V4(_)))
 }
 
 /// Transforms the given [`KnownNode`]s into [`ResolvedContactPoint`]s.
