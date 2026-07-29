@@ -372,11 +372,28 @@ pub(crate) fn select_one(addrs: &[SocketAddr]) -> Option<SocketAddr> {
 
 /// Transforms the given [`KnownNode`]s into [`ResolvedContactPoint`]s.
 ///
-/// In case of a hostname, resolves it using a DNS lookup.
+/// In case of a hostname, resolves it using a DNS lookup, producing one
+/// [`ResolvedContactPoint`] per resolved address.
 /// In case of a plain IP address, parses it and uses straight.
 pub(crate) async fn resolve_contact_points(
     known_nodes: &[KnownNode],
     hostname_resolution_timeout: Option<Duration>,
+) -> (Vec<ResolvedContactPoint>, Vec<String>) {
+    resolve_contact_points_inner(known_nodes, async move |hostname| {
+        resolve_hostname(&hostname, hostname_resolution_timeout).await
+    })
+    .await
+}
+
+/// Inner implementation of [`resolve_contact_points`], generic over the DNS
+/// resolver so that it can be tested deterministically without real DNS lookups.
+///
+/// Each hostname is expanded to *all* of its resolved addresses, so a single
+/// [`KnownNode::Hostname`] may produce multiple [`ResolvedContactPoint`]s.
+async fn resolve_contact_points_inner(
+    known_nodes: &[KnownNode],
+    // This is generic only to allow mocking in unit tests; the real resolver is `resolve_hostname`.
+    resolve: impl AsyncFn(String) -> Result<Vec<SocketAddr>, DnsLookupError>,
 ) -> (Vec<ResolvedContactPoint>, Vec<String>) {
     // Find IP addresses of all known nodes passed in the config
     let mut initial_peers: Vec<ResolvedContactPoint> = Vec::with_capacity(known_nodes.len());
@@ -395,16 +412,20 @@ pub(crate) async fn resolve_contact_points(
             }
         };
     }
-    let resolve_futures = to_resolve.into_iter().map(|hostname| async move {
-        match resolve_hostname(hostname, hostname_resolution_timeout).await {
-            Ok(addresses) => select_one(&addresses).map(|address| ResolvedContactPoint { address }),
-            Err(e) => {
-                warn!("Hostname resolution failed for {}: {}", hostname, &e);
-                None
-            }
-        }
-    });
-    let resolved: Vec<_> = futures::future::join_all(resolve_futures).await;
+    let resolve_futures =
+        to_resolve
+            .into_iter()
+            .map(async |hostname| match resolve(hostname.to_string()).await {
+                Ok(addresses) => addresses
+                    .into_iter()
+                    .map(|address| ResolvedContactPoint { address })
+                    .collect::<Vec<_>>(),
+                Err(e) => {
+                    warn!("Hostname resolution failed for {}: {}", hostname, &e);
+                    Vec::new()
+                }
+            });
+    let resolved: Vec<Vec<ResolvedContactPoint>> = futures::future::join_all(resolve_futures).await;
     initial_peers.extend(resolved.into_iter().flatten());
 
     (initial_peers, hostnames)
@@ -437,5 +458,114 @@ mod tests {
         pub(crate) fn use_enabled_as_connected(&self) {
             self.enabled_as_connected.store(true, Ordering::SeqCst);
         }
+    }
+
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    fn v4(last_octet: u8, port: u16) -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, last_octet)), port)
+    }
+
+    fn v6(port: u16) -> SocketAddr {
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port)
+    }
+
+    // A single hostname resolving to multiple addresses must produce one
+    // ResolvedContactPoint per address, preserving the resolver's order.
+    #[tokio::test]
+    async fn contact_points_expand_hostname_to_all_addresses() {
+        let known = vec![KnownNode::Hostname("multi.example:9042".to_string())];
+        let addrs = vec![v4(1, 9042), v6(9042), v4(2, 9042)];
+        let resolved_addrs = addrs.clone();
+
+        let (peers, hostnames) = resolve_contact_points_inner(&known, |_host| {
+            let resolved_addrs = resolved_addrs.clone();
+            async move { Ok(resolved_addrs) }
+        })
+        .await;
+
+        assert_eq!(peers.iter().map(|p| p.address).collect::<Vec<_>>(), addrs);
+        assert_eq!(hostnames, vec!["multi.example:9042".to_string()]);
+    }
+
+    // Literal addresses are used as-is and come before hostname-resolved ones.
+    // The `hostnames` output must list only the hostnames.
+    #[tokio::test]
+    async fn contact_points_mix_addresses_and_hostnames() {
+        let literal = v4(100, 9042);
+        let known = vec![
+            KnownNode::Address(literal),
+            KnownNode::Hostname("host.example:9042".to_string()),
+        ];
+        let host_addrs = vec![v4(1, 9042), v6(9042)];
+        let resolved_addrs = host_addrs.clone();
+
+        let (peers, hostnames) = resolve_contact_points_inner(&known, |_host| {
+            let resolved_addrs = resolved_addrs.clone();
+            async move { Ok(resolved_addrs) }
+        })
+        .await;
+
+        let mut expected = vec![literal];
+        expected.extend(host_addrs);
+        assert_eq!(
+            peers.iter().map(|p| p.address).collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(hostnames, vec!["host.example:9042".to_string()]);
+    }
+
+    // A hostname whose resolution fails is skipped, while others are kept.
+    #[tokio::test]
+    async fn contact_points_skip_failed_resolution() {
+        let known = vec![
+            KnownNode::Hostname("good.example:9042".to_string()),
+            KnownNode::Hostname("bad.example:9042".to_string()),
+        ];
+        let good = v4(1, 9042);
+
+        let (peers, hostnames) = resolve_contact_points_inner(&known, async move |host| {
+            if host.starts_with("good") {
+                Ok(vec![good])
+            } else {
+                Err(DnsLookupError::Timeout(1))
+            }
+        })
+        .await;
+
+        assert_eq!(
+            peers.iter().map(|p| p.address).collect::<Vec<_>>(),
+            vec![good]
+        );
+        assert_eq!(
+            hostnames,
+            vec![
+                "good.example:9042".to_string(),
+                "bad.example:9042".to_string()
+            ]
+        );
+    }
+
+    // If all hostnames fail to resolve and there are no literal addresses,
+    // the resulting contact point list is empty.
+    #[tokio::test]
+    async fn contact_points_all_failed_yields_empty() {
+        let known = vec![
+            KnownNode::Hostname("a.example:9042".to_string()),
+            KnownNode::Hostname("b.example:9042".to_string()),
+        ];
+
+        let (peers, hostnames) =
+            resolve_contact_points_inner(
+                &known,
+                |_host| async move { Err(DnsLookupError::Timeout(1)) },
+            )
+            .await;
+
+        assert!(peers.is_empty());
+        assert_eq!(
+            hostnames,
+            vec!["a.example:9042".to_string(), "b.example:9042".to_string()]
+        );
     }
 }
