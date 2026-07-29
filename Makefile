@@ -83,6 +83,18 @@ dockerized-test: up
 build:
 	cargo build --examples --benches
 
+.PHONY: bench-baseline
+bench-baseline: up
+	# Run the driver benchmarks and store the results as the baseline named
+	# "base" to compare against later (e.g. before applying your changes).
+	cargo bench -p benchmarks --bench requests -- --save-baseline=base
+
+.PHONY: bench
+bench: up
+	# Run the driver benchmarks and compare against the "base" baseline saved
+	# by `make bench-baseline` (without overwriting it).
+	cargo bench -p benchmarks --bench requests -- --baseline=base
+
 .PHONY: docs
 docs:
 	mdbook build docs
