@@ -97,25 +97,59 @@ impl ClusterState {
         }
     }
 
+    /// Finds the known node whose address equals `addr`, if any.
+    ///
+    /// `STATUS_CHANGE` events carry the node's broadcast address. For a node learnt from
+    /// metadata that is exactly what [`Node::address`] holds
+    /// ([`NodeAddr::Translatable`], i.e. before any address translation), so the
+    /// comparison is right. In the current implementation, `Node` object always uses this variant.
+    fn node_by_broadcast_address(&self, addr: SocketAddr) -> Option<&Arc<Node>> {
+        self.known_nodes
+            .values()
+            .find(|node| node.address.into_inner() == addr)
+    }
+
     /// Triggers an immediate pool refill for the node with the given broadcast
     /// address. Used when a `STATUS_CHANGE UP` event hints that a node is back
     /// and its pool (likely in exponential backoff) should retry immediately.
     pub(super) fn trigger_pool_refill_for_addr(&self, addr: SocketAddr) {
-        for node in self.known_nodes.values() {
-            if node.address.into_inner() == addr {
-                debug!(
-                    address = %addr,
-                    host_id = %node.host_id,
-                    "STATUS_CHANGE UP: triggering immediate pool refill"
-                );
-                node.trigger_pool_refill();
-                return;
-            }
-        }
+        let Some(node) = self.node_by_broadcast_address(addr) else {
+            debug!(
+                address = %addr,
+                "STATUS_CHANGE UP: no known node with this address"
+            );
+            return;
+        };
         debug!(
             address = %addr,
-            "STATUS_CHANGE UP: no known node with this address"
+            host_id = %node.host_id,
+            "STATUS_CHANGE UP: triggering immediate pool refill"
         );
+        node.trigger_pool_refill();
+    }
+
+    /// Triggers an immediate keepalive request on all connections to the node with the
+    /// given broadcast address.
+    ///
+    /// Used when a `STATUS_CHANGE DOWN` event hints that the node's connections are
+    /// likely defunct, so the driver probes them immediately instead of waiting for the
+    /// next keepalive interval tick. If the probe fails, the connections are closed and
+    /// the node stops being targeted by the load balancing policy; if it succeeds, the
+    /// node is likely still alive and keeps being targeted.
+    pub(super) fn trigger_keepalive_for_addr(&self, addr: SocketAddr) {
+        let Some(node) = self.node_by_broadcast_address(addr) else {
+            debug!(
+                address = %addr,
+                "STATUS_CHANGE DOWN: no known node with this address"
+            );
+            return;
+        };
+        debug!(
+            address = %addr,
+            host_id = %node.host_id,
+            "STATUS_CHANGE DOWN: triggering immediate keepalive"
+        );
+        node.trigger_keepalive();
     }
 
     /// Creates new ClusterState using information about topology held in `metadata`.

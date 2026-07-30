@@ -238,6 +238,16 @@ impl Node {
         }
     }
 
+    /// Signals the node's connection pool to issue a keepalive request on all of its
+    /// connections immediately, instead of waiting for the next keepalive interval tick.
+    ///
+    /// This is a no-op if the node has no pool (disabled by host filter).
+    pub(crate) fn trigger_keepalive(&self) {
+        if let Some(pool) = &self.pool {
+            pool.trigger_immediate_keepalive();
+        }
+    }
+
     pub(crate) async fn use_keyspace(
         &self,
         keyspace_name: VerifiedKeyspaceName,

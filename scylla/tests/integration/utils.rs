@@ -510,6 +510,56 @@ pub(crate) async fn check_session_works_and_fully_connected(
         .unwrap();
 }
 
+/// Upper bound for [`wait_until_all_nodes_are_connected`]. Generous, because it is
+/// only ever reached when the driver fails to connect at all.
+const ALL_NODES_CONNECTED_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Waits until the driver knows `expected_nodes` nodes and holds a connection pool
+/// for each of them.
+///
+/// Polling is unavoidable here: pool filling is asynchronous and the driver exposes
+/// no completion signal for it. 1ms polls keep the wait imperceptible.
+///
+/// Beware that `Node::is_connected()` only means the pool holds *at least one*
+/// connection, not that it reached its configured size. A test that must not race
+/// with pool filling - e.g. one observing per-connection traffic - should therefore
+/// also pin the pool to a single connection per node with `PoolSize::PerHost(1)`,
+/// which makes the two coincide.
+///
+/// # Panics
+///
+/// Panics if the nodes do not all become connected within
+/// [`ALL_NODES_CONNECTED_TIMEOUT`].
+pub(crate) async fn wait_until_all_nodes_are_connected(expected_nodes: usize, session: &Session) {
+    let wait = async {
+        loop {
+            {
+                let state = session.get_cluster_state();
+                let nodes = state.get_nodes_info();
+                if nodes.len() == expected_nodes && nodes.iter().all(|node| node.is_connected()) {
+                    return;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    };
+
+    tokio::time::timeout(ALL_NODES_CONNECTED_TIMEOUT, wait)
+        .await
+        .unwrap_or_else(|_| {
+            let state = session.get_cluster_state();
+            let seen: Vec<_> = state
+                .get_nodes_info()
+                .iter()
+                .map(|node| (node.host_id, node.address, node.is_connected()))
+                .collect();
+            panic!(
+                "Timed out after {ALL_NODES_CONNECTED_TIMEOUT:?} waiting for {expected_nodes} \
+                 connected nodes; driver sees (host_id, address, connected): {seen:?}"
+            )
+        });
+}
+
 pub(crate) struct SerializeValueWithFakeType<'typ, T> {
     fake_type: ColumnType<'typ>,
     value: T,

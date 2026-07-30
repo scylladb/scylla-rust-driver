@@ -61,7 +61,7 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter, split};
 use tokio::net::{TcpSocket, TcpStream};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::Instant;
 use tracing::{debug, error, trace, warn};
 
@@ -116,6 +116,15 @@ struct RouterHandle {
     // pushing values in a synchronous way (without an `.await`), which is
     // needed for pushing values in `Drop` implementations.
     orphan_notification_sender: mpsc::UnboundedSender<RequestId>,
+
+    /// Notified in order to make this connection's keepaliver issue a keepalive
+    /// request immediately, without waiting for the next `keepalive_interval` tick.
+    ///
+    /// `RouterHandle` is the natural place for this: it is the `Arc`-shared handle
+    /// that both the `Connection` and the router task (which owns the keepaliver)
+    /// already hold, so the hint needs no extra plumbing through
+    /// `HostConnectionConfig` or `router()`.
+    keepalive_hint: Notify,
 }
 
 impl RouterHandle {
@@ -497,6 +506,7 @@ impl Connection {
             submit_channel: sender,
             request_id_generator: AtomicU64::new(0),
             orphan_notification_sender,
+            keepalive_hint: Notify::new(),
         });
 
         #[cfg(test)]
@@ -1801,7 +1811,21 @@ impl Connection {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
             loop {
-                interval.tick().await;
+                // A lost wakeup is impossible here: `Notify::notify_one` stores a permit
+                // when no task is awaiting `notified()`, so a hint that arrives while this
+                // loop is busy sending a keepalive is consumed by the next iteration.
+                tokio::select! {
+                    _ = interval.tick() => {}
+                    () = router_handle.keepalive_hint.notified() => {
+                        debug!(
+                            "Received a keepalive hint for the connection to node {} - issuing a keepalive request immediately",
+                            node_address
+                        );
+                        // The keepalive that is about to be sent restarts the idle period,
+                        // so the next periodic keepalive should be a full interval away.
+                        interval.reset();
+                    }
+                }
 
                 let keepalive_query = issue_keepalive_query(&router_handle);
                 let query_result = if let Some(timeout) = keepalive_timeout {
@@ -1911,6 +1935,26 @@ impl Connection {
 
     pub(crate) fn get_connect_address(&self) -> SocketAddr {
         self.connect_address
+    }
+
+    /// Makes this connection's keepaliver issue a keepalive (`OPTIONS`) request
+    /// immediately, instead of waiting for the next `keepalive_interval` tick.
+    ///
+    /// Called upon a `STATUS_CHANGE DOWN` hint for this connection's node: the node is
+    /// supposedly down, so the connection is likely defunct and it is better to probe it
+    /// now than at the next interval tick. If the probe fails, the connection is closed;
+    /// if it succeeds, the node is likely still alive and the connection keeps serving
+    /// requests.
+    ///
+    /// The hint cannot be lost if the keepaliver happens to be busy sending or awaiting
+    /// a keepalive at this moment, because `Notify::notify_one` *stores* a permit that
+    /// the keepaliver consumes on its next iteration.
+    ///
+    /// This is a no-op if keepalives are disabled for this connection
+    /// (`keepalive_interval == None`), because then there is no keepaliver task to
+    /// consume the notification.
+    pub(crate) fn trigger_keepalive(&self) {
+        self.router_handle.keepalive_hint.notify_one();
     }
 
     async fn update_tablets_from_response(
