@@ -286,6 +286,10 @@ pub struct SessionConfig {
 
     /// Interval of sending keepalive requests.
     /// If `None`, keepalives are never sent, so `Self::keepalive_timeout` has no effect.
+    /// Besides the periodic schedule, a keepalive request is also sent immediately on every
+    /// connection to a node for which a `STATUS_CHANGE DOWN` event was received, in order to
+    /// verify those connections' liveness; setting this to `None` disables that too, since it
+    /// disables keepalives entirely.
     pub keepalive_interval: Option<Duration>,
 
     /// Controls after what time of not receiving response to keepalives a connection is closed.

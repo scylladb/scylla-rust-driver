@@ -1036,6 +1036,11 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// Note: this configures CQL-layer keepalives. See also:
     /// `Self::tcp_keepalive_interval`.
     ///
+    /// Besides the periodic schedule, a keepalive request is also sent immediately on every
+    /// connection to a node for which a `STATUS_CHANGE DOWN` event was received, in order to
+    /// verify those connections' liveness. This hint is only honoured while keepalives are
+    /// enabled: disabling them entirely disables it as well.
+    ///
     /// # Example
     /// ```
     /// # use scylla::client::session::Session;

@@ -398,15 +398,16 @@ impl ClusterWorker {
                                             // so it won't be targeted by the load balancing policy.
                                             self.cluster_state.load().trigger_pool_refill_for_addr(addr);
                                         },
-                                        StatusChangeEvent::Down(_addr) => {
-                                            // TODO: When receiving a DOWN event, and the driver still sees the node as connected,
-                                            // send a keepalive query to its connections to verify liveness.
+                                        StatusChangeEvent::Down(addr) => {
+                                            // When receiving a DOWN event, and the driver still sees the node as connected,
+                                            // we send a keepalive query on its connections to verify their liveness.
                                             // The node is supposedly DOWN, so connections to this node are likely defunct.
                                             // We expect that the keepalive query fails, in which case connections will be closed.
                                             // As a result, the connection pool will report 0 connections to this node,
                                             // and thus the node will not be targeted by the LoadBalancingPolicy,
                                             // which is the desired behaviour. However, if the keepalive query succeeds,
-                                            // then the node is likely still alive (got stale event?), and we can keep targeting it.
+                                            // then the node is likely still alive (got stale event?), and we keep targeting it.
+                                            self.cluster_state.load().trigger_keepalive_for_addr(addr);
                                         },
                                     }
                                     continue; // Don't go to refreshing.

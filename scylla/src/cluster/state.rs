@@ -102,11 +102,7 @@ impl ClusterState {
     /// `STATUS_CHANGE` events carry the node's broadcast address. For a node learnt from
     /// metadata that is exactly what [`Node::address`] holds
     /// ([`NodeAddr::Translatable`], i.e. before any address translation), so the
-    /// comparison is right. A contact point instead holds the address the driver was
-    /// given ([`NodeAddr::Untranslatable`]), which differs from its broadcast address
-    /// when an address translator is in use, and an event naming such a node matches
-    /// nothing. Missing the hint merely leaves the pool on its regular refill
-    /// backoff, which is not worth extra address bookkeeping to avoid.
+    /// comparison is right. In the current implementation, `Node` object always uses this variant.
     fn node_by_broadcast_address(&self, addr: SocketAddr) -> Option<&Arc<Node>> {
         self.known_nodes
             .values()
@@ -130,6 +126,30 @@ impl ClusterState {
             "STATUS_CHANGE UP: triggering immediate pool refill"
         );
         node.trigger_pool_refill();
+    }
+
+    /// Triggers an immediate keepalive request on all connections to the node with the
+    /// given broadcast address.
+    ///
+    /// Used when a `STATUS_CHANGE DOWN` event hints that the node's connections are
+    /// likely defunct, so the driver probes them immediately instead of waiting for the
+    /// next keepalive interval tick. If the probe fails, the connections are closed and
+    /// the node stops being targeted by the load balancing policy; if it succeeds, the
+    /// node is likely still alive and keeps being targeted.
+    pub(super) fn trigger_keepalive_for_addr(&self, addr: SocketAddr) {
+        let Some(node) = self.node_by_broadcast_address(addr) else {
+            debug!(
+                address = %addr,
+                "STATUS_CHANGE DOWN: no known node with this address"
+            );
+            return;
+        };
+        debug!(
+            address = %addr,
+            host_id = %node.host_id,
+            "STATUS_CHANGE DOWN: triggering immediate keepalive"
+        );
+        node.trigger_keepalive();
     }
 
     /// Creates new ClusterState using information about topology held in `metadata`.

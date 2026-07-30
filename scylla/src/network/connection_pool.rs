@@ -282,6 +282,33 @@ impl NodeConnectionPool {
         self.refill_now_notify.notify_one();
     }
 
+    /// Makes every connection currently in the pool issue a keepalive (`OPTIONS`)
+    /// request immediately, instead of waiting for the next keepalive interval tick.
+    ///
+    /// Used upon a `STATUS_CHANGE DOWN` event for this node: the node is supposedly down,
+    /// so its connections are likely defunct. The keepalives are expected to fail, which
+    /// closes those connections; the pool then reports 0 connections and the node stops
+    /// being targeted by the load balancing policy. If they succeed, the node is likely
+    /// still alive (a stale event) and keeps being targeted.
+    ///
+    /// The `Result` is deliberately discarded: if the pool is `Initializing` or `Broken`,
+    /// there are no connections to probe, which is exactly the case where the driver does
+    /// not see the node as connected and the hint is pointless anyway.
+    pub(crate) fn trigger_immediate_keepalive(&self) {
+        let _ = self.with_connections(|pool_conns| match pool_conns {
+            PoolConnections::NotSharded(conns) => {
+                for conn in conns {
+                    conn.trigger_keepalive();
+                }
+            }
+            PoolConnections::Sharded { connections, .. } => {
+                for conn in connections.iter().flatten() {
+                    conn.trigger_keepalive();
+                }
+            }
+        });
+    }
+
     pub(crate) fn sharder(&self) -> Option<Sharder> {
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(_) => None,
