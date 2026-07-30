@@ -97,25 +97,39 @@ impl ClusterState {
         }
     }
 
+    /// Finds the known node whose address equals `addr`, if any.
+    ///
+    /// `STATUS_CHANGE` events carry the node's broadcast address. For a node learnt from
+    /// metadata that is exactly what [`Node::address`] holds
+    /// ([`NodeAddr::Translatable`], i.e. before any address translation), so the
+    /// comparison is right. A contact point instead holds the address the driver was
+    /// given ([`NodeAddr::Untranslatable`]), which differs from its broadcast address
+    /// when an address translator is in use, and an event naming such a node matches
+    /// nothing. Missing the hint merely leaves the pool on its regular refill
+    /// backoff, which is not worth extra address bookkeeping to avoid.
+    fn node_by_broadcast_address(&self, addr: SocketAddr) -> Option<&Arc<Node>> {
+        self.known_nodes
+            .values()
+            .find(|node| node.address.into_inner() == addr)
+    }
+
     /// Triggers an immediate pool refill for the node with the given broadcast
     /// address. Used when a `STATUS_CHANGE UP` event hints that a node is back
     /// and its pool (likely in exponential backoff) should retry immediately.
     pub(super) fn trigger_pool_refill_for_addr(&self, addr: SocketAddr) {
-        for node in self.known_nodes.values() {
-            if node.address.into_inner() == addr {
-                debug!(
-                    address = %addr,
-                    host_id = %node.host_id,
-                    "STATUS_CHANGE UP: triggering immediate pool refill"
-                );
-                node.trigger_pool_refill();
-                return;
-            }
-        }
+        let Some(node) = self.node_by_broadcast_address(addr) else {
+            debug!(
+                address = %addr,
+                "STATUS_CHANGE UP: no known node with this address"
+            );
+            return;
+        };
         debug!(
             address = %addr,
-            "STATUS_CHANGE UP: no known node with this address"
+            host_id = %node.host_id,
+            "STATUS_CHANGE UP: triggering immediate pool refill"
         );
+        node.trigger_pool_refill();
     }
 
     /// Creates new ClusterState using information about topology held in `metadata`.
