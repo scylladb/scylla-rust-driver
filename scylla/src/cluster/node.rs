@@ -370,7 +370,7 @@ pub(crate) fn select_one(addrs: &[SocketAddr]) -> Option<SocketAddr> {
         .find_or_last(|addr| matches!(addr, SocketAddr::V4(_)))
 }
 
-/// Transforms the given [`InternalKnownNode`]s into [`ContactPoint`]s.
+/// Transforms the given [`KnownNode`]s into [`ResolvedContactPoint`]s.
 ///
 /// In case of a hostname, resolves it using a DNS lookup.
 /// In case of a plain IP address, parses it and uses straight.
