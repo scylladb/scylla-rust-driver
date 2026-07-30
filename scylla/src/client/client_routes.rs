@@ -3,6 +3,8 @@
 //! Enables connecting to Scylla Cloud clusters using AWS PrivateLink or GCP Private Service Connect, among others.
 
 use async_trait::async_trait;
+use rand::rng;
+use rand::seq::IndexedRandom;
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -14,7 +16,7 @@ use uuid::Uuid;
 
 use crate::cluster::metadata::{ClientRoute, ClientRoutes};
 use crate::cluster::node::resolve_hostname;
-use crate::errors::TranslationError;
+use crate::errors::{DnsLookupError, TranslationError};
 use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 
@@ -434,9 +436,22 @@ impl AddressTranslator for ClientRoutesAddressTranslator {
             format!("{}:{}", hostname, port)
         };
 
-        let addr = resolve_hostname(&hostport, self.hostname_resolution_timeout)
+        let addrs = resolve_hostname(&hostport, self.hostname_resolution_timeout)
             .await
             .map_err(TranslationError::DnsLookupFailed)?;
+
+        // Randomly selects one of the resolved addresses of a client route.
+        //
+        // Client-route resolution happens on every connection attempt and the chosen
+        // address is never persisted, so picking at random gives successive  attempts
+        // a chance to select another available address. This helps in transient
+        // scenarios where DNS returns both a soon-to-be-invalid old address
+        // and the soon-to-be-valid new one.
+        let addr = *addrs.choose(&mut rng()).ok_or_else(|| {
+            TranslationError::DnsLookupFailed(DnsLookupError::EmptyAddressListForHost(
+                hostport.as_str().into(),
+            ))
+        })?;
 
         debug!(
             "ClientRoutesAddressTranslator: translated host_id {} to address {}",
