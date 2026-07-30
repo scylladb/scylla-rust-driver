@@ -10,17 +10,16 @@ pub(crate) mod node;
 
 /// The database type to use for the cluster.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum DBType {
+pub enum DBType {
     /// ScyllaDB database
     Scylla,
     /// Apache Cassandra database
-    #[expect(dead_code)]
     Cassandra,
 }
 
 /// Options to start the node with.
 /// It controls `--no-wait`, `--wait-other-notice` and `--wait-for-binary-proto` ccm options.
-pub(crate) struct NodeStartOptions {
+pub struct NodeStartOptions {
     /// Don't wait for the node to start. Corresponds to `--no-wait` option in ccm.
     pub(super) no_wait: bool,
     /// Wait till other nodes recognize started node. Corresponds to `--wait-other-notice` option in ccm.
@@ -55,37 +54,24 @@ impl NodeStartOptions {
     /// - `--wait-for-binary-proto`
     ///
     /// The `--no-wait` option is not enabled.
-    #[cfg_attr(
-        not(all(scylla_unstable, feature = "unstable-host-listener")),
-        expect(dead_code)
-    )]
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
     /// Enables or disables the `--no-wait` ccm option.
-    #[expect(dead_code)]
-    pub(crate) fn no_wait(mut self, no_wait: bool) -> Self {
+    pub fn no_wait(mut self, no_wait: bool) -> Self {
         self.no_wait = no_wait;
         self
     }
 
     /// Enables or disables the `--wait-other-notice` ccm option.
-    #[cfg_attr(
-        not(all(scylla_unstable, feature = "unstable-host-listener")),
-        expect(dead_code)
-    )]
-    pub(crate) fn wait_other_notice(mut self, wait_other_notice: bool) -> Self {
+    pub fn wait_other_notice(mut self, wait_other_notice: bool) -> Self {
         self.wait_other_notice = wait_other_notice;
         self
     }
 
     /// Enables or disables the `--wait-for-binary-proto` ccm option.
-    #[cfg_attr(
-        not(all(scylla_unstable, feature = "unstable-host-listener")),
-        expect(dead_code)
-    )]
-    pub(crate) fn wait_for_binary_proto(mut self, wait_for_binary_proto: bool) -> Self {
+    pub fn wait_for_binary_proto(mut self, wait_for_binary_proto: bool) -> Self {
         self.wait_for_binary_proto = wait_for_binary_proto;
         self
     }
@@ -94,7 +80,7 @@ impl NodeStartOptions {
 /// Options to stop the node with.
 /// It allows to control the value of `--no-wait` and `--not-gently` ccm options.
 #[derive(Default)]
-pub(crate) struct NodeStopOptions {
+pub struct NodeStopOptions {
     /// Dont't wait for the node to properly stop.
     pub(super) no_wait: bool,
     /// Force-terminate node with `kill -9`.
@@ -107,8 +93,7 @@ impl NodeStopOptions {
 
     /// Create a new `NodeStopOptions` with default values.
     /// All ccm options are disabled by default.
-    #[expect(dead_code)]
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         NodeStopOptions {
             no_wait: false,
             not_gently: false,
@@ -116,15 +101,13 @@ impl NodeStopOptions {
     }
 
     /// Enables or disables the `--no-wait` cmm option.
-    #[expect(dead_code)]
-    pub(crate) fn no_wait(mut self, no_wait: bool) -> Self {
+    pub fn no_wait(mut self, no_wait: bool) -> Self {
         self.no_wait = no_wait;
         self
     }
 
     /// Enables or disables the `--not-gently` ccm option.
-    #[expect(dead_code)]
-    pub(crate) fn not_gently(mut self, not_gently: bool) -> Self {
+    pub fn not_gently(mut self, not_gently: bool) -> Self {
         self.not_gently = not_gently;
         self
     }

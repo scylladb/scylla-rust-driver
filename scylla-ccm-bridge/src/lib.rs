@@ -3,13 +3,13 @@
 mod cli_wrapper;
 /// Client routes integration tests utilities.
 #[cfg(feature = "unstable-client-routes")]
-pub(crate) mod client_routes;
+pub mod client_routes;
 /// Cluster management types and operations.
-pub(crate) mod cluster;
+pub mod cluster;
 mod ip_allocator;
 mod logged_cmd;
 /// Node management types and operations.
-pub(crate) mod node;
+pub mod node;
 
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ use tracing::info;
 
 /// The version of the cluster to use for tests (e.g., "release:2026.1.0").
 /// Can be overridden with the `SCYLLA_TEST_CLUSTER` environment variable.
-pub(crate) static CLUSTER_VERSION: LazyLock<String> = LazyLock::new(|| {
+pub static CLUSTER_VERSION: LazyLock<String> = LazyLock::new(|| {
     std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or("release:2026.1.0".to_string())
 });
 
@@ -75,7 +75,7 @@ static ROOT_CCM_DIR: LazyLock<String> = LazyLock::new(|| {
 ///
 /// # Example
 /// ```
-/// use crate::ccm::lib::{run_ccm_test, cluster::ClusterOptions};
+/// use scylla_ccm_bridge::{run_ccm_test, cluster::ClusterOptions};
 ///
 /// fn cluster_options() -> ClusterOptions {
 ///     ClusterOptions {
@@ -93,7 +93,7 @@ static ROOT_CCM_DIR: LazyLock<String> = LazyLock::new(|| {
 ///     }).await;
 /// }
 /// ```
-pub(crate) async fn run_ccm_test<C, T>(make_cluster_options: C, test_body: T)
+pub async fn run_ccm_test<C, T>(make_cluster_options: C, test_body: T)
 where
     C: FnOnce() -> ClusterOptions,
     T: AsyncFnOnce(&mut Cluster) -> (),
@@ -115,7 +115,7 @@ where
 ///
 /// # Example
 /// ```
-/// use crate::ccm::lib::{run_ccm_test_with_configuration, cluster::{Cluster, ClusterOptions}};
+/// use scylla_ccm_bridge::{run_ccm_test_with_configuration, cluster::{Cluster, ClusterOptions}};
 ///
 /// async fn configure_cluster(mut cluster: Cluster) -> Cluster {
 ///    // Do some configuration here
@@ -137,7 +137,7 @@ where
 ///     ).await;
 /// }
 /// ```
-pub(crate) async fn run_ccm_test_with_configuration<C, Conf, T>(
+pub async fn run_ccm_test_with_configuration<C, Conf, T>(
     make_cluster_options: C,
     configure: Conf,
     test_body: T,

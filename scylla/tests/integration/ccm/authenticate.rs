@@ -5,9 +5,9 @@ use bytes::{BufMut, BytesMut};
 use scylla::authentication::{AuthenticatorProvider, AuthenticatorSession};
 use scylla::errors::AuthError;
 
-use crate::ccm::lib::cluster::{Cluster, ClusterOptions};
-use crate::ccm::lib::{CLUSTER_VERSION, run_ccm_test_with_configuration};
 use crate::utils::{PerformDDL, setup_tracing, unique_keyspace_name};
+use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
+use scylla_ccm_bridge::{CLUSTER_VERSION, run_ccm_test_with_configuration};
 
 fn cluster_1_node() -> ClusterOptions {
     ClusterOptions {

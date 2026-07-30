@@ -3,7 +3,7 @@ use std::fmt::Write;
 use std::process::ExitStatus;
 use std::sync::Arc;
 
-use crate::ccm::lib::logged_cmd::{LoggedCmd, RunOptions};
+use crate::logged_cmd::{LoggedCmd, RunOptions};
 
 use super::{NodeStartOptions, NodeStopOptions};
 

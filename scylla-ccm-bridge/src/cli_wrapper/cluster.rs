@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use itertools::Itertools;
 
-use crate::ccm::lib::ip_allocator::NetPrefix;
-use crate::ccm::lib::logged_cmd::{LoggedCmd, RunOptions};
+use crate::ip_allocator::NetPrefix;
+use crate::logged_cmd::{LoggedCmd, RunOptions};
 
 use super::node::NodeCcm;
 use super::{DBType, NodeStartOptions};

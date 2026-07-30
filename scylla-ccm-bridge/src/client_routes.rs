@@ -59,7 +59,7 @@ use super::cluster::{Cluster, ClusterOptions};
 use super::node::NodeId;
 
 /// Re-export the feedback frame type used by proxy feedback channels.
-pub(crate) type FeedbackItem = (
+pub type FeedbackItem = (
     scylla_proxy::RequestFrame,
     Option<scylla_proxy::TargetShard>,
 );
@@ -227,7 +227,7 @@ impl DcConfig {
 ///
 /// Provides everything needed to build a [`ClientRoutesSessionBuilder`] that
 /// connects through simulated NLBs with CQL-level feedback verification.
-pub(crate) struct ClientRoutesCluster {
+pub struct ClientRoutesCluster {
     /// The underlying CCM cluster.
     cluster: Cluster,
     /// Per-DC configuration, keyed by datacenter_id (0-based).
@@ -322,7 +322,7 @@ impl ClientRoutesCluster {
     ///
     /// Creates one [`ClientRoutesProxy`] per DC (each with its DC-specific
     /// connection ID) and uses the per-DC contact-point NLB as the contact point.
-    pub(crate) fn make_session_builder(&self) -> ClientRoutesSessionBuilder {
+    pub fn make_session_builder(&self) -> ClientRoutesSessionBuilder {
         let (proxies, contact_points): (Vec<_>, Vec<_>) = self
             .dc_configs
             .values()
@@ -346,7 +346,7 @@ impl ClientRoutesCluster {
     ///
     /// The condition matches only user QUERY frames, excluding control
     /// connection traffic (REGISTER-ed connections).
-    pub(crate) fn setup_query_feedback(
+    pub fn setup_query_feedback(
         &mut self,
     ) -> HashMap<NodeId, mpsc::UnboundedReceiver<FeedbackItem>> {
         let mut receivers = HashMap::new();
@@ -373,17 +373,17 @@ impl ClientRoutesCluster {
     }
 
     /// Returns a mutable reference to the underlying cluster.
-    pub(crate) fn cluster_mut(&mut self) -> &mut Cluster {
+    pub fn cluster_mut(&mut self) -> &mut Cluster {
         &mut self.cluster
     }
 
     /// Returns the mapping from CCM node ID to Scylla host_id.
-    pub(crate) fn host_ids(&self) -> &HashMap<NodeId, Uuid> {
+    pub fn host_ids(&self) -> &HashMap<NodeId, Uuid> {
         &self.host_ids
     }
 
     /// Returns all active node IDs across all DCs.
-    pub(crate) fn active_node_ids(&self) -> Vec<NodeId> {
+    pub fn active_node_ids(&self) -> Vec<NodeId> {
         self.dc_configs
             .values()
             .flat_map(|dc| dc.per_node_chains.keys().copied())
@@ -397,7 +397,7 @@ impl ClientRoutesCluster {
     /// its normal mechanisms (initial metadata fetch, `TOPOLOGY_CHANGE` and
     /// `CLIENT_ROUTES_CHANGE` events) and reconnects via `STATUS_CHANGE UP`
     /// or client-routes-triggered pool refills.
-    pub(crate) async fn wait_for_pools_connected(
+    pub async fn wait_for_pools_connected(
         &self,
         session: &Session,
         timeout: Duration,
@@ -460,7 +460,7 @@ impl ClientRoutesCluster {
     /// a node that no longer exists in its topology), whereas removing the
     /// route while the node is still alive would leave the driver without a
     /// translated address for in-flight reconnection attempts.
-    pub(crate) async fn decommission_node(&mut self, node_id: NodeId) -> Result<(), Error> {
+    pub async fn decommission_node(&mut self, node_id: NodeId) -> Result<(), Error> {
         // Find which DC this node belongs to.
         let dc_id = self
             .cluster
@@ -538,7 +538,7 @@ impl ClientRoutesCluster {
     ///
     /// The host_id mapping is preserved so `restart_node_chain()` can
     /// re-establish everything later.
-    pub(crate) async fn stop_node_chain(&mut self, node_id: NodeId) -> Result<(), Error> {
+    pub async fn stop_node_chain(&mut self, node_id: NodeId) -> Result<(), Error> {
         let dc_id = self
             .cluster
             .nodes()
@@ -576,7 +576,7 @@ impl ClientRoutesCluster {
     /// 1. Shuts down the old proxy chain if still present (ignoring expected errors)
     /// 2. Starts a new proxy chain with a fresh proxy address + NLB
     /// 3. Re-posts routes with the new NLB address
-    pub(crate) async fn restart_node_chain(&mut self, node_id: NodeId) -> Result<(), Error> {
+    pub async fn restart_node_chain(&mut self, node_id: NodeId) -> Result<(), Error> {
         // Find which DC this node belongs to.
         let dc_id = self
             .cluster
@@ -645,7 +645,7 @@ impl ClientRoutesCluster {
     /// the DC contact-point NLB.
     ///
     /// Returns the new node's ID.
-    pub(crate) async fn add_node(&mut self, dc_id: Option<u16>) -> Result<NodeId, Error> {
+    pub async fn add_node(&mut self, dc_id: Option<u16>) -> Result<NodeId, Error> {
         // Step 1: CCM add + start.
         let new_node_id = {
             let add_result = self.cluster.add_node(dc_id).await;
@@ -719,7 +719,7 @@ impl ClientRoutesCluster {
     ///
     /// Panics if any `node_id` is missing from `self.host_ids` or does not
     /// belong to any DC.
-    pub(crate) fn build_event_body_for_nodes(&self, target_node_ids: &[NodeId]) -> Bytes {
+    pub fn build_event_body_for_nodes(&self, target_node_ids: &[NodeId]) -> Bytes {
         let mut connection_ids: Vec<String> = Vec::new();
         let mut host_id_strings: Vec<String> = Vec::new();
 
@@ -756,7 +756,7 @@ impl ClientRoutesCluster {
     /// Returns a map from `NodeId` to the feedback receiver. The test should
     /// await a message on *any* receiver (only the proxy hosting the control
     /// connection will produce one).
-    pub(crate) fn setup_event_requery_detection(
+    pub fn setup_event_requery_detection(
         &mut self,
     ) -> HashMap<NodeId, mpsc::UnboundedReceiver<FeedbackItem>> {
         let mut receivers = HashMap::new();
@@ -797,7 +797,7 @@ impl ClientRoutesCluster {
     ///
     /// Returns the number of proxy nodes that successfully injected the event
     /// (expected to be 1 — only the CC's proxy has a registered sender).
-    pub(crate) fn inject_event(&self, target_node_ids: &[NodeId]) -> usize {
+    pub fn inject_event(&self, target_node_ids: &[NodeId]) -> usize {
         let event_body = self.build_event_body_for_nodes(target_node_ids);
 
         let mut injected = 0;
@@ -834,7 +834,7 @@ impl ClientRoutesCluster {
     /// [`inject_malformed_event`](Self::inject_malformed_event).
     ///
     /// Returns a map from `NodeId` to the feedback receiver.
-    pub(crate) fn setup_malformed_event_requery_detection(
+    pub fn setup_malformed_event_requery_detection(
         &mut self,
     ) -> HashMap<NodeId, mpsc::UnboundedReceiver<FeedbackItem>> {
         let mut receivers = HashMap::new();
@@ -877,7 +877,7 @@ impl ClientRoutesCluster {
     ///
     /// Returns the number of proxy nodes that successfully injected the event
     /// (expected to be 1).
-    pub(crate) fn inject_malformed_event(&self) -> usize {
+    pub fn inject_malformed_event(&self) -> usize {
         let malformed_body = build_client_routes_change_body(
             &[
                 "bogus-conn-1".to_string(),
@@ -1302,7 +1302,7 @@ async fn discover_single_host_id(addr: SocketAddr) -> Result<Uuid, Error> {
 ///
 /// This is non-blocking: it drains whatever is currently buffered in each
 /// channel. Call this after all queries have completed and a short delay.
-pub(crate) fn drain_feedback(
+pub fn drain_feedback(
     receivers: &mut HashMap<NodeId, mpsc::UnboundedReceiver<FeedbackItem>>,
 ) -> (HashMap<NodeId, usize>, usize) {
     let mut per_node = HashMap::new();
@@ -1464,7 +1464,7 @@ async fn post_client_routes_raw_once(
 /// 2. Discovers host IDs, starts per-node proxy chains, and posts client routes
 /// 3. Runs the test body with a [`ClientRoutesCluster`]
 /// 4. Shuts down all proxy chains and NLBs, cleans up the cluster
-pub(crate) async fn run_client_routes_test<C, T>(make_cluster_options: C, test_body: T)
+pub async fn run_client_routes_test<C, T>(make_cluster_options: C, test_body: T)
 where
     C: FnOnce() -> ClusterOptions,
     T: AsyncFnOnce(&mut ClientRoutesCluster) -> (),

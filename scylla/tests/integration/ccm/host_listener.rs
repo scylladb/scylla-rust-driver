@@ -8,10 +8,10 @@ use scylla::policies::host_listener::{HostEvent, HostEventContext, HostListener}
 use tracing::info;
 use uuid::Uuid;
 
-use crate::ccm::lib::cluster::{Cluster, ClusterOptions};
-use crate::ccm::lib::node::{Node, NodeStartOptions};
-use crate::ccm::lib::{CLUSTER_VERSION, run_ccm_test_with_configuration};
 use crate::utils::{check_session_works_and_fully_connected, setup_tracing};
+use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
+use scylla_ccm_bridge::node::{Node, NodeStartOptions};
+use scylla_ccm_bridge::{CLUSTER_VERSION, run_ccm_test_with_configuration};
 
 /* LoggingListener HostListener implementation */
 

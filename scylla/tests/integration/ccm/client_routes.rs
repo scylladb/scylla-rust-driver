@@ -18,13 +18,13 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-use crate::ccm::lib::CLUSTER_VERSION;
-use crate::ccm::lib::client_routes::{
+use crate::utils::{HEALTHCHECK_QUERY, setup_tracing};
+use scylla_ccm_bridge::CLUSTER_VERSION;
+use scylla_ccm_bridge::client_routes::{
     ClientRoutesCluster, FeedbackItem, drain_feedback, run_client_routes_test,
 };
-use crate::ccm::lib::cluster::ClusterOptions;
-use crate::ccm::lib::node::NodeId;
-use crate::utils::{HEALTHCHECK_QUERY, setup_tracing};
+use scylla_ccm_bridge::cluster::ClusterOptions;
+use scylla_ccm_bridge::node::NodeId;
 
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
