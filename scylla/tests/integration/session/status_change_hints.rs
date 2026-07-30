@@ -60,9 +60,7 @@ fn status_change_down_event_body(addr: SocketAddr) -> Bytes {
 ///
 /// This is the address that `ClusterState` compares against the address
 /// carried by a `STATUS_CHANGE` event, so it is the address that must be put
-/// into the forged event. Depending on whether the node was learnt from
-/// metadata or is a contact point, it is either the broadcast (translatable)
-/// or the already-translated address - both are handled uniformly here.
+/// into the forged event.
 fn driver_visible_address(session: &Session, host_id: Uuid) -> SocketAddr {
     let state = session.get_cluster_state();
     let node = state
