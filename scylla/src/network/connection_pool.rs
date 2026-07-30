@@ -26,6 +26,7 @@ use std::num::NonZeroUsize;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
+use std::time::Duration;
 use uuid::Uuid;
 
 use tokio::sync::{Notify, mpsc};
@@ -460,6 +461,13 @@ impl NodeConnectionPool {
 
 const EXCESS_CONNECTION_BOUND_PER_SHARD_MULTIPLIER: usize = 10;
 
+/// For how long the driver refrains from using advanced shard awareness towards a node
+/// after discovering that it does not work for that node.
+///
+/// Long enough not to waste connections on an attempt that is nearly certain to fail,
+/// short enough for the driver to recover on its own if the network setup changes.
+const ADVANCED_SHARD_AWARENESS_BLOCK_DURATION: Duration = Duration::from_secs(300);
+
 struct PoolRefiller {
     // Following information identify the pool and do not change
     pool_config: HostPoolConfig,
@@ -473,6 +481,15 @@ struct PoolRefiller {
     // Following fields are updated with information from OPTIONS
     shard_aware_port: Option<u16>,
     sharder: Option<Sharder>,
+
+    // If set, advanced shard awareness (choosing the connection's source port so that ScyllaDB
+    // assigns the desired shard to it) is not attempted until this instant.
+    //
+    // It is set upon discovering that a connection opened with advanced shard awareness landed
+    // on a different shard than the requested one, which means that something in between
+    // (most likely a NAT) rewrites our source ports. Further attempts would then have virtually
+    // no chance of hitting the requested shard, so they would only waste connections.
+    advanced_shard_awareness_blocked_until: Option<tokio::time::Instant>,
 
     // `shared_conns` is updated only after `conns` change
     shared_conns: Arc<ArcSwap<MaybePoolConnections>>,
@@ -553,6 +570,7 @@ impl PoolRefiller {
 
             shard_aware_port: None,
             sharder: None,
+            advanced_shard_awareness_blocked_until: None,
 
             shared_conns,
             conns,
@@ -717,6 +735,36 @@ impl PoolRefiller {
         self.sharder.is_some()
             && self.shard_aware_port.is_some()
             && self.pool_config.can_use_shard_aware_port
+            && !self.is_advanced_shard_awareness_blocked()
+    }
+
+    fn is_advanced_shard_awareness_blocked(&self) -> bool {
+        self.advanced_shard_awareness_blocked_until
+            .is_some_and(|until| tokio::time::Instant::now() < until)
+    }
+
+    /// Stops using advanced shard awareness towards this node for
+    /// [`ADVANCED_SHARD_AWARENESS_BLOCK_DURATION`], after it turned out not to work.
+    fn block_advanced_shard_awareness(&mut self) {
+        // Nothing to log or update if a block is already in effect - the duration is constant,
+        // so re-arming it could only postpone the retry indefinitely under a stream of mismatches.
+        if self.is_advanced_shard_awareness_blocked() {
+            return;
+        }
+
+        warn!(
+            "[{}] A connection opened with advanced shard awareness landed on an unrequested shard, \
+             which suggests that the source port is rewritten (e.g. by a NAT) on the way to the node. \
+             Not using advanced shard awareness for this node for the next {} s. \
+             Requests will still be routed to the correct shards, but the connection pool \
+             will be filled less efficiently. If you intentionally want to not use shard aware port, \
+             use `disallow_shard_aware_port` config option. Consider if it's possible to repair your network \
+             configuration to prevent source port rewriting.",
+            self.endpoint_description(),
+            ADVANCED_SHARD_AWARENESS_BLOCK_DURATION.as_secs(),
+        );
+        self.advanced_shard_awareness_blocked_until =
+            Some(tokio::time::Instant::now() + ADVANCED_SHARD_AWARENESS_BLOCK_DURATION);
     }
 
     // Begins opening a number of connections in order to fill the connection pool.
@@ -824,6 +872,21 @@ impl PoolRefiller {
                 let shard_info = connection.get_shard_info().as_ref();
                 let sharder = shard_info.map(|s| s.get_sharder());
                 let shard_id = shard_info.map_or(0, |s| s.shard as usize);
+
+                // If the connection was opened with advanced shard awareness - i.e. from a source
+                // port picked so that ScyllaDB assigns `requested_shard` to the connection - but
+                // ScyllaDB assigned another shard, then advanced shard awareness does not work
+                // towards this node, so stop attempting it for a while.
+                // The port is only meaningful for the shard count it was computed with, so a
+                // mismatch counts only if the node still uses that very sharder; otherwise the
+                // node resharded while the attempt was in flight and that alone explains it.
+                if let Some(requested) = evt.requested_shard.as_ref()
+                    && Some(&requested.sharder) == sharder.as_ref()
+                    && requested.shard != shard_id as Shard
+                {
+                    self.block_advanced_shard_awareness();
+                }
+
                 self.maybe_reshard(sharder);
 
                 // Update the shard-aware port
@@ -967,7 +1030,7 @@ impl PoolRefiller {
 
                 OpenedConnectionEvent {
                     result,
-                    requested_shard: Some(shard),
+                    requested_shard: Some(RequestedShard { shard, sharder }),
                     keyspace_name: None,
                 }
             }
@@ -1222,7 +1285,7 @@ impl PoolRefiller {
         &mut self,
         connection: Connection,
         error_receiver: ErrorReceiver,
-        requested_shard: Option<Shard>,
+        requested_shard: Option<RequestedShard>,
     ) {
         // TODO: There should be a timeout for this
 
@@ -1284,9 +1347,22 @@ async fn wait_for_error(
     }
 }
 
+/// The shard that a connection attempt targeted using advanced shard awareness, together with
+/// the sharder that its source port was computed with.
+///
+/// The sharder is remembered because the node may reshard while the attempt is in flight: the
+/// resulting shard mismatch is then explained by the stale shard count rather than by the source
+/// port not surviving the way to the node, and must not be blamed on advanced shard awareness.
+/// The pool's current sharder cannot answer that question - it may have already adopted the new
+/// one from an earlier attempt of the same, now obsolete, generation.
+struct RequestedShard {
+    shard: Shard,
+    sharder: Sharder,
+}
+
 struct OpenedConnectionEvent {
     result: Result<(Connection, ErrorReceiver), ConnectionError>,
-    requested_shard: Option<Shard>,
+    requested_shard: Option<RequestedShard>,
     keyspace_name: Option<VerifiedKeyspaceName>,
 }
 
@@ -1311,13 +1387,30 @@ impl ConnectivityChangeEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::super::connection::{HostConnectionConfig, open_connection_to_shard_aware_port};
+    use super::super::connection::{
+        HostConnectionConfig, open_connection, open_connection_to_shard_aware_port,
+    };
+    use super::{
+        ADVANCED_SHARD_AWARENESS_BLOCK_DURATION, HostPoolConfig, OpenedConnectionEvent,
+        PoolRefiller, RequestedShard,
+    };
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
+    use crate::frame::request::options;
     use crate::network::TcpSocketOptions;
-    use crate::routing::{ShardCount, Sharder};
+    use crate::observability::metrics::Metrics;
+    use crate::policies::reconnect::{ExponentialReconnectPolicy, ReconnectPolicy as _};
+    use crate::routing::{Shard, ShardCount, ShardInfo, Sharder};
     use crate::test_utils::setup_tracing;
+    use scylla_proxy::{
+        Condition, Node, Proxy, Reaction as _, RequestFrame, RequestOpcode, RequestReaction,
+        RequestRule, ResponseFrame, RunningProxy,
+    };
+    use std::collections::HashMap;
     use std::net::{SocketAddr, ToSocketAddrs};
+    use std::sync::{Arc, RwLock};
+    use std::time::Duration;
+    use tokio::sync::{Notify, mpsc};
 
     async fn test_many_connections_with_config(connection_config: HostConnectionConfig) {
         let connections_number = 400;
@@ -1375,5 +1468,212 @@ mod tests {
             ..Default::default()
         })
         .await;
+    }
+
+    fn mock_pool_refiller() -> PoolRefiller {
+        let endpoint = Arc::new(RwLock::new(UntranslatedEndpoint::ContactPoint(
+            ResolvedContactPoint {
+                address: SocketAddr::from(([127, 0, 0, 1], 9042)),
+            },
+        )));
+        // The receiver is dropped right away; the refiller only does a best-effort `try_send()`.
+        let (pool_empty_notifier, _) = mpsc::channel(1);
+
+        PoolRefiller::new(
+            endpoint,
+            HostPoolConfig::default(),
+            None,
+            None,
+            Arc::new(Notify::new()),
+            Arc::new(Notify::new()),
+            pool_empty_notifier,
+            Metrics::new(),
+            ExponentialReconnectPolicy::default().new_session(),
+        )
+    }
+
+    /// Once the driver discovers that connections opened with advanced shard awareness land on
+    /// shards other than the requested ones, it must stop attempting it - but only temporarily,
+    /// so that it recovers on its own if the network setup changes.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn advanced_shard_awareness_is_blocked_temporarily() {
+        setup_tracing();
+
+        let mut refiller = mock_pool_refiller();
+        // Pretend that OPTIONS revealed a sharded node with a shard-aware port.
+        refiller.sharder = Some(Sharder::new(ShardCount::new(4).unwrap(), 12));
+        refiller.shard_aware_port = Some(19042);
+        assert!(refiller.can_use_shard_aware_port());
+
+        refiller.block_advanced_shard_awareness();
+        assert!(!refiller.can_use_shard_aware_port());
+
+        tokio::time::advance(ADVANCED_SHARD_AWARENESS_BLOCK_DURATION - Duration::from_secs(1))
+            .await;
+        assert!(!refiller.can_use_shard_aware_port());
+
+        tokio::time::advance(Duration::from_secs(2)).await;
+        assert!(refiller.can_use_shard_aware_port());
+    }
+
+    /// The shard-aware port that the simulated node advertises, so that the pool is willing to
+    /// use advanced shard awareness towards it in the first place.
+    const SIMULATED_SHARD_AWARE_PORT: u16 = 19042;
+
+    /// Starts a dry-mode proxy pretending to be a ScyllaDB node with the given sharding info.
+    ///
+    /// The assigned shard is something only the node can report (in SUPPORTED), so simulating the
+    /// node is what makes shard mismatches reproducible without a real cluster - and independent
+    /// of the cluster's shard count.
+    async fn start_simulated_node(shard_info: ShardInfo) -> (RunningProxy, UntranslatedEndpoint) {
+        let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+        let rules = vec![
+            // OPTIONS -> SUPPORTED, advertising the sharding info of the simulated node.
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Options),
+                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                    ResponseFrame::forged_supported(frame.params, &{
+                        let mut options = HashMap::new();
+                        shard_info.add_to_options(&mut options);
+                        options.insert(
+                            options::SCYLLA_SHARD_AWARE_PORT.to_owned(),
+                            vec![SIMULATED_SHARD_AWARE_PORT.to_string()],
+                        );
+                        options
+                    })
+                    .unwrap()
+                })),
+            ),
+            // STARTUP -> READY, so that the handshake completes.
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Startup),
+                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                    ResponseFrame::forged_ready(frame.params)
+                })),
+            ),
+        ];
+        let proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .proxy_address(proxy_addr)
+                    .request_rules(rules)
+                    .build_dry_mode(),
+            )
+            .build()
+            .run()
+            .await
+            .unwrap();
+
+        let endpoint = UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+            address: proxy_addr,
+        });
+        (proxy, endpoint)
+    }
+
+    /// Opens a connection to the simulated node and wraps it in the event that the pool would
+    /// receive had the connection been opened by an advanced shard awareness attempt targeting
+    /// `shard` with a source port computed using `sharder`.
+    async fn shard_aware_attempt_result(
+        endpoint: &UntranslatedEndpoint,
+        shard: Shard,
+        sharder: &Sharder,
+    ) -> OpenedConnectionEvent {
+        let result = open_connection(endpoint, None, &HostConnectionConfig::default()).await;
+        OpenedConnectionEvent {
+            result: Ok(result.unwrap()),
+            requested_shard: Some(RequestedShard {
+                shard,
+                sharder: sharder.clone(),
+            }),
+            keyspace_name: None,
+        }
+    }
+
+    /// A refiller in the state it would be in after learning the node's sharding.
+    fn refiller_aware_of(sharder: &Sharder) -> PoolRefiller {
+        let mut refiller = mock_pool_refiller();
+        refiller.conns = vec![Vec::new(); sharder.nr_shards.get() as usize];
+        refiller.sharder = Some(sharder.clone());
+        refiller.shard_aware_port = Some(SIMULATED_SHARD_AWARE_PORT);
+        refiller
+    }
+
+    /// Verifies the detection itself: a connection that reports a shard other than the requested
+    /// one must put advanced shard awareness on hold, while a matching one must not.
+    #[tokio::test]
+    async fn shard_mismatch_blocks_advanced_shard_awareness() {
+        setup_tracing();
+
+        // The simulated node always reports shard 0.
+        let shard_info = ShardInfo {
+            shard: 0,
+            nr_shards: ShardCount::new(4).unwrap(),
+            msb_ignore: 12,
+        };
+        let sharder = shard_info.get_sharder();
+        let (proxy, endpoint) = start_simulated_node(shard_info).await;
+
+        let mut refiller = refiller_aware_of(&sharder);
+
+        // A connection that landed on the requested shard proves nothing about the network setup.
+        refiller.handle_ready_connection(shard_aware_attempt_result(&endpoint, 0, &sharder).await);
+        assert!(refiller.can_use_shard_aware_port());
+
+        // A connection that landed elsewhere means that our source port did not reach the node
+        // intact, so advanced shard awareness must be put on hold.
+        refiller.handle_ready_connection(shard_aware_attempt_result(&endpoint, 1, &sharder).await);
+        assert!(!refiller.can_use_shard_aware_port());
+
+        // The refiller holds the connections, so drop it before the proxy stops serving them.
+        drop(refiller);
+        let _ = proxy.finish().await;
+    }
+
+    /// A node that reshards invalidates the source ports of the attempts that are still in flight:
+    /// they were computed for a shard count the node no longer uses, so the shard they land on has
+    /// nothing to do with whether the source port survived the way to the node. Such a mismatch
+    /// must not block advanced shard awareness - and that must hold for every attempt of the
+    /// obsolete generation, not just for the first one to arrive, even though that first one
+    /// already makes the pool adopt the new sharder.
+    #[tokio::test]
+    async fn resharding_does_not_block_advanced_shard_awareness() {
+        setup_tracing();
+
+        // The node used to have 4 shards; it now reports 2 shards and always shard 0.
+        let stale_sharder = Sharder::new(ShardCount::new(4).unwrap(), 12);
+        let shard_info = ShardInfo {
+            shard: 0,
+            nr_shards: ShardCount::new(2).unwrap(),
+            msb_ignore: 12,
+        };
+        let sharder = shard_info.get_sharder();
+        let (proxy, endpoint) = start_simulated_node(shard_info).await;
+
+        // The pool still believes in the old topology, as do the attempts it started.
+        let mut refiller = refiller_aware_of(&stale_sharder);
+
+        // First attempt of the obsolete generation: the mismatch is explained by the reshard,
+        // which the pool learns about from this very connection.
+        refiller.handle_ready_connection(
+            shard_aware_attempt_result(&endpoint, 1, &stale_sharder).await,
+        );
+        assert_eq!(refiller.sharder.as_ref(), Some(&sharder));
+        assert!(refiller.can_use_shard_aware_port());
+
+        // Second attempt of the same generation: the pool has already adopted the new sharder,
+        // but this attempt's source port still comes from the old one, so the mismatch is still
+        // no evidence against advanced shard awareness.
+        refiller.handle_ready_connection(
+            shard_aware_attempt_result(&endpoint, 1, &stale_sharder).await,
+        );
+        assert!(refiller.can_use_shard_aware_port());
+
+        // An attempt whose source port was computed with the sharder the node actually uses is
+        // evidence, though - and must block.
+        refiller.handle_ready_connection(shard_aware_attempt_result(&endpoint, 1, &sharder).await);
+        assert!(!refiller.can_use_shard_aware_port());
+
+        drop(refiller);
+        let _ = proxy.finish().await;
     }
 }
