@@ -164,6 +164,35 @@ jobs:
       - name: Run CCM tests
         run: RUST_LOG=trace make ccm-test
 
+  # The examples need both prerequisites in place: most talk to the plain cluster
+  # from the compose file, while a few need a cluster it cannot provide - TLS,
+  # password authentication, two datacenters, published client routes - and bring
+  # up their own with scylla-ccm, as the ccm tests do. So both are set up first,
+  # and then a single step runs them all.
+  examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Setup rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
+      - name: Print rustc version
+        run: rustc --version
+      - name: Install scylla-ccm
+        run: pip3 install https://github.com/scylladb/scylla-ccm/archive/master.zip
+      - name: Setup 3-node ScyllaDB cluster
+        run: |
+          sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
+          docker compose -f test/cluster/docker-compose.yml up -d --wait
+      - name: Run the examples
+        run: ./scripts/run-examples.sh
+      - name: Print the docker cluster logs
+        if: ${{ always() }}
+        run: docker compose -f test/cluster/docker-compose.yml logs
+      - name: Remove cluster
+        if: ${{ always() }}
+        run: docker compose -f test/cluster/docker-compose.yml down
+
   # Tests that our current minimum supported rust version compiles everything sucessfully
   min_rust:
     runs-on: ubuntu-latest
