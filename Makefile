@@ -75,6 +75,10 @@ test: up
 ccm-test:
 	cargo nextest run --all-features -E 'test(ccm::)' --ignore-default-filter --status-level pass
 
+.PHONY: run-examples
+run-examples: up
+	./scripts/run-examples.sh
+
 .PHONY: dockerized-test
 dockerized-test: up
 	test/dockerized/run.sh
