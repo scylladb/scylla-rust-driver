@@ -16,9 +16,6 @@ scylla = { path = "../scylla", features = [
     "rustls-023",
     "chrono-04",
     "time-03",
-    "num-bigint-03",
-    "num-bigint-04",
-    "bigdecimal-04",
     "metrics",
     "unstable-client-routes",
 ] }
@@ -27,9 +24,8 @@ tracing = { version = "0.1.25", features = ["log"] }
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 chrono = { version = "0.4", default-features = false }
 time = { version = "0.3.22" }
-uuid = { version = "1.0", features = ["v1"] }
+uuid = "1.0"
 tower = "0.5"
-clap = { version = "4.0", features = ["derive"] }
 rand = "0.9.0"
 env_logger = "0.11"
 rustls = "0.23"
