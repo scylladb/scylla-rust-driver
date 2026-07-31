@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
 
     while let Some(row) = row_stream.next().await {
         // Receive rows
-        let _row: (String, i32, Uuid) = row?;
+        let _row: (String,) = row?;
     }
 
     // Now print tracing ids for all page queries:
