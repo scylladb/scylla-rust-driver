@@ -1,10 +1,15 @@
+//! CCM (Cassandra Cluster Manager) bridge for testing ScyllaDB Drivers.
+
 mod cli_wrapper;
+/// Client routes integration tests utilities.
 #[cfg(feature = "unstable-client-routes")]
-pub(crate) mod client_routes;
-pub(crate) mod cluster;
+pub mod client_routes;
+/// Cluster management types and operations.
+pub mod cluster;
 mod ip_allocator;
 mod logged_cmd;
-pub(crate) mod node;
+/// Node management types and operations.
+pub mod node;
 
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
@@ -16,7 +21,9 @@ use futures::FutureExt;
 use ip_allocator::IpAllocator;
 use tracing::info;
 
-pub(crate) static CLUSTER_VERSION: LazyLock<String> = LazyLock::new(|| {
+/// The version of the cluster to use for tests (e.g., "release:2026.1.0").
+/// Can be overridden with the `SCYLLA_TEST_CLUSTER` environment variable.
+pub static CLUSTER_VERSION: LazyLock<String> = LazyLock::new(|| {
     std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or("release:2026.1.0".to_string())
 });
 
@@ -60,7 +67,33 @@ static ROOT_CCM_DIR: LazyLock<String> = LazyLock::new(|| {
     ccm_root_dir
 });
 
-pub(crate) async fn run_ccm_test<C, T>(make_cluster_options: C, test_body: T)
+/// Run a CCM test with default configuration.
+///
+/// # Arguments
+/// * `make_cluster_options` - A function that returns cluster configuration
+/// * `test_body` - The test function to execute
+///
+/// # Example
+/// ```
+/// use scylla_ccm_bridge::{run_ccm_test, cluster::ClusterOptions};
+///
+/// fn cluster_options() -> ClusterOptions {
+///     ClusterOptions {
+///         name: "test_cluster".to_string(),
+///         nodes_per_dc: vec![1],
+///         ..Default::default()
+///     }
+/// }
+///
+/// #[tokio::test]
+/// async fn test_example() {
+///     run_ccm_test(cluster_options, |cluster| async {
+///         let session = cluster.make_session_builder().await.build().await.unwrap();
+///         // test code here
+///     }).await;
+/// }
+/// ```
+pub async fn run_ccm_test<C, T>(make_cluster_options: C, test_body: T)
 where
     C: FnOnce() -> ClusterOptions,
     T: AsyncFnOnce(&mut Cluster) -> (),
@@ -73,29 +106,38 @@ where
     .await
 }
 
-/// Run a CCM test with a custom configuration logic before the cluster starts.
+/// Run a CCM test with custom configuration logic before the cluster starts.
 ///
-/// ### Example
+/// # Arguments
+/// * `make_cluster_options` - A function that returns cluster configuration
+/// * `configure` - Configuration function to customize the cluster before start
+/// * `test_body` - The test function to execute
+///
+/// # Example
 /// ```
-/// # use crate::ccm::cluster::Cluster;
-/// # use crate::ccm::run_ccm_test_with_configuration;
-/// # use std::sync::{Arc, Mutex};
-/// async fn configure_cluster(cluster: Cluster) -> Cluster {
+/// use scylla_ccm_bridge::{run_ccm_test_with_configuration, cluster::{Cluster, ClusterOptions}};
+///
+/// async fn configure_cluster(mut cluster: Cluster) -> Cluster {
 ///    // Do some configuration here
 ///    cluster.updateconf([("foo", "bar")]).await.expect("failed to update conf");
 ///    cluster
 /// }
 ///
-/// async fn test(cluster: Arc<Mutex<Cluster>>) {
-///     let cluster = cluster.lock().await;
-///     let session = cluster.make_session_builder().await.build().await.unwrap();
-///
-///     println!("Succesfully connected to the cluster!");
+/// async fn test(cluster: &mut Cluster) {
+/// #   let _c = cluster;
+///     // test code here
 /// }
 ///
-/// run_ccm_test_with_configuration(ClusterOptions::default, configure_cluster, test).await;
+/// #[tokio::test]
+/// async fn test_example() {
+///     run_ccm_test_with_configuration(
+///         ClusterOptions::default,
+///         configure_cluster,
+///         test
+///     ).await;
+/// }
 /// ```
-pub(crate) async fn run_ccm_test_with_configuration<C, Conf, T>(
+pub async fn run_ccm_test_with_configuration<C, Conf, T>(
     make_cluster_options: C,
     configure: Conf,
     test_body: T,

@@ -10,7 +10,7 @@ use tracing::debug;
 
 /// A subnet prefix for local network (127.x.x.x/24).
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct NetPrefix(IpAddr);
+pub struct NetPrefix(IpAddr);
 
 impl NetPrefix {
     pub(super) fn empty() -> Self {

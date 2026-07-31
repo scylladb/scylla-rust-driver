@@ -13,9 +13,9 @@ use scylla_proxy::{
     ResponseRule, RunningProxy, ShardAwareness, WorkerError,
 };
 
-use crate::ccm::lib::cluster::{Cluster, ClusterOptions};
-use crate::ccm::lib::{CLUSTER_VERSION, run_ccm_test_with_configuration};
 use crate::utils::setup_tracing;
+use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
+use scylla_ccm_bridge::{CLUSTER_VERSION, run_ccm_test_with_configuration};
 
 fn cluster_1_node() -> ClusterOptions {
     ClusterOptions {

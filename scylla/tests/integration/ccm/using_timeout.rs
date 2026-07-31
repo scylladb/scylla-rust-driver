@@ -26,9 +26,9 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tracing::info;
 
-use crate::ccm::lib::cluster::{Cluster, ClusterOptions};
-use crate::ccm::lib::{CLUSTER_VERSION, run_ccm_test_with_configuration};
 use crate::utils::setup_tracing;
+use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
+use scylla_ccm_bridge::{CLUSTER_VERSION, run_ccm_test_with_configuration};
 
 /// Custom server-side metadata timeout we force the driver to use, so that the
 /// `USING TIMEOUT` clause is deterministic and easy to assert on.

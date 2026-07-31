@@ -37,6 +37,7 @@ impl RunOptions {
         self
     }
 
+    #[allow(dead_code)]
     pub(crate) fn allow_failure(mut self, allow: bool) -> Self {
         self.allow_failure = allow;
         self
@@ -329,7 +330,7 @@ mod tests {
 
     mod async_tests {
         use super::setup_tracing_collected_logs;
-        use crate::ccm::lib::logged_cmd::{LoggedCmd, RunOptions};
+        use crate::logged_cmd::{LoggedCmd, RunOptions};
 
         use std::collections::HashMap;
 
@@ -427,7 +428,7 @@ mod tests {
 
     mod sync_tests {
         use super::setup_tracing_collected_logs;
-        use crate::ccm::lib::logged_cmd::{LoggedCmd, RunOptions};
+        use crate::logged_cmd::{LoggedCmd, RunOptions};
         use std::collections::HashMap;
 
         #[test]

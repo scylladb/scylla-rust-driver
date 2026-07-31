@@ -1,5 +1,4 @@
-use crate::ccm::lib::TEST_KEEP_CLUSTER_ON_FAILURE;
-use crate::ccm::lib::node::NodeOptions;
+use crate::node::NodeOptions;
 
 use super::cli_wrapper::DBType;
 use super::cli_wrapper::NodeStartOptions;
@@ -7,8 +6,9 @@ use super::cli_wrapper::cluster::Ccm;
 use super::ip_allocator::NetPrefix;
 use super::logged_cmd::LoggedCmd;
 use super::node::{Node, NodeId, NodeStatus};
-use super::{IP_ALLOCATOR, ROOT_CCM_DIR};
+use super::{IP_ALLOCATOR, ROOT_CCM_DIR, TEST_KEEP_CLUSTER_ON_FAILURE};
 
+#[cfg(feature = "driver")]
 use scylla::client::session_builder::SessionBuilder;
 
 use anyhow::{Context, Error};
@@ -19,30 +19,33 @@ use tracing::info;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub(crate) const DEFAULT_MEMORY: u32 = 512;
-pub(crate) const DEFAULT_SMP: u16 = 1;
+/// Default memory size in MB for cluster nodes.
+pub const DEFAULT_MEMORY: u32 = 512;
+/// Default number of SMPs for cluster nodes.
+pub const DEFAULT_SMP: u16 = 1;
 
+/// Configuration options for creating a CCM cluster.
 #[derive(Debug, Clone)]
-pub(crate) struct ClusterOptions {
+pub struct ClusterOptions {
     /// Cluster Name
-    pub(crate) name: String,
+    pub name: String,
     /// What to database to run: ScyllaDB or Cassandra
-    pub(crate) db_type: DBType,
+    pub db_type: DBType,
     /// ScyllaDB or Cassandra version string that goes to CCM.
     /// Examples: `release:6.2.2`, `unstable:master/2021-05-24T17:16:53Z`
-    pub(crate) version: String,
+    pub version: String,
     /// CCM allocates node ip addresses based on this prefix:
     /// if ip_prefix = `127.0.1.`, then `node1` address is `127.0.1.1`, `node2` address is `127.0.1.2`
-    pub(crate) ip_prefix: NetPrefix,
+    pub ip_prefix: NetPrefix,
     /// Number of nodes to populate
-    /// [1,2] - DC1 contains 1 node, DC2 contains 2 nodes
-    pub(crate) nodes_per_dc: Vec<u8>,
+    /// \[1,2\] - DC1 contains 1 node, DC2 contains 2 nodes
+    pub nodes_per_dc: Vec<u8>,
     /// Number of vCPU for Scylla to occupy
-    pub(crate) smp: u16,
+    pub smp: u16,
     /// Amount of MB for Scylla to occupy. Has to be bigger than `smp`*512.
-    pub(crate) memory: u32,
+    pub memory: u32,
     /// Don't call `ccm remove` when cluster instance is dropped
-    pub(crate) keep_on_drop: bool,
+    pub keep_on_drop: bool,
 }
 
 impl Default for ClusterOptions {
@@ -60,7 +63,8 @@ impl Default for ClusterOptions {
     }
 }
 
-pub(crate) struct NodeList(Vec<Node>);
+/// List of nodes in a cluster.
+pub struct NodeList(Vec<Node>);
 
 impl NodeList {
     fn get_free_node_id(&self) -> Option<NodeId> {
@@ -77,21 +81,23 @@ impl NodeList {
         self.0.push(node);
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &Node> {
+    /// Iterate over nodes.
+    pub fn iter(&self) -> impl Iterator<Item = &Node> {
         self.0.iter()
     }
 
-    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut Node> {
+    /// Iterate mutably over nodes.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Node> {
         self.0.iter_mut()
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn get_by_id(&self, id: NodeId) -> Option<&Node> {
+    /// Get a node by ID.
+    pub fn get_by_id(&self, id: NodeId) -> Option<&Node> {
         self.iter().find(|node| node.id() == id)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn get_mut_by_id(&mut self, id: NodeId) -> Option<&mut Node> {
+    /// Get a mutable reference to a node by ID.
+    pub fn get_mut_by_id(&mut self, id: NodeId) -> Option<&mut Node> {
         self.iter_mut().find(|node| node.id() == id)
     }
 
@@ -99,17 +105,24 @@ impl NodeList {
         NodeList(Vec::new())
     }
 
-    pub(crate) fn get_contact_endpoints(&self) -> Vec<String> {
+    /// Get contact endpoints for all nodes.
+    pub fn get_contact_endpoints(&self) -> Vec<String> {
         self.iter().map(|node| node.contact_endpoint()).collect()
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn len(&self) -> usize {
+    /// Get the number of nodes.
+    pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    /// Check if the node list is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
-pub(crate) struct Cluster {
+/// A CCM cluster instance.
+pub struct Cluster {
     ccm_cmd: Ccm,
     // Needs to be held, because it removes the dir when dropped
     tmp_dir_guard: TempDir,
@@ -138,7 +151,8 @@ impl Drop for Cluster {
 }
 
 impl Cluster {
-    pub(crate) async fn new(opts: ClusterOptions) -> Result<Self, Error> {
+    /// Creates a new cluster instance with the given options.
+    pub async fn new(opts: ClusterOptions) -> Result<Self, Error> {
         let mut opts = opts.clone();
         let allocated_prefix = if opts.ip_prefix.is_empty() {
             opts.ip_prefix = IP_ALLOCATOR
@@ -209,7 +223,8 @@ impl Cluster {
         Ok(cluster)
     }
 
-    pub(crate) async fn init(&mut self) -> Result<(), Error> {
+    /// Initializes the cluster by creating it via CCM.
+    pub async fn init(&mut self) -> Result<(), Error> {
         self.ccm_cmd
             .cluster_create(
                 self.opts.name.clone(),
@@ -227,15 +242,16 @@ impl Cluster {
     ///
     /// ### Example
     /// ```
-    /// # use crate::ccm::cluster::Cluster;
-    /// # async fn check_only_compiles(cluster: &Cluster) -> Result<(), Box<dyn Error>> {
+    /// # use scylla_ccm_bridge::cluster::Cluster;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(cluster: &mut Cluster) -> Result<(), Box<dyn Error>> {
     /// let args = [
     ///     ("client_encryption_options.enabled", "true"),
     ///     ("client_encryption_options.certificate", "db.cert"),
     ///     ("client_encryption_options.keyfile", "db.key"),
     /// ];
     ///
-    /// cluster.updateconf(args).await?
+    /// cluster.updateconf(args).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -247,7 +263,7 @@ impl Cluster {
     ///   certificate: db.cert
     ///   keyfile: db.key
     /// ```
-    pub(crate) async fn updateconf<K, V>(
+    pub async fn updateconf<K, V>(
         &mut self,
         key_values: impl IntoIterator<Item = (K, V)>,
     ) -> Result<(), Error>
@@ -266,7 +282,7 @@ impl Cluster {
     /// Enables the `PasswordAuthenticator` for the cluster.
     // Consider making it accept an enum in the future. Supported authenticators:
     // https://github.com/scylladb/scylladb/blob/529ff3efa57553eef6b0239b03b81581b70fb9ed/db/config.cc#L1045-L1051.
-    pub(crate) async fn enable_password_authentication(&mut self) -> Result<(), Error> {
+    pub async fn enable_password_authentication(&mut self) -> Result<(), Error> {
         let args = [
             ("authenticator", "PasswordAuthenticator"),
             ("auth_superuser_name", "cassandra"),
@@ -281,7 +297,7 @@ impl Cluster {
 
     /// This method starts the cluster. User can provide optional [`NodeStartOptions`] to control the behavior of the nodes start.
     /// If `None` is provided, the default options are used (see the implementation of Default for [`NodeStartOptions`]).
-    pub(crate) async fn start(&mut self, opts: Option<NodeStartOptions>) -> Result<(), Error> {
+    pub async fn start(&mut self, opts: Option<NodeStartOptions>) -> Result<(), Error> {
         self.ccm_cmd
             .cluster_start()
             .wait_options(opts)
@@ -309,22 +325,12 @@ impl Cluster {
         self.nodes.0.last_mut().unwrap()
     }
 
-    #[cfg_attr(
-        not(any(
-            all(scylla_unstable, feature = "unstable-host-listener"),
-            feature = "unstable-client-routes",
-        )),
-        expect(dead_code)
-    )]
     /// Add a new node to the cluster in the given datacenter.
     ///
     /// `datacenter_id` uses **1-based** CCM naming: `1` →  `dc1`, `2` →  `dc2`, etc.
     /// The value stored in [`NodeOptions::datacenter_id`] is **0-based** (matching
     /// the convention used by [`Cluster::new`]).
-    pub(crate) async fn add_node(
-        &mut self,
-        datacenter_id: Option<u16>,
-    ) -> Result<&mut Node, Error> {
+    pub async fn add_node(&mut self, datacenter_id: Option<u16>) -> Result<&mut Node, Error> {
         let id = self.nodes.get_free_node_id().expect("No available node id");
         // CCM uses 1-based DC names: dc1, dc2, …
         let ccm_dc_id = datacenter_id.unwrap_or(1);
@@ -349,17 +355,19 @@ impl Cluster {
         Ok(self.append_node(node_options))
     }
 
-    #[expect(dead_code)]
-    pub(crate) async fn stop(&mut self) -> Result<(), Error> {
+    /// Stops the cluster.
+    pub async fn stop(&mut self) -> Result<(), Error> {
         self.ccm_cmd.cluster_stop().run().await.map(|_| ())
     }
 
-    pub(crate) fn set_keep_on_drop(&mut self, value: bool) {
+    /// Sets whether to keep the cluster on drop.
+    pub fn set_keep_on_drop(&mut self, value: bool) {
         self.opts.keep_on_drop = value;
         self.tmp_dir_guard.disable_cleanup(value);
     }
 
-    pub(crate) fn mark_as_failed(&mut self) {
+    /// Marks the cluster as failed and preserves it if `TEST_KEEP_CLUSTER_ON_FAILURE` is set.
+    pub fn mark_as_failed(&mut self) {
         if *TEST_KEEP_CLUSTER_ON_FAILURE {
             println!("Test failed, keep cluster alive, TEST_KEEP_CLUSTER_ON_FAILURE=true");
             self.set_keep_on_drop(true);
@@ -378,35 +386,32 @@ impl Cluster {
         Ok(())
     }
 
-    #[expect(dead_code)]
-    pub(crate) async fn destroy(mut self) -> Result<(), Error> {
+    /// Destroys the cluster by removing it via CCM.
+    pub async fn destroy(mut self) -> Result<(), Error> {
         self.ccm_cmd.cluster_remove().run().await.map(|_| ())?;
         self.destroyed = true;
         Ok(())
     }
 
-    pub(crate) async fn make_session_builder(&self) -> SessionBuilder {
+    /// Creates a new session builder with the cluster's contact endpoints.
+    #[cfg(feature = "driver")]
+    pub async fn make_session_builder(&self) -> SessionBuilder {
         let endpoints = self.nodes.get_contact_endpoints();
         SessionBuilder::new().known_nodes(endpoints)
     }
 
-    pub(crate) fn nodes(&self) -> &NodeList {
+    /// Returns a reference to the list of nodes in the cluster.
+    pub fn nodes(&self) -> &NodeList {
         &self.nodes
     }
 
-    #[cfg_attr(
-        not(any(
-            all(scylla_unstable, feature = "unstable-host-listener"),
-            all(feature = "openssl-010", feature = "rustls-023"),
-            feature = "unstable-client-routes",
-        )),
-        expect(dead_code)
-    )]
-    pub(crate) fn nodes_mut(&mut self) -> &mut NodeList {
+    /// Returns a mutable reference to the list of nodes in the cluster.
+    pub fn nodes_mut(&mut self) -> &mut NodeList {
         &mut self.nodes
     }
 
-    pub(crate) fn cluster_dir(&self) -> PathBuf {
+    /// Returns the cluster's configuration directory path.
+    pub fn cluster_dir(&self) -> PathBuf {
         self.tmp_dir_guard.path().join(&self.opts.name)
     }
 }

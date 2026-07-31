@@ -1,5 +1,3 @@
-mod lib;
-
 mod authenticate;
 #[cfg(feature = "unstable-client-routes")]
 mod client_routes;

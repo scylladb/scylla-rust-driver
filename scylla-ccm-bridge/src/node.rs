@@ -4,36 +4,37 @@ use std::path::{Path, PathBuf};
 use anyhow::Error;
 
 use super::cli_wrapper::node::NodeCcm;
-pub(crate) use super::cli_wrapper::{DBType, NodeStartOptions, NodeStopOptions};
+pub use super::cli_wrapper::{DBType, NodeStartOptions, NodeStopOptions};
 use super::cluster::ClusterOptions;
 use super::ip_allocator::NetPrefix;
 
-pub(crate) type NodeId = u16;
+/// Unique identifier for a node within a cluster.
+pub type NodeId = u16;
 
+/// Configuration options for creating a CCM node.
 #[derive(Debug, Clone)]
-pub(crate) struct NodeOptions {
+pub struct NodeOptions {
     /// Node ID, needed to compose ccm commands properly
-    pub(crate) id: NodeId,
+    pub id: NodeId,
     /// Database Type: Cassandra, Scylla or Datastax
-    #[expect(dead_code)]
-    pub(crate) db_type: DBType,
+    pub db_type: DBType,
     /// Scylla or Cassandra version string that goes to CCM.
     /// Examples: `release:6.2.2`, `unstable:master/2021-05-24T17:16:53Z`
-    #[expect(dead_code)]
-    pub(crate) version: String,
+    pub version: String,
     /// Datacenter ID (0-based index matching position in `ClusterOptions::nodes_per_dc`).
-    pub(crate) datacenter_id: u16,
+    pub datacenter_id: u16,
     /// CCM allocates node ip addresses based on this prefix:
     /// if ip_prefix = `127.0.1.`, then `node1` address is `127.0.1.1`, `node2` address is `127.0.1.2`
-    pub(crate) ip_prefix: NetPrefix,
+    pub ip_prefix: NetPrefix,
     /// Number of vCPU for Scylla to occupy
-    pub(crate) smp: u16,
+    pub smp: u16,
     /// Amount of MB for Scylla to occupy. Has to be bigger than `smp`*512.
-    pub(crate) memory: u32,
+    pub memory: u32,
 }
 
 impl NodeOptions {
-    pub(crate) fn name(&self) -> String {
+    /// Returns the CCM node name (e.g., "node1", "node2").
+    pub fn name(&self) -> String {
         format!("node{}", self.id)
     }
 
@@ -50,15 +51,21 @@ impl NodeOptions {
     }
 }
 
+/// The operational status of a node in the cluster.
 #[derive(PartialEq)]
-pub(crate) enum NodeStatus {
+pub enum NodeStatus {
+    /// Node is stopped.
     Stopped,
+    /// Node is started and running.
     Started,
+    /// Node has been decommissioned.
     Decommissioned,
+    /// Node has been deleted.
     Deleted,
 }
 
-pub(crate) struct Node {
+/// Represents a single node in the CCM cluster.
+pub struct Node {
     status: NodeStatus,
     opts: NodeOptions,
     ccm_cmd: NodeCcm,
@@ -76,16 +83,18 @@ impl Node {
         }
     }
 
-    #[expect(dead_code)]
-    pub(crate) fn name(&self) -> String {
+    /// Returns the name of this node (e.g., "node1").
+    pub fn name(&self) -> String {
         self.opts.name()
     }
 
-    pub(crate) fn id(&self) -> NodeId {
+    /// Returns the unique ID of this node.
+    pub fn id(&self) -> NodeId {
         self.opts.id
     }
 
-    pub(crate) fn contact_endpoint(&self) -> String {
+    /// Returns the CQL contact endpoint (address:port) for this node.
+    pub fn contact_endpoint(&self) -> String {
         format!(
             "{}:{}",
             self.broadcast_rpc_address(),
@@ -93,11 +102,13 @@ impl Node {
         )
     }
 
-    pub(crate) fn broadcast_rpc_address(&self) -> IpAddr {
+    /// Returns the broadcast RPC address for this node.
+    pub fn broadcast_rpc_address(&self) -> IpAddr {
         self.opts.ip_prefix.to_ipaddress(self.opts.id)
     }
 
-    pub(crate) fn native_transport_port(&self) -> u16 {
+    /// Returns the native transport port for this node (typically 9042).
+    pub fn native_transport_port(&self) -> u16 {
         9042
     }
 
@@ -105,8 +116,7 @@ impl Node {
     ///
     /// Corresponds to the position in [`ClusterOptions::nodes_per_dc`].
     /// CCM names these `dc1`, `dc2`, … (1-based), so CCM DC name = `dc{datacenter_id + 1}`.
-    #[cfg_attr(not(feature = "unstable-client-routes"), expect(dead_code))]
-    pub(crate) fn datacenter_id(&self) -> u16 {
+    pub fn datacenter_id(&self) -> u16 {
         self.opts.datacenter_id
     }
 
@@ -115,15 +125,16 @@ impl Node {
     ///
     /// ### Example
     /// ```
-    /// # use crate::ccm::cluster::Node;
-    /// # async fn check_only_compiles(node: &Node) -> Result<(), Box<dyn Error>> {
+    /// # use scylla_ccm_bridge::node::Node;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(node: &mut Node) -> Result<(), Box<dyn Error>> {
     /// let args = [
     ///     ("client_encryption_options.enabled", "true"),
     ///     ("client_encryption_options.certificate", "db.cert"),
     ///     ("client_encryption_options.keyfile", "db.key"),
     /// ];
     ///
-    /// node.updateconf(args).await?
+    /// node.updateconf(args).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -135,11 +146,7 @@ impl Node {
     ///   certificate: db.cert
     ///   keyfile: db.key
     /// ```
-    #[cfg_attr(
-        any(not(feature = "openssl-010"), not(feature = "rustls-023")),
-        expect(dead_code)
-    )]
-    pub(crate) async fn updateconf<K, V>(
+    pub async fn updateconf<K, V>(
         &mut self,
         key_values: impl IntoIterator<Item = (K, V)>,
     ) -> Result<(), Error>
@@ -157,14 +164,7 @@ impl Node {
 
     /// This method starts the node. User can provide optional [`NodeStartOptions`] to control the behavior of the node start.
     /// If `None` is provided, the default options are used (see the implementation of Default for [`NodeStartOptions`]).
-    #[cfg_attr(
-        not(any(
-            all(scylla_unstable, feature = "unstable-host-listener"),
-            feature = "unstable-client-routes",
-        )),
-        expect(dead_code)
-    )]
-    pub(crate) async fn start(&mut self, opts: Option<NodeStartOptions>) -> Result<(), Error> {
+    pub async fn start(&mut self, opts: Option<NodeStartOptions>) -> Result<(), Error> {
         self.ccm_cmd
             .node_start()
             .wait_options(opts)
@@ -176,27 +176,15 @@ impl Node {
         Ok(())
     }
 
-    #[cfg_attr(
-        not(any(
-            all(scylla_unstable, feature = "unstable-host-listener"),
-            feature = "unstable-client-routes",
-        )),
-        expect(dead_code)
-    )]
-    pub(crate) async fn stop(&mut self, opts: Option<NodeStopOptions>) -> Result<(), Error> {
+    /// Stops the node.
+    pub async fn stop(&mut self, opts: Option<NodeStopOptions>) -> Result<(), Error> {
         self.ccm_cmd.node_stop().wait_options(opts).run().await?;
         self.set_status(NodeStatus::Stopped);
         Ok(())
     }
 
-    #[cfg_attr(
-        not(any(
-            all(scylla_unstable, feature = "unstable-host-listener"),
-            feature = "unstable-client-routes",
-        )),
-        expect(dead_code)
-    )]
-    pub(crate) async fn decommission(&mut self) -> Result<(), Error> {
+    /// Decommissions the node.
+    pub async fn decommission(&mut self) -> Result<(), Error> {
         if self.status == NodeStatus::Deleted || self.status == NodeStatus::Decommissioned {
             return Ok(());
         }
@@ -205,14 +193,8 @@ impl Node {
         Ok(())
     }
 
-    #[cfg_attr(
-        not(any(
-            all(scylla_unstable, feature = "unstable-host-listener"),
-            feature = "unstable-client-routes",
-        )),
-        expect(dead_code)
-    )]
-    pub(crate) async fn delete(&mut self) -> Result<(), Error> {
+    /// Deletes the node from the cluster.
+    pub async fn delete(&mut self) -> Result<(), Error> {
         if self.status == NodeStatus::Deleted {
             return Ok(());
         }
@@ -225,16 +207,13 @@ impl Node {
         self.status = status;
     }
 
-    #[expect(dead_code)]
-    pub(crate) fn status(self) -> NodeStatus {
+    /// Returns the current operational status of this node.
+    pub fn status(self) -> NodeStatus {
         self.status
     }
 
-    #[cfg_attr(
-        any(not(feature = "openssl-010"), not(feature = "rustls-023")),
-        expect(dead_code)
-    )]
-    pub(crate) fn node_dir(&self) -> &Path {
+    /// Returns the path to the node's configuration directory.
+    pub fn node_dir(&self) -> &Path {
         &self.node_dir
     }
 }
