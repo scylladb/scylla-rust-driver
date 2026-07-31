@@ -67,6 +67,32 @@ static ROOT_CCM_DIR: LazyLock<String> = LazyLock::new(|| {
     ccm_root_dir
 });
 
+/// Run a CCM test with default configuration.
+///
+/// # Arguments
+/// * `make_cluster_options` - A function that returns cluster configuration
+/// * `test_body` - The test function to execute
+///
+/// # Example
+/// ```
+/// use crate::ccm::lib::{run_ccm_test, cluster::ClusterOptions};
+///
+/// fn cluster_options() -> ClusterOptions {
+///     ClusterOptions {
+///         name: "test_cluster".to_string(),
+///         nodes_per_dc: vec![1],
+///         ..Default::default()
+///     }
+/// }
+///
+/// #[tokio::test]
+/// async fn test_example() {
+///     run_ccm_test(cluster_options, |cluster| async {
+///         let session = cluster.make_session_builder().await.build().await.unwrap();
+///         // test code here
+///     }).await;
+/// }
+/// ```
 pub(crate) async fn run_ccm_test<C, T>(make_cluster_options: C, test_body: T)
 where
     C: FnOnce() -> ClusterOptions,
