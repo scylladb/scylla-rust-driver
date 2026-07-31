@@ -39,8 +39,40 @@ name = "basic"
 path = "basic.rs"
 
 [[example]]
-name = "metrics"
-path = "metrics.rs"
+name = "client_routes"
+path = "client_routes.rs"
+
+[[example]]
+name = "compare_tokens"
+path = "compare_tokens.rs"
+
+[[example]]
+name = "cql_time_types"
+path = "cql_time_types.rs"
+
+[[example]]
+name = "cqlsh_rs"
+path = "cqlsh_rs.rs"
+
+[[example]]
+name = "custom_deserialization"
+path = "custom_deserialization.rs"
+
+[[example]]
+name = "custom_load_balancing_policy"
+path = "custom_load_balancing_policy.rs"
+
+[[example]]
+name = "enforce_coordinator"
+path = "enforce_coordinator.rs"
+
+[[example]]
+name = "execution_profile"
+path = "execution_profile.rs"
+
+[[example]]
+name = "get_by_name"
+path = "get_by_name.rs"
 
 [[example]]
 name = "logging"
@@ -51,84 +83,52 @@ name = "logging_log"
 path = "logging_log.rs"
 
 [[example]]
-name = "cqlsh-rs"
-path = "cqlsh-rs.rs"
+name = "metrics"
+path = "metrics.rs"
 
 [[example]]
 name = "parallel"
 path = "parallel.rs"
 
 [[example]]
-name = "compare-tokens"
-path = "compare-tokens.rs"
-
-[[example]]
-name = "select-paging"
-path = "select-paging.rs"
-
-[[example]]
-name = "user-defined-type"
-path = "user-defined-type.rs"
-
-[[example]]
-name = "cql-time-types"
-path = "cql-time-types.rs"
-
-[[example]]
-name = "tracing"
-path = "tracing.rs"
+name = "query_history"
+path = "query_history.rs"
 
 [[example]]
 name = "schema_agreement"
 path = "schema_agreement.rs"
 
 [[example]]
-name = "speculative-execution"
-path = "speculative-execution.rs"
+name = "select_paging"
+path = "select_paging.rs"
 
 [[example]]
-name = "get_by_name"
-path = "get_by_name.rs"
+name = "speculative_execution"
+path = "speculative_execution.rs"
 
 [[example]]
-name = "value_list"
-path = "value_list.rs"
+name = "tls_openssl"
+path = "tls_openssl.rs"
 
 [[example]]
-name = "enforce_coordinator"
-path = "enforce_coordinator.rs"
-
-[[example]]
-name = "custom_load_balancing_policy"
-path = "custom_load_balancing_policy.rs"
-
-[[example]]
-name = "custom_deserialization"
-path = "custom_deserialization.rs"
+name = "tls_rustls"
+path = "tls_rustls.rs"
 
 [[example]]
 name = "tower"
 path = "tower.rs"
 
 [[example]]
-name = "query_history"
-path = "query_history.rs"
+name = "tracing"
+path = "tracing.rs"
 
 [[example]]
-name = "tls-openssl"
-path = "tls-openssl.rs"
+name = "user_defined_type"
+path = "user_defined_type.rs"
 
 [[example]]
-name = "tls-rustls"
-path = "tls-rustls.rs"
-
-[[example]]
-name = "execution_profile"
-path = "execution_profile.rs"
-
-[[example]]
-name = "client-routes"
-path = "client-routes.rs"
+name = "value_list"
+path = "value_list.rs"
 
 [package.metadata.cargo-semver-checks.lints]
 workspace = true
