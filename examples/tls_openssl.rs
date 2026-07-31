@@ -1,102 +1,68 @@
+//! Connecting to a ScyllaDB cluster over TLS, using the `openssl` backend.
+//!
+//! The example starts its own throwaway TLS-enabled cluster, because talking TLS
+//! requires a cluster whose certificates were generated up front — there is no
+//! generic one to point at.
+
 use anyhow::Result;
-use futures::TryStreamExt as _;
-use scylla::client::session::Session;
-use scylla::client::session_builder::SessionBuilder;
-use std::env;
-use std::fs;
-use std::path::PathBuf;
-
 use openssl::ssl::{SslContextBuilder, SslMethod, SslVerifyMode};
+use openssl::x509::X509;
+use scylla::client::session::Session;
 
-// How to run scylla instance with TLS:
-// FIXME(wprzytula): Adjust to rustls.
-//
-// Edit your scylla.yaml file and add paths to certificates
-// ex:
-// client_encryption_options:
-//     enabled: true
-//     certificate: /etc/scylla/db.crt
-//     keyfile: /etc/scylla/db.key
-//
-// If using docker mount your scylla.yaml file and your cert files with option
-// --volume $(pwd)/tls.yaml:/etc/scylla/scylla.yaml
-//
-// If python returns permission error 13 use "Z" flag
-// --volume $(pwd)/tls.yaml:/etc/scylla/scylla.yaml:Z
-//
-// In your Rust program connect to port 9142 if it wasn't changed
-// Create new SslContextBuilder with SslMethod that is used in your connection
-// Set verification mode
-// if SslVerifyMode::PEER with self-signed certificate you have to
-// use set_ca_file method with path to your ca.crt file as an argument
-// if SslVerifyMode::NONE you don't need to use any additional methods
-//
-// Build it and add to scylla-rust-driver's SessionBuilder
+// Not an example itself: shared CI-only cluster setup, see `examples/ci/`.
+#[path = "ci/tls_cluster.rs"]
+mod ci_tls_cluster;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Create connection
-    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9142".to_string());
+    // --- CI setup ---------------------------------------------------------
+    // Everything down to the matching banner exists only so that this example
+    // can run unattended in CI, against a cluster nobody had to configure by
+    // hand: it starts a throwaway TLS-enabled cluster with `scylla-ccm-bridge`.
+    // It is not what the example teaches. If you already have such a cluster,
+    // this is the block you replace with your own contact points.
+    let cluster = ci_tls_cluster::start("examples_tls_openssl").await?;
+    let ca_cert_der = cluster.ca_cert_der();
+    let session_builder = cluster.session_builder().await;
+    // --- end of CI setup --------------------------------------------------
 
-    println!("Connecting to {uri} ...");
-
+    // Teach openssl to trust the certificate authority that signed the nodes'
+    // certificates. Had the CA been handed to us as a `ca.crt` file, this would
+    // be `context_builder.set_ca_file("ca.crt")?`.
     let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
-    let ca_dir = fs::canonicalize(PathBuf::from("./test/tls/ca.crt"))?;
-    context_builder.set_ca_file(ca_dir.as_path())?;
+    context_builder
+        .cert_store_mut()
+        .add_cert(X509::from_der(ca_cert_der)?)?;
+    // Verify the node's certificate. The driver additionally checks that the
+    // certificate covers the IP address it connected to, so the nodes' certs
+    // must carry that address in their subject alternative name.
     context_builder.set_verify(SslVerifyMode::PEER);
 
-    let session: Session = SessionBuilder::new()
-        .known_node(uri)
+    // An `SslContext` is accepted by `tls_context` directly.
+    let session: Session = session_builder
         .tls_context(Some(context_builder.build()))
         .build()
         .await?;
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
-    session
+    // `system.clients` is the server's own view of our connections, which is a
+    // convenient way to confirm that they really are encrypted.
+    let rows_result = session
         .query_unpaged(
-            "CREATE TABLE IF NOT EXISTS examples_ks.tls (a int, b int, c text, primary key (a, b))",
+            "SELECT ssl_enabled, ssl_protocol, ssl_cipher_suite FROM system.clients",
             &[],
         )
-        .await?;
-
-    session
-        .query_unpaged(
-            "INSERT INTO examples_ks.tls (a, b, c) VALUES (?, ?, ?)",
-            (3, 4, "def"),
-        )
-        .await?;
-
-    session
-        .query_unpaged(
-            "INSERT INTO examples_ks.tls (a, b, c) VALUES (1, 2, 'abc')",
-            &[],
-        )
-        .await?;
-
-    let prepared = session
-        .prepare("INSERT INTO examples_ks.tls (a, b, c) VALUES (?, 7, ?)")
-        .await?;
-    session
-        .execute_unpaged(&prepared, (42_i32, "I'm prepared!"))
-        .await?;
-    session
-        .execute_unpaged(&prepared, (43_i32, "I'm prepared 2!"))
-        .await?;
-    session
-        .execute_unpaged(&prepared, (44_i32, "I'm prepared 3!"))
-        .await?;
-
-    // Rows can be parsed as tuples
-    let mut iter = session
-        .query_iter("SELECT a, b, c FROM examples_ks.tls", &[])
         .await?
-        .rows_stream::<(i32, i32, String)>()?;
-    while let Some((a, b, c)) = iter.try_next().await? {
-        println!("a, b, c: {a}, {b}, {c}");
+        .into_rows_result()?;
+    for row in rows_result.rows::<(Option<bool>, Option<String>, Option<String>)>()? {
+        let (enabled, protocol, cipher) = row?;
+        println!(
+            "server sees a connection: ssl_enabled={enabled:?}, protocol={protocol:?}, cipher={cipher:?}"
+        );
     }
 
-    println!("Ok.");
+    println!("Ok, talked to the cluster over TLS with openssl.");
 
     Ok(())
 }

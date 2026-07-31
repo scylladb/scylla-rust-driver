@@ -29,6 +29,14 @@ tower = "0.5"
 rand = "0.9.0"
 env_logger = "0.11"
 rustls = "0.23"
+rcgen = "0.14"
+# Only used by the examples that have to bring up a specially configured
+# cluster (TLS, authentication, multi-datacenter, client routes) so that they
+# are runnable in CI. See examples/README.md.
+scylla-ccm-bridge = { path = "../scylla-ccm-bridge", features = [
+    "driver",
+    "unstable-client-routes",
+] }
 
 [[example]]
 name = "auth"
