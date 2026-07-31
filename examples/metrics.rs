@@ -8,8 +8,10 @@ use anyhow::Result;
 use futures::TryStreamExt as _;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
+use scylla::response::PagingState;
 use scylla::statement::unprepared::Statement;
 use std::env;
+use std::ops::ControlFlow;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -43,25 +45,45 @@ async fn main() -> Result<()> {
         stmt
     };
 
-    // Paged requests are accounted for separately from the unpaged ones above.
+    // The driver counts three kinds of request separately, so exercise all
+    // three. Automatically paged: the pager fetches pages as the stream is
+    // consumed, and the counter goes up once per page, not once per call.
     let mut rows = session
         .query_iter(select_stmt.clone(), &[])
         .await?
         .rows_stream::<(i32,)>()?;
     while rows.try_next().await?.is_some() {}
 
+    // Manually paged: one page per request, with the caller holding the
+    // paging state in between.
+    let mut paging_state = PagingState::start();
+    loop {
+        let (_, paging_state_response) = session
+            .query_single_page(select_stmt.clone(), &[], paging_state)
+            .await?;
+        match paging_state_response.into_paging_control_flow() {
+            ControlFlow::Break(()) => break,
+            ControlFlow::Continue(new_paging_state) => paging_state = new_paging_state,
+        }
+    }
+
     let metrics = session.get_metrics();
+    println!("Unpaged requests: {}", metrics.get_requests_unpaged_num());
     println!(
-        "Unpaged queries requested: {}",
-        metrics.get_requests_unpaged_num()
+        "Manually paged requests: {}",
+        metrics.get_requests_manually_paged_num()
     );
     println!(
-        "Automatically paged queries requested: {}",
+        "Automatically paged requests: {}",
         metrics.get_requests_automatically_paged_num()
     );
     println!(
         "Errors occurred in unpaged requests: {}",
         metrics.get_errors_unpaged_num()
+    );
+    println!(
+        "Errors occurred in manually paged requests: {}",
+        metrics.get_errors_manually_paged_num()
     );
     println!(
         "Errors occurred in automatically paged requests: {}",
