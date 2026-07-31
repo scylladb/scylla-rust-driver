@@ -5,6 +5,11 @@
         "helpers:pinGitHubActionDigestsToSemver"
     ],
     "commitBodyTable": true,
+    "description": "Global branch-creation cadence: Renovate may only open update branches on Saturdays. Individual deps can be slowed down further with a per-package `schedule` below.",
+    // See https://crontab.cronhub.io/ for cheatsheet on crontab syntax and translation to natural language.
+    "schedule": [
+        "* * * * 6"
+    ],
     "packageRules": [
         {
             "matchManagers": [
@@ -63,6 +68,19 @@
                 "scylla/Cargo.toml"
             ],
             "dependencyDashboardApproval": true
+        },
+        {
+            "description": "taiki-e/install-action releases (near-)daily and only installs CI tooling, so weekly is still too noisy: restrict it to the 1st and 3rd Saturday of each month. Cron cannot express a true fortnightly cadence; day-of-month and day-of-week are ANDed, so consecutive windows are exactly 14 or 21 days apart - never less than a fortnight.",
+            "matchManagers": [
+                "github-actions"
+            ],
+            "matchDepNames": [
+                "taiki-e/install-action"
+            ],
+            // See https://crontab.cronhub.io/ for cheatsheet on crontab syntax and translation to natural language.
+            "schedule": [
+                "* * 1-7,15-21 * 6"
+            ]
         }
     ]
 }
