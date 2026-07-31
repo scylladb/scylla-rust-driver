@@ -37,6 +37,9 @@ scylla-ccm-bridge = { path = "../scylla-ccm-bridge", features = [
     "driver",
     "unstable-client-routes",
 ] }
+# Ditto: its NLB stands in for the cloud load balancers that the client-routes
+# example needs in front of its throwaway cluster.
+scylla-proxy = { path = "../scylla-proxy" }
 
 [[example]]
 name = "auth"
