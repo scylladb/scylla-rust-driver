@@ -114,6 +114,12 @@ impl NodeList {
     pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
+
+    /// Check if the node list is empty.
+    #[expect(dead_code)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 /// A CCM cluster instance.
