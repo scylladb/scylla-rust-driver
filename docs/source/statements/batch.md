@@ -47,6 +47,9 @@ session.batch(&batch, batch_values).await?;
 > Results of preparation are not cached between `Session::batch` calls.
 > Consider preparing the statements before putting them into the batch.
 
+The full [example](https://github.com/scylladb/scylla-rust-driver/tree/main/examples/batch.rs) is available in the `examples` folder.
+You can run it from main folder of driver repository using `cargo run --example batch` after starting our docker cluster with `make up`.
+
 ### Preparing a batch
 Instead of preparing each statement individually, it's possible to prepare a whole batch at once:
 
@@ -146,6 +149,15 @@ For more information about sending values in a statement see [Statement values](
 
 
 ### Performance
-Batch statements do not use token/shard aware load balancing, batches are sent to a random node.
+A batch is sent to a single coordinator, which then has to fan its statements
+out to the replicas of each partition.
+Driver routes the batch exactly the same way it would route the first statement
+of the batch. That means if you use our DefaultPolicy (with token awareness enabled),
+the first statement is prepared and token-aware, then driver will try to route
+the batch to a replica for this first statement.
+Grouping the statements of a batch by partition is therefore what makes it
+cheaper - the replica used by the driver will be a replica for all statements in the batch.
 
-Use [prepared statements](prepared.md) for best performance
+Note that a batch is not a way to make many independent writes faster - sending
+them as separate concurrent requests lets each one go straight to a replica of
+its own partition. Use [prepared statements](prepared.md) for best performance.

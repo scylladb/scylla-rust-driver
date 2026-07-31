@@ -39,6 +39,10 @@ name = "basic"
 path = "basic.rs"
 
 [[example]]
+name = "batch"
+path = "batch.rs"
+
+[[example]]
 name = "client_routes"
 path = "client_routes.rs"
 
