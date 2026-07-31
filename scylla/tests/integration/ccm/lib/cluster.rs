@@ -35,7 +35,7 @@ pub(crate) struct ClusterOptions {
     /// if ip_prefix = `127.0.1.`, then `node1` address is `127.0.1.1`, `node2` address is `127.0.1.2`
     pub(crate) ip_prefix: NetPrefix,
     /// Number of nodes to populate
-    /// [1,2] - DC1 contains 1 node, DC2 contains 2 nodes
+    /// \[1,2\] - DC1 contains 1 node, DC2 contains 2 nodes
     pub(crate) nodes_per_dc: Vec<u8>,
     /// Number of vCPU for Scylla to occupy
     pub(crate) smp: u16,
