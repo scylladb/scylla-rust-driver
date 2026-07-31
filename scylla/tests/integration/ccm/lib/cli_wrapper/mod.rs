@@ -8,9 +8,12 @@
 pub(crate) mod cluster;
 pub(crate) mod node;
 
+/// The database type to use for the cluster.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum DBType {
+    /// ScyllaDB database
     Scylla,
+    /// Apache Cassandra database
     #[expect(dead_code)]
     Cassandra,
 }

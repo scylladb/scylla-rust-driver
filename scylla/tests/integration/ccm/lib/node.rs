@@ -8,8 +8,10 @@ pub(crate) use super::cli_wrapper::{DBType, NodeStartOptions, NodeStopOptions};
 use super::cluster::ClusterOptions;
 use super::ip_allocator::NetPrefix;
 
+/// Unique identifier for a node within a cluster.
 pub(crate) type NodeId = u16;
 
+/// Configuration options for creating a CCM node.
 #[derive(Debug, Clone)]
 pub(crate) struct NodeOptions {
     /// Node ID, needed to compose ccm commands properly
@@ -33,6 +35,7 @@ pub(crate) struct NodeOptions {
 }
 
 impl NodeOptions {
+    /// Returns the CCM node name (e.g., "node1", "node2").
     pub(crate) fn name(&self) -> String {
         format!("node{}", self.id)
     }
@@ -50,14 +53,20 @@ impl NodeOptions {
     }
 }
 
+/// The operational status of a node in the cluster.
 #[derive(PartialEq)]
 pub(crate) enum NodeStatus {
+    /// Node is stopped.
     Stopped,
+    /// Node is started and running.
     Started,
+    /// Node has been decommissioned.
     Decommissioned,
+    /// Node has been deleted.
     Deleted,
 }
 
+/// Represents a single node in the CCM cluster.
 pub(crate) struct Node {
     status: NodeStatus,
     opts: NodeOptions,
@@ -76,15 +85,18 @@ impl Node {
         }
     }
 
+    /// Returns the name of this node (e.g., "node1").
     #[expect(dead_code)]
     pub(crate) fn name(&self) -> String {
         self.opts.name()
     }
 
+    /// Returns the unique ID of this node.
     pub(crate) fn id(&self) -> NodeId {
         self.opts.id
     }
 
+    /// Returns the CQL contact endpoint (address:port) for this node.
     pub(crate) fn contact_endpoint(&self) -> String {
         format!(
             "{}:{}",
@@ -93,10 +105,12 @@ impl Node {
         )
     }
 
+    /// Returns the broadcast RPC address for this node.
     pub(crate) fn broadcast_rpc_address(&self) -> IpAddr {
         self.opts.ip_prefix.to_ipaddress(self.opts.id)
     }
 
+    /// Returns the native transport port for this node (typically 9042).
     pub(crate) fn native_transport_port(&self) -> u16 {
         9042
     }
@@ -176,6 +190,7 @@ impl Node {
         Ok(())
     }
 
+    /// Stops the node.
     #[cfg_attr(
         not(any(
             all(scylla_unstable, feature = "unstable-host-listener"),
@@ -189,6 +204,7 @@ impl Node {
         Ok(())
     }
 
+    /// Decommissions the node.
     #[cfg_attr(
         not(any(
             all(scylla_unstable, feature = "unstable-host-listener"),
@@ -205,6 +221,7 @@ impl Node {
         Ok(())
     }
 
+    /// Deletes the node from the cluster.
     #[cfg_attr(
         not(any(
             all(scylla_unstable, feature = "unstable-host-listener"),
@@ -225,11 +242,13 @@ impl Node {
         self.status = status;
     }
 
+    /// Returns the current operational status of this node.
     #[expect(dead_code)]
     pub(crate) fn status(self) -> NodeStatus {
         self.status
     }
 
+    /// Returns the path to the node's configuration directory.
     #[cfg_attr(
         any(not(feature = "openssl-010"), not(feature = "rustls-023")),
         expect(dead_code)

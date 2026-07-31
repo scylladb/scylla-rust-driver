@@ -372,6 +372,7 @@ impl ClientRoutesCluster {
         receivers
     }
 
+    /// Returns a mutable reference to the underlying cluster.
     pub(crate) fn cluster_mut(&mut self) -> &mut Cluster {
         &mut self.cluster
     }

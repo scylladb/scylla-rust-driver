@@ -1,9 +1,14 @@
+//! CCM (Cassandra Cluster Manager) bridge for testing ScyllaDB Drivers.
+
 mod cli_wrapper;
+/// Client routes integration tests utilities.
 #[cfg(feature = "unstable-client-routes")]
 pub(crate) mod client_routes;
+/// Cluster management types and operations.
 pub(crate) mod cluster;
 mod ip_allocator;
 mod logged_cmd;
+/// Node management types and operations.
 pub(crate) mod node;
 
 use std::panic::AssertUnwindSafe;
@@ -16,6 +21,8 @@ use futures::FutureExt;
 use ip_allocator::IpAllocator;
 use tracing::info;
 
+/// The version of the cluster to use for tests (e.g., "release:2026.1.0").
+/// Can be overridden with the `SCYLLA_TEST_CLUSTER` environment variable.
 pub(crate) static CLUSTER_VERSION: LazyLock<String> = LazyLock::new(|| {
     std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or("release:2026.1.0".to_string())
 });

@@ -60,6 +60,7 @@ impl Default for ClusterOptions {
     }
 }
 
+/// List of nodes in a cluster.
 pub(crate) struct NodeList(Vec<Node>);
 
 impl NodeList {
@@ -77,19 +78,23 @@ impl NodeList {
         self.0.push(node);
     }
 
+    /// Iterate over nodes.
     pub(crate) fn iter(&self) -> impl Iterator<Item = &Node> {
         self.0.iter()
     }
 
+    /// Iterate mutably over nodes.
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut Node> {
         self.0.iter_mut()
     }
 
+    /// Get a node by ID.
     #[allow(dead_code)]
     pub(crate) fn get_by_id(&self, id: NodeId) -> Option<&Node> {
         self.iter().find(|node| node.id() == id)
     }
 
+    /// Get a mutable reference to a node by ID.
     #[allow(dead_code)]
     pub(crate) fn get_mut_by_id(&mut self, id: NodeId) -> Option<&mut Node> {
         self.iter_mut().find(|node| node.id() == id)
@@ -99,16 +104,19 @@ impl NodeList {
         NodeList(Vec::new())
     }
 
+    /// Get contact endpoints for all nodes.
     pub(crate) fn get_contact_endpoints(&self) -> Vec<String> {
         self.iter().map(|node| node.contact_endpoint()).collect()
     }
 
+    /// Get the number of nodes.
     #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
 }
 
+/// A CCM cluster instance.
 pub(crate) struct Cluster {
     ccm_cmd: Ccm,
     // Needs to be held, because it removes the dir when dropped
@@ -138,6 +146,7 @@ impl Drop for Cluster {
 }
 
 impl Cluster {
+    /// Creates a new cluster instance with the given options.
     pub(crate) async fn new(opts: ClusterOptions) -> Result<Self, Error> {
         let mut opts = opts.clone();
         let allocated_prefix = if opts.ip_prefix.is_empty() {
@@ -209,6 +218,7 @@ impl Cluster {
         Ok(cluster)
     }
 
+    /// Initializes the cluster by creating it via CCM.
     pub(crate) async fn init(&mut self) -> Result<(), Error> {
         self.ccm_cmd
             .cluster_create(
@@ -349,16 +359,19 @@ impl Cluster {
         Ok(self.append_node(node_options))
     }
 
+    /// Stops the cluster.
     #[expect(dead_code)]
     pub(crate) async fn stop(&mut self) -> Result<(), Error> {
         self.ccm_cmd.cluster_stop().run().await.map(|_| ())
     }
 
+    /// Sets whether to keep the cluster on drop.
     pub(crate) fn set_keep_on_drop(&mut self, value: bool) {
         self.opts.keep_on_drop = value;
         self.tmp_dir_guard.disable_cleanup(value);
     }
 
+    /// Marks the cluster as failed and preserves it if `TEST_KEEP_CLUSTER_ON_FAILURE` is set.
     pub(crate) fn mark_as_failed(&mut self) {
         if *TEST_KEEP_CLUSTER_ON_FAILURE {
             println!("Test failed, keep cluster alive, TEST_KEEP_CLUSTER_ON_FAILURE=true");
@@ -378,6 +391,7 @@ impl Cluster {
         Ok(())
     }
 
+    /// Destroys the cluster by removing it via CCM.
     #[expect(dead_code)]
     pub(crate) async fn destroy(mut self) -> Result<(), Error> {
         self.ccm_cmd.cluster_remove().run().await.map(|_| ())?;
@@ -385,15 +399,18 @@ impl Cluster {
         Ok(())
     }
 
+    /// Creates a new session builder with the cluster's contact endpoints.
     pub(crate) async fn make_session_builder(&self) -> SessionBuilder {
         let endpoints = self.nodes.get_contact_endpoints();
         SessionBuilder::new().known_nodes(endpoints)
     }
 
+    /// Returns a reference to the list of nodes in the cluster.
     pub(crate) fn nodes(&self) -> &NodeList {
         &self.nodes
     }
 
+    /// Returns a mutable reference to the list of nodes in the cluster.
     #[cfg_attr(
         not(any(
             all(scylla_unstable, feature = "unstable-host-listener"),
@@ -406,6 +423,7 @@ impl Cluster {
         &mut self.nodes
     }
 
+    /// Returns the cluster's configuration directory path.
     pub(crate) fn cluster_dir(&self) -> PathBuf {
         self.tmp_dir_guard.path().join(&self.opts.name)
     }
