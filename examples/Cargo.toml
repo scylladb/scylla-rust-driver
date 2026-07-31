@@ -39,6 +39,10 @@ name = "basic"
 path = "basic.rs"
 
 [[example]]
+name = "metrics"
+path = "metrics.rs"
+
+[[example]]
 name = "logging"
 path = "logging.rs"
 
