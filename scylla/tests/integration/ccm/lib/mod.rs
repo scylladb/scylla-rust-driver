@@ -80,27 +80,36 @@ where
     .await
 }
 
-/// Run a CCM test with a custom configuration logic before the cluster starts.
+/// Run a CCM test with custom configuration logic before the cluster starts.
 ///
-/// ### Example
+/// # Arguments
+/// * `make_cluster_options` - A function that returns cluster configuration
+/// * `configure` - Configuration function to customize the cluster before start
+/// * `test_body` - The test function to execute
+///
+/// # Example
 /// ```
-/// # use crate::ccm::cluster::Cluster;
-/// # use crate::ccm::run_ccm_test_with_configuration;
-/// # use std::sync::{Arc, Mutex};
-/// async fn configure_cluster(cluster: Cluster) -> Cluster {
+/// use crate::ccm::lib::{run_ccm_test_with_configuration, cluster::{Cluster, ClusterOptions}};
+///
+/// async fn configure_cluster(mut cluster: Cluster) -> Cluster {
 ///    // Do some configuration here
 ///    cluster.updateconf([("foo", "bar")]).await.expect("failed to update conf");
 ///    cluster
 /// }
 ///
-/// async fn test(cluster: Arc<Mutex<Cluster>>) {
-///     let cluster = cluster.lock().await;
-///     let session = cluster.make_session_builder().await.build().await.unwrap();
-///
-///     println!("Succesfully connected to the cluster!");
+/// async fn test(cluster: &mut Cluster) {
+/// #   let _c = cluster;
+///     // test code here
 /// }
 ///
-/// run_ccm_test_with_configuration(ClusterOptions::default, configure_cluster, test).await;
+/// #[tokio::test]
+/// async fn test_example() {
+///     run_ccm_test_with_configuration(
+///         ClusterOptions::default,
+///         configure_cluster,
+///         test
+///     ).await;
+/// }
 /// ```
 pub(crate) async fn run_ccm_test_with_configuration<C, Conf, T>(
     make_cluster_options: C,
