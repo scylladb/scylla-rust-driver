@@ -63,6 +63,10 @@ name = "custom_load_balancing_policy"
 path = "custom_load_balancing_policy.rs"
 
 [[example]]
+name = "custom_serialization"
+path = "custom_serialization.rs"
+
+[[example]]
 name = "enforce_coordinator"
 path = "enforce_coordinator.rs"
 
@@ -75,12 +79,12 @@ name = "get_by_name"
 path = "get_by_name.rs"
 
 [[example]]
-name = "logging"
-path = "logging.rs"
+name = "logging_via_log"
+path = "logging_via_log.rs"
 
 [[example]]
-name = "logging_log"
-path = "logging_log.rs"
+name = "logging_via_tracing"
+path = "logging_via_tracing.rs"
 
 [[example]]
 name = "metrics"
@@ -125,10 +129,6 @@ path = "tracing.rs"
 [[example]]
 name = "user_defined_type"
 path = "user_defined_type.rs"
-
-[[example]]
-name = "value_list"
-path = "value_list.rs"
 
 [package.metadata.cargo-semver-checks.lints]
 workspace = true

@@ -6,7 +6,7 @@ use tracing::info;
 
 // To run this example, and view logged messages, RUST_LOG env var needs to be set
 // This can be done using shell command presented below
-// RUST_LOG=info cargo run --example logging
+// RUST_LOG=info cargo run --example logging_tracing
 #[tokio::main]
 async fn main() -> Result<()> {
     // Install global collector configured based on RUST_LOG env var

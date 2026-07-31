@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
 
     session
         .query_unpaged(
-            "CREATE TABLE IF NOT EXISTS examples_ks.my_type (k int, my text, primary key (k))",
+            "CREATE TABLE IF NOT EXISTS examples_ks.custom_serialization (k int, my text, primary key (k))",
             &[],
         )
         .await?;
@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
 
     session
         .query_unpaged(
-            "INSERT INTO examples_ks.my_type (k, my) VALUES (?, ?)",
+            "INSERT INTO examples_ks.custom_serialization (k, my) VALUES (?, ?)",
             to_insert,
         )
         .await?;
@@ -53,13 +53,13 @@ async fn main() -> Result<()> {
 
     session
         .query_unpaged(
-            "INSERT INTO examples_ks.my_type (k, my) VALUES (?, ?)",
+            "INSERT INTO examples_ks.custom_serialization (k, my) VALUES (?, ?)",
             to_insert_2,
         )
         .await?;
 
     let iter = session
-        .query_iter("SELECT * FROM examples_ks.my_type", &[])
+        .query_iter("SELECT * FROM examples_ks.custom_serialization", &[])
         .await?
         .rows_stream::<(i32, String)>()?;
 

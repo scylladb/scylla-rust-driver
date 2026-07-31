@@ -52,8 +52,8 @@ To start this example execute:
 RUST_LOG=info cargo run
 ```
 
-The full [example](https://github.com/scylladb/scylla-rust-driver/tree/main/examples/logging.rs) is available in the `examples` folder.
-You can run it from main folder of driver repository using `RUST_LOG=trace SCYLLA_URI=<scylla_ip>:9042 cargo run --example logging`.
+The full [example](https://github.com/scylladb/scylla-rust-driver/tree/main/examples/logging_tracing.rs) is available in the `examples` folder.
+You can run it from main folder of driver repository using `RUST_LOG=trace SCYLLA_URI=<scylla_ip>:9042 cargo run --example logging_tracing`.
 
 ## Using log
 
