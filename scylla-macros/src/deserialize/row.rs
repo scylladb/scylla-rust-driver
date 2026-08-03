@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use darling::{FromAttributes, FromField};
 use proc_macro2::Span;
 use syn::ext::IdentExt;
-use syn::parse_quote;
+use syn::{ImplItem, parse_quote};
 
 use crate::Flavor;
 
@@ -85,8 +85,8 @@ pub(crate) fn deserialize_row_derive(
     validate_attrs(&s.attrs, &s.fields)?;
 
     let items = [
-        s.generate_type_check_method().into(),
-        s.generate_deserialize_method().into(),
+        ImplItem::Fn(s.generate_type_check_method()),
+        ImplItem::Fn(s.generate_deserialize_method()),
     ];
 
     Ok(s.generate_impl(implemented_trait, items))
