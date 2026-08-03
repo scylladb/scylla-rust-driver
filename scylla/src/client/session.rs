@@ -8,6 +8,7 @@ use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
 use crate::client::client_routes::ClientRoutesConfig;
 use crate::client::execution::{RequestExecutionParams, RunRequestResult};
+use crate::cluster::metadata::{SchemaMetadataFetchLevel, SchemaMetadataFetchMode};
 use crate::cluster::node::KnownNode;
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::DbError;
@@ -281,6 +282,11 @@ pub struct SessionConfig {
     /// If true, full schema is fetched with every metadata refresh.
     pub fetch_schema_metadata: bool,
 
+    /// If true, full schema details (columns, partition keys, clustering keys, UDTs) are fetched.
+    /// Only has effect when fetch_schema_metadata is true.
+    /// If false, only lightweight metadata needed for routing (table names, partitioners, tablet info) is fetched.
+    pub fetch_full_schema_metadata: bool,
+
     /// Custom timeout for requests that query metadata.
     pub metadata_request_serverside_timeout: Option<Duration>,
 
@@ -422,6 +428,7 @@ impl SessionConfig {
             timestamp_generator: None,
             keyspaces_to_fetch: Vec::new(),
             fetch_schema_metadata: true,
+            fetch_full_schema_metadata: true,
             metadata_request_serverside_timeout: Some(Duration::from_secs(2)),
             keepalive_interval: Some(Duration::from_secs(30)),
             keepalive_timeout: Some(Duration::from_secs(30)),
@@ -1157,11 +1164,20 @@ impl Session {
             }
         };
 
+        let schema_metadata_fetch_mode = match (
+            config.fetch_schema_metadata,
+            config.fetch_full_schema_metadata,
+        ) {
+            (false, _) => SchemaMetadataFetchMode::Disabled,
+            (true, false) => SchemaMetadataFetchMode::Enabled(SchemaMetadataFetchLevel::Minimal),
+            (true, true) => SchemaMetadataFetchMode::Enabled(SchemaMetadataFetchLevel::Full),
+        };
+
         let cluster = Cluster::new(
             known_nodes,
             pool_config,
             config.keyspaces_to_fetch,
-            config.fetch_schema_metadata,
+            schema_metadata_fetch_mode,
             config.metadata_request_serverside_timeout,
             config.hostname_resolution_timeout,
             config.host_filter,

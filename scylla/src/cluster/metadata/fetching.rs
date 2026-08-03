@@ -32,8 +32,8 @@ use uuid::Uuid;
 
 use super::{
     CollectionType, Column, ColumnKind, ColumnType, Keyspace, MaterializedView, Metadata,
-    MissingUserDefinedType, NativeType, Peer, SingleKeyspaceMetadataError, Strategy, Table,
-    UserDefinedType,
+    MissingUserDefinedType, NativeType, Peer, SchemaMetadataFetchLevel, SchemaMetadataFetchMode,
+    SingleKeyspaceMetadataError, Strategy, Table, UserDefinedType,
 };
 
 use crate::DeserializeRow;
@@ -160,11 +160,11 @@ impl ControlConnection {
         &self,
         connect_port: u16,
         keyspace_to_fetch: &[String],
-        fetch_schema: bool,
+        schema_metadata_fetch_mode: SchemaMetadataFetchMode,
         client_routes_connection_ids: Option<&[String]>,
     ) -> Result<Metadata, MetadataError> {
         let peers_query = self.query_peers(connect_port);
-        let keyspaces_query = self.query_keyspaces(keyspace_to_fetch, fetch_schema);
+        let keyspaces_query = self.query_keyspaces(keyspace_to_fetch, schema_metadata_fetch_mode);
         let client_routes_query = async {
             let Some(connection_ids) = client_routes_connection_ids else {
                 return Ok(None);
@@ -586,8 +586,13 @@ impl ControlConnection {
     async fn query_keyspaces(
         &self,
         keyspaces_to_fetch: &[String],
-        fetch_schema: bool,
+        schema_metadata_fetch_mode: SchemaMetadataFetchMode,
     ) -> Result<PerKeyspaceResult<Keyspace, SingleKeyspaceMetadataError>, MetadataError> {
+        let schema_metadata_fetch_level = match schema_metadata_fetch_mode {
+            SchemaMetadataFetchMode::Disabled => return Ok(HashMap::new()),
+            SchemaMetadataFetchMode::Enabled(level) => level,
+        };
+
         let rows = self
             .query_filter_keyspace_name::<(String, HashMap<String, String>, bool)>(
                 "SELECT keyspace_name, replication, durable_writes FROM system_schema.keyspaces",
@@ -602,25 +607,56 @@ impl ControlConnection {
         // are independent of each other, so we run them concurrently to minimize the
         // critical path length.
         let schema_query = async {
-            if fetch_schema {
-                let udts = self.query_user_defined_types(keyspaces_to_fetch).await?;
-                let mut tables_schema = self.query_tables_schema(keyspaces_to_fetch, &udts).await?;
-                Ok::<_, MetadataError>((
-                    // We pass the mutable reference to the same map to the both functions.
-                    // First function fetches `system_schema.tables`, and removes found
-                    // table from `tables_schema`.
-                    // Second does the same for `system_schema.views`.
-                    // The assumption here is that no keys (table names) can appear in both
-                    // of those schema table.
-                    // As far as we know this assumption is true for Scylla and Cassandra.
-                    self.query_tables(keyspaces_to_fetch, &mut tables_schema)
-                        .await?,
-                    self.query_views(keyspaces_to_fetch, &mut tables_schema)
-                        .await?,
-                    udts,
-                ))
-            } else {
-                Ok((HashMap::new(), HashMap::new(), HashMap::new()))
+            match schema_metadata_fetch_level {
+                SchemaMetadataFetchLevel::Full => {
+                    // Fetch full schema: columns, keys, UDTs
+                    let udts = self.query_user_defined_types(keyspaces_to_fetch).await?;
+                    let mut tables_schema =
+                        self.query_tables_schema(keyspaces_to_fetch, &udts).await?;
+                    Ok((
+                        // We pass the mutable reference to the same map to the both functions.
+                        // First function fetches `system_schema.tables`, and removes found
+                        // table from `tables_schema`.
+                        // Second does the same for `system_schema.views`.
+                        // The assumption here is that no keys (table names) can appear in both
+                        // of those schema table.
+                        // As far as we know this assumption is true for Scylla and Cassandra.
+                        self.query_tables(keyspaces_to_fetch, &mut tables_schema)
+                            .await?,
+                        self.query_views(keyspaces_to_fetch, &mut tables_schema)
+                            .await?,
+                        udts,
+                    ))
+                }
+                SchemaMetadataFetchLevel::Minimal => {
+                    // Fetch minimal schema: just table/view names and partitioners
+                    // This is needed for token-awareness and tablet-awareness to work
+                    let mut tables_schema = self
+                        .query_table_partitioners(keyspaces_to_fetch)
+                        .await?
+                        .into_iter()
+                        .map(|(keyspace_and_table_name, partitioner)| {
+                            (
+                                keyspace_and_table_name,
+                                Ok(Table {
+                                    columns: HashMap::new(),
+                                    partition_key: vec![],
+                                    clustering_key: vec![],
+                                    partitioner,
+                                    pk_column_specs: vec![],
+                                }),
+                            )
+                        })
+                        .collect();
+
+                    Ok((
+                        self.query_tables(keyspaces_to_fetch, &mut tables_schema)
+                            .await?,
+                        self.query_views(keyspaces_to_fetch, &mut tables_schema)
+                            .await?,
+                        HashMap::new(),
+                    ))
+                }
             }
         };
         let tablets_query = async {
