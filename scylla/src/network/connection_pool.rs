@@ -671,6 +671,9 @@ impl PoolRefiller {
                             self.endpoint_description(),
                             self.excess_connections.len()
                         );
+                        self.decrement_total_connections(
+                            self.excess_connections.len()
+                        );
                         self.excess_connections.clear();
                     }
                 }
@@ -1013,6 +1016,7 @@ impl PoolRefiller {
                             "[{}] Excess connection pool exceeded limit of {} connections - clearing",
                             endpoint, excess_connection_limit,
                         );
+                        self.decrement_total_connections(self.excess_connections.len());
                         self.excess_connections.clear();
                     }
                 }
@@ -1095,6 +1099,9 @@ impl PoolRefiller {
         // If the sharder has changed, we can throw away all previous connections.
         // All connections to the same live node will have the same sharder,
         // so the old ones will become dead very soon anyway.
+        self.decrement_total_connections(
+            self.active_connection_count() + self.excess_connections.len(),
+        );
         self.conns.clear();
 
         let shard_count = new_sharder.map_or(1, |s| s.nr_shards.get() as usize);
@@ -1339,6 +1346,12 @@ impl PoolRefiller {
 
     fn active_connection_count(&self) -> usize {
         self.conns.iter().map(Vec::len).sum::<usize>()
+    }
+
+    fn decrement_total_connections(&self, count: usize) {
+        for _ in 0..count {
+            self.metrics.dec_total_connections();
+        }
     }
 
     fn excess_connection_limit(&self) -> usize {
