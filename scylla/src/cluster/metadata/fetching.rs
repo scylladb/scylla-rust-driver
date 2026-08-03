@@ -161,32 +161,27 @@ impl ControlConnection {
         connect_port: u16,
         keyspace_to_fetch: &[String],
         fetch_schema: bool,
+        client_routes_connection_ids: Option<&[String]>,
     ) -> Result<Metadata, MetadataError> {
         let peers_query = self.query_peers(connect_port);
         let keyspaces_query = self.query_keyspaces(keyspace_to_fetch, fetch_schema);
         let client_routes_query = async {
-            let Some(subscriber) = self.client_routes_subscriber() else {
-                return Ok(ClientRoutes::default());
+            let Some(connection_ids) = client_routes_connection_ids else {
+                return Ok(None);
             };
-            let connection_ids = subscriber.get_connection_ids();
-            self.query_client_routes(connection_ids, &[]).await
+            self.query_client_routes(connection_ids, &[])
+                .await
+                .map(Some)
         };
 
         let peers_and_cluster_name;
-        let client_routes: ClientRoutes;
+        let client_routes: Option<ClientRoutes>;
         let keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>;
 
         (peers_and_cluster_name, client_routes, keyspaces) =
             tokio::try_join!(peers_query, client_routes_query, keyspaces_query)?;
 
         let (peers, cluster_name) = peers_and_cluster_name;
-
-        let client_routes_updated_hosts =
-            if let Some(client_routes_subscriber) = self.client_routes_subscriber() {
-                client_routes_subscriber.replace_client_routes(client_routes)
-            } else {
-                HashSet::new()
-            };
 
         // There must be at least one peer
         if peers.is_empty() {
@@ -202,7 +197,7 @@ impl ControlConnection {
             peers,
             keyspaces,
             cluster_name,
-            client_routes_updated_hosts,
+            client_routes,
         })
     }
 }

@@ -24,7 +24,7 @@ use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
 use crate::routing::Token;
 
 use crate::frame::response::result::ColumnSpec;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
@@ -54,10 +54,10 @@ pub(crate) struct Metadata {
     pub(crate) keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
     pub(crate) cluster_name: Option<String>,
 
-    /// Host IDs whose client routes were added or updated during this metadata fetch.
-    /// Used to trigger immediate pool refills for nodes that may have been in backoff
-    /// due to `TranslationError::NoRuleForHost`.
-    pub(crate) client_routes_updated_hosts: HashSet<Uuid>,
+    /// The raw snapshot of client routes, as fetched from `system.client_routes`.
+    /// `None` if client routes are not configured for this session - in that case
+    /// the table is not queried at all and nothing should be applied.
+    pub(crate) client_routes: Option<ClientRoutes>,
 }
 
 /// Represents a node in the cluster, as fetched from the `system.{peers,local}` tables.
@@ -354,7 +354,7 @@ impl Metadata {
             peers,
             keyspaces: HashMap::new(),
             cluster_name: None,
-            client_routes_updated_hosts: HashSet::new(),
+            client_routes: None,
         }
     }
 }

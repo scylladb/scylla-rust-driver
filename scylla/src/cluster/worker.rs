@@ -92,6 +92,9 @@ impl Cluster {
             translator
         });
 
+        let client_routes_subscriber = client_routes_address_translator
+            .map(|translator| translator as Arc<dyn ClientRoutesSubscriber>);
+
         let mut metadata_reader = MetadataReader::new(
             known_nodes,
             hostname_resolution_timeout,
@@ -100,16 +103,26 @@ impl Cluster {
             keyspaces_to_fetch,
             fetch_schema_metadata,
             &host_filter,
-            client_routes_address_translator
-                .map(|translator| translator as Arc<dyn ClientRoutesSubscriber>),
+            client_routes_subscriber.as_ref().map(Arc::clone),
         )
         .await?;
 
         let mut node_status = HashMap::new();
 
-        let (cc, metadata) = metadata_reader
+        let (cc, mut metadata) = metadata_reader
             .establish_cc_and_fetch_metadata(true)
             .await?;
+
+        // The initial metadata is fetched before the worker exists, so the routes must be
+        // applied here - `ClusterState::new` below creates connection pools, which translate
+        // addresses through the subscriber.
+        if let (Some(subscriber), Some(routes)) = (
+            client_routes_subscriber.as_ref(),
+            metadata.client_routes.take(),
+        ) {
+            // The returned host ids are irrelevant here: the pools are being created fresh anyway.
+            let _ = subscriber.replace_client_routes(routes);
+        }
 
         let cluster_state = ClusterState::new(
             metadata,
@@ -141,6 +154,7 @@ impl Cluster {
             node_status,
 
             metadata_reader,
+            client_routes_subscriber,
             pool_config,
 
             refresh_channel: refresh_receiver,
@@ -234,6 +248,10 @@ struct ClusterWorker {
 
     // Cluster connections
     metadata_reader: MetadataReader,
+
+    /// The applier of client routes snapshots fetched from `system.client_routes`.
+    /// `None` if client routes are not configured.
+    client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
     pool_config: PoolConfig,
 
     // To listen for refresh requests
@@ -376,10 +394,14 @@ impl ClusterWorker {
                                         error!("BUG: Received a server event without a control connection.");
                                         continue;
                                     };
-                                    let res = self.metadata_reader.fetch_client_route_updates_on_event(cc, &evt).await;
+                                    let res = self.metadata_reader.fetch_client_routes_update_on_event(cc, &evt).await;
                                     match res {
-                                        Ok(updated_hosts) => {
-                                            self.cluster_state.load().trigger_pool_refills_for_hosts(updated_hosts.iter().copied());
+                                        Ok(None) => continue, // Nothing to apply; don't go to refreshing.
+                                        Ok(Some(routes)) => {
+                                            if let Some(subscriber) = self.client_routes_subscriber.as_ref() {
+                                                let updated_hosts = subscriber.merge_client_routes_update(&evt, routes);
+                                                self.cluster_state.load().trigger_pool_refills_for_hosts(updated_hosts.iter().copied());
+                                            }
                                             continue; // Don't go to refreshing.
                                         }
                                         Err(err) =>
@@ -552,8 +574,18 @@ impl ClusterWorker {
         control_connection: &mut Option<ControlConnection>,
     ) -> Result<(), MetadataError> {
         // Read latest Metadata
-        let metadata = self.read_metadata(control_connection).await?;
-        let client_routes_updated_hosts = metadata.client_routes_updated_hosts.clone();
+        let mut metadata = self.read_metadata(control_connection).await?;
+
+        // Apply the fetched client routes snapshot BEFORE constructing the new `ClusterState`,
+        // because `ClusterState::new` creates connection pools, which translate addresses
+        // through the subscriber.
+        let client_routes_updated_hosts = match (
+            self.client_routes_subscriber.as_ref(),
+            metadata.client_routes.take(),
+        ) {
+            (Some(subscriber), Some(routes)) => subscriber.replace_client_routes(routes),
+            _ => Default::default(),
+        };
 
         let cluster_state: Arc<ClusterState> = self.cluster_state.load_full();
 

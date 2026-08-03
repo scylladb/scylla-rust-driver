@@ -1462,7 +1462,7 @@ mod tests {
             let info = Metadata {
                 peers,
                 keyspaces: HashMap::new(),
-                client_routes_updated_hosts: Default::default(),
+                client_routes: None,
                 cluster_name: Some("TestCluster".into()),
             };
 
