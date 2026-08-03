@@ -862,7 +862,7 @@ impl PoolRefiller {
     fn handle_ready_connection(&mut self, evt: OpenedConnectionEvent) {
         let endpoint = self.endpoint_description();
         match evt.result {
-            Err(err) => {
+            Err(ConnectionSetupError::Connection(err)) => {
                 if evt.requested_shard.is_some() {
                     // If we failed to connect to a shard-aware port,
                     // fall back to the non-shard-aware port.
@@ -897,7 +897,37 @@ impl PoolRefiller {
                     }
                 }
             }
+            Err(ConnectionSetupError::Keyspace(err)) => {
+                self.metrics.dec_total_connections();
+                self.had_error_since_last_refill = true;
+                debug!(
+                    "[{}] Failed to set keyspace for new connection: {}",
+                    endpoint, err,
+                );
+
+                if !self.is_filling() && self.is_empty() {
+                    self.update_shared_conns(Some(err.into()));
+                }
+            }
             Ok((connection, error_receiver)) => {
+                // Before the connection can be put to the pool, we need
+                // to make sure that it uses appropriate keyspace
+                if let Some(keyspace) = &self.current_keyspace
+                    && evt.keyspace_name.as_ref() != Some(keyspace)
+                {
+                    // Asynchronously start setting keyspace for this
+                    // connection. It will be received on the ready
+                    // connections channel and will travel through
+                    // this logic again, to be finally put into
+                    // the conns.
+                    self.start_setting_keyspace_for_connection(
+                        connection,
+                        error_receiver,
+                        evt.requested_shard,
+                    );
+                    return;
+                }
+
                 // Update sharding and optionally reshard
                 let shard_info = connection.get_shard_info().as_ref();
                 let sharder = shard_info.map(|s| s.get_sharder());
@@ -927,24 +957,6 @@ impl PoolRefiller {
                         connection.get_shard_aware_port(),
                     );
                     self.shard_aware_port = connection.get_shard_aware_port();
-                }
-
-                // Before the connection can be put to the pool, we need
-                // to make sure that it uses appropriate keyspace
-                if let Some(keyspace) = &self.current_keyspace
-                    && evt.keyspace_name.as_ref() != Some(keyspace)
-                {
-                    // Asynchronously start setting keyspace for this
-                    // connection. It will be received on the ready
-                    // connections channel and will travel through
-                    // this logic again, to be finally put into
-                    // the conns.
-                    self.start_setting_keyspace_for_connection(
-                        connection,
-                        error_receiver,
-                        evt.requested_shard,
-                    );
-                    return;
                 }
 
                 let active_connection_count = self.active_connection_count();
@@ -1060,7 +1072,7 @@ impl PoolRefiller {
                 count_in_metrics(&result);
 
                 OpenedConnectionEvent {
-                    result,
+                    result: result.map_err(ConnectionSetupError::Connection),
                     requested_shard: Some(RequestedShard { shard, sharder }),
                     keyspace_name: None,
                 }
@@ -1073,7 +1085,7 @@ impl PoolRefiller {
                 count_in_metrics(&result);
 
                 OpenedConnectionEvent {
-                    result,
+                    result: result.map_err(ConnectionSetupError::Connection),
                     requested_shard: None,
                     keyspace_name: None,
                 }
@@ -1326,16 +1338,13 @@ impl PoolRefiller {
         let keyspace_name = self.current_keyspace.as_ref().cloned().unwrap();
         self.ready_connections.push(
             async move {
-                let result = connection.use_keyspace(&keyspace_name).await;
-                if let Err(err) = result {
-                    warn!(
-                        "[{}] Failed to set keyspace for new connection: {}",
-                        connection.get_connect_address().ip(),
-                        err,
-                    );
-                }
+                let result = connection
+                    .use_keyspace(&keyspace_name)
+                    .await
+                    .map(|()| (connection, error_receiver))
+                    .map_err(ConnectionSetupError::Keyspace);
                 OpenedConnectionEvent {
-                    result: Ok((connection, error_receiver)),
+                    result,
                     requested_shard,
                     keyspace_name: Some(keyspace_name),
                 }
@@ -1401,9 +1410,14 @@ struct RequestedShard {
 }
 
 struct OpenedConnectionEvent {
-    result: Result<(Connection, ErrorReceiver), ConnectionError>,
+    result: Result<(Connection, ErrorReceiver), ConnectionSetupError>,
     requested_shard: Option<RequestedShard>,
     keyspace_name: Option<VerifiedKeyspaceName>,
+}
+
+enum ConnectionSetupError {
+    Connection(ConnectionError),
+    Keyspace(UseKeyspaceError),
 }
 
 /// Signals that connectivity to a node has changed.
@@ -1428,30 +1442,256 @@ impl ConnectivityChangeEvent {
 #[cfg(test)]
 mod tests {
     use super::super::connection::{
-        HostConnectionConfig, open_connection, open_connection_to_shard_aware_port,
+        HostConnectionConfig, VerifiedKeyspaceName, open_connection,
+        open_connection_to_shard_aware_port,
     };
     use super::{
-        ADVANCED_SHARD_AWARENESS_BLOCK_DURATION, HostPoolConfig, OpenedConnectionEvent,
-        PoolRefiller, RequestedShard,
+        ADVANCED_SHARD_AWARENESS_BLOCK_DURATION, ConnectionSetupError, HostPoolConfig,
+        MaybePoolConnections, OpenedConnectionEvent, PoolConnections, PoolRefiller, RequestedShard,
     };
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
+    use crate::errors::{ConnectionError, UseKeyspaceError};
     use crate::frame::request::options;
     use crate::network::TcpSocketOptions;
     use crate::observability::metrics::Metrics;
     use crate::policies::reconnect::{ExponentialReconnectPolicy, ReconnectPolicy as _};
     use crate::routing::{Shard, ShardCount, ShardInfo, Sharder};
     use crate::test_utils::setup_tracing;
-    use futures::FutureExt;
+    use bytes::Bytes;
+    use futures::{FutureExt, StreamExt};
     use scylla_proxy::{
-        Condition, Node, Proxy, Reaction as _, RequestFrame, RequestOpcode, RequestReaction,
-        RequestRule, ResponseFrame, RunningProxy,
+        Condition, Node, Proxy, ProxyError, Reaction as _, RequestFrame, RequestOpcode,
+        RequestReaction, RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, WorkerError,
     };
     use std::collections::HashMap;
     use std::net::{SocketAddr, ToSocketAddrs};
     use std::sync::{Arc, RwLock};
     use std::time::Duration;
     use tokio::sync::{Notify, mpsc};
+
+    #[test]
+    fn keyspace_setup_failure_triggers_refill() {
+        let endpoint = Arc::new(RwLock::new(UntranslatedEndpoint::ContactPoint(
+            ResolvedContactPoint {
+                address: "127.0.0.1:9042".parse().unwrap(),
+            },
+        )));
+        let metrics = Metrics::new();
+        let (pool_empty_notifier, _pool_empty_receiver) = mpsc::channel(1);
+        let pool_updated_notify = Arc::new(Notify::new());
+        let mut pool_updated = Box::pin(pool_updated_notify.notified());
+        assert!(!pool_updated.as_mut().enable());
+        let mut refiller = PoolRefiller::new(
+            endpoint,
+            HostPoolConfig::default(),
+            None,
+            None,
+            pool_updated_notify.clone(),
+            Arc::new(Notify::new()),
+            pool_empty_notifier,
+            metrics.clone(),
+            ExponentialReconnectPolicy::new().new_session(),
+        );
+
+        metrics.inc_total_connections();
+        refiller.handle_ready_connection(OpenedConnectionEvent {
+            result: Err(ConnectionSetupError::Keyspace(
+                UseKeyspaceError::RequestTimeout(Duration::from_secs(1)),
+            )),
+            requested_shard: Some(RequestedShard {
+                shard: 0,
+                sharder: Sharder::new(ShardCount::new(1).unwrap(), 12),
+            }),
+            keyspace_name: None,
+        });
+
+        assert!(refiller.had_error_since_last_refill);
+        assert!(refiller.ready_connections.is_empty());
+        assert!(refiller.is_empty());
+        assert!(refiller.need_filling());
+        let shared = refiller.shared_conns.load_full();
+        assert!(matches!(
+            shared.as_ref(),
+            MaybePoolConnections::Broken(ConnectionError::UseKeyspaceError(
+                UseKeyspaceError::RequestTimeout(duration)
+            )) if *duration == Duration::from_secs(1)
+        ));
+        assert!(pool_updated.now_or_never().is_some());
+        #[cfg(feature = "metrics")]
+        assert_eq!(metrics.get_total_connections(), 0);
+    }
+
+    #[tokio::test]
+    async fn keyspace_setup_failure_preserves_pool_state() {
+        let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+        let make_rules = |shard_info: Option<ShardInfo>, keyspace_succeeds: bool| {
+            let query_reaction = if keyspace_succeeds {
+                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                    ResponseFrame {
+                        params: frame.params.for_response(),
+                        opcode: ResponseOpcode::Result,
+                        body: Bytes::from_static(b"\0\0\0\x03\0\x08keyspace"),
+                    }
+                }))
+            } else {
+                RequestReaction::forge().server_error()
+            };
+            vec![
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Options),
+                    RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                        ResponseFrame::forged_supported(frame.params, &{
+                            let mut options = HashMap::new();
+                            if let Some(shard_info) = shard_info.as_ref() {
+                                shard_info.add_to_options(&mut options);
+                            }
+                            options
+                        })
+                        .unwrap()
+                    })),
+                ),
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Startup),
+                    RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                        ResponseFrame::forged_ready(frame.params)
+                    })),
+                ),
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Query),
+                    query_reaction,
+                ),
+            ]
+        };
+        let mut proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .proxy_address(proxy_addr)
+                    .request_rules(make_rules(None, false))
+                    .build_dry_mode(),
+            )
+            .build()
+            .run()
+            .await
+            .unwrap();
+        let endpoint = UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+            address: proxy_addr,
+        });
+        let connection_config = HostConnectionConfig::default();
+        let (initial_connection, initial_error_receiver) =
+            open_connection(&endpoint, None, &connection_config)
+                .await
+                .unwrap();
+        let metrics = Metrics::new();
+        let (pool_empty_notifier, _pool_empty_receiver) = mpsc::channel(1);
+        let mut refiller = PoolRefiller::new(
+            Arc::new(RwLock::new(endpoint.clone())),
+            HostPoolConfig::default(),
+            None,
+            None,
+            Arc::new(Notify::new()),
+            Arc::new(Notify::new()),
+            pool_empty_notifier,
+            metrics.clone(),
+            ExponentialReconnectPolicy::new().new_session(),
+        );
+
+        metrics.inc_total_connections();
+        refiller.handle_ready_connection(OpenedConnectionEvent {
+            result: Ok((initial_connection, initial_error_receiver)),
+            requested_shard: None,
+            keyspace_name: None,
+        });
+        assert_eq!(refiller.active_connection_count(), 1);
+        #[cfg(feature = "metrics")]
+        assert_eq!(metrics.get_total_connections(), 1);
+        let shared = refiller.shared_conns.load_full();
+        assert!(matches!(
+            shared.as_ref(),
+            MaybePoolConnections::Ready(PoolConnections::NotSharded(connections))
+                if connections.len() == 1
+        ));
+
+        refiller.current_keyspace =
+            Some(VerifiedKeyspaceName::new("keyspace".to_owned(), false).unwrap());
+        let shard_info = ShardInfo::new(0, ShardCount::new(2).unwrap(), 12).unwrap();
+        proxy.running_nodes[0]
+            .change_request_rules(Some(make_rules(Some(shard_info.clone()), false)));
+        let (new_connection, new_error_receiver) =
+            open_connection(&endpoint, None, &connection_config)
+                .await
+                .unwrap();
+
+        metrics.inc_total_connections();
+        refiller.handle_ready_connection(OpenedConnectionEvent {
+            result: Ok((new_connection, new_error_receiver)),
+            requested_shard: None,
+            keyspace_name: None,
+        });
+        assert_eq!(refiller.active_connection_count(), 1);
+        assert!(refiller.sharder.is_none());
+
+        let event = refiller.ready_connections.next().await.unwrap();
+        assert!(matches!(
+            &event.result,
+            Err(ConnectionSetupError::Keyspace(_))
+        ));
+        refiller.handle_ready_connection(event);
+
+        assert_eq!(refiller.active_connection_count(), 1);
+        assert!(refiller.sharder.is_none());
+        #[cfg(feature = "metrics")]
+        assert_eq!(metrics.get_total_connections(), 1);
+        let shared = refiller.shared_conns.load_full();
+        assert!(matches!(
+            shared.as_ref(),
+            MaybePoolConnections::Ready(PoolConnections::NotSharded(connections))
+                if connections.len() == 1
+        ));
+
+        proxy.running_nodes[0].change_request_rules(Some(make_rules(Some(shard_info), true)));
+        let (successful_connection, successful_error_receiver) =
+            open_connection(&endpoint, None, &connection_config)
+                .await
+                .unwrap();
+
+        metrics.inc_total_connections();
+        refiller.handle_ready_connection(OpenedConnectionEvent {
+            result: Ok((successful_connection, successful_error_receiver)),
+            requested_shard: None,
+            keyspace_name: None,
+        });
+        assert_eq!(refiller.active_connection_count(), 1);
+        assert!(refiller.sharder.is_none());
+
+        let event = refiller.ready_connections.next().await.unwrap();
+        match &event.result {
+            Err(ConnectionSetupError::Connection(err)) => panic!("connection setup failed: {err}"),
+            Err(ConnectionSetupError::Keyspace(err)) => panic!("keyspace setup failed: {err}"),
+            Ok(_) => {}
+        }
+        refiller.handle_ready_connection(event);
+
+        assert_eq!(refiller.active_connection_count(), 1);
+        #[cfg(feature = "metrics")]
+        assert_eq!(metrics.get_total_connections(), 1);
+        assert_eq!(refiller.sharder.as_ref().unwrap().nr_shards.get(), 2);
+        let shared = refiller.shared_conns.load_full();
+        assert!(matches!(
+            shared.as_ref(),
+            MaybePoolConnections::Ready(PoolConnections::Sharded {
+                sharder,
+                connections,
+            }) if sharder.nr_shards.get() == 2
+                && connections.iter().map(Vec::len).sum::<usize>() == 1
+        ));
+
+        match proxy.finish().await {
+            Ok(()) | Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => {}
+            Err(err) => panic!("{err}"),
+        }
+        drop(refiller);
+    }
 
     async fn test_many_connections_with_config(connection_config: HostConnectionConfig) {
         let connections_number = 400;
