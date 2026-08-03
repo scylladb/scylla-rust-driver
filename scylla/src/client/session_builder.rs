@@ -986,6 +986,15 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// Set the fetch schema metadata flag.
     /// The default is true.
     ///
+    /// When false, NO schema metadata is fetched - the driver will not
+    /// fetch keyspaces, tables, partitioners, or any other schema information.
+    /// Token-awareness and tablet-awareness will NOT function.
+    ///
+    /// This should ONLY be used in very specific scenarios where you want to
+    /// completely eliminate schema metadata queries and can accept degraded
+    /// driver performance. For most use cases, you should use
+    /// `fetch_full_schema_metadata(false)` instead.
+    ///
     /// # Example
     /// ```
     /// # use scylla::client::session::Session;

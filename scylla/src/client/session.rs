@@ -279,7 +279,8 @@ pub struct SessionConfig {
     /// If empty, fetch all keyspaces
     pub keyspaces_to_fetch: Vec<String>,
 
-    /// If true, full schema is fetched with every metadata refresh.
+    /// If true, schema metadata is fetched with every metadata refresh.
+    /// If false, NO schema metadata is fetched at all (no keyspaces, no tables, nothing).
     pub fetch_schema_metadata: bool,
 
     /// If true, full schema details (columns, partition keys, clustering keys, UDTs) are fetched.
