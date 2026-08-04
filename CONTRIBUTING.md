@@ -39,10 +39,15 @@ Most of them live in `scylla/tests/integration`, but there are still a few lefto
 To run them, you need a 3-node DB cluster. The simplest way to set it up locally is to use a `docker compose`.
 Fortunately there is no need to invoke `docker compose` manually, everything can be handled by our `Makefile`.
 
-To run a cargo test suite, use the command below (note that you must have Docker, Docker Compose V2, and [cargo-nextest](https://nexte.st/) installed):
+To run a cargo test suite, use the command below (note that you must have Docker, Docker Compose V2 (at least v2.20), and [cargo-nextest](https://nexte.st/) installed):
 ```bash
 make test
 ```
+
+The ScyllaDB version used by the `docker compose` cluster is pinned in `scylla_version.env` in the repository root, and Renovate keeps it up to date.
+It must be a full, three-component version (e.g. `2026.2.2`) rather than a truncated one (e.g. `2026.2`) - otherwise CCM would resolve the full version
+on each call, making the tests take much more time.
+To run the `docker compose` cluster on a different version ad hoc, set `SCYLLA_VERSION` in your environment - it takes precedence over the value from the file.
 
 When on non-Linux machine, however, it can be impossible to connect to containerized ScyllaDB instance from outside Docker.\
 If you are using macOS, we provide a `dockerized-test` make target for running tests inside another Docker container:

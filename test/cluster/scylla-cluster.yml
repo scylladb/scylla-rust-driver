@@ -1,0 +1,126 @@
+networks:
+  public:
+    name: scylla_rust_driver_public
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.42.0.0/16
+services:
+  scylla1:
+    image: scylladb/scylla:${SCYLLA_VERSION:?SCYLLA_VERSION is not set - it should come from scylla_version.env in the repository root}
+    networks:
+      public:
+        ipv4_address: 172.42.0.2
+    command: |
+      --rpc-address 172.42.0.2
+      --listen-address 172.42.0.2
+      --seeds 172.42.0.2
+      --skip-wait-for-gossip-to-settle 0
+      --ring-delay-ms 0
+      --smp 2
+      --memory 1G
+      --developer-mode=1
+      --unsafe-bypass-fsync=on
+      --kernel-page-cache=on
+      --collectd=0
+      --max-networking-io-control-blocks=1000
+      --commitlog-use-o-dsync=0
+      --flush-schema-tables-after-modification=false
+      --auto-snapshot=0
+      --logger-log-level=compaction=warn
+      --logger-log-level=migration_manager=warn
+      --shutdown-announce-in-ms=0
+      --cluster-name TestCluster
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "cqlsh",
+          "scylla1",
+          "-e",
+          "SELECT * FROM system.local WHERE key='local'",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+  scylla2:
+    image: scylladb/scylla:${SCYLLA_VERSION:?SCYLLA_VERSION is not set - it should come from scylla_version.env in the repository root}
+    networks:
+      public:
+        ipv4_address: 172.42.0.3
+    command: |
+      --rpc-address 172.42.0.3
+      --listen-address 172.42.0.3
+      --seeds 172.42.0.2
+      --skip-wait-for-gossip-to-settle 0
+      --ring-delay-ms 0
+      --smp 2
+      --memory 1G
+      --developer-mode=1
+      --unsafe-bypass-fsync=on
+      --kernel-page-cache=on
+      --collectd=0
+      --max-networking-io-control-blocks=1000
+      --commitlog-use-o-dsync=0
+      --flush-schema-tables-after-modification=false
+      --auto-snapshot=0
+      --logger-log-level=compaction=warn
+      --logger-log-level=migration_manager=warn
+      --shutdown-announce-in-ms=0
+      --cluster-name TestCluster
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "cqlsh",
+          "scylla2",
+          "-e",
+          "SELECT * FROM system.local WHERE key='local'",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      scylla1:
+        condition: service_healthy
+  scylla3:
+    image: scylladb/scylla:${SCYLLA_VERSION:?SCYLLA_VERSION is not set - it should come from scylla_version.env in the repository root}
+    networks:
+      public:
+        ipv4_address: 172.42.0.4
+    command: |
+      --rpc-address 172.42.0.4
+      --listen-address 172.42.0.4
+      --seeds 172.42.0.2,172.42.0.3
+      --skip-wait-for-gossip-to-settle 0
+      --ring-delay-ms 0
+      --smp 2
+      --memory 1G
+      --developer-mode=1
+      --unsafe-bypass-fsync=on
+      --kernel-page-cache=on
+      --collectd=0
+      --max-networking-io-control-blocks=1000
+      --commitlog-use-o-dsync=0
+      --flush-schema-tables-after-modification=false
+      --auto-snapshot=0
+      --logger-log-level=compaction=warn
+      --logger-log-level=migration_manager=warn
+      --shutdown-announce-in-ms=0
+      --cluster-name TestCluster
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "cqlsh",
+          "scylla3",
+          "-e",
+          "SELECT * FROM system.local WHERE key='local'",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      scylla2:
+        condition: service_healthy
