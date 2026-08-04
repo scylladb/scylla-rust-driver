@@ -60,7 +60,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::timeout;
-use tracing::{Instrument, debug, error};
+use tracing::{Instrument, debug, error, warn};
 use uuid::Uuid;
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
@@ -535,6 +535,15 @@ impl SessionConfig {
             return Err(NewSessionError::IllegalConfig(
                 "Keepalive interval must be non-zero".into(),
             ));
+        }
+
+        if !self.fetch_schema_metadata && self.fetch_full_schema_metadata {
+            warn!(
+                "Inconsistent schema metadata configuration: `fetch_schema_metadata` is `false`, \
+                         but `fetch_full_schema_metadata` is `true`. Because overall schema metadata fetching \
+                         is turned off, ALL schema metadata fetching is now disabled, and `fetch_full_schema_metadata` \
+                         will have no effect. Token-aware and tablet-aware routing will NOT function."
+            );
         }
 
         // Ensure no illegal configuration with Client Routes
