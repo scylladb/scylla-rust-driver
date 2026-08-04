@@ -14,19 +14,17 @@
 //! Ownership of the established control connection lives outside the reader (in the
 //! cluster worker); the reader only knows how to create one and fetch metadata on it.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use rand::rng;
 use rand::seq::SliceRandom;
 use tracing::{debug, error, warn};
-use uuid::Uuid;
 
 use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::cluster::KnownNode;
 use crate::cluster::control_connection::{ControlConnection, ControlConnectionCache};
-use crate::cluster::metadata::{Metadata, PeerEndpoint, UntranslatedEndpoint};
+use crate::cluster::metadata::{ClientRoutes, Metadata, PeerEndpoint, UntranslatedEndpoint};
 use crate::cluster::node::resolve_contact_points;
 use crate::errors::{ConnectionPoolError, MetadataError, NewSessionError};
 use crate::frame::response::event::ClientRoutesChangeEvent;
@@ -237,7 +235,7 @@ impl MetadataReader {
                 self.control_connection_config.clone(),
                 self.request_serverside_timeout,
                 Arc::clone(&self.cc_cache),
-                self.client_routes_subscriber.as_ref().map(Arc::clone),
+                self.client_routes_subscriber.is_some(),
             )
             .await
             {
@@ -318,6 +316,9 @@ impl MetadataReader {
             cc.endpoint().address().port(),
             &self.keyspaces_to_fetch,
             self.fetch_schema,
+            self.client_routes_subscriber
+                .as_ref()
+                .map(|subscriber| subscriber.get_connection_ids()),
         )
         .await
     }
@@ -389,7 +390,7 @@ impl MetadataReader {
         mut config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
         cache: Arc<ControlConnectionCache>,
-        client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
+        register_for_client_routes_events: bool,
     ) -> Result<ControlConnection, MetadataError> {
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
         // setting event_sender field in connection config will cause control connection to
@@ -400,7 +401,7 @@ impl MetadataReader {
             EventType::StatusChange,
             EventType::SchemaChange,
         ];
-        if client_routes_subscriber.is_some() {
+        if register_for_client_routes_events {
             events_to_register_for.push(EventType::ClientRoutesChange);
         }
 
@@ -413,15 +414,12 @@ impl MetadataReader {
         .await;
 
         match open_result {
-            Ok((con, recv)) => Ok(ControlConnection::new(
-                Arc::new(con),
-                endpoint,
-                cache,
-                client_routes_subscriber,
-                recv,
-                receiver,
-            )
-            .override_serverside_timeout(request_serverside_timeout)),
+            Ok((con, recv)) => {
+                Ok(
+                    ControlConnection::new(Arc::new(con), endpoint, cache, recv, receiver)
+                        .override_serverside_timeout(request_serverside_timeout),
+                )
+            }
             Err(conn_err) => Err(MetadataError::ConnectionPoolError(
                 ConnectionPoolError::Broken {
                     last_connection_error: conn_err,
@@ -434,16 +432,18 @@ impl MetadataReader {
     /// not only by connection ids known to the driver (which is always the case), but also
     /// by host ids - only for the hosts whose ids are present in the event payload.
     ///
-    /// Then, the updates are fed to the [`ClientRoutesSubscriber`] for merging with previous knowledge.
-    pub(in super::super) async fn fetch_client_route_updates_on_event(
+    /// Returns the raw partial snapshot, or `None` if there is no subscriber configured
+    /// or the event contained no connection ids relevant to this driver. Merging the
+    /// update into the [`ClientRoutesSubscriber`]'s knowledge is the caller's job.
+    pub(in super::super) async fn fetch_client_routes_update_on_event(
         &self,
         cc: &ControlConnection,
         evt: &ClientRoutesChangeEvent,
-    ) -> Result<HashSet<Uuid>, MetadataError> {
+    ) -> Result<Option<ClientRoutes>, MetadataError> {
         let Some(subscriber) = &self.client_routes_subscriber else {
             // No subscriber, but received an event? Strange enough, but nothing to be done here.
             warn!("BUG: Received ClientRoutesChange event, but no ClientRoutesSubscriber was set!");
-            return Ok(HashSet::new());
+            return Ok(None);
         };
 
         #[deny(clippy::wildcard_enum_match_arm)]
@@ -468,7 +468,7 @@ impl MetadataReader {
         if connection_ids.is_empty() {
             // The event contained no relevant connection IDs.
             // Nothing to be done.
-            return Ok(HashSet::new());
+            return Ok(None);
         }
 
         // Although this is vaguely documented, the semantics of an event with connection ids [A, B, C] and host ids [X, Y, Z]
@@ -479,9 +479,7 @@ impl MetadataReader {
         // I believe the tradeoff here is correct.
         let client_routes = cc.query_client_routes(&connection_ids, host_ids).await?;
 
-        let updated_hosts = subscriber.merge_client_routes_update(evt, client_routes);
-
-        Ok(updated_hosts)
+        Ok(Some(client_routes))
     }
 }
 

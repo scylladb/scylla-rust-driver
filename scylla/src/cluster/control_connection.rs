@@ -10,7 +10,6 @@ use dashmap::DashMap;
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
-use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::client::pager::QueryPager;
 use crate::cluster::metadata::UntranslatedEndpoint;
 use crate::errors::{
@@ -39,7 +38,6 @@ pub(super) struct ControlConnection {
     /// The custom server-side timeout set for requests executed on the control connection.
     overridden_serverside_timeout: Option<Duration>,
     cache: Arc<ControlConnectionCache>,
-    client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
 
     error_channel: oneshot::Receiver<ConnectionError>,
     events_channel: mpsc::Receiver<Event>,
@@ -50,7 +48,6 @@ impl ControlConnection {
         conn: Arc<Connection>,
         endpoint: UntranslatedEndpoint,
         cache: Arc<ControlConnectionCache>,
-        client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
         error_channel: oneshot::Receiver<ConnectionError>,
         events_channel: mpsc::Receiver<Event>,
     ) -> Self {
@@ -59,7 +56,6 @@ impl ControlConnection {
             endpoint,
             overridden_serverside_timeout: None,
             cache,
-            client_routes_subscriber,
             error_channel,
             events_channel,
         }
@@ -75,10 +71,6 @@ impl ControlConnection {
             overridden_serverside_timeout: overridden_timeout,
             ..self
         }
-    }
-
-    pub(super) fn client_routes_subscriber(&self) -> Option<&Arc<dyn ClientRoutesSubscriber>> {
-        self.client_routes_subscriber.as_ref()
     }
 
     pub(super) fn get_connect_address(&self) -> SocketAddr {
@@ -353,7 +345,6 @@ mod tests {
                 Arc::new(conn),
                 endpoint,
                 Arc::new(ControlConnectionCache::new()),
-                None,
                 error_receiver,
                 events_receiver,
             );

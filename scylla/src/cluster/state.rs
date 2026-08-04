@@ -684,7 +684,7 @@ mod tests {
         Metadata {
             peers,
             keyspaces: HashMap::new(),
-            client_routes_updated_hosts: HashSet::new(),
+            client_routes: None,
             cluster_name: Some("Test Cluster".into()),
         }
     }
