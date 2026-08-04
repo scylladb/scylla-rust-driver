@@ -21,11 +21,70 @@ use futures::FutureExt;
 use ip_allocator::IpAllocator;
 use tracing::info;
 
-/// The version of the cluster to use for tests (e.g., "release:2026.1.0").
-/// Can be overridden with the `SCYLLA_TEST_CLUSTER` environment variable.
+/// The version of the cluster to use for tests (e.g., "release:2026.2.2").
+///
+/// The default is derived at run time from `scylla_version.env` in the
+/// repository root, which is the single source of truth for the ScyllaDB
+/// version used in testing.
+///
+/// Can be overridden with the `SCYLLA_TEST_CLUSTER` environment variable. The
+/// override is used verbatim, so it must be a full ccm version string -
+/// including the `release:` prefix (e.g. `release:2026.2.2`), or another ccm
+/// version scheme such as `unstable/master:<id>`.
 pub static CLUSTER_VERSION: LazyLock<String> = LazyLock::new(|| {
-    std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or("release:2026.1.0".to_string())
+    std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or_else(|_| {
+        let file_contents = read_scylla_version_env();
+        format!("release:{}", parse_scylla_version(&file_contents))
+    })
 });
+
+/// Path to `scylla_version.env`, resolved at compile time relative to this
+/// crate's manifest. The crate is test-only and always built from a checkout,
+/// so this keeps the lookup independent of the process working directory -
+/// which matters because cargo and nextest run test binaries from varying
+/// directories.
+const SCYLLA_VERSION_ENV_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../scylla_version.env");
+
+/// Reads `scylla_version.env`.
+fn read_scylla_version_env() -> String {
+    std::fs::read_to_string(SCYLLA_VERSION_ENV_PATH).unwrap_or_else(|e| {
+        panic!("Failed to read the ScyllaDB version file `{SCYLLA_VERSION_ENV_PATH}`: {e}")
+    })
+}
+
+/// Extracts and validates the `SCYLLA_VERSION` value from the contents of
+/// `scylla_version.env`. Panics if the key is missing, the value is empty, or
+/// the version is not a full three-component version.
+fn parse_scylla_version(file_contents: &str) -> &str {
+    let version = file_contents
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("SCYLLA_VERSION="))
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .expect(
+            "scylla_version.env must contain a non-empty `SCYLLA_VERSION=<version>` line \
+             (e.g. `SCYLLA_VERSION=2026.2.2`)",
+        );
+
+    let mut components = version.split('.');
+    let three_components = std::array::from_fn::<_, 3, _>(|_| components.next());
+    let valid = components.next().is_none()
+        && three_components.iter().all(|component| {
+            component.is_some_and(|component| {
+                !component.is_empty() && component.bytes().all(|b| b.is_ascii_digit())
+            })
+        });
+    assert!(
+        valid,
+        "SCYLLA_VERSION in scylla_version.env must be a full three-component numeric version \
+         (e.g. `2026.2.2`), got `{version}`. A truncated version such as `2026.2` is accepted \
+         by ccm, but it makes every single ccm invocation - even against an already-running \
+         cluster - query AWS to resolve the latest patch number, which slows the tests down \
+         badly.",
+    );
+
+    version
+}
 
 static TEST_KEEP_CLUSTER_ON_FAILURE: LazyLock<bool> = LazyLock::new(|| {
     std::env::var("TEST_KEEP_CLUSTER_ON_FAILURE")
@@ -171,5 +230,37 @@ pub async fn run_ccm_test_with_configuration<C, Conf, T>(
             cluster.mark_as_failed();
             std::panic::resume_unwind(err);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_scylla_version;
+    use super::read_scylla_version_env;
+
+    #[test]
+    fn parses_version_ignoring_comments_and_blank_lines() {
+        let contents = "# a comment\n\n#SCYLLA_VERSION=1.2.3\nMY_SCYLLA_VERSION=3.2.1\nSCYLLA_VERSION=2026.2.2\n";
+        assert_eq!(parse_scylla_version(contents), "2026.2.2");
+    }
+
+    #[test]
+    #[should_panic(expected = "three-component")]
+    fn rejects_truncated_version() {
+        parse_scylla_version("SCYLLA_VERSION=2026.2\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "SCYLLA_VERSION")]
+    fn rejects_missing_key() {
+        parse_scylla_version("# no version here\n#SCYLLA_VERSION=1.2.3\nMY_SCYLLA_VERSION=1.2.3\n");
+    }
+
+    /// The regression guard that matters: the checked-in file is found at the
+    /// compile-time-resolved path and its contents parse.
+    #[test]
+    fn checked_in_env_file_parses() {
+        let contents = read_scylla_version_env();
+        parse_scylla_version(&contents);
     }
 }
