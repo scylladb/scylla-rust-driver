@@ -13,6 +13,7 @@ pub const SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION: &str = "SCYLLA_LWT_ADD_METADAT
 /// which entry is a bit mask for the frame flags used to mark LWT frames.
 pub const LWT_OPTIMIZATION_META_BIT_MASK_KEY: &str = "LWT_OPTIMIZATION_META_BIT_MASK";
 const TABLETS_ROUTING_V1_KEY: &str = "TABLETS_ROUTING_V1";
+const TABLETS_ROUTING_V2_KEY: &str = "TABLETS_ROUTING_V2_EXPERIMENTAL";
 const SCYLLA_USE_METADATA_ID_KEY: &str = "SCYLLA_USE_METADATA_ID";
 
 /// Which protocol extensions are supported by the server.
@@ -50,6 +51,12 @@ pub struct ProtocolFeatures {
     /// Whether the server supports tablets routing v1.
     pub tablets_v1_supported: bool,
 
+    /// Whether the server supports tablets routing v2.
+    ///
+    /// The driver does not opt into the extension in STARTUP yet;
+    /// see [`ProtocolFeatures::add_startup_options`].
+    pub tablets_v2_supported: bool,
+
     /// Does the server supports sending metadata id (introduced in CQL v5) for CQL v4.
     pub scylla_metadata_id_supported: bool,
 }
@@ -65,6 +72,7 @@ impl ProtocolFeatures {
                 supported,
             ),
             tablets_v1_supported: Self::check_tablets_routing_v1_support(supported),
+            tablets_v2_supported: Self::check_tablets_routing_v2_support(supported),
             scylla_metadata_id_supported: Self::check_scylla_metadata_id_support(supported),
         }
     }
@@ -86,6 +94,10 @@ impl ProtocolFeatures {
 
     fn check_tablets_routing_v1_support(supported: &HashMap<String, Vec<String>>) -> bool {
         supported.contains_key(TABLETS_ROUTING_V1_KEY)
+    }
+
+    fn check_tablets_routing_v2_support(supported: &HashMap<String, Vec<String>>) -> bool {
+        supported.contains_key(TABLETS_ROUTING_V2_KEY)
     }
 
     fn check_scylla_metadata_id_support(supported: &HashMap<String, Vec<String>>) -> bool {
@@ -126,5 +138,24 @@ impl ProtocolFeatures {
         self.lwt_optimization_meta_bit_mask
             .map(|mask| (flags & mask) == mask)
             .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn supported(keys: &[&str]) -> HashMap<String, Vec<String>> {
+        keys.iter().map(|k| (k.to_string(), Vec::new())).collect()
+    }
+
+    #[test]
+    fn parses_tablets_v1_and_v2_support() {
+        let features = ProtocolFeatures::parse_from_supported(&supported(&[
+            TABLETS_ROUTING_V1_KEY,
+            TABLETS_ROUTING_V2_KEY,
+        ]));
+        assert!(features.tablets_v1_supported);
+        assert!(features.tablets_v2_supported);
     }
 }
