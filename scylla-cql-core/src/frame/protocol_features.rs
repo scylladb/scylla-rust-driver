@@ -53,12 +53,10 @@ pub struct ProtocolFeatures {
 
     /// Whether the server supports tablets routing v2.
     ///
+    /// V2 subsumes V1: when the server advertises both, the driver negotiates only V2.
     /// In addition to keeping the tablet routing cache fresh (like V1), V2 lets the driver
     /// send a tablet-version block on each `EXECUTE`, so the server only returns updated
     /// routing information when the driver's cached version is stale.
-    ///
-    /// Note that this only records what the server advertised. The driver does not opt into
-    /// the extension in STARTUP yet; see [`ProtocolFeatures::add_startup_options`].
     pub tablets_v2_supported: bool,
 
     /// Does the server supports sending metadata id (introduced in CQL v5) for CQL v4.
@@ -126,7 +124,10 @@ impl ProtocolFeatures {
             );
         }
 
-        if self.tablets_v1_supported {
+        // V2 subsumes V1: when the server supports both, negotiate only V2.
+        if self.tablets_v2_supported {
+            options.insert(Cow::Borrowed(TABLETS_ROUTING_V2_KEY), Cow::Borrowed(""));
+        } else if self.tablets_v1_supported {
             options.insert(Cow::Borrowed(TABLETS_ROUTING_V1_KEY), Cow::Borrowed(""));
         }
 
@@ -153,6 +154,14 @@ mod tests {
         keys.iter().map(|k| (k.to_string(), Vec::new())).collect()
     }
 
+    fn startup_keys(features: &ProtocolFeatures) -> Vec<String> {
+        let mut options = HashMap::new();
+        features.add_startup_options(&mut options);
+        let mut keys: Vec<String> = options.into_keys().map(|k| k.into_owned()).collect();
+        keys.sort();
+        keys
+    }
+
     #[test]
     fn parses_tablets_v1_and_v2_support() {
         let features = ProtocolFeatures::parse_from_supported(&supported(&[
@@ -161,5 +170,36 @@ mod tests {
         ]));
         assert!(features.tablets_v1_supported);
         assert!(features.tablets_v2_supported);
+    }
+
+    #[test]
+    fn negotiates_only_v2_when_both_supported() {
+        // The server advertises both v1 and v2; v2 subsumes v1, so the driver must
+        // echo only the v2 key in STARTUP.
+        let features = ProtocolFeatures::parse_from_supported(&supported(&[
+            TABLETS_ROUTING_V1_KEY,
+            TABLETS_ROUTING_V2_KEY,
+        ]));
+        assert_eq!(startup_keys(&features), vec![TABLETS_ROUTING_V2_KEY]);
+    }
+
+    #[test]
+    fn negotiates_v1_when_only_v1_supported() {
+        let features =
+            ProtocolFeatures::parse_from_supported(&supported(&[TABLETS_ROUTING_V1_KEY]));
+        assert_eq!(startup_keys(&features), vec![TABLETS_ROUTING_V1_KEY]);
+    }
+
+    #[test]
+    fn negotiates_v2_when_only_v2_supported() {
+        let features =
+            ProtocolFeatures::parse_from_supported(&supported(&[TABLETS_ROUTING_V2_KEY]));
+        assert_eq!(startup_keys(&features), vec![TABLETS_ROUTING_V2_KEY]);
+    }
+
+    #[test]
+    fn negotiates_no_tablets_routing_when_unsupported() {
+        let features = ProtocolFeatures::parse_from_supported(&supported(&[]));
+        assert!(startup_keys(&features).is_empty());
     }
 }
