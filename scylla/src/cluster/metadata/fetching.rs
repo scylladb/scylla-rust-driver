@@ -1302,7 +1302,7 @@ impl ControlConnection {
         .try_for_each(|_| future::ok(()))
         .await?;
 
-        let mut all_partitioners = self.query_table_partitioners().await?;
+        let mut all_partitioners = self.query_table_partitioners(keyspaces_to_fetch).await?;
         let mut result = HashMap::new();
 
         'tables_loop: for ((keyspace_name, table_name), table_result) in tables_schema {
@@ -1560,31 +1560,17 @@ impl ControlConnection {
     #[expect(clippy::result_large_err)]
     async fn query_table_partitioners(
         &self,
+        keyspaces_to_fetch: &[String],
     ) -> Result<PerKsTable<Option<String>>, MetadataFetchError> {
-        fn create_err(err: impl Into<MetadataFetchErrorKind>) -> MetadataFetchError {
-            MetadataFetchError {
-                error: err.into(),
-                table: "system_schema.scylla_tables",
-            }
-        }
-
         let rows = self
-            .query_iter(
+            .query_filter_keyspace_name::<(String, String, Option<String>)>(
                 "SELECT keyspace_name, table_name, partitioner FROM system_schema.scylla_tables",
-                &(),
+                keyspaces_to_fetch,
             )
-            .map(|pager_res| {
-                let pager = pager_res.map_err(create_err)?;
-                let stream = pager
-                    .rows_stream::<(String, String, Option<String>)>()
-                    // Map the error of Result<TypedRowStream, TypecheckError>
-                    .map_err(create_err)?
-                    // Map the error of single stream iteration (NextRowError)
-                    .map_err(create_err);
-                Ok::<_, MetadataFetchError>(stream)
-            })
-            .into_stream()
-            .try_flatten();
+            .map_err(|error| MetadataFetchError {
+                error,
+                table: "system_schema.scylla_tables",
+            });
 
         let result = rows
             .map(|row_result| {
