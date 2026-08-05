@@ -332,9 +332,9 @@ impl<'a> RequestExecutionParams<'a> {
         let mut last_error: Option<RequestError> = None;
         let mut current_consistency: Consistency = self.consistency;
 
-        'nodes_in_plan: for (node, shard) in request_plan {
+        'targets_in_plan: for (node, shard) in request_plan {
             let span = trace_span!("Executing request", node = %node.address, shard = %shard);
-            'same_node_retries: loop {
+            'same_target_retries: loop {
                 trace!(parent: &span, "Execution started");
                 let connection = match node.connection_for_shard(shard).await {
                     Ok(connection) => connection,
@@ -346,7 +346,7 @@ impl<'a> RequestExecutionParams<'a> {
                         );
                         last_error = Some(e.into());
                         // Broken connection doesn't count as a failed request, don't log in metrics
-                        continue 'nodes_in_plan;
+                        continue 'targets_in_plan;
                     }
                 };
                 context.request_span.record_shard_id(&connection);
@@ -420,14 +420,14 @@ impl<'a> RequestExecutionParams<'a> {
                     RetryDecision::RetrySameTarget(new_cl) => {
                         self.inc_retries_num();
                         current_consistency = new_cl.unwrap_or(current_consistency);
-                        continue 'same_node_retries;
+                        continue 'same_target_retries;
                     }
                     RetryDecision::RetryNextTarget(new_cl) => {
                         self.inc_retries_num();
                         current_consistency = new_cl.unwrap_or(current_consistency);
-                        continue 'nodes_in_plan;
+                        continue 'targets_in_plan;
                     }
-                    RetryDecision::DontRetry => break 'nodes_in_plan,
+                    RetryDecision::DontRetry => break 'targets_in_plan,
                     RetryDecision::IgnoreWriteError => {
                         return Some(Ok((RunRequestResult::IgnoredWriteError, coordinator)));
                     }
