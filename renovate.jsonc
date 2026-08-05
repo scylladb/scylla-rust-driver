@@ -10,6 +10,22 @@
     "schedule": [
         "* * * * 6"
     ],
+    // See https://docs.renovatebot.com/modules/manager/regex/ to learn how this works.
+    "customManagers": [
+        {
+            "description": "Keep the ScyllaDB version used by our test clusters current. `semver` versioning is deliberate: it skips the truncated tags (`2026.2`), `latest` and prereleases that Docker Hub publishes alongside real releases, none of which are usable here - see the comments in `scylla_version.env`.",
+            "customType": "regex",
+            "managerFilePatterns": [
+                "/^scylla_version\\.env$/"
+            ],
+            "matchStrings": [
+                "(?m)^SCYLLA_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)$"
+            ],
+            "depNameTemplate": "scylladb/scylla",
+            "datasourceTemplate": "docker",
+            "versioningTemplate": "semver" // Prevents updates to tags other than full versions.
+        }
+    ],
     "packageRules": [
         {
             "matchManagers": [

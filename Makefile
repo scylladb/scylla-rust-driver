@@ -126,6 +126,14 @@ up:
 down:
 	$(COMPOSE) down --remove-orphans
 
+.PHONY: stop
+stop:
+	$(COMPOSE) stop
+
+.PHONY: print-logs
+print-logs:
+	$(COMPOSE) logs
+
 .PHONY: logs
 logs:
 	$(COMPOSE) logs -f

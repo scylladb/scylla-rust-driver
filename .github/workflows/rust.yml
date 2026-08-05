@@ -138,7 +138,7 @@ jobs:
       - name: Setup 3-node ScyllaDB cluster
         run: |
           sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
-          docker compose -f test/cluster/docker-compose.yml up -d --wait
+          make up
       # We need to run doctests separately, because nextest doesn't support them :(
       # https://github.com/nextest-rs/nextest/issues/16
       - name: Run doctests
@@ -150,12 +150,12 @@ jobs:
         run: cargo run --bin find_stale_test_keyspaces
       - name: Stop the docker cluster
         if: ${{ always() }}
-        run: docker compose -f test/cluster/docker-compose.yml stop
+        run: make stop
       - name: Print the docker cluster logs
         if: ${{ always() }}
-        run: docker compose -f test/cluster/docker-compose.yml logs
+        run: make print-logs
       - name: Remove cluster
-        run: docker compose -f test/cluster/docker-compose.yml down
+        run: make down
       - name: Install scylla-ccm
         run: pip3 install https://github.com/scylladb/scylla-ccm/archive/master.zip
       - name: Run CCM command to create the ~/.ccm dir

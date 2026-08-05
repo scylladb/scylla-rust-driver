@@ -39,10 +39,16 @@ Most of them live in `scylla/tests/integration`, but there are still a few lefto
 To run them, you need a 3-node DB cluster. The simplest way to set it up locally is to use a `docker compose`.
 Fortunately there is no need to invoke `docker compose` manually, everything can be handled by our `Makefile`.
 
-To run a cargo test suite, use the command below (note that you must have Docker, Docker Compose V2, and [cargo-nextest](https://nexte.st/) installed):
+To run a cargo test suite, use the command below (note that you must have Docker, Docker Compose V2 (at least v2.20), and [cargo-nextest](https://nexte.st/) installed):
 ```bash
 make test
 ```
+
+The ScyllaDB version used for testing is pinned in `scylla_version.env` in the repository root, and Renovate keeps it up to date.
+That single file pins the version for both the `docker compose` cluster and the ccm tests.
+It must be a full, three-component version (e.g. `2026.2.2`) rather than a truncated one (e.g. `2026.2`) - otherwise CCM would resolve the full version
+on each call, making the tests take much more time.
+To run the `docker compose` cluster on a different version ad hoc, set `SCYLLA_VERSION` in your environment - it takes precedence over the value from the file.
 
 When on non-Linux machine, however, it can be impossible to connect to containerized ScyllaDB instance from outside Docker.\
 If you are using macOS, we provide a `dockerized-test` make target for running tests inside another Docker container:
@@ -60,6 +66,8 @@ There is a third category: ccm tests. They live in `scylla/tests/integration/ccm
 topology changes, or custom configurations. To run them you need to have [scylla-ccm](https://github.com/scylladb/scylla-ccm)
 installed. Easiest way is to install it using uv: `uv tool install git+https://github.com/scylladb/scylla-ccm.git`
 You can then execute those tests with `make ccm-test`.
+By default they use the version from `scylla_version.env`, prefixed with `release:`.
+To point them at a different version ad hoc, set `SCYLLA_TEST_CLUSTER` to a full ccm version string, e.g. `release:2026.1.0` or `unstable/master:<id>`.
 
 ### Writing tests that need to connect to Scylla
 
