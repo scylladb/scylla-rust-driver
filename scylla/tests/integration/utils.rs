@@ -139,6 +139,8 @@ where
     running_proxy.finish().await
 }
 
+/// # Warning
+/// This function **requires full schema metadata** to function correctly.
 pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
     // Cassandra doesn't have a concept of features, so first detect
     // if there is the `supported_features` column in system.local
@@ -173,6 +175,8 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
         .any(|f| f == feature)
 }
 
+/// # Warning
+/// This function **requires full schema metadata** to function correctly.
 pub(crate) async fn scylla_supports_tablets(session: &Session) -> bool {
     supports_feature(session, "TABLETS").await
 }
