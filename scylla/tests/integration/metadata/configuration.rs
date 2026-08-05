@@ -2,12 +2,13 @@
 //! iff ScyllaDB is the target node (else ignores the custom timeout).
 
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, setup_tracing, test_with_3_node_cluster,
-    unique_keyspace_name,
+    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, setup_tracing,
+    test_with_3_node_cluster, unique_keyspace_name,
 };
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::metadata::{ColumnType, NativeType, Strategy, UserDefinedType};
+use scylla::routing::partitioner::PartitionerName;
 use scylla_proxy::{
     Condition, Reaction as _, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
     ShardAwareness,
@@ -36,6 +37,33 @@ fn map_fedback_message<'a, T, F: Fn(RequestFrame) -> T + 'a>(
         }
         Err(TryRecvError::Empty) => None,
     })
+}
+
+async fn setup_minimal_schema_metadata_session() -> (Session, String) {
+    // Two sessions are required here:
+    // 1. The first session fetches full schema metadata, which is required by `scylla_supports_tablets`
+    //    to accurately verify if the cluster supports tablets.
+    // 2. The second session disables schema metadata fetching (`fetch_full_schema_metadata(false)`)
+    let session = create_new_session_builder().build().await.unwrap();
+    let supports_tablets = scylla_supports_tablets(&session).await;
+    let session = create_new_session_builder()
+        .fetch_full_schema_metadata(false)
+        .build()
+        .await
+        .unwrap();
+    let ks = unique_keyspace_name();
+
+    let mut create_ks = format!(
+        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    );
+    if supports_tablets {
+        create_ks += " AND TABLETS = {'enabled': false}";
+    }
+
+    session.ddl(create_ks).await.unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
+
+    (session, ks)
 }
 
 #[tokio::test]
@@ -301,10 +329,46 @@ async fn test_turning_off_schema_fetching() {
         .await
         .unwrap();
 
-    session.refresh_metadata().await.unwrap();
     let cluster_state = &session.get_cluster_state();
-    let keyspace = cluster_state.get_keyspace(&ks).unwrap();
+    assert!(cluster_state.get_keyspace(&ks).is_none());
 
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_fetching_minimal_schema_metadata() {
+    setup_tracing();
+    let session = create_new_session_builder()
+        .fetch_full_schema_metadata(false)
+        .build()
+        .await
+        .unwrap();
+    let ks = unique_keyspace_name();
+
+    session
+        .ddl(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"))
+        .await
+        .unwrap();
+    session
+        .query_unpaged(format!("USE {ks}"), &[])
+        .await
+        .unwrap();
+    session
+        .ddl("CREATE TYPE type_a (a int, b text)")
+        .await
+        .unwrap();
+    session
+        .ddl(
+            "CREATE TABLE table_a (
+                a int PRIMARY KEY,
+                b text
+            )",
+        )
+        .await
+        .unwrap();
+
+    let cluster_state = session.get_cluster_state();
+    let keyspace = cluster_state.get_keyspace(&ks).unwrap();
     let datacenter_repfactors: HashMap<String, usize> = cluster_state
         .replica_locator()
         .datacenter_names()
@@ -318,8 +382,73 @@ async fn test_turning_off_schema_fetching() {
             datacenter_repfactors
         }
     );
-    assert_eq!(keyspace.tables.len(), 0);
-    assert_eq!(keyspace.user_defined_types.len(), 0);
+    assert_eq!(keyspace.tables.len(), 1);
+    let table = keyspace.tables.get("table_a").unwrap();
+    assert!(table.columns.is_empty());
+    assert!(table.partition_key.is_empty());
+    assert!(table.clustering_key.is_empty());
+    assert!(keyspace.user_defined_types.is_empty());
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_token_awareness_with_minimal_schema_metadata() {
+    setup_tracing();
+    let (session, ks) = setup_minimal_schema_metadata_session().await;
+
+    session
+        .ddl("CREATE TABLE token_table (pk int PRIMARY KEY, value text)")
+        .await
+        .unwrap();
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let mut prepared = session
+        .prepare("INSERT INTO token_table (pk, value) VALUES (?, ?)")
+        .await
+        .unwrap();
+    assert!(prepared.is_token_aware());
+    assert_eq!(prepared.get_partitioner_name(), &PartitionerName::Murmur3);
+    prepared.set_tracing(true);
+
+    let result = session
+        .execute_unpaged(&prepared, (42_i32, "value"))
+        .await
+        .unwrap();
+    let tracing_info = session
+        .get_tracing_info(result.tracing_id().as_ref().unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(tracing_info.nodes().len(), 1);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+#[tokio::test]
+#[cfg_attr(cassandra_tests, ignore)]
+async fn test_cdc_partitioner_with_minimal_schema_metadata() {
+    setup_tracing();
+    let (session, ks) = setup_minimal_schema_metadata_session().await;
+    session
+        .ddl("CREATE TABLE cdc_table (pk int PRIMARY KEY) WITH cdc = {'enabled': true}")
+        .await
+        .unwrap();
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let cluster_state = session.get_cluster_state();
+    let cdc_table = cluster_state
+        .get_keyspace(&ks)
+        .unwrap()
+        .tables
+        .get("cdc_table_scylla_cdc_log")
+        .unwrap();
+    assert_eq!(
+        cdc_table.partitioner.as_deref(),
+        Some("com.scylladb.dht.CDCPartitioner")
+    );
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }

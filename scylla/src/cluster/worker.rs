@@ -3,6 +3,7 @@ use crate::client::client_routes::{
 };
 use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::cluster::control_connection::{ControlConnection, ControlConnectionEvent};
+use crate::cluster::metadata::SchemaMetadataFetchMode;
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::EventV2 as Event;
@@ -60,7 +61,7 @@ impl Cluster {
         known_nodes: Vec<KnownNode>,
         mut pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
-        fetch_schema_metadata: bool,
+        schema_metadata_fetch_mode: SchemaMetadataFetchMode,
         metadata_request_serverside_timeout: Option<Duration>,
         hostname_resolution_timeout: Option<Duration>,
         host_filter: Option<Arc<dyn HostFilter>>,
@@ -101,7 +102,7 @@ impl Cluster {
             pool_config.connection_config.clone(),
             metadata_request_serverside_timeout,
             keyspaces_to_fetch,
-            fetch_schema_metadata,
+            schema_metadata_fetch_mode,
             &host_filter,
             client_routes_subscriber.as_ref().map(Arc::clone),
         )

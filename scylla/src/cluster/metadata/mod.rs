@@ -32,6 +32,18 @@ use uuid::Uuid;
 // Re-export of CQL types.
 pub use crate::frame::response::result::{CollectionType, ColumnType, NativeType, UserDefinedType};
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SchemaMetadataFetchMode {
+    Disabled,
+    Enabled(SchemaMetadataFetchLevel),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SchemaMetadataFetchLevel {
+    Minimal,
+    Full,
+}
+
 /// Indicates that reading metadata failed, but in a way
 /// that we can handle, by throwing out data for a keyspace.
 /// It is possible that some of the errors could be handled in even

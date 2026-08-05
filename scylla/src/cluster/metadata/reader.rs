@@ -24,7 +24,9 @@ use tracing::{debug, error, warn};
 use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::cluster::KnownNode;
 use crate::cluster::control_connection::{ControlConnection, ControlConnectionCache};
-use crate::cluster::metadata::{ClientRoutes, Metadata, PeerEndpoint, UntranslatedEndpoint};
+use crate::cluster::metadata::{
+    ClientRoutes, Metadata, PeerEndpoint, SchemaMetadataFetchMode, UntranslatedEndpoint,
+};
 use crate::cluster::node::resolve_contact_points;
 use crate::errors::{ConnectionPoolError, MetadataError, NewSessionError};
 use crate::frame::response::event::ClientRoutesChangeEvent;
@@ -44,7 +46,7 @@ pub(crate) struct MetadataReader {
     request_serverside_timeout: Option<Duration>,
     hostname_resolution_timeout: Option<Duration>,
     keyspaces_to_fetch: Vec<String>,
-    fetch_schema: bool,
+    schema_metadata_fetch_mode: SchemaMetadataFetchMode,
     host_filter: Option<Arc<dyn HostFilter>>,
     // When no known peer is reachable, initial known nodes are resolved once again as a fallback
     // and establishing control connection to them is attempted.
@@ -73,7 +75,7 @@ impl MetadataReader {
         connection_config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
         keyspaces_to_fetch: Vec<String>,
-        fetch_schema: bool,
+        schema_metadata_fetch_mode: SchemaMetadataFetchMode,
         host_filter: &Option<Arc<dyn HostFilter>>,
         client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
     ) -> Result<Self, NewSessionError> {
@@ -97,7 +99,7 @@ impl MetadataReader {
                 .map(UntranslatedEndpoint::ContactPoint)
                 .collect(),
             keyspaces_to_fetch,
-            fetch_schema,
+            schema_metadata_fetch_mode,
             host_filter: host_filter.clone(),
             initial_known_nodes,
             cc_cache,
@@ -315,7 +317,7 @@ impl MetadataReader {
         cc.query_metadata(
             cc.endpoint().address().port(),
             &self.keyspaces_to_fetch,
-            self.fetch_schema,
+            self.schema_metadata_fetch_mode,
             self.client_routes_subscriber
                 .as_ref()
                 .map(|subscriber| subscriber.get_connection_ids()),

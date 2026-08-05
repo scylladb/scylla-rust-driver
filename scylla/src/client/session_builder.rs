@@ -986,6 +986,15 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// Set the fetch schema metadata flag.
     /// The default is true.
     ///
+    /// When false, NO schema metadata is fetched - the driver will not
+    /// fetch keyspaces, tables, partitioners, or any other schema information.
+    /// Token-awareness and tablet-awareness will NOT function.
+    ///
+    /// This should ONLY be used in very specific scenarios where you want to
+    /// completely eliminate schema metadata queries and can accept degraded
+    /// driver performance. For most use cases, you should use
+    /// `fetch_full_schema_metadata(false)` instead.
+    ///
     /// # Example
     /// ```
     /// # use scylla::client::session::Session;
@@ -1001,6 +1010,42 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn fetch_schema_metadata(mut self, fetch: bool) -> Self {
         self.config.fetch_schema_metadata = fetch;
+        self
+    }
+
+    /// Set the fetch full schema metadata flag.
+    /// This only has effect when `fetch_schema_metadata` is true.
+    /// The default is true.
+    ///
+    /// When false, the driver fetches lightweight metadata necessary for proper
+    /// routing (table names, partitioners, tablet info) but skips heavy metadata
+    /// like column details, partition/clustering key information, and UDTs.
+    /// This significantly reduces memory usage and metadata fetch time while
+    /// maintaining full driver routing functionality.
+    ///
+    /// When true (default), the driver fetches complete schema information
+    /// including all columns, keys, and UDTs, which can be inspected via
+    /// ClusterState API.
+    ///
+    /// Note: When set to false, ClusterState::compute_token
+    /// and ClusterState::get_endpoints will not work.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .fetch_schema_metadata(true)
+    ///     .fetch_full_schema_metadata(false)  // Fetch only minimal metadata
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn fetch_full_schema_metadata(mut self, fetch: bool) -> Self {
+        self.config.fetch_full_schema_metadata = fetch;
         self
     }
 
