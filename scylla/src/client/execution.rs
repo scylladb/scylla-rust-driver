@@ -1,3 +1,28 @@
+//! Unified request-execution core shared by all request paths.
+//!
+//! Historically, request execution (load balancing, retries, speculative
+//! execution, history, metrics) was implemented independently in several
+//! places: [`Session`](crate::client::session::Session) non-paged methods, the
+//! [`QueryPager`](crate::client::pager::QueryPager) worker and the control
+//! connection worker. This module collapses all of that into a single set
+//! of layered functions:
+//!
+//! - [`RequestExecutionParams::run_request_no_side_effects`] - takes no `Session`
+//!   and does not handle side effects. It applies the client-side timeout and dispatches
+//!   speculative-execution fibers. It is generic over the *source* of
+//!   connections (see [`AttemptTarget`]) so that it works both with a
+//!   load-balancing plan of nodes and with a single fixed connection (as used
+//!   by the control connection).
+//! - [`RequestExecutionParams::run_request_speculative_fiber`] - a single speculative fiber:
+//!   iterates the execution plan, picks connections, runs the per-attempt
+//!   closure and applies the retry policy.
+//!
+//! The outermost layer (`run_request`), which additionally handles
+//! side effects coming from `USE <keyspace>` and schema-changing statements,
+//! lives on [`Session`](crate::client::session::Session) because it needs
+//! access to session state. An analogous side-effects-handling layer lives
+//! [`PagingExecutor`](crate::client::pager::PagingExecutor).
+
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
