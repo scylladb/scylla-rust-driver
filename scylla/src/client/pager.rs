@@ -305,8 +305,10 @@ impl PagingExecutor {
             serial_consistency: self.serial_consistency,
             retry_policy: self.retry_policy.as_ref(),
             load_balancing_policy: self.load_balancing_policy.as_ref(),
-            metrics: &self.metrics,
-            speculative_policy: self.speculative_policy.as_deref(),
+            metrics_and_speculative_policy: Some((
+                &self.metrics,
+                self.speculative_policy.as_deref(),
+            )),
             request_timeout: self.request_timeout,
             history_listener: self.history_listener.as_deref(),
             request_kind: RequestPaging::Automatic,

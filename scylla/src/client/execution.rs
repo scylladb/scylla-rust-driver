@@ -69,10 +69,13 @@ pub(crate) struct RequestExecutionParams<'a> {
     pub(crate) retry_policy: &'a dyn RetryPolicy,
     /// Load balancing policy used to order targets for the execution.
     pub(crate) load_balancing_policy: &'a dyn LoadBalancingPolicy,
-    /// Metrics sink.
-    pub(crate) metrics: &'a Arc<Metrics>,
-    /// Speculative execution policy, if any.
-    pub(crate) speculative_policy: Option<&'a dyn SpeculativeExecutionPolicy>,
+    /// The following two fields are grouped to statically enforce that speculative execution
+    /// is only used when metrics sink is provided.
+    ///
+    /// Metrics sink, if any. The control connection has no metrics.
+    /// Speculative execution policy, if any. Only fires for idempotent requests.
+    pub(crate) metrics_and_speculative_policy:
+        Option<(&'a Arc<Metrics>, Option<&'a dyn SpeculativeExecutionPolicy>)>,
     /// Client-side request timeout, if any.
     pub(crate) request_timeout: Option<Duration>,
     /// History listener, if any.
@@ -116,8 +119,7 @@ impl<'a> RequestExecutionParams<'a> {
             serial_consistency,
             retry_policy,
             load_balancing_policy,
-            metrics,
-            speculative_policy,
+            metrics_and_speculative_policy: Some((metrics, speculative_policy)),
             request_timeout,
             history_listener,
             request_kind,
@@ -173,31 +175,43 @@ impl ExecuteRequestContext<'_> {
 
 impl<'a> RequestExecutionParams<'a> {
     fn inc_total_queries(&self) {
+        let Some((metrics, _)) = self.metrics_and_speculative_policy else {
+            return;
+        };
         match self.request_kind {
-            RequestPaging::Unpaged => self.metrics.inc_total_nonpaged_queries(),
-            RequestPaging::Manual => self.metrics.inc_total_manually_paged_queries(),
-            RequestPaging::Automatic => self.metrics.inc_total_automatically_paged_queries(),
+            RequestPaging::Unpaged => metrics.inc_total_nonpaged_queries(),
+            RequestPaging::Manual => metrics.inc_total_manually_paged_queries(),
+            RequestPaging::Automatic => metrics.inc_total_automatically_paged_queries(),
         }
     }
 
     fn inc_failed_queries(&self) {
+        let Some((metrics, _)) = self.metrics_and_speculative_policy else {
+            return;
+        };
         match self.request_kind {
-            RequestPaging::Unpaged => self.metrics.inc_failed_nonpaged_queries(),
-            RequestPaging::Manual => self.metrics.inc_failed_manually_paged_queries(),
-            RequestPaging::Automatic => self.metrics.inc_failed_automatically_paged_queries(),
+            RequestPaging::Unpaged => metrics.inc_failed_nonpaged_queries(),
+            RequestPaging::Manual => metrics.inc_failed_manually_paged_queries(),
+            RequestPaging::Automatic => metrics.inc_failed_automatically_paged_queries(),
         }
     }
 
     fn inc_retries_num(&self) {
-        self.metrics.inc_retries_num();
+        if let Some((metrics, _)) = self.metrics_and_speculative_policy {
+            metrics.inc_retries_num();
+        }
     }
 
     fn inc_request_timeouts(&self) {
-        self.metrics.inc_request_timeouts();
+        if let Some((metrics, _)) = self.metrics_and_speculative_policy {
+            metrics.inc_request_timeouts();
+        }
     }
 
     fn log_query_latency(&self, latency_ms: u64) {
-        let _ = self.metrics.log_query_latency(latency_ms);
+        if let Some((metrics, _)) = self.metrics_and_speculative_policy {
+            let _ = metrics.log_query_latency(latency_ms);
+        }
     }
 
     /// Executes a request without handling side effects and without
@@ -223,8 +237,9 @@ impl<'a> RequestExecutionParams<'a> {
             self.history_listener.map(|hl| (hl, hl.log_request_start()));
 
         let runner = async {
-            match self.speculative_policy {
-                Some(speculative) if self.is_idempotent => {
+            match self.metrics_and_speculative_policy {
+                #[cfg_attr(not(feature = "metrics"), expect(unused_variables))]
+                Some((metrics, Some(speculative))) if self.is_idempotent => {
                     let shared_request_plan = SharedPlan {
                         iter: std::sync::Mutex::new(request_plan),
                     };
@@ -258,7 +273,7 @@ impl<'a> RequestExecutionParams<'a> {
 
                     let context = speculative_execution::Context {
                         #[cfg(feature = "metrics")]
-                        metrics: Arc::clone(self.metrics),
+                        metrics: Arc::clone(metrics),
                     };
 
                     speculative_execution::execute(speculative, &context, request_runner_generator)
