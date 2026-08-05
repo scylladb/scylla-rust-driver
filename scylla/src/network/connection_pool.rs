@@ -1442,6 +1442,7 @@ mod tests {
     use crate::policies::reconnect::{ExponentialReconnectPolicy, ReconnectPolicy as _};
     use crate::routing::{Shard, ShardCount, ShardInfo, Sharder};
     use crate::test_utils::setup_tracing;
+    use futures::FutureExt;
     use scylla_proxy::{
         Condition, Node, Proxy, Reaction as _, RequestFrame, RequestOpcode, RequestReaction,
         RequestRule, ResponseFrame, RunningProxy,
@@ -1608,6 +1609,167 @@ mod tests {
             address: proxy_addr,
         });
         (proxy, endpoint)
+    }
+
+    #[cfg(feature = "metrics")]
+    async fn unrequested_connection_event(
+        endpoint: &UntranslatedEndpoint,
+    ) -> OpenedConnectionEvent {
+        let result = open_connection(endpoint, None, &HostConnectionConfig::default()).await;
+        OpenedConnectionEvent {
+            result: Ok(result.unwrap()),
+            requested_shard: None,
+            keyspace_name: None,
+        }
+    }
+
+    #[cfg(feature = "metrics")]
+    #[tokio::test]
+    async fn resharding_discards_old_connections_and_balances_metrics() {
+        setup_tracing();
+
+        let initial_shard_info = ShardInfo {
+            shard: 0,
+            nr_shards: ShardCount::new(1).unwrap(),
+            msb_ignore: 12,
+        };
+        let (mut proxy, endpoint) = start_simulated_node(initial_shard_info).await;
+        proxy.running_nodes[0].change_request_rules(Some(vec![
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Options),
+                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                    ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
+                })),
+            ),
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Startup),
+                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                    ResponseFrame::forged_ready(frame.params)
+                })),
+            ),
+        ]));
+        let mut refiller = mock_pool_refiller();
+        let metrics = refiller.metrics.clone();
+
+        metrics.inc_total_connections();
+        refiller.handle_ready_connection(unrequested_connection_event(&endpoint).await);
+        assert!(refiller.sharder.is_none());
+
+        let new_shard_info = ShardInfo {
+            shard: 1,
+            nr_shards: ShardCount::new(2).unwrap(),
+            msb_ignore: 12,
+        };
+        let new_sharder = new_shard_info.get_sharder();
+        proxy.running_nodes[0].change_request_rules(Some(vec![
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Options),
+                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                    ResponseFrame::forged_supported(frame.params, &{
+                        let mut options = HashMap::new();
+                        new_shard_info.add_to_options(&mut options);
+                        options.insert(
+                            options::SCYLLA_SHARD_AWARE_PORT.to_owned(),
+                            vec![SIMULATED_SHARD_AWARE_PORT.to_string()],
+                        );
+                        options
+                    })
+                    .unwrap()
+                })),
+            ),
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Startup),
+                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                    ResponseFrame::forged_ready(frame.params)
+                })),
+            ),
+        ]));
+
+        metrics.inc_total_connections();
+        refiller.handle_ready_connection(unrequested_connection_event(&endpoint).await);
+
+        assert_eq!(refiller.sharder.as_ref(), Some(&new_sharder));
+        assert_eq!(refiller.active_connection_count(), 1);
+        assert!(refiller.conns[0].is_empty());
+        assert_eq!(refiller.conns[1].len(), 1);
+        assert!(refiller.excess_connections.is_empty());
+        assert_eq!(metrics.get_total_connections(), 1);
+
+        drop(refiller);
+        let _ = proxy.finish().await;
+    }
+
+    #[cfg(feature = "metrics")]
+    #[tokio::test]
+    async fn excess_connection_limit_clears_connections_and_balances_metrics() {
+        setup_tracing();
+
+        let shard_info = ShardInfo {
+            shard: 0,
+            nr_shards: ShardCount::new(1).unwrap(),
+            msb_ignore: 12,
+        };
+        let (proxy, endpoint) = start_simulated_node(shard_info).await;
+        let mut refiller = mock_pool_refiller();
+        let metrics = refiller.metrics.clone();
+        let connection_count = refiller.excess_connection_limit() + 2;
+
+        for _ in 0..connection_count {
+            metrics.inc_total_connections();
+            refiller.handle_ready_connection(unrequested_connection_event(&endpoint).await);
+        }
+
+        assert_eq!(refiller.active_connection_count(), 1);
+        assert!(refiller.excess_connections.is_empty());
+        assert_eq!(metrics.get_total_connections(), 1);
+
+        drop(refiller);
+        let _ = proxy.finish().await;
+    }
+
+    #[cfg(feature = "metrics")]
+    #[tokio::test]
+    async fn full_pool_clears_excess_connections_and_balances_metrics() {
+        setup_tracing();
+
+        let shard_info = ShardInfo {
+            shard: 0,
+            nr_shards: ShardCount::new(1).unwrap(),
+            msb_ignore: 12,
+        };
+        let (proxy, endpoint) = start_simulated_node(shard_info).await;
+        let mut refiller = mock_pool_refiller();
+        let metrics = refiller.metrics.clone();
+
+        for _ in 0..2 {
+            metrics.inc_total_connections();
+            refiller.handle_ready_connection(unrequested_connection_event(&endpoint).await);
+        }
+
+        assert_eq!(refiller.active_connection_count(), 1);
+        assert_eq!(refiller.excess_connections.len(), 1);
+        assert_eq!(metrics.get_total_connections(), 2);
+
+        metrics.inc_total_connections();
+        let event = unrequested_connection_event(&endpoint).await;
+        refiller
+            .ready_connections
+            .push(futures::future::ready(event).boxed());
+        let (use_keyspace_sender, use_keyspace_receiver) = mpsc::channel(1);
+        let worker = tokio::spawn(refiller.run(use_keyspace_receiver));
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while metrics.get_total_connections() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        drop(use_keyspace_sender);
+        worker.await.unwrap();
+        assert_eq!(metrics.get_total_connections(), 1);
+        let _ = proxy.finish().await;
     }
 
     /// Opens a connection to the simulated node and wraps it in the event that the pool would
