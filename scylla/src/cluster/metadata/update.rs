@@ -17,7 +17,6 @@ pub(in super::super) struct RefreshRequest {
 }
 
 #[derive(PartialEq, Eq)]
-#[expect(dead_code)]
 pub(in super::super) enum StatusHint {
     Up,
     Down,
@@ -37,7 +36,6 @@ pub(in super::super) struct MetadataUpdate {
     pub(in super::super) status_hints: HashMap<SocketAddr, StatusHint>,
 }
 
-#[expect(dead_code)]
 pub(in super::super) enum MetadataChanges {
     Full {
         /// Full fetch of metadata. Later partial fetch is allowed to modify this.
@@ -54,7 +52,6 @@ pub(in super::super) enum MetadataChanges {
     },
 }
 
-#[expect(dead_code)]
 impl MetadataUpdate {
     fn slot_mut(slot: &mut Option<Self>) -> &mut Self {
         slot.get_or_insert_with(Self::default)
@@ -207,7 +204,6 @@ impl ClientRoutesUpdate {
     }
 
     /// Return self by value, leaving empty update in its place.
-    #[expect(dead_code)]
     pub(crate) fn take(&mut self) -> Self {
         let map = std::mem::take(&mut self.updates);
         Self { updates: map }
@@ -215,7 +211,6 @@ impl ClientRoutesUpdate {
 
     /// Merges a newer update into this one. Entries of `newer` override entries of `self`
     /// for the same (host id, connection id) pair; all other entries are kept.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn merge(&mut self, newer: ClientRoutesUpdate) {
         for (host_id, connection_id, route) in newer.into_entries() {
             self.updates

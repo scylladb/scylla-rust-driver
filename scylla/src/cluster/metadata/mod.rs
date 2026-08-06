@@ -21,6 +21,7 @@ mod fetching;
 pub(crate) mod merge_channel;
 pub(super) mod reader;
 pub(crate) mod update;
+pub(super) mod worker;
 
 use crate::cluster::metadata::update::ClientRoutesUpdate;
 use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
@@ -345,7 +346,6 @@ impl ClientRoutes {
     /// Applies a partial update to this full snapshot: `Some(route)` inserts or overwrites
     /// the route, `None` removes it. A host entry whose inner map becomes empty is removed
     /// entirely, to uphold the invariant that inner maps are never empty.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn merge(&mut self, update: ClientRoutesUpdate) {
         for (host_id, connection_id, route) in update.into_entries() {
             match route {

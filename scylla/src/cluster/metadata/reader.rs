@@ -12,7 +12,7 @@
 //! - Host filtering to ensure the control connection is established to an accepted node
 //!
 //! Ownership of the established control connection lives outside the reader (in the
-//! cluster worker); the reader only knows how to create one and fetch metadata on it.
+//! metadata worker); the reader only knows how to create one and fetch metadata on it.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,7 +37,7 @@ use crate::utils::safe_format::IteratorSafeFormatExt;
 
 /// Maintains the persistent state needed to create control connections and
 /// fetch cluster metadata. The established control connection itself is owned by
-/// the caller (the cluster worker), not by the reader.
+/// the caller (the metadata worker), not by the reader.
 pub(crate) struct MetadataReader {
     // =======================================================================================
     // Configuration values - they will stay the same during whole lifetime of MetadataReader.

@@ -1,4 +1,3 @@
-#![allow(dead_code)] // `expect` would need to be put in a lot of places.
 //! A single-producer single-consumer, capacity-one, merge-on-send channel.
 //!
 //! This is the primitive over which the metadata worker (producer) talks to the

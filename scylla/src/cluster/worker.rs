@@ -2,12 +2,12 @@ use crate::client::client_routes::{
     ClientRoutesAddressTranslator, ClientRoutesConfig, ClientRoutesSubscriber,
 };
 use crate::client::session::TABLET_CHANNEL_SIZE;
-use crate::cluster::control_connection::{ControlConnection, ControlConnectionEvent};
 use crate::cluster::metadata::SchemaMetadataFetchMode;
-use crate::cluster::metadata::update::RefreshRequest;
+use crate::cluster::metadata::update::{
+    MetadataChanges, MetadataUpdate, RefreshRequest, StatusHint,
+};
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
-use crate::frame::response::event::EventV2 as Event;
 use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::metrics::Metrics;
 use crate::policies::address_translator::AddressTranslator;
@@ -15,20 +15,21 @@ use crate::policies::host_filter::HostFilter;
 use crate::policies::host_listener::{HostEvent, HostEventContext, HostListener};
 use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
 
-use crate::frame::response::event::StatusChangeEvent;
 use crate::frame::response::result::TableSpec;
 use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{FutureExt, future::RemoteHandle};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
 use super::metadata::Metadata;
+use super::metadata::merge_channel::{self, merge_channel};
 use super::metadata::reader::MetadataReader;
+use super::metadata::worker::MetadataWorker;
 use super::state::ClusterState;
 
 /// Cluster manages up to date information and connections to database nodes.
@@ -42,6 +43,7 @@ pub(crate) struct Cluster {
     use_keyspace_channel: tokio::sync::mpsc::Sender<UseKeyspaceRequest>,
 
     _worker_handle: RemoteHandle<()>,
+    _metadata_worker_handle: RemoteHandle<()>,
 }
 
 /// Enables printing [Cluster] struct in a neat way, by skipping the rather useless
@@ -151,15 +153,16 @@ impl Cluster {
         let cluster_state: Arc<ArcSwap<ClusterState>> =
             Arc::new(ArcSwap::from(Arc::new(cluster_state)));
 
+        let (metadata_updates_sender, metadata_updates_receiver) = merge_channel();
+
         let worker = ClusterWorker {
             cluster_state: cluster_state.clone(),
             node_status,
 
-            metadata_reader,
             client_routes_subscriber,
             pool_config,
 
-            refresh_channel: refresh_receiver,
+            metadata_updates: metadata_updates_receiver,
             connectivity_events_sender,
             connectivity_events_receiver,
             tablets_channel: tablet_receiver,
@@ -169,19 +172,30 @@ impl Cluster {
 
             host_filter,
             host_listener,
-            cluster_metadata_refresh_interval,
 
             metrics,
         };
 
-        let (fut, worker_handle) = worker.work(cc).remote_handle();
+        let metadata_worker = MetadataWorker::new(
+            metadata_reader,
+            cc,
+            cluster_metadata_refresh_interval,
+            refresh_receiver,
+            metadata_updates_sender,
+        );
+
+        let (fut, worker_handle) = worker.work().remote_handle();
         tokio::spawn(fut);
+
+        let (metadata_fut, metadata_worker_handle) = metadata_worker.work().remote_handle();
+        tokio::spawn(metadata_fut);
 
         let result = Cluster {
             state: cluster_state,
             refresh_channel: refresh_sender,
             use_keyspace_channel: use_keyspace_sender,
             _worker_handle: worker_handle,
+            _metadata_worker_handle: metadata_worker_handle,
         };
 
         Ok(result)
@@ -200,12 +214,12 @@ impl Cluster {
             })
             .await
             .expect("Bug in Cluster::refresh_metadata sending");
-        // Other end of this channel is in ClusterWorker, can't be dropped while we have &self to Cluster with _worker_handle
+        // Other end of this channel is in MetadataWorker, can't be dropped while we have &self to Cluster with _metadata_worker_handle
 
         response_receiver
             .await
             .expect("Bug in Cluster::refresh_metadata receiving")
-        // ClusterWorker always responds
+        // The workers always respond
     }
 
     pub(crate) async fn use_keyspace(
@@ -248,16 +262,14 @@ struct ClusterWorker {
     /// Used to track node status in order to deduplicate HostListener events.
     node_status: HashMap<Uuid, NodeConnectivityStatus>,
 
-    // Cluster connections
-    metadata_reader: MetadataReader,
-
     /// The applier of client routes snapshots fetched from `system.client_routes`.
     /// `None` if client routes are not configured.
     client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
     pool_config: PoolConfig,
 
-    // To listen for refresh requests
-    refresh_channel: tokio::sync::mpsc::Receiver<RefreshRequest>,
+    // Channel over which the metadata worker delivers everything it learned
+    // about the cluster.
+    metadata_updates: merge_channel::Receiver<MetadataUpdate>,
 
     // Channel used to receive use keyspace requests
     use_keyspace_channel: tokio::sync::mpsc::Receiver<UseKeyspaceRequest>,
@@ -281,10 +293,6 @@ struct ClusterWorker {
     // The host listener allows to listen for topology and node status changes.
     host_listener: Option<Arc<dyn HostListener>>,
 
-    // This value determines how frequently the cluster
-    // worker will refresh the cluster metadata
-    cluster_metadata_refresh_interval: Duration,
-
     metrics: Metrics,
 }
 
@@ -295,46 +303,11 @@ struct UseKeyspaceRequest {
 }
 
 impl ClusterWorker {
-    pub(crate) async fn work(mut self, initial_cc: Option<ControlConnection>) {
-        use tokio::time::Instant;
-
-        let control_connection_repair_duration = Duration::from_secs(1); // Attempt control connection repair every second
-        let mut last_refresh_time = Instant::now();
-
-        // The control connection is now owned by the worker. `None` means it is
-        // currently broken (or was never established) and needs to be re-established,
-        // which happens during the next metadata refresh.
-        let mut control_connection: Option<ControlConnection> = initial_cc;
-
+    pub(crate) async fn work(mut self) {
         loop {
-            let mut cur_request: Option<RefreshRequest> = None;
-
-            // Wait until it's time for the next refresh
-            let sleep_until: Instant = last_refresh_time
-                .checked_add(if control_connection.is_some() {
-                    self.cluster_metadata_refresh_interval
-                } else {
-                    control_connection_repair_duration
-                })
-                .unwrap_or_else(Instant::now);
-
             let mut tablets = Vec::new();
 
-            let sleep_future = tokio::time::sleep_until(sleep_until);
-            tokio::pin!(sleep_future);
-
             tokio::select! {
-                _sleep_finished = sleep_future => {
-                    // Time to do periodic refresh.
-                },
-
-                maybe_refresh_request = self.refresh_channel.recv() => {
-                    match maybe_refresh_request {
-                        Some(request) => cur_request = Some(request),
-                        None => return, // If refresh_channel was closed then cluster was dropped, we can stop working
-                    }
-                }
-
                 tablets_count = self.tablets_channel.recv_many(&mut tablets, TABLET_CHANNEL_SIZE) => {
                     tracing::trace!("Performing tablets update - received {} tablets", tablets_count);
                     if tablets_count == 0 {
@@ -363,92 +336,17 @@ impl ClusterWorker {
                     let mut new_cluster_state: ClusterState = self.cluster_state.load().as_ref().clone();
                     new_cluster_state.update_tablets(tablets);
                     self.update_cluster_state(Arc::new(new_cluster_state));
-
-                    continue;
                 }
 
-                control_connection_event = Self::wait_for_control_connection_event(&mut control_connection) => {
-                    match control_connection_event {
-                        ControlConnectionEvent::Shutdown => {
-                            // The runtime is shutting down. We can stop working.
-                            debug!("Got shutdown control connection event. Shutting down ClusterWorker.");
-                            return;
-                        },
-                        ControlConnectionEvent::Broken(_err) => {
-                            // The control connection was broken. Drop it and start attempting to reconnect.
-                            // The first reconnect attempt will be immediate (by attempting metadata refresh below),
-                            // and if it does not succeed, then the control connection will stay `None`, so
-                            // subsequent attempts will be issued every second.
-                            control_connection = None;
-                        },
-                        ControlConnectionEvent::ServerEvent(event) => {
-                            debug!("Received server event: {:?}", event);
-                            match event {
-                                Event::TopologyChange(_) => (), // Refresh immediately
-                                Event::ClientRoutesChange(evt) => {
-                                    // We received this event on the control connection, so it must be present.
-                                    let Some(cc) = control_connection.as_ref() else {
-                                        error!("BUG: Received a server event without a control connection.");
-                                        continue;
-                                    };
-                                    let res = self.metadata_reader.fetch_client_routes_update_on_event(cc, &evt).await;
-                                    match res {
-                                        Ok(None) => continue, // Nothing to apply; don't go to refreshing.
-                                        Ok(Some(update)) => {
-                                            if let Some(subscriber) = self.client_routes_subscriber.as_ref() {
-                                                let updated_hosts = subscriber.merge_client_routes_update(update);
-                                                self.cluster_state.load().trigger_pool_refills_for_hosts(updated_hosts.iter().copied());
-                                            }
-                                            continue; // Don't go to refreshing.
-                                        }
-                                        Err(err) =>
-                                        {
-                                            error!(
-                                                "Error when fetching client route updates: {err}. \
-                                                Proceeding with metadata refresh, because the control connection is likely defunct."
-                                            );
-                                            // Refresh immediately.
-                                        }
-                                    }
-                                }
-                                Event::StatusChange(status) => {
-                                    // Tracking node status using events is unreliable because of the possibility of losing events
-                                    // when control connection is broken. A better thing to do here is to treat those events as hints
-                                    // for:
-                                    // - PoolRefiller - UP triggers immediate pool refill attempt, and
-                                    // - Keepaliver - DOWN triggers immediate keepalive query attempt.
+                maybe_metadata_update = self.metadata_updates.recv() => {
+                    let Some(update) = maybe_metadata_update else {
+                        // If the channel was closed then the metadata worker is gone,
+                        // so there is nothing left to keep the cluster state updated with.
+                        debug!("The metadata worker is gone. Shutting down ClusterWorker.");
+                        return;
+                    };
 
-                                    match status {
-                                        StatusChangeEvent::Up(addr) => {
-                                            // When receiving an UP event, it is likely that the node just came back up and is now reachable.
-                                            // We optimistically trigger pool refill for this node.
-                                            // This is not guaranteed to be correct. It is for example possible that a network partition happened,
-                                            // the node lost connectivity to the cluster and driver; then it regained connectivity to the cluster,
-                                            // but not to the driver, and thus is still unreachable from the driver's perspective.
-                                            // However, in this case triggering pool refill is not harmful - if the node is actually reachable,
-                                            // then new connections will be opened to it, and if it is not reachable,
-                                            // then connection attempts will fail and the node will be marked as unreachable by `PoolRefiller`,
-                                            // so it won't be targeted by the load balancing policy.
-                                            self.cluster_state.load().trigger_pool_refill_for_addr(addr);
-                                        },
-                                        StatusChangeEvent::Down(addr) => {
-                                            // When receiving a DOWN event, and the driver still sees the node as connected,
-                                            // we send a keepalive query on its connections to verify their liveness.
-                                            // The node is supposedly DOWN, so connections to this node are likely defunct.
-                                            // We expect that the keepalive query fails, in which case connections will be closed.
-                                            // As a result, the connection pool will report 0 connections to this node,
-                                            // and thus the node will not be targeted by the LoadBalancingPolicy,
-                                            // which is the desired behaviour. However, if the keepalive query succeeds,
-                                            // then the node is likely still alive (got stale event?), and we keep targeting it.
-                                            self.cluster_state.load().trigger_keepalive_for_addr(addr);
-                                        },
-                                    }
-                                    continue; // Don't go to refreshing.
-                                },
-                                _ => continue, // Don't go to refreshing.
-                            }
-                        }
-                    }
+                    self.apply_metadata_update(update).await;
                 }
 
                 maybe_connectivity_event = self.connectivity_events_receiver.recv() => {
@@ -461,8 +359,6 @@ impl ClusterWorker {
                     debug!("Received connectivity event: {:?}", event);
 
                     self.handle_connectivity_change_event(&event);
-
-                    continue; // Don't go to refreshing.
                 }
 
                 maybe_use_keyspace_request = self.use_keyspace_channel.recv() => {
@@ -476,20 +372,7 @@ impl ClusterWorker {
                         },
                         None => return, // If use_keyspace_channel was closed then cluster was dropped, we can stop working
                     }
-
-                    continue; // Don't go to refreshing, wait for the next event
                 }
-            }
-
-            // Perform the refresh
-            debug!("Requesting metadata refresh");
-            last_refresh_time = Instant::now();
-            let refresh_res = self.perform_refresh(&mut control_connection).await;
-
-            // Send refresh result if there was a request
-            if let Some(request) = cur_request {
-                // We can ignore sending error - if no one waits for the response we can drop it
-                let _ = request.response_chan.send(refresh_res);
             }
         }
     }
@@ -518,72 +401,95 @@ impl ClusterWorker {
         use_keyspace_result(use_keyspace_results.into_iter())
     }
 
-    /// Waits for the next control connection event.
+    /// Applies everything that the metadata worker learned since the previous update.
     ///
-    /// If there is no working control connection (it is broken and awaiting
-    /// re-establishment), this never resolves — the worker will rely on the
-    /// periodic refresh timer to attempt re-establishment instead.
-    async fn wait_for_control_connection_event(
-        control_connection: &mut Option<ControlConnection>,
-    ) -> ControlConnectionEvent {
-        match control_connection {
-            None => std::future::pending().await,
-            Some(cc) => cc.wait_for_event().await,
-        }
-    }
-
-    /// Fetches the latest metadata, (re-)establishing the control connection if needed.
-    ///
-    /// If a working control connection is present, metadata is fetched on it. If that
-    /// fails, the connection is dropped and a fresh one is established (iterating over
-    /// known peers and, as a last resort, the initial contact points). The (possibly
-    /// new) working control connection is stored back into `control_connection`.
-    async fn read_metadata(
-        &mut self,
-        control_connection: &mut Option<ControlConnection>,
-    ) -> Result<Metadata, MetadataError> {
-        if let Some(cc) = control_connection.as_ref() {
-            match self.metadata_reader.fetch_metadata_on_cc(cc).await {
-                Ok(metadata) => return Ok(metadata),
-                Err(err) => {
-                    debug!(
-                        error = %err,
-                        "Failed to fetch metadata on the current control connection. \
-                        Will try to establish a new one."
-                    );
-                    // The control connection is considered defunct - drop it.
-                    *control_connection = None;
-                }
-            }
-        }
-
-        // We have no working control connection - establish a new one and fetch metadata on it.
-        let (cc, metadata) = self
-            .metadata_reader
-            .establish_cc_and_fetch_metadata(false)
-            .await?;
-        *control_connection = cc;
-        Ok(metadata)
-    }
-
-    async fn perform_refresh(
-        &mut self,
-        control_connection: &mut Option<ControlConnection>,
-    ) -> Result<(), MetadataError> {
-        // Read latest Metadata
-        let mut metadata = self.read_metadata(control_connection).await?;
-
-        // Apply the fetched client routes snapshot BEFORE constructing the new `ClusterState`,
+    /// See [`MetadataUpdate`] for what an update can contain and why several
+    /// discoveries can arrive merged into one.
+    async fn apply_metadata_update(&mut self, mut update: MetadataUpdate) {
+        // Apply the client routes BEFORE constructing the new `ClusterState` below,
         // because `ClusterState::new` creates connection pools, which translate addresses
         // through the subscriber.
-        let client_routes_updated_hosts = match (
-            self.client_routes_subscriber.as_ref(),
-            metadata.client_routes.take(),
-        ) {
-            (Some(subscriber), Some(routes)) => subscriber.replace_client_routes(routes),
-            _ => Default::default(),
+        let client_routes_hosts_to_refill = if let Some(subscriber) =
+            self.client_routes_subscriber.as_ref()
+            && let Some(metadata_changes) = update.metadata_changes.as_mut()
+        {
+            match metadata_changes {
+                MetadataChanges::Full {
+                    metadata,
+                    refresh_responses: _,
+                } => {
+                    if let Some(client_routes) = metadata.client_routes.take() {
+                        subscriber.replace_client_routes(client_routes)
+                    } else {
+                        HashSet::new()
+                    }
+                }
+                MetadataChanges::Partial {
+                    client_routes_updates,
+                } => subscriber.merge_client_routes_update(client_routes_updates.take()),
+            }
+        } else {
+            HashSet::new()
         };
 
+        // Unlike UP hints, DOWN hints are applied to the *current* state: a keepalive
+        // query only makes sense for a node the driver still holds connections to, so
+        // there is nothing a freshly built state could add, and waiting for the refresh
+        // (which awaits pool initialization) would only delay the liveness probe.
+        {
+            let cluster_state = self.cluster_state.load();
+            update
+                .status_hints
+                .iter()
+                .filter(|(_k, v)| **v == StatusHint::Down)
+                .for_each(|(addr, _)| cluster_state.trigger_keepalive_for_addr(*addr));
+        }
+
+        let process_up_hints = |state: &ClusterState| {
+            state.trigger_pool_refills_for_hosts(client_routes_hosts_to_refill.into_iter());
+            update
+                .status_hints
+                .iter()
+                .filter(|(_k, v)| **v == StatusHint::Up)
+                .for_each(|(addr, _)| state.trigger_pool_refill_for_addr(*addr));
+        };
+
+        match update.metadata_changes {
+            Some(MetadataChanges::Full {
+                metadata,
+                refresh_responses,
+            }) => {
+                self.perform_refresh(metadata, process_up_hints).await;
+                // The new state is published, so the awaited refreshes are complete.
+                for response_chan in refresh_responses {
+                    // We can ignore sending error - if no one waits for the response we can drop it
+                    let _ = response_chan.send(Ok(()));
+                }
+            }
+            None
+            | Some(MetadataChanges::Partial {
+                client_routes_updates: _,
+            }) => {
+                // For now there is nothing that requires publishing new ClusterState.
+                // The only thing left to do is processing up hints.
+                process_up_hints(self.cluster_state.load().as_ref());
+            }
+        }
+    }
+
+    /// Builds a new [`ClusterState`] from freshly fetched metadata and publishes it.
+    ///
+    /// The client routes carried by `metadata` must already have been applied by the
+    /// caller - `ClusterState::new` creates connection pools, which translate addresses
+    /// through the subscriber.
+    ///
+    /// `process_up_hints` triggers pool refills for hosts for which we received UP events.
+    /// It is called after new ClusterState is created.
+    async fn perform_refresh(
+        &mut self,
+        metadata: Metadata,
+        process_up_hints: impl FnOnce(&ClusterState),
+    ) {
         let cluster_state: Arc<ClusterState> = self.cluster_state.load_full();
 
         let new_cluster_state = Arc::new(
@@ -609,16 +515,13 @@ impl ClusterWorker {
             .await,
         );
 
-        new_cluster_state
-            .trigger_pool_refills_for_hosts(client_routes_updated_hosts.iter().copied());
+        process_up_hints(&new_cluster_state);
 
         new_cluster_state
             .wait_until_all_pools_are_initialized()
             .await;
 
         self.update_cluster_state(new_cluster_state);
-
-        Ok(())
     }
 
     fn update_cluster_state(&mut self, new_cluster_state: Arc<ClusterState>) {
