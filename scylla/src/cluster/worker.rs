@@ -178,7 +178,6 @@ impl Cluster {
 
         let metadata_worker = MetadataWorker::new(
             metadata_reader,
-            cc,
             cluster_metadata_refresh_interval,
             refresh_receiver,
             metadata_updates_sender,
@@ -187,7 +186,7 @@ impl Cluster {
         let (fut, worker_handle) = worker.work().remote_handle();
         tokio::spawn(fut);
 
-        let (metadata_fut, metadata_worker_handle) = metadata_worker.work().remote_handle();
+        let (metadata_fut, metadata_worker_handle) = metadata_worker.work(cc).remote_handle();
         tokio::spawn(metadata_fut);
 
         let result = Cluster {
