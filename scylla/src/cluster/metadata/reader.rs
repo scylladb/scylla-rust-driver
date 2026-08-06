@@ -25,7 +25,7 @@ use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::cluster::KnownNode;
 use crate::cluster::control_connection::{ControlConnection, ControlConnectionCache};
 use crate::cluster::metadata::{
-    ClientRoutes, Metadata, PeerEndpoint, SchemaMetadataFetchMode, UntranslatedEndpoint,
+    ClientRoutesUpdate, Metadata, PeerEndpoint, SchemaMetadataFetchMode, UntranslatedEndpoint,
 };
 use crate::cluster::node::resolve_contact_points;
 use crate::errors::{ConnectionPoolError, MetadataError, NewSessionError};
@@ -434,14 +434,14 @@ impl MetadataReader {
     /// not only by connection ids known to the driver (which is always the case), but also
     /// by host ids - only for the hosts whose ids are present in the event payload.
     ///
-    /// Returns the raw partial snapshot, or `None` if there is no subscriber configured
-    /// or the event contained no connection ids relevant to this driver. Merging the
-    /// update into the [`ClientRoutesSubscriber`]'s knowledge is the caller's job.
+    /// Returns the resulting [`ClientRoutesUpdate`], or `None` if there is no subscriber
+    /// configured or the event contained no connection ids relevant to this driver. Merging
+    /// the update into the [`ClientRoutesSubscriber`]'s knowledge is the caller's job.
     pub(in super::super) async fn fetch_client_routes_update_on_event(
         &self,
         cc: &ControlConnection,
         evt: &ClientRoutesChangeEvent,
-    ) -> Result<Option<ClientRoutes>, MetadataError> {
+    ) -> Result<Option<ClientRoutesUpdate>, MetadataError> {
         let Some(subscriber) = &self.client_routes_subscriber else {
             // No subscriber, but received an event? Strange enough, but nothing to be done here.
             warn!("BUG: Received ClientRoutesChange event, but no ClientRoutesSubscriber was set!");
@@ -481,7 +481,11 @@ impl MetadataReader {
         // I believe the tradeoff here is correct.
         let client_routes = cc.query_client_routes(&connection_ids, host_ids).await?;
 
-        Ok(Some(client_routes))
+        Ok(Some(ClientRoutesUpdate::from_event(
+            evt,
+            subscriber.get_connection_ids(),
+            &client_routes,
+        )))
     }
 }
 

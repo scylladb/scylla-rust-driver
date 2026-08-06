@@ -398,9 +398,9 @@ impl ClusterWorker {
                                     let res = self.metadata_reader.fetch_client_routes_update_on_event(cc, &evt).await;
                                     match res {
                                         Ok(None) => continue, // Nothing to apply; don't go to refreshing.
-                                        Ok(Some(routes)) => {
+                                        Ok(Some(update)) => {
                                             if let Some(subscriber) = self.client_routes_subscriber.as_ref() {
-                                                let updated_hosts = subscriber.merge_client_routes_update(&evt, routes);
+                                                let updated_hosts = subscriber.merge_client_routes_update(update);
                                                 self.cluster_state.load().trigger_pool_refills_for_hosts(updated_hosts.iter().copied());
                                             }
                                             continue; // Don't go to refreshing.

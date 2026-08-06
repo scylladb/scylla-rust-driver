@@ -11,13 +11,13 @@ use std::net::SocketAddr;
 use std::sync::RwLock;
 use std::time::Duration;
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
+use crate::cluster::metadata::update::ClientRoutesUpdate;
 use crate::cluster::metadata::{ClientRoute, ClientRoutes};
 use crate::cluster::node::resolve_hostname;
 use crate::errors::{DnsLookupError, TranslationError};
-use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 
 /// Represents a single ClientRoutes proxy, identified by a connection ID.
@@ -107,18 +107,14 @@ pub(crate) trait ClientRoutesSubscriber: Send + Sync {
     /// compared to the previous state (i.e., hosts that may need pool refill).
     fn replace_client_routes(&self, client_routes: ClientRoutes) -> HashSet<Uuid>;
 
-    /// Merges existing knowledge about client routes with a partial snapshot,
-    /// fetched in response to a CLIENT_ROUTES_CHANGE:UPDATE_NODES event.
-    /// The snapshot contains all entries that match connection ids and host ids
-    /// present in the event.
+    /// Merges existing knowledge about client routes with a partial, mergeable update
+    /// derived from a CLIENT_ROUTES_CHANGE:UPDATE_NODES event. The update contains one
+    /// entry per (host id, connection id) pair listed in the event and relevant to the
+    /// driver: `Some(route)` for a created/updated route, `None` for a removed one.
     ///
     /// Returns the set of host IDs that were added or updated (i.e., hosts
     /// that now have a route and may need pool refill).
-    fn merge_client_routes_update(
-        &self,
-        event: &ClientRoutesChangeEvent,
-        client_routes: ClientRoutes,
-    ) -> HashSet<Uuid>;
+    fn merge_client_routes_update(&self, update: ClientRoutesUpdate) -> HashSet<Uuid>;
 }
 
 /// Translator for client routes: uses content of system.client_routes
@@ -300,92 +296,79 @@ impl ClientRoutesSubscriber for ClientRoutesAddressTranslator {
         added_or_updated_host_ids
     }
 
-    fn merge_client_routes_update(
-        &self,
-        event: &ClientRoutesChangeEvent,
-        new_routes: ClientRoutes,
-    ) -> HashSet<Uuid> {
-        #[deny(clippy::wildcard_enum_match_arm)]
-        let (connection_ids, host_ids) = match event {
-            ClientRoutesChangeEvent::UpdateNodes {
-                connection_ids,
-
-                host_ids,
-            } => (connection_ids, host_ids),
-            _ => unreachable!("clippy testifies the match is exhaustive"),
-        };
-
+    fn merge_client_routes_update(&self, update: ClientRoutesUpdate) -> HashSet<Uuid> {
         let mut guard = self.client_routes.write().unwrap();
         let mut added_or_updated_host_ids = HashSet::new();
 
-        // Iterate over all entries listed in the event.
-        // Filter only those with connection ids that the driver cares about.
-        // For each, determine the type of the entry change: deletion, creation or update.
-        for (connection_id, &host_id) in connection_ids
-            .iter()
-            .zip(host_ids)
-            .filter(|(connection_id, _host_id)| self.get_connection_ids().contains(connection_id))
-        {
-            let new_routes_for_host = new_routes.routes.get(&host_id);
-            let maybe_route = new_routes_for_host
-                .as_ref()
-                .and_then(|host_routes| host_routes.get(connection_id).cloned());
-            match maybe_route {
-                None => {
-                    // Route specified in the event is absent, which means that the event reported route deletion.
-                    let Some(known_host_routes) = guard.get_mut(&host_id) else {
-                        // We didn't have any routes for that host, so nothing to be deleted.
-                        continue;
-                    };
-
-                    // If the route was in other_routes, we remove it here. Else, this is no-op.
-                    known_host_routes
-                        .other_routes
-                        .remove(connection_id.as_str());
-
-                    // If the route was the sticky route, we need to replace it with any from other_routes, if present.
-                    // Otherwise, we remove the whole entry for that host.
-                    if &known_host_routes.sticky_route.connection_id == connection_id {
-                        if let Some(RouteCmpByConnId(replacement_route)) =
-                            known_host_routes.other_routes.extract_if(|_| true).next()
-                        {
-                            known_host_routes.sticky_route = replacement_route;
-                        } else {
-                            guard.remove(&host_id);
-                        }
-                    }
+        // Iterate over all entries of the update. Filtering by connection ids that the
+        // driver cares about has already been done when the update was created.
+        // For each entry, the type of the change is determined: deletion, creation or update.
+        for (host_id, routes_for_host) in update.updates {
+            for (connection_id, maybe_route) in routes_for_host {
+                // Filtering by connection id should have been done by the caller.
+                // Let's double check that nothing slipped trough.
+                if !self.connection_ids.contains(&connection_id) {
+                    warn!("Received update for non-tracked connection_id: {connection_id}");
+                    continue;
                 }
+                match maybe_route {
+                    None => {
+                        // Route specified in the event is absent, which means that the event reported route deletion.
+                        let Some(known_host_routes) = guard.get_mut(&host_id) else {
+                            // We didn't have any routes for that host, so nothing to be deleted.
+                            continue;
+                        };
 
-                Some(new_route) => {
-                    // Route specified in the event is present, which means that the event reported route creation or update.
-                    // In both cases, we just insert it. Let's just handle the sticky route update separately.
-                    added_or_updated_host_ids.insert(host_id);
-                    match guard.get_mut(&host_id) {
-                        // There have already been routes for that host.
-                        Some(host_routes) => {
-                            // Let's see if the new route is the sticky one.
-                            if host_routes.sticky_route.connection_id == new_route.connection_id {
-                                // We update the sticky route.
-                                host_routes.sticky_route = new_route;
+                        // If the route was in other_routes, we remove it here. Else, this is no-op.
+                        known_host_routes
+                            .other_routes
+                            .remove(connection_id.as_str());
+
+                        // If the route was the sticky route, we need to replace it with any from other_routes, if present.
+                        // Otherwise, we remove the whole entry for that host.
+                        if known_host_routes.sticky_route.connection_id == connection_id {
+                            if let Some(RouteCmpByConnId(replacement_route)) =
+                                known_host_routes.other_routes.extract_if(|_| true).next()
+                            {
+                                known_host_routes.sticky_route = replacement_route;
                             } else {
-                                // We add a new route or update an existing one.
-                                // `replace` not `insert`: `other_routes` is a `HashSet`.
-                                // `HashSet::insert` retains old value if it already exists,
-                                // so it would not replace the route but keep the old one.
-                                host_routes
-                                    .other_routes
-                                    .replace(RouteCmpByConnId(new_route));
+                                guard.remove(&host_id);
                             }
                         }
-                        // There was no route for that host yet.
-                        None => {
-                            guard.insert(
-                                host_id,
-                                KnownHostRoutes {
-                                    sticky_route: new_route,
-                                    other_routes: HashSet::new(),
-                                },
-                            );
+                    }
+
+                    Some(new_route) => {
+                        // Route specified in the event is present, which means that the event reported route creation or update.
+                        // In both cases, we just insert it. Let's just handle the sticky route update separately.
+                        added_or_updated_host_ids.insert(host_id);
+                        match guard.get_mut(&host_id) {
+                            // There have already been routes for that host.
+                            Some(host_routes) => {
+                                // Let's see if the new route is the sticky one.
+                                if host_routes.sticky_route.connection_id == new_route.connection_id
+                                {
+                                    // We update the sticky route.
+                                    host_routes.sticky_route = new_route;
+                                } else {
+                                    // We add a new route or update an existing one.
+                                    // `replace` not `insert`: `other_routes` is a `HashSet`.
+                                    // `HashSet::insert` retains old value if it already exists,
+                                    // so it would not replace the route but keep the old one.
+                                    host_routes
+                                        .other_routes
+                                        .replace(RouteCmpByConnId(new_route));
+                                }
+                            }
+                            // There was no route for that host yet.
+                            None => {
+                                guard.insert(
+                                    host_id,
+                                    KnownHostRoutes {
+                                        sticky_route: new_route,
+                                        other_routes: HashSet::new(),
+                                    },
+                                );
+                            }
                         }
                     }
                 }
@@ -471,6 +454,7 @@ impl AddressTranslator for ClientRoutesAddressTranslator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cluster::metadata::update::ClientRoutesUpdate;
     use crate::cluster::metadata::{ClientRoute, ClientRoutes};
     use crate::frame::response::event::ClientRoutesChangeEvent;
     use assert_matches::assert_matches;
@@ -490,6 +474,14 @@ mod tests {
         let mut cr = ClientRoutes::default();
         cr.extend(routes);
         cr
+    }
+
+    fn make_update(
+        translator: &ClientRoutesAddressTranslator,
+        event: &ClientRoutesChangeEvent,
+        fetched: ClientRoutes,
+    ) -> ClientRoutesUpdate {
+        ClientRoutesUpdate::from_event(event, translator.get_connection_ids(), &fetched)
     }
 
     fn make_config(proxies: Vec<ClientRoutesProxy>) -> ClientRoutesConfig {
@@ -893,7 +885,8 @@ mod tests {
         };
 
         // Port changes via merge.
-        translator.merge_client_routes_update(
+        translator.merge_client_routes_update(make_update(
+            &translator,
             &make_event(),
             make_client_routes(vec![ClientRoute {
                 connection_id: "conn-1".to_owned(),
@@ -902,14 +895,15 @@ mod tests {
                 port: Some(9050),
                 tls_port: None,
             }]),
-        );
+        ));
         assert_eq!(
             translator.translate_address(&peer).await.unwrap(),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3)), 9050),
         );
 
         // Hostname changes via merge.
-        translator.merge_client_routes_update(
+        translator.merge_client_routes_update(make_update(
+            &translator,
             &make_event(),
             make_client_routes(vec![ClientRoute {
                 connection_id: "conn-1".to_owned(),
@@ -918,14 +912,15 @@ mod tests {
                 port: Some(9050),
                 tls_port: None,
             }]),
-        );
+        ));
         assert_eq!(
             translator.translate_address(&peer).await.unwrap(),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 4)), 9050),
         );
 
         // Both hostname and port change via merge.
-        translator.merge_client_routes_update(
+        translator.merge_client_routes_update(make_update(
+            &translator,
             &make_event(),
             make_client_routes(vec![ClientRoute {
                 connection_id: "conn-1".to_owned(),
@@ -934,7 +929,7 @@ mod tests {
                 port: Some(9060),
                 tls_port: None,
             }]),
-        );
+        ));
         assert_eq!(
             translator.translate_address(&peer).await.unwrap(),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 5)), 9060),
@@ -1054,7 +1049,7 @@ mod tests {
             port: Some(9044),
             tls_port: None,
         }]);
-        translator.merge_client_routes_update(&event, partial);
+        translator.merge_client_routes_update(make_update(&translator, &event, partial));
 
         // host_a got the updated port.
         let peer_a = make_peer(host_a, localhost_addr(19999));
@@ -1172,7 +1167,7 @@ mod tests {
                 tls_port: None,
             },
         ]);
-        translator.merge_client_routes_update(&event, partial);
+        translator.merge_client_routes_update(make_update(&translator, &event, partial));
 
         // Resilient: host_a updated to new port, not removed.
         assert_eq!(
@@ -1301,7 +1296,8 @@ mod tests {
             connection_ids: vec!["conn-1".to_owned(), "conn-0".to_owned()],
             host_ids: vec![host_id, host_id],
         };
-        translator.merge_client_routes_update(
+        translator.merge_client_routes_update(make_update(
+            &translator,
             &event,
             make_client_routes(vec![ClientRoute {
                 connection_id: "conn-0".to_owned(),
@@ -1310,7 +1306,7 @@ mod tests {
                 port: Some(9070),
                 tls_port: None,
             }]),
-        );
+        ));
         assert_eq!(
             translator.translate_address(&peer).await.unwrap(),
             localhost_addr(9070)
@@ -1377,7 +1373,8 @@ mod tests {
             connection_ids: vec!["conn-1".to_owned(), "conn-0".to_owned()],
             host_ids: vec![host_id, host_id],
         };
-        translator.merge_client_routes_update(
+        translator.merge_client_routes_update(make_update(
+            &translator,
             &event,
             make_client_routes(vec![ClientRoute {
                 connection_id: "conn-0".to_owned(),
@@ -1386,7 +1383,7 @@ mod tests {
                 port: Some(9060),
                 tls_port: None,
             }]),
-        );
+        ));
         assert_eq!(
             translator.translate_address(&peer).await.unwrap(),
             localhost_addr(9060)
@@ -1461,7 +1458,7 @@ mod tests {
                 tls_port: None,
             },
         ]);
-        translator.merge_client_routes_update(&event, refetched);
+        translator.merge_client_routes_update(make_update(&translator, &event, refetched));
 
         // host_y should now translate via conn-2.
         assert_eq!(
@@ -1518,7 +1515,11 @@ mod tests {
             connection_ids: vec!["conn-1".to_owned()],
             host_ids: vec![host_x],
         };
-        translator.merge_client_routes_update(&event, ClientRoutes::default());
+        translator.merge_client_routes_update(make_update(
+            &translator,
+            &event,
+            ClientRoutes::default(),
+        ));
 
         // Correct behaviour: host_x should still be translatable.
         // The driver previously knew about conn-2's route for this host, so it
@@ -1577,12 +1578,14 @@ mod tests {
             port: Some(9099),
             tls_port: None,
         }]);
-        translator.merge_client_routes_update(&event, refetched);
+        translator.merge_client_routes_update(make_update(&translator, &event, refetched));
 
-        // Correct behaviour: host_x should be reachable via conn-2 at port 9099.
-        // The first iteration handles (conn-1, host_x) — deletion + re-insert
-        // with conn-2.  The second iteration handles (conn-2, host_x) — should
-        // recognise that the route is present and keep it, not delete it.
+        // Correct behaviour: host_x should be reachable via conn-2 at port 9099,
+        // regardless of the (arbitrary) order in which the update's entries for
+        // host_x are processed: handling the (conn-1, host_x) deletion first drops
+        // the host entry and the (conn-2, host_x) entry re-creates it, while the
+        // reverse order replaces conn-2's route in `other_routes` and then promotes
+        // it to sticky when conn-1's route is deleted.
         assert_eq!(
             translator.translate_address(&peer).await.unwrap(),
             localhost_addr(9099),
@@ -1634,7 +1637,7 @@ mod tests {
             port: Some(9099),
             tls_port: None,
         }]);
-        translator.merge_client_routes_update(&event, refetched);
+        translator.merge_client_routes_update(make_update(&translator, &event, refetched));
 
         // The route should be updated to port 9099, not deleted.
         assert_eq!(
@@ -1946,7 +1949,8 @@ mod tests {
             port: Some(9042),
             tls_port: None,
         }]);
-        let returned = translator.merge_client_routes_update(&event, routes);
+        let returned =
+            translator.merge_client_routes_update(make_update(&translator, &event, routes));
         assert_eq!(returned, HashSet::from([host]));
     }
 
@@ -1979,7 +1983,8 @@ mod tests {
             port: Some(9099),
             tls_port: None,
         }]);
-        let returned = translator.merge_client_routes_update(&event, routes);
+        let returned =
+            translator.merge_client_routes_update(make_update(&translator, &event, routes));
         assert_eq!(returned, HashSet::from([host]));
     }
 
@@ -2006,7 +2011,11 @@ mod tests {
             connection_ids: vec!["conn-1".to_owned()],
             host_ids: vec![host],
         };
-        let returned = translator.merge_client_routes_update(&event, make_client_routes(vec![]));
+        let returned = translator.merge_client_routes_update(make_update(
+            &translator,
+            &event,
+            make_client_routes(vec![]),
+        ));
         assert!(
             returned.is_empty(),
             "Deleted host should not be returned, got: {:?}",
@@ -2035,7 +2044,8 @@ mod tests {
             port: Some(9042),
             tls_port: None,
         }]);
-        let returned = translator.merge_client_routes_update(&event, routes);
+        let returned =
+            translator.merge_client_routes_update(make_update(&translator, &event, routes));
         assert!(
             returned.is_empty(),
             "Irrelevant connection_id should be ignored, got: {:?}",
@@ -2098,7 +2108,8 @@ mod tests {
                 tls_port: None,
             },
         ]);
-        let returned = translator.merge_client_routes_update(&event, routes);
+        let returned =
+            translator.merge_client_routes_update(make_update(&translator, &event, routes));
         assert_eq!(returned, HashSet::from([host_updated, host_added]));
     }
 
@@ -2134,7 +2145,7 @@ mod tests {
             port: Some(9099),
             tls_port: None,
         }]);
-        let _ = translator.merge_client_routes_update(&event, routes);
+        let _ = translator.merge_client_routes_update(make_update(&translator, &event, routes));
 
         // Replace the route with conn id 2.
         let event = ClientRoutesChangeEvent::UpdateNodes {
@@ -2148,7 +2159,7 @@ mod tests {
             port: Some(9100),
             tls_port: None,
         }]);
-        let _ = translator.merge_client_routes_update(&event, routes);
+        let _ = translator.merge_client_routes_update(make_update(&translator, &event, routes));
 
         // Now let's remove conn id 1, so conn id 2 has to be used.
         // We expect the last route (with port 9100 to be used),
@@ -2158,7 +2169,7 @@ mod tests {
             host_ids: vec![host_id],
         };
         let routes = make_client_routes(vec![]);
-        let _ = translator.merge_client_routes_update(&event, routes);
+        let _ = translator.merge_client_routes_update(make_update(&translator, &event, routes));
 
         let peer = make_peer(host_id, localhost_addr(19999));
         assert_eq!(

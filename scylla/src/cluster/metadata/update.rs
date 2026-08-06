@@ -1,0 +1,458 @@
+use std::collections::HashMap;
+
+use uuid::Uuid;
+
+use crate::cluster::metadata::{ClientRoute, ClientRoutes};
+use crate::frame::response::event::ClientRoutesChangeEvent;
+
+/// A partial, mergeable update of client routes, derived from a
+/// CLIENT_ROUTES_CHANGE:UPDATE_NODES event and from the partial snapshot of
+/// `system.client_routes` fetched in response to that event.
+///
+/// Each entry corresponds to a (host id, connection id) pair listed in the event
+/// and relevant to the driver (i.e. with a connection id the driver monitors):
+/// - `Some(route)` - the route was created or updated;
+/// - `None` - the route was removed.
+#[derive(Debug, Default)]
+pub(crate) struct ClientRoutesUpdate {
+    /// Grouped by host id first, then by connection id - same as `ClientRoutes`.
+    pub(crate) updates: HashMap<Uuid, HashMap<String, Option<ClientRoute>>>,
+}
+
+impl ClientRoutesUpdate {
+    /// Builds an update from the event and the partial snapshot fetched in response to it.
+    ///
+    /// Only the (connection id, host id) pairs actually listed in the event and having
+    /// a connection id monitored by the driver are taken into account. Routes present in
+    /// `fetched` that do not correspond to any such pair are ignored: the fetch query is
+    /// `WHERE connection_id IN ? AND host_id IN ?`, so it returns the full cross product,
+    /// while the event's semantics is a zip of both lists.
+    pub(crate) fn from_event(
+        event: &ClientRoutesChangeEvent,
+        relevant_connection_ids: &[String],
+        fetched: &ClientRoutes,
+    ) -> Self {
+        #[deny(clippy::wildcard_enum_match_arm)]
+        let (connection_ids, host_ids) = match event {
+            ClientRoutesChangeEvent::UpdateNodes {
+                connection_ids,
+                host_ids,
+            } => (connection_ids, host_ids),
+            _ => unreachable!("clippy testifies that the match is exhaustive"),
+        };
+
+        let mut updates: HashMap<Uuid, HashMap<String, Option<ClientRoute>>> = HashMap::new();
+
+        for (connection_id, &host_id) in connection_ids
+            .iter()
+            .zip(host_ids)
+            .filter(|(connection_id, _host_id)| relevant_connection_ids.contains(connection_id))
+        {
+            let route = fetched
+                .routes
+                .get(&host_id)
+                .and_then(|routes_for_host| routes_for_host.get(connection_id).cloned());
+            updates
+                .entry(host_id)
+                .or_default()
+                .insert(connection_id.clone(), route);
+        }
+
+        Self { updates }
+    }
+
+    /// Flattens the update into (host id, connection id, maybe route) triples.
+    pub(crate) fn into_entries(self) -> impl Iterator<Item = (Uuid, String, Option<ClientRoute>)> {
+        self.updates
+            .into_iter()
+            .flat_map(|(host_id, routes_for_host)| {
+                routes_for_host
+                    .into_iter()
+                    .map(move |(connection_id, route)| (host_id, connection_id, route))
+            })
+    }
+
+    /// Return self by value, leaving empty update in its place.
+    #[expect(dead_code)]
+    pub(crate) fn take(&mut self) -> Self {
+        let map = std::mem::take(&mut self.updates);
+        Self { updates: map }
+    }
+
+    /// Merges a newer update into this one. Entries of `newer` override entries of `self`
+    /// for the same (host id, connection id) pair; all other entries are kept.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) fn merge(&mut self, newer: ClientRoutesUpdate) {
+        for (host_id, connection_id, route) in newer.into_entries() {
+            self.updates
+                .entry(host_id)
+                .or_default()
+                .insert(connection_id, route);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    // ---------------------------------------------------------------
+    // Tests for ClientRoutesUpdate::merge and ClientRoutes::merge
+    // ---------------------------------------------------------------
+
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    use crate::client::client_routes::{
+        ClientRoutesAddressTranslator, ClientRoutesConfig, ClientRoutesProxy,
+        ClientRoutesSubscriber,
+    };
+    use crate::cluster::metadata::update::ClientRoutesUpdate;
+    use crate::cluster::metadata::{ClientRoute, ClientRoutes};
+    use crate::frame::response::event::ClientRoutesChangeEvent;
+
+    fn route(host: Uuid, conn: &str, port: u16) -> ClientRoute {
+        ClientRoute {
+            connection_id: conn.to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(port),
+            tls_port: None,
+        }
+    }
+
+    // Builds a ClientRoutesUpdate directly from (host, connection id, entry) triples,
+    // bypassing `from_event` — the merge logic is independent of how the update
+    // was derived.
+    fn update_from_entries(entries: Vec<(Uuid, &str, Option<ClientRoute>)>) -> ClientRoutesUpdate {
+        let mut updates: HashMap<Uuid, HashMap<String, Option<ClientRoute>>> = HashMap::new();
+        for (host, conn, entry) in entries {
+            updates
+                .entry(host)
+                .or_default()
+                .insert(conn.to_owned(), entry);
+        }
+        ClientRoutesUpdate { updates }
+    }
+
+    // Flattens a ClientRoutes into a deterministically ordered list, so that two
+    // snapshots can be compared for equality (ClientRoutes itself is not PartialEq).
+    fn sorted_entries(routes: &ClientRoutes) -> Vec<(Uuid, String, ClientRoute)> {
+        let mut entries: Vec<(Uuid, String, ClientRoute)> = routes
+            .routes
+            .iter()
+            .flat_map(|(host, per_conn)| {
+                per_conn
+                    .iter()
+                    .map(move |(conn, route)| (*host, conn.clone(), route.clone()))
+            })
+            .collect();
+        entries.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+        entries
+    }
+
+    // Flattens a ClientRoutesUpdate the same way, for assertions on merge results.
+    fn sorted_update_entries(
+        update: &ClientRoutesUpdate,
+    ) -> Vec<(Uuid, String, Option<ClientRoute>)> {
+        let mut entries: Vec<(Uuid, String, Option<ClientRoute>)> = update
+            .updates
+            .iter()
+            .flat_map(|(host, per_conn)| {
+                per_conn
+                    .iter()
+                    .map(move |(conn, entry)| (*host, conn.clone(), entry.clone()))
+            })
+            .collect();
+        entries.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+        entries
+    }
+
+    fn make_client_routes(routes: Vec<ClientRoute>) -> ClientRoutes {
+        let mut cr = ClientRoutes::default();
+        cr.extend(routes);
+        cr
+    }
+
+    fn make_config(proxies: Vec<ClientRoutesProxy>) -> ClientRoutesConfig {
+        ClientRoutesConfig::new(proxies).unwrap()
+    }
+
+    fn make_update(
+        translator: &ClientRoutesAddressTranslator,
+        event: &ClientRoutesChangeEvent,
+        fetched: ClientRoutes,
+    ) -> ClientRoutesUpdate {
+        ClientRoutesUpdate::from_event(event, translator.get_connection_ids(), &fetched)
+    }
+
+    // `ClientRoutesUpdate::merge`: entries of the newer update override entries of
+    // the older one for the same (host id, connection id) pair; entries only present
+    // in one of the updates are retained as-is. This covers all four combinations
+    // of Some/None overriding Some/None.
+    #[test]
+    fn update_merge_newer_overrides_older_and_keeps_disjoint() {
+        let host_a = Uuid::new_v4();
+        let host_b = Uuid::new_v4();
+        let host_c = Uuid::new_v4();
+
+        let mut older = update_from_entries(vec![
+            // Overridden by a newer Some.
+            (host_a, "conn-1", Some(route(host_a, "conn-1", 9042))),
+            // Overridden by a newer None (deletion wins).
+            (host_a, "conn-2", Some(route(host_a, "conn-2", 9043))),
+            // Overridden by a newer Some (resurrection wins).
+            (host_b, "conn-1", None),
+            // Disjoint: only in the older update.
+            (host_c, "conn-1", Some(route(host_c, "conn-1", 9044))),
+        ]);
+
+        let newer = update_from_entries(vec![
+            (host_a, "conn-1", Some(route(host_a, "conn-1", 9099))),
+            (host_a, "conn-2", None),
+            (host_b, "conn-1", Some(route(host_b, "conn-1", 9050))),
+            // Disjoint: only in the newer update.
+            (host_c, "conn-2", None),
+        ]);
+
+        older.merge(newer);
+
+        let expected = sorted_update_entries(&update_from_entries(vec![
+            (host_a, "conn-1", Some(route(host_a, "conn-1", 9099))),
+            (host_a, "conn-2", None),
+            (host_b, "conn-1", Some(route(host_b, "conn-1", 9050))),
+            (host_c, "conn-1", Some(route(host_c, "conn-1", 9044))),
+            (host_c, "conn-2", None),
+        ]));
+        assert_eq!(sorted_update_entries(&older), expected);
+    }
+
+    // `ClientRoutes::merge`: a `Some` entry for a host absent from the snapshot
+    // inserts a brand-new host entry.
+    #[test]
+    fn client_routes_merge_some_inserts_new_host() {
+        let host_existing = Uuid::new_v4();
+        let host_new = Uuid::new_v4();
+
+        let mut routes = make_client_routes(vec![route(host_existing, "conn-1", 9042)]);
+        routes.merge(update_from_entries(vec![(
+            host_new,
+            "conn-1",
+            Some(route(host_new, "conn-1", 9099)),
+        )]));
+
+        assert_eq!(
+            routes.routes.get(&host_new).unwrap().get("conn-1"),
+            Some(&route(host_new, "conn-1", 9099))
+        );
+        // The pre-existing host is untouched.
+        assert_eq!(
+            routes.routes.get(&host_existing).unwrap().get("conn-1"),
+            Some(&route(host_existing, "conn-1", 9042))
+        );
+    }
+
+    // `ClientRoutes::merge`: a `Some` entry for an already-known
+    // (host id, connection id) overwrites the stored route.
+    #[test]
+    fn client_routes_merge_some_overwrites_existing_route() {
+        let host = Uuid::new_v4();
+
+        let mut routes = make_client_routes(vec![
+            route(host, "conn-1", 9042),
+            route(host, "conn-2", 9043),
+        ]);
+        routes.merge(update_from_entries(vec![(
+            host,
+            "conn-1",
+            Some(route(host, "conn-1", 9099)),
+        )]));
+
+        let per_conn = routes.routes.get(&host).unwrap();
+        assert_eq!(per_conn.get("conn-1"), Some(&route(host, "conn-1", 9099)));
+        // The other connection id of the same host is unaffected.
+        assert_eq!(per_conn.get("conn-2"), Some(&route(host, "conn-2", 9043)));
+    }
+
+    // `ClientRoutes::merge`: a `None` entry removes only that connection id's route,
+    // leaving the host's other routes in place.
+    #[test]
+    fn client_routes_merge_none_removes_single_route() {
+        let host = Uuid::new_v4();
+
+        let mut routes = make_client_routes(vec![
+            route(host, "conn-1", 9042),
+            route(host, "conn-2", 9043),
+        ]);
+        routes.merge(update_from_entries(vec![(host, "conn-1", None)]));
+
+        let per_conn = routes.routes.get(&host).unwrap();
+        assert_eq!(per_conn.get("conn-1"), None);
+        assert_eq!(per_conn.get("conn-2"), Some(&route(host, "conn-2", 9043)));
+    }
+
+    // `ClientRoutes::merge`: removing a host's last route drops the host entry
+    // entirely. ClientRoutes maintains the invariant that inner maps are never
+    // empty, so an empty inner map must not be left behind.
+    #[test]
+    fn client_routes_merge_none_removing_last_route_drops_host() {
+        let host = Uuid::new_v4();
+        let other_host = Uuid::new_v4();
+
+        let mut routes = make_client_routes(vec![
+            route(host, "conn-1", 9042),
+            route(other_host, "conn-1", 9043),
+        ]);
+        routes.merge(update_from_entries(vec![(host, "conn-1", None)]));
+
+        assert!(
+            !routes.routes.contains_key(&host),
+            "host with no remaining routes must be dropped, got: {:?}",
+            routes.routes.get(&host)
+        );
+        // Unrelated hosts survive.
+        assert_eq!(
+            routes.routes.get(&other_host).unwrap().get("conn-1"),
+            Some(&route(other_host, "conn-1", 9043))
+        );
+    }
+
+    // `ClientRoutes::merge`: a `None` for a host that is not known at all is a no-op.
+    #[test]
+    fn client_routes_merge_none_for_unknown_host_is_noop() {
+        let host = Uuid::new_v4();
+        let unknown = Uuid::new_v4();
+
+        let mut routes = make_client_routes(vec![route(host, "conn-1", 9042)]);
+        let before = sorted_entries(&routes);
+        routes.merge(update_from_entries(vec![
+            (unknown, "conn-1", None),
+            // Also: unknown connection id of a known host.
+            (host, "conn-9", None),
+        ]));
+
+        assert_eq!(sorted_entries(&routes), before);
+    }
+
+    // The point of making updates mergeable: applying update A and then update B to
+    // a snapshot must yield exactly the same snapshot as applying the single merged
+    // update `A.merge(B)`. This is what allows the driver to coalesce pending
+    // partial updates before applying them.
+    #[test]
+    fn client_routes_merge_is_equivalent_to_sequential_application() {
+        let host_a = Uuid::new_v4();
+        let host_b = Uuid::new_v4();
+        let host_c = Uuid::new_v4();
+
+        let initial = || {
+            make_client_routes(vec![
+                route(host_a, "conn-1", 9042),
+                route(host_a, "conn-2", 9043),
+                route(host_b, "conn-1", 9044),
+            ])
+        };
+
+        // A: updates host_a/conn-1, deletes host_a/conn-2, adds host_c/conn-1.
+        let update_a = || {
+            update_from_entries(vec![
+                (host_a, "conn-1", Some(route(host_a, "conn-1", 9050))),
+                (host_a, "conn-2", None),
+                (host_c, "conn-1", Some(route(host_c, "conn-1", 9051))),
+            ])
+        };
+        // B: overrides host_a/conn-1 again, resurrects host_a/conn-2,
+        //    deletes host_b's only route, adds host_c/conn-2.
+        let update_b = || {
+            update_from_entries(vec![
+                (host_a, "conn-1", Some(route(host_a, "conn-1", 9060))),
+                (host_a, "conn-2", Some(route(host_a, "conn-2", 9061))),
+                (host_b, "conn-1", None),
+                (host_c, "conn-2", Some(route(host_c, "conn-2", 9062))),
+            ])
+        };
+
+        // Sequential application.
+        let mut sequential = initial();
+        sequential.merge(update_a());
+        sequential.merge(update_b());
+
+        // Coalesced application.
+        let mut coalesced_update = update_a();
+        coalesced_update.merge(update_b());
+        let mut coalesced = initial();
+        coalesced.merge(coalesced_update);
+
+        assert_eq!(sorted_entries(&sequential), sorted_entries(&coalesced));
+        // Sanity: the merged result is what we expect, not two equal empty maps.
+        assert_eq!(
+            sorted_entries(&sequential),
+            sorted_entries(&make_client_routes(vec![
+                route(host_a, "conn-1", 9060),
+                route(host_a, "conn-2", 9061),
+                route(host_c, "conn-1", 9051),
+                route(host_c, "conn-2", 9062),
+            ]))
+        );
+        assert!(!sequential.routes.contains_key(&host_b));
+    }
+
+    // `ClientRoutesUpdate::from_event` must only pick up (host id, connection id)
+    // pairs listed in the event and relevant to the driver; routes returned by the
+    // re-fetch that do not correspond to an event pair are cross-product artifacts
+    // of the `WHERE connection_id IN ? AND host_id IN ?` query and must be ignored.
+    #[test]
+    fn update_from_event_ignores_cross_product_artifacts_and_irrelevant_conn_ids() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host_x = Uuid::new_v4();
+        let host_y = Uuid::new_v4();
+
+        // The event lists (conn-1, host_x) — relevant — and (conn-other, host_y),
+        // whose connection id the driver does not monitor.
+        let event = ClientRoutesChangeEvent::UpdateNodes {
+            connection_ids: vec!["conn-1".to_owned(), "conn-other".to_owned()],
+            host_ids: vec![host_x, host_y],
+        };
+        // The re-fetch additionally contains (conn-1, host_y), a cross-product artifact.
+        let fetched = make_client_routes(vec![
+            route(host_x, "conn-1", 9042),
+            route(host_y, "conn-1", 9043),
+        ]);
+
+        let update = make_update(&translator, &event, fetched);
+
+        assert_eq!(
+            sorted_update_entries(&update),
+            vec![(
+                host_x,
+                "conn-1".to_owned(),
+                Some(route(host_x, "conn-1", 9042))
+            )]
+        );
+    }
+
+    // `ClientRoutesUpdate::from_event`: an event pair with no matching route in the
+    // re-fetch yields an explicit `None` entry, i.e. a deletion.
+    #[test]
+    fn update_from_event_yields_none_for_missing_route() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host = Uuid::new_v4();
+        let event = ClientRoutesChangeEvent::UpdateNodes {
+            connection_ids: vec!["conn-1".to_owned()],
+            host_ids: vec![host],
+        };
+
+        let update = make_update(&translator, &event, ClientRoutes::default());
+
+        assert_eq!(
+            sorted_update_entries(&update),
+            vec![(host, "conn-1".to_owned(), None)]
+        );
+    }
+}
