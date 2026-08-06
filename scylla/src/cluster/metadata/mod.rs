@@ -18,6 +18,7 @@
 //    - [ClientRoute]
 
 mod fetching;
+pub(crate) mod merge_channel;
 pub(super) mod reader;
 pub(crate) mod update;
 
