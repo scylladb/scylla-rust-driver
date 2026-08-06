@@ -369,7 +369,12 @@ impl ClientRoutesSubscriber for ClientRoutesAddressTranslator {
                                 host_routes.sticky_route = new_route;
                             } else {
                                 // We add a new route or update an existing one.
-                                host_routes.other_routes.insert(RouteCmpByConnId(new_route));
+                                // `replace` not `insert`: `other_routes` is a `HashSet`.
+                                // `HashSet::insert` retains old value if it already exists,
+                                // so it would not replace the route but keep the old one.
+                                host_routes
+                                    .other_routes
+                                    .replace(RouteCmpByConnId(new_route));
                             }
                         }
                         // There was no route for that host yet.
@@ -2095,5 +2100,70 @@ mod tests {
         ]);
         let returned = translator.merge_client_routes_update(&event, routes);
         assert_eq!(returned, HashSet::from([host_updated, host_added]));
+    }
+
+    #[tokio::test]
+    async fn merge_overwrites_existing_nonsticky_routes() {
+        let config = make_config(vec![
+            ClientRoutesProxy::new_with_connection_id("conn-1".to_string()),
+            ClientRoutesProxy::new_with_connection_id("conn-2".to_string()),
+        ]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host_id = Uuid::new_v4();
+
+        // We add only one entry, so it will be the sticky one.
+        translator.replace_client_routes(make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9042),
+            tls_port: None,
+        }]));
+
+        // Adding a route with the other conn id, so it goes
+        // into the "other_routes".
+        let event = ClientRoutesChangeEvent::UpdateNodes {
+            connection_ids: vec!["conn-2".to_owned()],
+            host_ids: vec![host_id],
+        };
+        let routes = make_client_routes(vec![ClientRoute {
+            connection_id: "conn-2".to_owned(),
+            host_id,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9099),
+            tls_port: None,
+        }]);
+        let _ = translator.merge_client_routes_update(&event, routes);
+
+        // Replace the route with conn id 2.
+        let event = ClientRoutesChangeEvent::UpdateNodes {
+            connection_ids: vec!["conn-2".to_owned()],
+            host_ids: vec![host_id],
+        };
+        let routes = make_client_routes(vec![ClientRoute {
+            connection_id: "conn-2".to_owned(),
+            host_id,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9100),
+            tls_port: None,
+        }]);
+        let _ = translator.merge_client_routes_update(&event, routes);
+
+        // Now let's remove conn id 1, so conn id 2 has to be used.
+        // We expect the last route (with port 9100 to be used),
+        // not the old one with port 9099
+        let event = ClientRoutesChangeEvent::UpdateNodes {
+            connection_ids: vec!["conn-1".to_owned()],
+            host_ids: vec![host_id],
+        };
+        let routes = make_client_routes(vec![]);
+        let _ = translator.merge_client_routes_update(&event, routes);
+
+        let peer = make_peer(host_id, localhost_addr(19999));
+        assert_eq!(
+            translator.translate_address(&peer).await.unwrap(),
+            localhost_addr(9100)
+        );
     }
 }
