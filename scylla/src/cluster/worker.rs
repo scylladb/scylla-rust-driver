@@ -4,6 +4,7 @@ use crate::client::client_routes::{
 use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::cluster::control_connection::{ControlConnection, ControlConnectionEvent};
 use crate::cluster::metadata::SchemaMetadataFetchMode;
+use crate::cluster::metadata::update::RefreshRequest;
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::EventV2 as Event;
@@ -285,11 +286,6 @@ struct ClusterWorker {
     cluster_metadata_refresh_interval: Duration,
 
     metrics: Metrics,
-}
-
-#[derive(Debug)]
-struct RefreshRequest {
-    response_chan: tokio::sync::oneshot::Sender<Result<(), MetadataError>>,
 }
 
 #[derive(Debug)]

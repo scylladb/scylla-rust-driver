@@ -1,9 +1,143 @@
 use std::collections::HashMap;
+use std::net::SocketAddr;
 
+use tokio::sync::oneshot;
+use tracing::warn;
 use uuid::Uuid;
 
-use crate::cluster::metadata::{ClientRoute, ClientRoutes};
+use crate::cluster::metadata::{ClientRoute, ClientRoutes, Metadata};
+use crate::errors::MetadataError;
 use crate::frame::response::event::ClientRoutesChangeEvent;
+
+/// An explicit request to refresh cluster metadata, sent by
+/// [`Cluster::refresh_metadata`](crate::cluster::worker::Cluster::refresh_metadata).
+#[derive(Debug)]
+pub(in super::super) struct RefreshRequest {
+    pub(in super::super) response_chan: oneshot::Sender<Result<(), MetadataError>>,
+}
+
+#[derive(PartialEq, Eq)]
+#[expect(dead_code)]
+pub(in super::super) enum StatusHint {
+    Up,
+    Down,
+}
+
+/// Everything the [`MetadataWorker`] learned about the cluster and did not yet
+/// hand over to the cluster worker.
+///
+/// Because the channel carrying it has capacity one, several consecutive
+/// discoveries may end up merged into a single value - see the `merge_*`
+/// constructors below, which are the only way to fill it in.
+#[derive(Default)]
+pub(in super::super) struct MetadataUpdate {
+    pub(in super::super) metadata_changes: Option<MetadataChanges>,
+    /// Nodes for which we received status hints, and the type of hints.
+    /// Latest hint wins during merge.
+    pub(in super::super) status_hints: HashMap<SocketAddr, StatusHint>,
+}
+
+#[expect(dead_code)]
+pub(in super::super) enum MetadataChanges {
+    Full {
+        /// Full fetch of metadata. Later partial fetch is allowed to modify this.
+        metadata: Metadata,
+        /// Response channels of explicit refresh requests, to be answered once the
+        /// state resulting from `metadata` has been published.
+        refresh_responses: Vec<tokio::sync::oneshot::Sender<Result<(), MetadataError>>>,
+    },
+    /// For know, only client_routes can be updates separately. Later we'll add more stuff here.
+    Partial {
+        /// Partial client-routes snapshots fetched in response to
+        /// CLIENT_ROUTES_CHANGE events.
+        client_routes_updates: ClientRoutesUpdate,
+    },
+}
+
+#[expect(dead_code)]
+impl MetadataUpdate {
+    fn slot_mut(slot: &mut Option<Self>) -> &mut Self {
+        slot.get_or_insert_with(Self::default)
+    }
+
+    /// Records freshly fetched metadata, together with the response channel of
+    /// the explicit refresh request that triggered the fetch, if any.
+    ///
+    /// Any partial updates pending so far are dropped: they were
+    /// fetched before this metadata that subsumes them.
+    pub(crate) fn merge_metadata(
+        slot: &mut Option<Self>,
+        metadata: Metadata,
+        refresh_response: Option<tokio::sync::oneshot::Sender<Result<(), MetadataError>>>,
+    ) {
+        let update = Self::slot_mut(slot);
+        // Newest wins: an older, not-yet-applied fetch is worthless now.
+        // Caveat: We need to NOT drop the old refresh channel.
+        match &mut update.metadata_changes {
+            None | Some(MetadataChanges::Partial { .. }) => {
+                update.metadata_changes = Some(MetadataChanges::Full {
+                    metadata,
+                    refresh_responses: refresh_response.into_iter().collect(),
+                });
+            }
+            Some(MetadataChanges::Full {
+                metadata: slot_metadata,
+                refresh_responses,
+            }) => {
+                *slot_metadata = metadata;
+                if let Some(response_channel) = refresh_response {
+                    refresh_responses.push(response_channel);
+                }
+            }
+        }
+    }
+
+    /// Records a partial client-routes snapshot fetched in response to `event`.
+    pub(crate) fn merge_client_routes_update(
+        slot: &mut Option<Self>,
+        new_client_routes: ClientRoutesUpdate,
+    ) {
+        let update = Self::slot_mut(slot);
+        match &mut update.metadata_changes {
+            None => {
+                update.metadata_changes = Some(MetadataChanges::Partial {
+                    client_routes_updates: new_client_routes,
+                });
+            }
+            Some(MetadataChanges::Partial {
+                client_routes_updates,
+            }) => {
+                client_routes_updates.merge(new_client_routes);
+            }
+            Some(MetadataChanges::Full {
+                metadata,
+                refresh_responses: _,
+            }) => {
+                let Some(metadata_routes) = metadata.client_routes.as_mut() else {
+                    warn!(
+                        "Received update for client routes despite client routes not being configured"
+                    );
+                    return;
+                };
+                metadata_routes.merge(new_client_routes);
+            }
+        }
+    }
+
+    /// Records that `addr` was hinted to be UP.
+    pub(crate) fn merge_up_hint(slot: &mut Option<Self>, addr: SocketAddr) {
+        Self::slot_mut(slot)
+            .status_hints
+            .insert(addr, StatusHint::Up);
+    }
+
+    /// Records that `addr` was hinted to be DOWN.
+    pub(crate) fn merge_down_hint(slot: &mut Option<Self>, addr: SocketAddr) {
+        Self::slot_mut(slot)
+            .status_hints
+            .insert(addr, StatusHint::Down);
+    }
+}
 
 /// A partial, mergeable update of client routes, derived from a
 /// CLIENT_ROUTES_CHANGE:UPDATE_NODES event and from the partial snapshot of
