@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use tracing::{debug, error};
 
-use crate::cluster::control_connection::{ControlConnection, ControlConnectionEvent};
+use crate::cluster::control_connection::{
+    ControlConnection, ControlConnectionEvent, ControlConnectionEvents,
+};
 use crate::cluster::metadata::update::{MetadataUpdate, RefreshRequest};
 use crate::errors::MetadataError;
 use crate::frame::response::event::EventV2 as Event;
@@ -23,10 +25,10 @@ pub(in super::super) struct MetadataWorker {
     metadata_reader: MetadataReader,
 
     /// The control connection, on which metadata is fetched and CQL server
-    /// events are received. `None` means it is currently broken (or was never
-    /// established) and needs to be re-established, which happens during the
-    /// next metadata refresh.
-    control_connection: Option<ControlConnection>,
+    /// events are received, together with the channels the events arrive on.
+    /// `None` means it is currently broken (or was never established) and needs
+    /// to be re-established, which happens during the next metadata refresh.
+    control_connection: Option<(ControlConnection, ControlConnectionEvents)>,
 
     // This value determines how frequently the metadata
     // worker will refresh the cluster metadata
@@ -42,7 +44,7 @@ pub(in super::super) struct MetadataWorker {
 impl MetadataWorker {
     pub(in super::super) fn new(
         metadata_reader: MetadataReader,
-        initial_control_connection: Option<ControlConnection>,
+        initial_control_connection: Option<(ControlConnection, ControlConnectionEvents)>,
         cluster_metadata_refresh_interval: Duration,
         refresh_channel: tokio::sync::mpsc::Receiver<RefreshRequest>,
         updates: merge_channel::Sender<MetadataUpdate>,
@@ -109,7 +111,7 @@ impl MetadataWorker {
                                 Event::TopologyChange(_) => (), // Refresh immediately
                                 Event::ClientRoutesChange(evt) => {
                                     // We received this event on the control connection, so it must be present.
-                                    let Some(cc) = self.control_connection.as_ref() else {
+                                    let Some((cc, _events)) = self.control_connection.as_ref() else {
                                         error!("BUG: Received a server event without a control connection.");
                                         continue;
                                     };
@@ -228,11 +230,11 @@ impl MetadataWorker {
     /// re-establishment), this never resolves — the worker will rely on the
     /// periodic refresh timer to attempt re-establishment instead.
     async fn wait_for_control_connection_event(
-        control_connection: &mut Option<ControlConnection>,
+        control_connection: &mut Option<(ControlConnection, ControlConnectionEvents)>,
     ) -> ControlConnectionEvent {
         match control_connection {
             None => std::future::pending().await,
-            Some(cc) => cc.wait_for_event().await,
+            Some((_cc, events)) => events.wait_for_event().await,
         }
     }
 
@@ -243,7 +245,7 @@ impl MetadataWorker {
     /// known peers and, as a last resort, the initial contact points). The (possibly
     /// new) working control connection is stored back into `self.control_connection`.
     async fn read_metadata(&mut self) -> Result<Metadata, MetadataError> {
-        if let Some(cc) = self.control_connection.as_ref() {
+        if let Some((cc, _events)) = self.control_connection.as_ref() {
             match self.metadata_reader.fetch_metadata_on_cc(cc).await {
                 Ok(metadata) => return Ok(metadata),
                 Err(err) => {

@@ -23,7 +23,9 @@ use tracing::{debug, error, warn};
 
 use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::cluster::KnownNode;
-use crate::cluster::control_connection::{ControlConnection, ControlConnectionCache};
+use crate::cluster::control_connection::{
+    ControlConnection, ControlConnectionCache, ControlConnectionEvents,
+};
 use crate::cluster::metadata::{
     ClientRoutesUpdate, Metadata, PeerEndpoint, SchemaMetadataFetchMode, UntranslatedEndpoint,
 };
@@ -143,7 +145,13 @@ impl MetadataReader {
     pub(crate) async fn establish_cc_and_fetch_metadata(
         &mut self,
         initial: bool,
-    ) -> Result<(Option<ControlConnection>, Metadata), MetadataError> {
+    ) -> Result<
+        (
+            Option<(ControlConnection, ControlConnectionEvents)>,
+            Metadata,
+        ),
+        MetadataError,
+    > {
         // shuffle known_peers to iterate through them in random order
         self.known_peers.shuffle(&mut rng());
         debug!(
@@ -221,7 +229,13 @@ impl MetadataReader {
         &mut self,
         initial: bool,
         nodes: impl Iterator<Item = UntranslatedEndpoint>,
-    ) -> Result<(Option<ControlConnection>, Metadata), Option<MetadataError>> {
+    ) -> Result<
+        (
+            Option<(ControlConnection, ControlConnectionEvents)>,
+            Metadata,
+        ),
+        Option<MetadataError>,
+    > {
         let mut last_err: Option<MetadataError> = None;
         // Metadata fetched from a host-filter-rejected node. It is valid cluster-wide,
         // so it is kept as a fallback in case no accepted node can be reached, while we
@@ -232,7 +246,7 @@ impl MetadataReader {
             let peer_address = peer.address();
             debug!("Trying to establish control connection on {peer_address}");
 
-            let cc = match Self::make_control_connection(
+            let (cc, cc_events) = match Self::make_control_connection(
                 peer,
                 self.control_connection_config.clone(),
                 self.request_serverside_timeout,
@@ -296,7 +310,7 @@ impl MetadataReader {
                 continue;
             }
 
-            return Ok((Some(cc), metadata));
+            return Ok((Some((cc, cc_events)), metadata));
         }
 
         match rejected_metadata {
@@ -393,7 +407,7 @@ impl MetadataReader {
         request_serverside_timeout: Option<Duration>,
         cache: Arc<ControlConnectionCache>,
         register_for_client_routes_events: bool,
-    ) -> Result<ControlConnection, MetadataError> {
+    ) -> Result<(ControlConnection, ControlConnectionEvents), MetadataError> {
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
         // setting event_sender field in connection config will cause control connection to
         // - send REGISTER message to receive server events
@@ -417,10 +431,12 @@ impl MetadataReader {
 
         match open_result {
             Ok((con, recv)) => {
-                Ok(
-                    ControlConnection::new(Arc::new(con), endpoint, cache, recv, receiver)
-                        .override_serverside_timeout(request_serverside_timeout),
-                )
+                let (cc, cc_events) =
+                    ControlConnection::new(Arc::new(con), endpoint, cache, recv, receiver);
+                Ok((
+                    cc.override_serverside_timeout(request_serverside_timeout),
+                    cc_events,
+                ))
             }
             Err(conn_err) => Err(MetadataError::ConnectionPoolError(
                 ConnectionPoolError::Broken {
