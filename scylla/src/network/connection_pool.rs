@@ -2000,7 +2000,7 @@ mod tests {
 
         tokio::time::timeout(Duration::from_secs(5), async {
             while metrics.get_total_connections() != 1 {
-                tokio::task::yield_now().await;
+                tokio::time::sleep(Duration::from_millis(1)).await;
             }
         })
         .await
