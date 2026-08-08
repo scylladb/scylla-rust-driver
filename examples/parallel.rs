@@ -1,10 +1,25 @@
+//! Shows how to saturate the driver with concurrent requests.
+//!
+//! Three things matter for throughput:
+//! - the statement is prepared once and reused, so the driver knows its
+//!   partition key and can route every request straight to a replica;
+//! - requests are issued concurrently rather than one after another, since a
+//!   single request spends almost all of its time waiting for the database;
+//! - the number of in-flight requests is bounded, so that a burst of work
+//!   cannot exhaust memory or overload the cluster.
+
 use anyhow::Result;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use std::env;
 use std::sync::Arc;
+use tokio::task::JoinSet;
 
-use tokio::sync::Semaphore;
+/// How many rows to insert.
+const ROWS: i32 = 100_000;
+
+/// How many requests may be in flight at any given moment.
+const CONCURRENCY: usize = 256;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -24,35 +39,34 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    let parallelism = 256;
-    let sem = Arc::new(Semaphore::new(parallelism));
+    // Prepare once, outside of the loop. Preparing per request would double the
+    // number of round trips and defeat token-aware routing.
+    let insert = Arc::new(
+        session
+            .prepare("INSERT INTO examples_ks.parallel (a, b, c) VALUES (?, ?, 'abc')")
+            .await?,
+    );
 
-    for i in 0..100_000usize {
-        if i % 1000 == 0 {
-            println!("{i}");
+    // A `JoinSet` owns the spawned tasks and reports how many it still holds,
+    // which is all that is needed to bound the concurrency: reaping a task that
+    // has already finished returns immediately, so the bound never costs a wait.
+    let mut requests = JoinSet::new();
+
+    for a in 0..ROWS {
+        if requests.len() >= CONCURRENCY {
+            // Wait for one of the in-flight requests to finish before adding
+            // another one, and propagate its error if it failed.
+            requests.join_next().await.expect("set is not empty")??;
         }
-        let session = session.clone();
-        let permit = sem.clone().acquire_owned().await;
-        tokio::task::spawn(async move {
-            session
-                .query_unpaged(
-                    format!(
-                        "INSERT INTO examples_ks.parallel (a, b, c) VALUES ({}, {}, 'abc')",
-                        i,
-                        2 * i
-                    ),
-                    &[],
-                )
-                .await
-                .unwrap();
 
-            let _permit = permit;
-        });
+        let session = Arc::clone(&session);
+        let insert = Arc::clone(&insert);
+        requests.spawn(async move { session.execute_unpaged(&insert, (a, 2 * a)).await });
     }
 
-    // Wait for all in-flight requests to finish
-    for _ in 0..parallelism {
-        sem.acquire().await.unwrap().forget();
+    // Wait for the remaining requests and make sure none of them failed.
+    while let Some(result) = requests.join_next().await {
+        result??;
     }
 
     println!("Ok.");

@@ -16,23 +16,30 @@ scylla = { path = "../scylla", features = [
     "rustls-023",
     "chrono-04",
     "time-03",
-    "num-bigint-03",
-    "num-bigint-04",
-    "bigdecimal-04",
     "metrics",
     "unstable-client-routes",
 ] }
 tokio = { version = "1.34", features = ["full"] }
 tracing = { version = "0.1.25", features = ["log"] }
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
-chrono = { version = "0.4", default-features = false }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 time = { version = "0.3.22" }
-uuid = { version = "1.0", features = ["v1"] }
+uuid = "1.0"
 tower = "0.5"
-clap = { version = "4.0", features = ["derive"] }
 rand = "0.9.0"
 env_logger = "0.11"
 rustls = "0.23"
+rcgen = "0.14"
+# Only used by the examples that have to bring up a specially configured
+# cluster (TLS, authentication, multi-datacenter, client routes) so that they
+# are runnable in CI. See examples/README.md.
+scylla-ccm-bridge = { path = "../scylla-ccm-bridge", features = [
+    "driver",
+    "unstable-client-routes",
+] }
+# Ditto: its NLB stands in for the cloud load balancers that the client-routes
+# example needs in front of its throwaway cluster.
+scylla-proxy = { path = "../scylla-proxy" }
 
 [[example]]
 name = "auth"
@@ -43,96 +50,100 @@ name = "basic"
 path = "basic.rs"
 
 [[example]]
-name = "logging"
-path = "logging.rs"
+name = "batch"
+path = "batch.rs"
 
 [[example]]
-name = "logging_log"
-path = "logging_log.rs"
+name = "client_routes"
+path = "client_routes.rs"
 
 [[example]]
-name = "cqlsh-rs"
-path = "cqlsh-rs.rs"
+name = "compare_tokens"
+path = "compare_tokens.rs"
 
 [[example]]
-name = "parallel"
-path = "parallel.rs"
+name = "cql_time_types"
+path = "cql_time_types.rs"
 
 [[example]]
-name = "parallel-prepared"
-path = "parallel-prepared.rs"
-
-[[example]]
-name = "compare-tokens"
-path = "compare-tokens.rs"
-
-[[example]]
-name = "select-paging"
-path = "select-paging.rs"
-
-[[example]]
-name = "user-defined-type"
-path = "user-defined-type.rs"
-
-[[example]]
-name = "cql-time-types"
-path = "cql-time-types.rs"
-
-[[example]]
-name = "tracing"
-path = "tracing.rs"
-
-[[example]]
-name = "schema_agreement"
-path = "schema_agreement.rs"
-
-[[example]]
-name = "speculative-execution"
-path = "speculative-execution.rs"
-
-[[example]]
-name = "get_by_name"
-path = "get_by_name.rs"
-
-[[example]]
-name = "value_list"
-path = "value_list.rs"
-
-[[example]]
-name = "enforce_coordinator"
-path = "enforce_coordinator.rs"
-
-[[example]]
-name = "custom_load_balancing_policy"
-path = "custom_load_balancing_policy.rs"
+name = "cqlsh_rs"
+path = "cqlsh_rs.rs"
 
 [[example]]
 name = "custom_deserialization"
 path = "custom_deserialization.rs"
 
 [[example]]
-name = "tower"
-path = "tower.rs"
+name = "custom_load_balancing_policy"
+path = "custom_load_balancing_policy.rs"
 
 [[example]]
-name = "query_history"
-path = "query_history.rs"
+name = "custom_serialization"
+path = "custom_serialization.rs"
 
 [[example]]
-name = "tls-openssl"
-path = "tls-openssl.rs"
-
-[[example]]
-name = "tls-rustls"
-path = "tls-rustls.rs"
+name = "enforce_coordinator"
+path = "enforce_coordinator.rs"
 
 [[example]]
 name = "execution_profile"
 path = "execution_profile.rs"
 
 [[example]]
-name = "client-routes"
-path = "client-routes.rs"
+name = "get_by_name"
+path = "get_by_name.rs"
+
+[[example]]
+name = "logging_via_log"
+path = "logging_via_log.rs"
+
+[[example]]
+name = "logging_via_tracing"
+path = "logging_via_tracing.rs"
+
+[[example]]
+name = "metrics"
+path = "metrics.rs"
+
+[[example]]
+name = "parallel"
+path = "parallel.rs"
+
+[[example]]
+name = "query_history"
+path = "query_history.rs"
+
+[[example]]
+name = "schema_agreement"
+path = "schema_agreement.rs"
+
+[[example]]
+name = "select_paging"
+path = "select_paging.rs"
+
+[[example]]
+name = "speculative_execution"
+path = "speculative_execution.rs"
+
+[[example]]
+name = "tls_openssl"
+path = "tls_openssl.rs"
+
+[[example]]
+name = "tls_rustls"
+path = "tls_rustls.rs"
+
+[[example]]
+name = "tower"
+path = "tower.rs"
+
+[[example]]
+name = "tracing"
+path = "tracing.rs"
+
+[[example]]
+name = "user_defined_type"
+path = "user_defined_type.rs"
 
 [package.metadata.cargo-semver-checks.lints]
 workspace = true

@@ -35,6 +35,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::io::{self, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -119,6 +120,7 @@ impl NlbFrontend {
         let shared = Arc::new(NlbShared {
             backends: RwLock::new(self.backends),
             connection_tasks: tokio::sync::Mutex::new(JoinSet::new()),
+            accepted_connections: AtomicU64::new(0),
         });
 
         let shared_for_handle = shared.clone();
@@ -127,6 +129,7 @@ impl NlbFrontend {
             loop {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
+                        shared.accepted_connections.fetch_add(1, Ordering::Relaxed);
                         let connection_shared = shared.clone();
                         shared.connection_tasks.lock().await.spawn(async move {
                             let result =
@@ -231,6 +234,8 @@ struct NlbShared {
     /// to clone a `SocketAddr` -- no async work under the lock.
     backends: RwLock<Vec<SocketAddr>>,
     connection_tasks: tokio::sync::Mutex<JoinSet<()>>,
+    /// Number of TCP connections accepted by the listener since it started.
+    accepted_connections: AtomicU64,
 }
 
 /// Handle for a running NLB frontend. Allows querying the listen address,
@@ -249,6 +254,15 @@ impl RunningNlbFrontend {
     /// since the OS will have assigned an actual port.
     pub fn listen_addr(&self) -> SocketAddr {
         self.listen_addr
+    }
+
+    /// Returns the number of TCP connections this NLB has accepted since it
+    /// started listening.
+    ///
+    /// Useful for asserting that traffic went through a particular NLB port -
+    /// e.g. that a driver really did route to the endpoint it was told about.
+    pub fn accepted_connections(&self) -> u64 {
+        self.shared.accepted_connections.load(Ordering::Relaxed)
     }
 
     /// Replace the set of backend addresses at runtime.
@@ -360,6 +374,7 @@ mod tests {
             "Expected both backends to be hit, but saw_backend = {:?}",
             saw_backend
         );
+        assert_eq!(running.accepted_connections(), 20);
 
         // Clean up.
         running.finish().await;

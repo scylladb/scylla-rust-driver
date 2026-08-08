@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let mut iter = session
-        .query_iter("SELECT d from examples_ks.times", &[])
+        .query_iter("SELECT t from examples_ks.times", &[])
         .await?
         .rows_stream::<(NaiveTime,)>()?;
     while let Some((read_time,)) = iter.try_next().await? {
@@ -137,7 +137,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let mut iter = session
-        .query_iter("SELECT d from examples_ks.times", &[])
+        .query_iter("SELECT t from examples_ks.times", &[])
         .await?
         .rows_stream::<(time::Time,)>()?;
     while let Some((read_time,)) = iter.try_next().await? {
@@ -152,7 +152,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let mut iter = session
-        .query_iter("SELECT d from examples_ks.times", &[])
+        .query_iter("SELECT t from examples_ks.times", &[])
         .await?
         .rows_stream::<(CqlTime,)>()?;
     while let Some((read_time,)) = iter.try_next().await? {
@@ -183,7 +183,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let mut iter = session
-        .query_iter("SELECT d from examples_ks.timestamps", &[])
+        .query_iter("SELECT t from examples_ks.timestamps", &[])
         .await?
         .rows_stream::<(DateTime<Utc>,)>()?;
     while let Some((read_time,)) = iter.try_next().await? {
@@ -201,7 +201,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let mut iter = session
-        .query_iter("SELECT d from examples_ks.timestamps", &[])
+        .query_iter("SELECT t from examples_ks.timestamps", &[])
         .await?
         .rows_stream::<(time::OffsetDateTime,)>()?;
     while let Some((read_time,)) = iter.try_next().await? {
@@ -219,7 +219,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let mut iter = session
-        .query_iter("SELECT d from examples_ks.timestamps", &[])
+        .query_iter("SELECT t from examples_ks.timestamps", &[])
         .await?
         .rows_stream::<(CqlTimestamp,)>()?;
     while let Some((read_time,)) = iter.try_next().await? {

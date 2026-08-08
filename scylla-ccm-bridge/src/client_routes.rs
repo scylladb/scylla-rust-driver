@@ -907,9 +907,7 @@ impl ClientRoutesCluster {
     }
 
     async fn post_client_routes_to_cluster(&self) -> Result<(), Error> {
-        let routes = self.build_route_entries();
-        let route_json = serde_json_routes(&routes);
-        info!("Posting client routes: {}", route_json);
+        let routes = self.build_routes();
 
         // Randomly choose any node that has active proxy chain.
         let active_id = self
@@ -924,7 +922,7 @@ impl ClientRoutesCluster {
         let node = self.cluster.nodes().get_by_id(node_id).unwrap();
 
         let node_ip = node.broadcast_rpc_address();
-        post_client_routes_raw(node_ip, &route_json)
+        publish_client_routes(node_ip, &routes)
             .await
             .with_context(|| {
                 format!(
@@ -937,28 +935,20 @@ impl ClientRoutesCluster {
         Ok(())
     }
 
-    /// Build the JSON-serializable route entries from current state.
+    /// Build the routes to publish from the current state.
     ///
-    /// Each node's route uses the connection ID of its DC. The `port` field
-    /// points to the NLB. `tls_port` is set to the same value as `port`
-    /// because the REST API rejects port 0; the driver never uses TLS in
-    /// these tests, so the value is irrelevant.
-    fn build_route_entries(&self) -> Vec<RouteEntry> {
+    /// Each node's route uses the connection ID of its DC and points at the
+    /// node's NLB.
+    fn build_routes(&self) -> Vec<ClientRoute> {
         let mut entries = Vec::new();
 
         for (dc_id, dc_cfg) in &self.dc_configs {
             for (&node_id, chain) in &dc_cfg.per_node_chains {
                 if let Some(&host_id) = self.host_ids.get(&node_id) {
-                    let nlb = chain.nlb_addr();
-                    entries.push(RouteEntry {
+                    entries.push(ClientRoute {
                         connection_id: dc_cfg.connection_id.clone(),
                         host_id,
-                        address: nlb.ip().to_string(),
-                        port: nlb.port(),
-                        // For now, both are at the same port. TLS is anyway not tested, as not yet
-                        // supported. Once it's supported, this needs to be adjusted to a different port
-                        // than plaintext.
-                        tls_port: nlb.port(),
+                        endpoint: chain.nlb_addr(),
                     });
                 } else {
                     debug!(
@@ -1348,43 +1338,68 @@ fn build_client_routes_change_body(connection_ids: &[String], host_ids: &[String
 // Route posting (raw HTTP)
 // ---------------------------------------------------------------------------
 
-/// A single route entry for the REST API JSON payload.
-struct RouteEntry {
-    connection_id: String,
-    host_id: Uuid,
-    address: String,
-    port: u16,
-    tls_port: u16,
+/// Port of ScyllaDB's REST API, through which client routes are published.
+const REST_API_PORT: u16 = 10000;
+
+/// How many times posting client routes to a node's REST API is attempted.
+const MAX_POST_ATTEMPTS: u32 = 10;
+
+/// How long to wait between consecutive attempts to post client routes.
+const RETRY_DELAY: Duration = Duration::from_secs(2);
+
+/// A single route to publish in `system.client_routes`: the endpoint at which
+/// one node is reachable by clients using one connection ID.
+#[derive(Debug, Clone)]
+pub struct ClientRoute {
+    /// The connection ID this route belongs to. A driver is only served the
+    /// routes whose connection ID matches the one it is configured with.
+    pub connection_id: String,
+    /// Host ID of the node that `endpoint` leads to.
+    pub host_id: Uuid,
+    /// The endpoint at which the node is reachable, e.g. the address of the
+    /// load balancer fronting a private endpoint.
+    pub endpoint: SocketAddr,
 }
 
-/// Serialize route entries to JSON without pulling in serde_json.
-fn serde_json_routes(routes: &[RouteEntry]) -> String {
+/// Serialize routes into the REST API's JSON payload without pulling in serde_json.
+fn serde_json_routes(routes: &[ClientRoute]) -> String {
     let entries: Vec<String> = routes
         .iter()
         .map(|r| {
             format!(
                 r#"{{"connection_id":"{}","host_id":"{}","address":"{}","port":{},"tls_port":{}}}"#,
-                r.connection_id, r.host_id, r.address, r.port, r.tls_port
+                r.connection_id,
+                r.host_id,
+                r.endpoint.ip(),
+                r.endpoint.port(),
+                // `tls_port` repeats the plaintext port: TLS is not supported by
+                // Client Routes yet, and the REST API rejects port 0, so there is
+                // no way to say "none". Once TLS is supported this has to become a
+                // port of its own.
+                r.endpoint.port(),
             )
         })
         .collect();
     format!("[{}]", entries.join(","))
 }
 
-/// POST client routes to a single Scylla node via its REST API.
+/// Publishes `routes` in `system.client_routes`, by POSTing them to the REST
+/// API of the ScyllaDB node at `node_ip`. In a real deployment, this is what
+/// the cloud provider does when a private endpoint is created.
 ///
 /// Uses raw HTTP/1.1 over TCP to avoid adding an HTTP client dependency.
-/// Retries up to `MAX_POST_ATTEMPTS` times with backoff because a freshly
-/// started node's REST API may not be ready immediately (returns HTTP 500).
-async fn post_client_routes_raw(node_ip: IpAddr, json_body: &str) -> Result<(), Error> {
-    const MAX_POST_ATTEMPTS: u32 = 10;
-    const RETRY_DELAY: Duration = Duration::from_secs(2);
+/// Retries up to `MAX_POST_ATTEMPTS` times with `RETRY_DELAY` backoff, because
+/// a freshly started node's REST API may not be ready immediately (it answers
+/// HTTP 500 for a while).
+pub async fn publish_client_routes(node_ip: IpAddr, routes: &[ClientRoute]) -> Result<(), Error> {
+    let json_body = serde_json_routes(routes);
+    info!("Posting client routes: {}", json_body);
 
-    let api_addr = SocketAddr::new(node_ip, 10000);
+    let api_addr = SocketAddr::new(node_ip, REST_API_PORT);
     let mut last_err = None;
 
     for attempt in 1..=MAX_POST_ATTEMPTS {
-        match post_client_routes_raw_once(api_addr, node_ip, json_body).await {
+        match post_client_routes_raw_once(api_addr, &json_body).await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 info!(
@@ -1402,26 +1417,21 @@ async fn post_client_routes_raw(node_ip: IpAddr, json_body: &str) -> Result<(), 
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("No POST attempts made")))
 }
 
-/// Single attempt to POST client routes. Called by [`post_client_routes_raw`].
-async fn post_client_routes_raw_once(
-    api_addr: SocketAddr,
-    node_ip: IpAddr,
-    json_body: &str,
-) -> Result<(), Error> {
+/// Single attempt to POST client routes. Called by [`publish_client_routes`].
+async fn post_client_routes_raw_once(api_addr: SocketAddr, json_body: &str) -> Result<(), Error> {
     let mut stream = TcpStream::connect(api_addr)
         .await
         .with_context(|| format!("Failed to connect to REST API at {}", api_addr))?;
 
     let request = format!(
         "POST /v2/client-routes HTTP/1.1\r\n\
-         Host: {}:{}\r\n\
+         Host: {}\r\n\
          Content-Type: application/json\r\n\
          Content-Length: {}\r\n\
          Connection: close\r\n\
          \r\n\
          {}",
-        node_ip,
-        10000,
+        api_addr,
         json_body.len(),
         json_body
     );

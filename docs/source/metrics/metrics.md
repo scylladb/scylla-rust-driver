@@ -13,14 +13,15 @@ the round trip time of a request and driver-side processing.
 If you need server-side metrics, please look into Scylla Monitoring Stack.
 
 ### Collected metrics:
-* Query latencies
-* Total number of nonpaged queries
-* Number of errors during nonpaged queries
-* Total number of paged queries
-* Number of errors during paged queries
+* Request latencies
+* Total number of unpaged requests, and number of errors among them
+* Total number of manually paged requests (single page fetched per request),
+  and number of errors among them
+* Total number of automatically paged requests (`QueryPager` / `*_iter()` APIs),
+  counted once per page fetched, and number of errors among them
 * Number of retries
 * Latency histogram statistics (min, max, mean, standard deviation, percentiles)
-* Rates of queries per second in various time frames
+* Rates of requests per second in various time frames
 * Number of active connections, and connection and request timeouts
 
 ### Example
@@ -31,10 +32,30 @@ If you need server-side metrics, please look into Scylla Monitoring Stack.
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 let metrics = session.get_metrics();
 
-println!("Queries requested: {}", metrics.get_queries_num());
-println!("Iter queries requested: {}", metrics.get_queries_iter_num());
-println!("Errors occurred: {}", metrics.get_errors_num());
-println!("Iter errors occurred: {}", metrics.get_errors_iter_num());
+println!(
+    "Unpaged requests: {}",
+    metrics.get_requests_unpaged_num()
+);
+println!(
+    "Manually paged requests: {}",
+    metrics.get_requests_manually_paged_num()
+);
+println!(
+    "Automatically paged requests: {}",
+    metrics.get_requests_automatically_paged_num()
+);
+println!(
+    "Errors occurred in unpaged requests: {}",
+    metrics.get_errors_unpaged_num()
+);
+println!(
+    "Errors occurred in manually paged requests: {}",
+    metrics.get_errors_manually_paged_num()
+);
+println!(
+    "Errors occurred in automatically paged requests: {}",
+    metrics.get_errors_automatically_paged_num()
+);
 println!("Average latency: {}", metrics.get_latency_avg_ms()?);
 println!(
     "99 latency percentile: {}",
@@ -64,3 +85,6 @@ println!("Requests timeouts: {}", metrics.get_request_timeouts());
 # Ok(())
 # }
 ```
+
+The full [example](https://github.com/scylladb/scylla-rust-driver/tree/main/examples/metrics.rs) is available in the `examples` folder.
+You can run it from main folder of driver repository using `SCYLLA_URI=<scylla_ip>:9042 cargo run --example metrics`.

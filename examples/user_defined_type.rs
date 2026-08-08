@@ -52,10 +52,7 @@ async fn main() -> Result<()> {
 
     // And read like any normal value
     let mut iter = session
-        .query_iter(
-            "SELECT a, b, c FROM examples_ks.user_defined_type_table",
-            &[],
-        )
+        .query_iter("SELECT my FROM examples_ks.user_defined_type_table", &[])
         .await?
         .rows_stream::<(MyType,)>()?;
     while let Some((my_val,)) = iter.try_next().await? {
