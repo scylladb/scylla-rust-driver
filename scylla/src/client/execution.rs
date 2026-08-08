@@ -1,23 +1,30 @@
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
-use tracing::{Instrument as _, trace, trace_span};
+use tracing::Instrument;
+use tracing::trace;
+use tracing::trace_span;
 
 use crate::client::execution_profile::ExecutionProfileInner;
-use crate::errors::{RequestAttemptError, RequestError};
+use crate::cluster::NodeRef;
+use crate::errors::RequestAttemptError;
+use crate::errors::RequestError;
 use crate::frame::types::{Consistency, SerialConsistency};
-
 use crate::network::Connection;
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
 use crate::observability::metrics::Metrics;
-use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
+use crate::policies::load_balancing;
+use crate::policies::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::policies::speculative_execution::{self, SpeculativeExecutionPolicy};
-use crate::response::{Coordinator, NonErrorQueryResponse};
+use crate::response::Coordinator;
+use crate::response::NonErrorQueryResponse;
+use crate::routing::Shard;
 use crate::statement::StatementConfig;
-use crate::{cluster::NodeRef, routing::Shard};
 
 /// Result of running a request, before side effects are handled.
 pub(crate) enum RunRequestResult<ResT> {
@@ -127,6 +134,15 @@ impl<'a> RequestExecutionParams<'a> {
     }
 }
 
+/// Outcome of [`run_request_no_side_effects`]/[`run_request_speculative_fiber`].
+pub(crate) struct RequestExecutionOutcome<C> {
+    /// The successful (or ignored-write) result.
+    pub(crate) result: RunRequestResult<NonErrorQueryResponse>,
+    /// The coordinator that served the request (target-dependent type, only available
+    /// in certain execution contexts).
+    pub(crate) coordinator: C,
+}
+
 /// History data threaded through a single fiber.
 struct HistoryData<'a> {
     listener: &'a dyn HistoryListener,
@@ -154,7 +170,6 @@ impl ExecuteRequestContext<'_> {
         let (Some(history_data), Some(attempt_id)) = (&self.history_data, attempt_id_opt) else {
             return;
         };
-
         history_data.listener.log_attempt_success(*attempt_id);
     }
 
@@ -167,7 +182,6 @@ impl ExecuteRequestContext<'_> {
         let (Some(history_data), Some(attempt_id)) = (&self.history_data, attempt_id_opt) else {
             return;
         };
-
         history_data
             .listener
             .log_attempt_error(*attempt_id, error, retry_decision);
@@ -230,7 +244,7 @@ impl<'a> RequestExecutionParams<'a> {
         request_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
         run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         request_span: &'a RequestSpan,
-    ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), RequestError>
+    ) -> Result<RequestExecutionOutcome<Coordinator>, RequestError>
     where
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
@@ -342,7 +356,7 @@ impl<'a> RequestExecutionParams<'a> {
         request_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
         run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         mut context: ExecuteRequestContext<'a>,
-    ) -> Option<Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), RequestError>>
+    ) -> Option<Result<RequestExecutionOutcome<Coordinator>, RequestError>>
     where
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
@@ -369,7 +383,7 @@ impl<'a> RequestExecutionParams<'a> {
                 context.request_span.record_shard_id(&connection);
 
                 self.inc_total_queries();
-                let request_start = std::time::Instant::now();
+                let request_start = Instant::now();
 
                 let connect_address = connection.get_connect_address();
                 trace!(
@@ -381,6 +395,7 @@ impl<'a> RequestExecutionParams<'a> {
 
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connect_address);
+
                 let request_result: Result<NonErrorQueryResponse, RequestAttemptError> =
                     run_request_once(connection, current_consistency)
                         .instrument(span.clone())
@@ -397,7 +412,10 @@ impl<'a> RequestExecutionParams<'a> {
                             elapsed,
                             node,
                         );
-                        return Some(Ok((RunRequestResult::Completed(response), coordinator)));
+                        return Some(Ok(RequestExecutionOutcome {
+                            result: RunRequestResult::Completed(response),
+                            coordinator,
+                        }));
                     }
                     Err(e) => {
                         trace!(
@@ -446,7 +464,10 @@ impl<'a> RequestExecutionParams<'a> {
                     }
                     RetryDecision::DontRetry => break 'targets_in_plan,
                     RetryDecision::IgnoreWriteError => {
-                        return Some(Ok((RunRequestResult::IgnoredWriteError, coordinator)));
+                        return Some(Ok(RequestExecutionOutcome {
+                            result: RunRequestResult::IgnoredWriteError,
+                            coordinator,
+                        }));
                     }
                 };
             }

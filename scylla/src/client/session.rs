@@ -7,7 +7,7 @@ use super::pager::QueryPager;
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
 use crate::client::client_routes::ClientRoutesConfig;
-use crate::client::execution::{RequestExecutionParams, RunRequestResult};
+use crate::client::execution::{RequestExecutionOutcome, RequestExecutionParams, RunRequestResult};
 use crate::cluster::metadata::{SchemaMetadataFetchLevel, SchemaMetadataFetchMode};
 use crate::cluster::node::KnownNode;
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
@@ -2121,7 +2121,10 @@ impl Session {
             &cluster_state,
         );
 
-        let result = exec_params
+        let RequestExecutionOutcome {
+            result,
+            coordinator,
+        } = exec_params
             .run_request_no_side_effects(
                 &routing_info,
                 request_plan,
@@ -2132,13 +2135,13 @@ impl Session {
             .map_err(RequestError::into_execution_error)?;
 
         // Automatically handle meaningful responses.
-        if let (RunRequestResult::Completed(ref response), ref coordinator) = result {
+        if let RunRequestResult::Completed(ref response) = result {
             self.handle_set_keyspace_response(response).await?;
             self.handle_auto_await_schema_agreement(response, coordinator.node().host_id)
                 .await?;
         }
 
-        Ok(result)
+        Ok((result, coordinator))
     }
 }
 

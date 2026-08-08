@@ -16,7 +16,9 @@ use tokio::sync::mpsc;
 use tracing::{Instrument, warn};
 use uuid::Uuid;
 
-use crate::client::execution::{RequestExecutionParams, RequestPaging, RunRequestResult};
+use crate::client::execution::{
+    RequestExecutionOutcome, RequestExecutionParams, RequestPaging, RunRequestResult,
+};
 use crate::client::session::Session;
 use crate::cluster::{ClusterState, Node};
 use crate::deserialize::DeserializeOwnedRow;
@@ -213,13 +215,17 @@ impl PagingExecutor {
                 .await;
 
             let page_res = match page_res {
-                Ok((RunRequestResult::IgnoredWriteError, _)) => {
+                Ok(RequestExecutionOutcome {
+                    result: RunRequestResult::IgnoredWriteError,
+                    coordinator: _,
+                }) => {
                     warn!("Ignoring error during fetching pages; stopping fetching.");
                     return;
                 }
-                Ok((RunRequestResult::Completed(page), coordinator)) => {
-                    self.process_next_page(coordinator, &page_span, page)
-                }
+                Ok(RequestExecutionOutcome {
+                    result: RunRequestResult::Completed(page),
+                    coordinator,
+                }) => self.process_next_page(coordinator, &page_span, page),
                 Err(err) => Err(err),
             };
             match page_res {
@@ -263,7 +269,10 @@ impl PagingExecutor {
 
         match fetch_result {
             Err(e) => Err(e),
-            Ok((result, coordinator)) => match result {
+            Ok(RequestExecutionOutcome {
+                result,
+                coordinator,
+            }) => match result {
                 RunRequestResult::IgnoredWriteError => {
                     warn!("Ignoring error during fetching pages; stopping fetching.");
                     Ok((
@@ -294,7 +303,7 @@ impl PagingExecutor {
         routing_info: &RoutingInfo<'_>,
         page_span: &RequestSpan,
         page_query: &PageQuery,
-    ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), RequestError>
+    ) -> Result<RequestExecutionOutcome<Coordinator>, RequestError>
     where
         PageQuery: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
