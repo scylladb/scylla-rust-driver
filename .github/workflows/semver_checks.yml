@@ -56,7 +56,7 @@ jobs:
     - name: Fetch PR base
       run: git fetch origin "$PR_BASE"
     - name: Setup rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
+      uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
     - name: Install semver-checks
     # This is a temporary workaround because current cargo-semver-checks doesn't work with this repo,
     # and needs a fix. After the bug is fixed, we should revert to using taiki-e/install-action.
@@ -147,7 +147,7 @@ jobs:
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
     - name: Setup rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
+      uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
     - name: Install semver-checks
       uses: taiki-e/install-action@7ea35f098a7369cd23488403f58be9c491a6c55f # v2.77.0
       with:
