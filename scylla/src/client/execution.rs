@@ -333,9 +333,9 @@ impl<'a> RequestExecutionParams<'a> {
         let mut current_consistency: Consistency = self.consistency;
 
         'targets_in_plan: for (node, shard) in request_plan {
-            let span = trace_span!("Executing request", node = %node.address, shard = %shard);
+            let span = trace_span!("Executing request on chosen target", node = %node.address, shard = %shard);
             'same_target_retries: loop {
-                trace!(parent: &span, "Execution started");
+                trace!(parent: &span, "Execution attempt started");
                 let connection = match node.connection_for_shard(shard).await {
                     Ok(connection) => connection,
                     Err(e) => {
