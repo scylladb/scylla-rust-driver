@@ -18,8 +18,12 @@
 //    - [ClientRoute]
 
 mod fetching;
+pub(crate) mod merge_channel;
 pub(super) mod reader;
+pub(crate) mod update;
+pub(super) mod worker;
 
+use crate::cluster::metadata::update::ClientRoutesUpdate;
 use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
 use crate::routing::Token;
 
@@ -334,6 +338,34 @@ impl Extend<ClientRoute> for ClientRoutes {
                 .entry(route.host_id)
                 .or_default() // Insert empty HashMap.
                 .insert(route.connection_id.clone(), route);
+        }
+    }
+}
+
+impl ClientRoutes {
+    /// Applies a partial update to this full snapshot: `Some(route)` inserts or overwrites
+    /// the route, `None` removes it. A host entry whose inner map becomes empty is removed
+    /// entirely, to uphold the invariant that inner maps are never empty.
+    pub(crate) fn merge(&mut self, update: ClientRoutesUpdate) {
+        for (host_id, connection_id, route) in update.into_entries() {
+            match route {
+                Some(route) => {
+                    self.routes
+                        .entry(host_id)
+                        .or_default()
+                        .insert(connection_id, route);
+                }
+                None => {
+                    if let std::collections::hash_map::Entry::Occupied(mut entry) =
+                        self.routes.entry(host_id)
+                    {
+                        entry.get_mut().remove(&connection_id);
+                        if entry.get().is_empty() {
+                            entry.remove();
+                        }
+                    }
+                }
+            }
         }
     }
 }

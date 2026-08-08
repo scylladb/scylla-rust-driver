@@ -38,7 +38,15 @@ pub(super) struct ControlConnection {
     /// The custom server-side timeout set for requests executed on the control connection.
     overridden_serverside_timeout: Option<Duration>,
     cache: Arc<ControlConnectionCache>,
+}
 
+/// The event side of a control connection: the channels on which the connection
+/// reports server events and its own failure.
+///
+/// Kept apart from [`ControlConnection`] so that awaiting events (which requires
+/// a mutable borrow) does not conflict with running metadata queries on the
+/// connection (which require a shared borrow).
+pub(super) struct ControlConnectionEvents {
     error_channel: oneshot::Receiver<ConnectionError>,
     events_channel: mpsc::Receiver<Event>,
 }
@@ -50,15 +58,19 @@ impl ControlConnection {
         cache: Arc<ControlConnectionCache>,
         error_channel: oneshot::Receiver<ConnectionError>,
         events_channel: mpsc::Receiver<Event>,
-    ) -> Self {
-        Self {
-            conn,
-            endpoint,
-            overridden_serverside_timeout: None,
-            cache,
-            error_channel,
-            events_channel,
-        }
+    ) -> (Self, ControlConnectionEvents) {
+        (
+            Self {
+                conn,
+                endpoint,
+                overridden_serverside_timeout: None,
+                cache,
+            },
+            ControlConnectionEvents {
+                error_channel,
+                events_channel,
+            },
+        )
     }
 
     pub(super) fn endpoint(&self) -> &UntranslatedEndpoint {
@@ -146,8 +158,10 @@ impl ControlConnection {
             .execute_iter(prepared, serialized_values)
             .await
     }
+}
 
-    pub(crate) async fn wait_for_event(&mut self) -> ControlConnectionEvent {
+impl ControlConnectionEvents {
+    pub(super) async fn wait_for_event(&mut self) -> ControlConnectionEvent {
         tokio::select! {
             // Why only `Some`? `None` means that event channel was dropped.
             // In current implementation (as of writing this comment)
@@ -341,7 +355,7 @@ mod tests {
             .unwrap();
 
             let connected_to_scylladb = conn.get_shard_info().is_some();
-            let conn_with_default_timeout = ControlConnection::new(
+            let (conn_with_default_timeout, _events) = ControlConnection::new(
                 Arc::new(conn),
                 endpoint,
                 Arc::new(ControlConnectionCache::new()),
