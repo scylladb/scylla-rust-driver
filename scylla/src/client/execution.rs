@@ -13,7 +13,7 @@ use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
-use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy};
+use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::policies::speculative_execution::{self, SpeculativeExecutionPolicy};
 use crate::response::{Coordinator, NonErrorQueryResponse};
 use crate::statement::StatementConfig;
@@ -136,6 +136,7 @@ struct HistoryData<'a> {
 
 /// Per-fiber execution context.
 struct ExecuteRequestContext<'a> {
+    retry_session: Box<dyn RetrySession>,
     history_data: Option<HistoryData<'a>>,
     routing_info: &'a load_balancing::RoutingInfo<'a>,
     request_span: &'a RequestSpan,
@@ -264,6 +265,7 @@ impl<'a> RequestExecutionParams<'a> {
                             &shared_request_plan,
                             &run_request_once,
                             ExecuteRequestContext {
+                                retry_session: self.retry_policy.new_session(),
                                 history_data,
                                 routing_info,
                                 request_span,
@@ -290,6 +292,7 @@ impl<'a> RequestExecutionParams<'a> {
                         request_plan,
                         &run_request_once,
                         ExecuteRequestContext {
+                            retry_session: self.retry_policy.new_session(),
                             history_data,
                             routing_info,
                             request_span,
@@ -338,12 +341,11 @@ impl<'a> RequestExecutionParams<'a> {
         &self,
         request_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
         run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
-        context: ExecuteRequestContext<'a>,
+        mut context: ExecuteRequestContext<'a>,
     ) -> Option<Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), RequestError>>
     where
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
-        let mut retry_session = self.retry_policy.new_session();
         let mut last_error: Option<RequestError> = None;
         let mut current_consistency: Consistency = self.consistency;
 
@@ -421,7 +423,7 @@ impl<'a> RequestExecutionParams<'a> {
                     consistency: current_consistency,
                 };
 
-                let retry_decision = retry_session.decide_should_retry(request_info);
+                let retry_decision = context.retry_session.decide_should_retry(request_info);
                 trace!(
                     parent: &span,
                     retry_decision = ?retry_decision
