@@ -2542,7 +2542,6 @@ mod tests {
     /// 1. SELECT from an empty table.
     /// 2. Create table and insert ints 0..100.
     ///    Then use execute_iter with page_size set to 7 to select all 100 rows.
-    /// 3. INSERT execute_iter should work and not return any rows.
     #[tokio::test]
     async fn connection_execute_iter_test() {
         use crate::client::session_builder::SessionBuilder;
