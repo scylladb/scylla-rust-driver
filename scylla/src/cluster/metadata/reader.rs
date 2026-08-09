@@ -252,7 +252,7 @@ impl MetadataReader {
             };
 
             let metadata = match cc.query_metadata().await {
-                Ok(metadata) => metadata,
+                Ok(topology_update) => topology_update.apply(self),
                 Err(err) => {
                     if initial {
                         // The control connection was established, but the initial
@@ -284,7 +284,6 @@ impl MetadataReader {
             };
 
             debug!("Fetched new metadata");
-            self.update_known_peers(&metadata);
 
             if self.is_cc_endpoint_rejected(cc.endpoint(), &metadata) {
                 // The node hosting this control connection is rejected by the host
@@ -303,7 +302,7 @@ impl MetadataReader {
         }
     }
 
-    pub(super) fn update_known_peers(&mut self, metadata: &Metadata) {
+    fn update_known_peers(&mut self, metadata: &Metadata) {
         let host_filter = self.host_filter.as_ref();
         self.known_peers = metadata
             .peers
@@ -407,6 +406,30 @@ impl MetadataReader {
                 },
             )),
         }
+    }
+}
+
+/// Freshly fetched [`Metadata`] that the [`MetadataReader`] has not yet absorbed.
+///
+/// [`ControlConnection::query_metadata`] returns its result wrapped in this
+/// guard, so that the fetched metadata cannot be used without the reader
+/// updating its known peers from it first: the only way to extract the
+/// [`Metadata`] is [`apply`](Self::apply).
+#[must_use = "the fetched metadata must be applied to the MetadataReader"]
+pub(super) struct TopologyUpdateGuard {
+    metadata: Metadata,
+}
+
+impl TopologyUpdateGuard {
+    pub(super) fn new(metadata: Metadata) -> Self {
+        Self { metadata }
+    }
+
+    /// Updates the reader's known peers from the fetched metadata and releases
+    /// the metadata itself.
+    pub(super) fn apply(self, reader: &mut MetadataReader) -> Metadata {
+        reader.update_known_peers(&self.metadata);
+        self.metadata
     }
 }
 

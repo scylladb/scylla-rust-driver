@@ -301,9 +301,9 @@ impl MetadataWorker {
             last_refresh_time = Instant::now();
 
             match cc.query_metadata().await {
-                Ok(metadata) => {
+                Ok(topology_update) => {
                     debug!("Fetched new metadata");
-                    self.metadata_reader.update_known_peers(&metadata);
+                    let metadata = topology_update.apply(&mut self.metadata_reader);
                     // The refresh request, if any, is answered by the cluster worker, once the
                     // state resulting from this metadata is published - this is what makes
                     // `Cluster::refresh_metadata` return only after the new state is visible.

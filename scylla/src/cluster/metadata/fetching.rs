@@ -50,6 +50,8 @@ use crate::errors::{
 use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::routing::Token;
 
+use super::reader::TopologyUpdateGuard;
+
 type PerKeyspace<T> = HashMap<String, T>;
 type PerKeyspaceResult<T, E> = PerKeyspace<Result<T, E>>;
 type PerTable<T> = HashMap<String, T>;
@@ -160,7 +162,12 @@ impl ControlConnection {
     /// Queries the cluster metadata (peers, schema, client routes) as configured
     /// by this control connection's
     /// [`ControlConnectionConfig`](crate::cluster::control_connection::ControlConnectionConfig).
-    pub(super) async fn query_metadata(&self) -> Result<Metadata, MetadataError> {
+    ///
+    /// The result comes wrapped in a [`TopologyUpdateGuard`]: the fetched metadata
+    /// affects which peers the [`MetadataReader`](super::reader::MetadataReader)
+    /// establishes control connections to, so the reader must absorb it before
+    /// anything else can use it.
+    pub(super) async fn query_metadata(&self) -> Result<TopologyUpdateGuard, MetadataError> {
         let connect_port = self.endpoint().address().port();
 
         let peers_query = self.query_peers(connect_port);
@@ -196,12 +203,12 @@ impl ControlConnection {
             return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists));
         }
 
-        Ok(Metadata {
+        Ok(TopologyUpdateGuard::new(Metadata {
             peers,
             keyspaces,
             cluster_name,
             client_routes,
-        })
+        }))
     }
 }
 
