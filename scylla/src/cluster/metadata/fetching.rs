@@ -47,7 +47,6 @@ use crate::errors::{
     MetadataError, MetadataFetchError, MetadataFetchErrorKind, NextPageError, NextRowError,
     PeersMetadataError, RequestAttemptError, RequestError, TablesMetadataError, UdtMetadataError,
 };
-use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::routing::Token;
 
 use super::reader::TopologyUpdateGuard;
@@ -552,18 +551,20 @@ impl ControlConnection {
         Ok(routes)
     }
 
-    /// Performs a partial fetch of `system.client_routes`. Partial means that filtering is done
-    /// not only by connection ids known to the driver (which is always the case), but also
-    /// by host ids - only for the hosts whose ids are present in the event payload.
+    /// Performs a partial fetch of `system.client_routes`.
+    ///
+    /// Such partial fetch is restricted to the given (connection id, host id) pairs, as accumulated from
+    /// CLIENT_ROUTES_CHANGE:UPDATE_NODES events. Those pairs are additionally filtered
+    /// to only query connection ids that the driver is interested in.
     ///
     /// Returns the resulting [`ClientRoutesUpdate`], or `None` if there is no subscriber
-    /// configured or the event contained no connection ids relevant to this driver. Merging
+    /// configured or no pair has a connection id relevant to this driver. Merging
     /// the update into the [`ClientRoutesSubscriber`]'s knowledge is the caller's job.
     ///
     /// [`ClientRoutesSubscriber`]: crate::client::client_routes::ClientRoutesSubscriber
-    pub(super) async fn fetch_client_routes_update_on_event(
+    pub(super) async fn fetch_client_routes_update(
         &self,
-        evt: &ClientRoutesChangeEvent,
+        pairs: &HashSet<(String, Uuid)>,
     ) -> Result<Option<ClientRoutesUpdate>, MetadataError> {
         let Some(subscriber) = self.config.client_routes_subscriber.as_ref() else {
             // No subscriber, but received an event? Strange enough, but nothing to be done here.
@@ -571,41 +572,38 @@ impl ControlConnection {
             return Ok(None);
         };
 
-        #[deny(clippy::wildcard_enum_match_arm)]
-        let (connection_ids, host_ids) = match evt {
-            ClientRoutesChangeEvent::UpdateNodes {
-                connection_ids,
-                host_ids,
-            } => (connection_ids, host_ids),
-            _ => unreachable!("clippy testifies that the match is exhaustive"),
-        };
+        let monitored_pairs = pairs
+            .iter()
+            .filter(|(conn_id, _host_id)| subscriber.get_connection_ids().contains(conn_id));
 
-        // TODO: this is wasteful - it allocates both strings and a vec.
+        // The pairs cannot be queried as such: the query is
+        // `WHERE connection id IN ? AND host id IN ?`, which fetches the whole
+        // cross product of the listed ids - possibly more routes than the
+        // pairs name, for example `(A, Y)` for pairs `[(A, X), (B, Y)]`. This
+        // is a tradeoff - the only alternative is issuing multiple queries,
+        // one per connection id. The surplus routes are ignored when the
+        // update is built from the pairs - see
+        // [`ClientRoutesUpdate::from_pairs`].
+        //
+        // TODO: this is wasteful - it allocates strings and vecs.
         // This won't be a performance problem, because UPDATE_NODES events are not frequent.
         // As an optimization, we can implement ser/de for some special new iterator type,
         // to avoid the need to allocate when serializing collections.
-        let connection_ids: Vec<String> = connection_ids
-            .iter()
-            .filter(|&conn_id| subscriber.get_connection_ids().contains(conn_id))
-            .cloned()
-            .collect();
+        let (connection_ids, host_ids): (HashSet<String>, HashSet<Uuid>) =
+            monitored_pairs.cloned().unzip();
 
         if connection_ids.is_empty() {
-            // The event contained no relevant connection IDs.
+            // The events contained no relevant connection IDs.
             // Nothing to be done.
             return Ok(None);
         }
 
-        // Although this is vaguely documented, the semantics of an event with connection ids [A, B, C] and host ids [X, Y, Z]
-        // is that the following entries were added/updated/removed: `[(A, X), (B, Y), (C, Z)]`.
-        // Unfortunately, we can't really query Scylla this way. Therefore, we do the query: `WHERE connection id IN ? AND host id IN ?`,
-        // which fetches possibly more routes than necessary, for example `(A, Z)` or `(C, Y)`.
-        // This is a tradeoff - the only alternative is issuing multiple queries, one per connection id.
-        // I believe the tradeoff here is correct.
-        let client_routes = self.query_client_routes(&connection_ids, host_ids).await?;
+        let client_routes = self
+            .query_client_routes(&Vec::from_iter(connection_ids), &Vec::from_iter(host_ids))
+            .await?;
 
-        Ok(Some(ClientRoutesUpdate::from_event(
-            evt,
+        Ok(Some(ClientRoutesUpdate::from_pairs(
+            pairs,
             subscriber.get_connection_ids(),
             &client_routes,
         )))

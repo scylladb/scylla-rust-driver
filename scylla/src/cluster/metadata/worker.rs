@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::ops::ControlFlow;
 use std::time::Duration;
 
@@ -8,6 +9,7 @@ use crate::cluster::control_connection::{
     ControlConnection, ControlConnectionEvent, ControlConnectionEvents,
 };
 use crate::cluster::metadata::update::{MetadataUpdate, RefreshRequest};
+use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::frame::response::event::EventV2 as Event;
 use crate::frame::response::event::StatusChangeEvent;
 
@@ -232,7 +234,19 @@ impl MetadataWorker {
                             match event {
                                 Event::TopologyChange(_) => (), // Refresh immediately
                                 Event::ClientRoutesChange(evt) => {
-                                    let res = cc.fetch_client_routes_update_on_event(&evt).await;
+                                    // An UPDATE_NODES event pairs `connection_ids[i]`
+                                    // with `host_ids[i]`.
+                                    #[deny(clippy::wildcard_enum_match_arm)]
+                                    let pairs: HashSet<_> = match evt {
+                                        ClientRoutesChangeEvent::UpdateNodes {
+                                            connection_ids,
+                                            host_ids,
+                                        } => connection_ids.into_iter().zip(host_ids).collect(),
+                                        _ => unreachable!(
+                                            "clippy testifies that the match is exhaustive"
+                                        ),
+                                    };
+                                    let res = cc.fetch_client_routes_update(&pairs).await;
                                     match res {
                                         Ok(None) => continue, // Nothing to apply; don't go to refreshing.
                                         Ok(Some(routes)) => {
