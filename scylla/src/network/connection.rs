@@ -2523,12 +2523,17 @@ mod tests {
         RequestRule, ResponseFrame, ShardAwareness,
     };
 
+    use bytes::Bytes;
     use tokio::select;
     use tokio::sync::mpsc;
 
     use super::{HostConnectionConfig, open_connection};
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
+    use crate::errors::{
+        CqlResponseKind, DbError, NextPageError, NextRowError, RequestAttemptError, RequestError,
+    };
+    use crate::statement::prepared::PreparedStatement;
     use crate::statement::unprepared::Statement;
     use crate::test_utils::setup_tracing;
     use crate::utils::test_utils::{PerformDDL, resolve_hostname, unique_keyspace_name};
@@ -2542,6 +2547,9 @@ mod tests {
     /// 1. SELECT from an empty table.
     /// 2. Create table and insert ints 0..100.
     ///    Then use execute_iter with page_size set to 7 to select all 100 rows.
+    ///
+    /// For the failure modes of this path (timeouts, server errors, non-Rows
+    /// responses), see the `connection_execute_iter_*` tests below.
     #[tokio::test]
     async fn connection_execute_iter_test() {
         use crate::client::session_builder::SessionBuilder;
@@ -2634,6 +2642,358 @@ mod tests {
             // Teardown phase
             session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
         }
+    }
+
+    /// A fixture for tests of the fixed-connection paging path, i.e.
+    /// [`Connection::execute_iter`] -> `SingleConnectionPagingExecutor`.
+    ///
+    /// The connection under test goes through a proxy, so that request rules can
+    /// inject delays and errors into particular pages.
+    struct FixedConnectionPagingFixture {
+        proxy: scylla_proxy::RunningProxy,
+        connection: Arc<super::Connection>,
+    }
+
+    impl FixedConnectionPagingFixture {
+        async fn setup(request_rules: Vec<RequestRule>) -> Self {
+            let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
+            let node_addr: SocketAddr = resolve_hostname(&uri).await;
+            let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+
+            let proxy = Proxy::builder()
+                .with_node(
+                    Node::builder()
+                        .proxy_address(proxy_addr)
+                        .real_address(node_addr)
+                        .shard_awareness(ShardAwareness::QueryNode)
+                        .request_rules(request_rules)
+                        .build(),
+                )
+                .build()
+                .run()
+                .await
+                .unwrap();
+
+            let (connection, _) = open_connection(
+                &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+                    address: proxy_addr,
+                }),
+                None,
+                &HostConnectionConfig::default(),
+            )
+            .await
+            .unwrap();
+
+            Self {
+                proxy,
+                connection: Arc::new(connection),
+            }
+        }
+
+        /// Prepares a paged SELECT over a system table, which is guaranteed to
+        /// exist and to contain multiple rows. Page size of 1 makes every row a
+        /// separate page, so that pages 2+ are always fetched.
+        async fn prepare_paged_select(&self) -> PreparedStatement {
+            let select =
+                Statement::new("SELECT keyspace_name FROM system_schema.tables").with_page_size(1);
+            self.connection.prepare(&select).await.unwrap()
+        }
+
+        fn change_request_rules(&mut self, rules: Vec<RequestRule>) {
+            self.proxy.running_nodes[0].change_request_rules(Some(rules));
+        }
+
+        async fn finish(self) {
+            let _ = self.proxy.finish().await;
+        }
+    }
+
+    /// A rule matching EXECUTE frames only. PREPARE requests must not be
+    /// affected, or the statement under test could not even be prepared.
+    fn execute_opcode_condition() -> Condition {
+        Condition::RequestOpcode(RequestOpcode::Execute)
+    }
+
+    /// The timeout configured by the tests below. Its value is arbitrary: those
+    /// tests never wait for it to elapse in real time. It is only chosen far
+    /// longer than any realistic round trip, so that a timeout firing in the test
+    /// can only be the result of the clock being advanced deliberately.
+    const PAGING_TEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+    /// Makes the request under test delayed for more than the timeout's duration,
+    /// so that the only possible outcome is the client-side timeout.
+    fn delay_request_for_more_than_timeout() -> RequestReaction {
+        RequestReaction::delay(PAGING_TEST_TIMEOUT + Duration::from_secs(1))
+    }
+
+    /// Stops the clock, so that the request timeout no longer elapses on its own.
+    ///
+    /// From this point on, time only moves when the runtime runs out of work to
+    /// do, in which case tokio advances it to the nearest deadline - here, the
+    /// request timeout. Since the request under test is delayed by the proxy for
+    /// significantly longer, the response will not race with that, which makes
+    /// the timeout fire deterministically and at no cost in wall-clock time.
+    /// This is why the tests need no timing margins whatsoever.
+    ///
+    /// Must only be called once all the setup that involves real I/O is done,
+    /// as a paused clock would make such I/O race against the advancing time.
+    fn stop_the_clock() {
+        tokio::time::pause();
+    }
+
+    /// Regression test: the client-side request timeout must be applied to the
+    /// fetch of the *first* page, which `QueryPager::new_for_connection_execute_iter`
+    /// performs eagerly, on the caller's task. Hence the error must be returned
+    /// from `execute_iter()` itself.
+    #[tokio::test]
+    async fn connection_execute_iter_first_page_timeout() {
+        setup_tracing();
+
+        let fixture = FixedConnectionPagingFixture::setup(vec![RequestRule(
+            execute_opcode_condition(),
+            delay_request_for_more_than_timeout(),
+        )])
+        .await;
+
+        let mut prepared = fixture.prepare_paged_select().await;
+        prepared.set_request_timeout(Some(PAGING_TEST_TIMEOUT));
+
+        stop_the_clock();
+
+        let err = Arc::clone(&fixture.connection)
+            .execute_iter(prepared, SerializedValues::new())
+            .await
+            .unwrap_err();
+
+        assert_matches!(
+            &err,
+            NextRowError::NextPageError(NextPageError::RequestFailure(
+                RequestError::RequestTimeout(got_timeout),
+            )) if *got_timeout == PAGING_TEST_TIMEOUT,
+            "Expected RequestTimeout({PAGING_TEST_TIMEOUT:?}), got: {err:?}"
+        );
+
+        fixture.finish().await;
+    }
+
+    /// Regression test: the client-side request timeout must be applied to each
+    /// page separately, including pages fetched by the worker task spawned by
+    /// `QueryPager::new_for_connection_execute_iter`. Such an error reaches the
+    /// user through the page channel, i.e. from the rows stream rather than from
+    /// `execute_iter()` itself.
+    #[tokio::test]
+    async fn connection_execute_iter_later_page_timeout() {
+        setup_tracing();
+
+        let fixture = FixedConnectionPagingFixture::setup(vec![
+            // Let the first page through, then delay all subsequent requests.
+            RequestRule(
+                execute_opcode_condition().and(Condition::TrueForLimitedTimes(1)),
+                RequestReaction::noop(),
+            ),
+            RequestRule(
+                execute_opcode_condition(),
+                delay_request_for_more_than_timeout(),
+            ),
+        ])
+        .await;
+
+        let mut prepared = fixture.prepare_paged_select().await;
+        prepared.set_request_timeout(Some(PAGING_TEST_TIMEOUT));
+
+        // The first page is served by the real node, so it is fetched while the
+        // clock still runs. The timeout is armed for it as well, but it is far
+        // too long to elapse - and, being the last thing done in real time, it
+        // cannot be advanced past by accident, either.
+        let mut rows_stream = Arc::clone(&fixture.connection)
+            .execute_iter(prepared, SerializedValues::new())
+            .await
+            .unwrap()
+            .rows_stream::<(String,)>()
+            .unwrap();
+
+        // The first page consists of exactly one row, which must arrive intact.
+        let (_ks_name,) = rows_stream.next().await.unwrap().unwrap();
+
+        stop_the_clock();
+
+        // The fetch of the second page, performed by the spawned worker task,
+        // must time out.
+        let err = rows_stream.next().await.unwrap().unwrap_err();
+        assert_matches!(
+            &err,
+            NextRowError::NextPageError(NextPageError::RequestFailure(
+                RequestError::RequestTimeout(got_timeout),
+            )) if *got_timeout == PAGING_TEST_TIMEOUT,
+            "Expected RequestTimeout({PAGING_TEST_TIMEOUT:?}), got: {err:?}"
+        );
+
+        fixture.finish().await;
+    }
+
+    /// Regression test for mapping of server errors on this path. As it employs
+    /// `FallthroughRetryPolicy`, the very first attempt is terminal - both for the
+    /// first page and for subsequent ones - and the DB error is surfaced verbatim.
+    #[tokio::test]
+    async fn connection_execute_iter_server_error() {
+        setup_tracing();
+
+        let (feedback_tx, mut feedback_rx) = mpsc::unbounded_channel();
+
+        let count_executes = |rx: &mut mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>| {
+            let mut count = 0;
+            while rx.try_recv().is_ok() {
+                count += 1;
+            }
+            count
+        };
+
+        // Case 1: the first page fetch fails with a server error.
+        let mut fixture = FixedConnectionPagingFixture::setup(vec![RequestRule(
+            execute_opcode_condition(),
+            RequestReaction::forge()
+                .server_error()
+                .with_feedback_when_performed(feedback_tx.clone()),
+        )])
+        .await;
+
+        let prepared = fixture.prepare_paged_select().await;
+
+        let err = Arc::clone(&fixture.connection)
+            .execute_iter(prepared.clone(), SerializedValues::new())
+            .await
+            .unwrap_err();
+        assert_matches!(
+            &err,
+            NextRowError::NextPageError(NextPageError::RequestFailure(
+                RequestError::LastAttemptError(RequestAttemptError::DbError(
+                    DbError::ServerError,
+                    _
+                )),
+            )),
+            "Expected a terminal ServerError, got: {err:?}"
+        );
+        assert_eq!(
+            count_executes(&mut feedback_rx),
+            1,
+            "FallthroughRetryPolicy must make the first attempt terminal - no retries expected"
+        );
+
+        // Case 2: a subsequent page fetch fails with a server error. The error
+        // must reach the user through the page channel, with the same mapping.
+        fixture.change_request_rules(vec![
+            // Let the first page through, then fail all subsequent ones.
+            RequestRule(
+                execute_opcode_condition().and(Condition::TrueForLimitedTimes(1)),
+                RequestReaction::noop(),
+            ),
+            RequestRule(
+                execute_opcode_condition(),
+                RequestReaction::forge()
+                    .server_error()
+                    .with_feedback_when_performed(feedback_tx.clone()),
+            ),
+        ]);
+
+        let mut rows_stream = Arc::clone(&fixture.connection)
+            .execute_iter(prepared, SerializedValues::new())
+            .await
+            .unwrap()
+            .rows_stream::<(String,)>()
+            .unwrap();
+
+        let (_ks_name,) = rows_stream.next().await.unwrap().unwrap();
+
+        let err = rows_stream.next().await.unwrap().unwrap_err();
+        assert_matches!(
+            &err,
+            NextRowError::NextPageError(NextPageError::RequestFailure(
+                RequestError::LastAttemptError(RequestAttemptError::DbError(
+                    DbError::ServerError,
+                    _
+                )),
+            )),
+            "Expected a terminal ServerError, got: {err:?}"
+        );
+        assert_eq!(
+            count_executes(&mut feedback_rx),
+            1,
+            "FallthroughRetryPolicy must make the attempt terminal on later pages, too"
+        );
+
+        fixture.finish().await;
+    }
+
+    /// Forges a RESULT response of Void kind, i.e. the kind of response that a
+    /// non-SELECT statement would yield.
+    fn forge_void_result() -> RequestReaction {
+        RequestReaction::forge_response(Arc::new(|frame: RequestFrame| ResponseFrame {
+            params: frame.params.for_response(),
+            opcode: scylla_proxy::ResponseOpcode::Result,
+            // The body of a RESULT response begins with its kind; 0x0001 is Void.
+            body: Bytes::from_static(&[0, 0, 0, 1]),
+        }))
+    }
+
+    /// Regression test: this path only supports responses of Rows kind. Any other
+    /// kind - here a Void result, as returned by non-SELECT statements - must be
+    /// rejected as an unexpected response instead of being silently accepted.
+    /// This holds both for the first page and for subsequent ones.
+    #[tokio::test]
+    async fn connection_execute_iter_unexpected_response() {
+        setup_tracing();
+
+        let assert_unexpected_response = |err: NextRowError| {
+            assert_matches!(
+                &err,
+                NextRowError::NextPageError(NextPageError::RequestFailure(
+                    RequestError::LastAttemptError(RequestAttemptError::UnexpectedResponse(
+                        CqlResponseKind::Result
+                    )),
+                )),
+                "Expected UnexpectedResponse(Result), got: {err:?}"
+            );
+        };
+
+        // Case 1: the first page is not of Rows kind.
+        let mut fixture = FixedConnectionPagingFixture::setup(vec![RequestRule(
+            execute_opcode_condition(),
+            forge_void_result(),
+        )])
+        .await;
+
+        let prepared = fixture.prepare_paged_select().await;
+
+        let err = Arc::clone(&fixture.connection)
+            .execute_iter(prepared.clone(), SerializedValues::new())
+            .await
+            .unwrap_err();
+        assert_unexpected_response(err);
+
+        // Case 2: a subsequent page is not of Rows kind. The error must reach the
+        // user through the page channel, with the same mapping.
+        fixture.change_request_rules(vec![
+            // Let the first page through, then spoil all subsequent ones.
+            RequestRule(
+                execute_opcode_condition().and(Condition::TrueForLimitedTimes(1)),
+                RequestReaction::noop(),
+            ),
+            RequestRule(execute_opcode_condition(), forge_void_result()),
+        ]);
+
+        let mut rows_stream = Arc::clone(&fixture.connection)
+            .execute_iter(prepared, SerializedValues::new())
+            .await
+            .unwrap()
+            .rows_stream::<(String,)>()
+            .unwrap();
+
+        let (_ks_name,) = rows_stream.next().await.unwrap().unwrap();
+
+        let err = rows_stream.next().await.unwrap().unwrap_err();
+        assert_unexpected_response(err);
+
+        fixture.finish().await;
     }
 
     #[tokio::test]
