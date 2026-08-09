@@ -3,19 +3,18 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bytes::{Bytes, BytesMut};
 use scylla::client::PoolSize;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
-    RunningProxy, ShardAwareness, TargetShard, WorkerError,
+    ShardAwareness, TargetShard, WorkerError,
 };
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::utils::{
-    calculate_proxy_host_ids, setup_tracing, test_with_3_node_cluster,
+    calculate_proxy_host_ids, inject_status_change_down, setup_tracing, test_with_3_node_cluster,
     wait_until_all_nodes_are_connected,
 };
 
@@ -44,18 +43,6 @@ const POOL_SIZE: PoolSize = PoolSize::PerHost(NonZeroUsize::new(1).unwrap());
 type FeedbackItem = (RequestFrame, Option<TargetShard>);
 type FeedbackRx = mpsc::UnboundedReceiver<FeedbackItem>;
 
-/// Builds the body of a `STATUS_CHANGE` / `DOWN` EVENT frame for `addr`:
-/// `[string] "STATUS_CHANGE"`, `[string] "DOWN"`, `[inet] addr`.
-fn status_change_down_event_body(addr: SocketAddr) -> Bytes {
-    use scylla_cql::frame::types::{write_inet, write_string};
-
-    let mut body = BytesMut::new();
-    write_string("STATUS_CHANGE", &mut body).unwrap();
-    write_string("DOWN", &mut body).unwrap();
-    write_inet(addr, &mut body);
-    body.freeze()
-}
-
 /// Returns the driver-visible address of the node with the given host id.
 ///
 /// This is the address that `ClusterState` compares against the address
@@ -67,25 +54,6 @@ fn driver_visible_address(session: &Session, host_id: Uuid) -> SocketAddr {
         .get_node_by_host_id(host_id)
         .unwrap_or_else(|| panic!("node with host id {host_id} unknown to the driver"));
     SocketAddr::new(node.address.ip(), node.address.port())
-}
-
-/// Injects a forged `STATUS_CHANGE DOWN` event for `addr` into every proxy
-/// node's control connections.
-///
-/// Only one of the three proxied nodes hosts the driver's control connection,
-/// hence the broadcast; at least one injection must have found a registered
-/// control connection.
-fn inject_status_change_down(running_proxy: &RunningProxy, addr: SocketAddr) {
-    let body = status_change_down_event_body(addr);
-    let injected = running_proxy
-        .running_nodes
-        .iter()
-        .filter(|node| node.inject_event_to_cc(body.clone()))
-        .count();
-    assert!(
-        injected > 0,
-        "no proxy node had a registered control connection to inject the event into"
-    );
 }
 
 /// Verifies that a `STATUS_CHANGE DOWN` server event is used as a hint for the
