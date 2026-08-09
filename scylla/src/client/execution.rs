@@ -304,13 +304,23 @@ struct HistoryData<'a> {
 
 /// Per-fiber execution context.
 struct ExecuteRequestContext<'a> {
-    retry_session: Box<dyn RetrySession>,
+    retry_policy: &'a dyn RetryPolicy,
+    /// Created lazily, upon the first attempt error, in order to avoid
+    /// an allocation on the happy path (where no retry is ever needed).
+    retry_session: Option<Box<dyn RetrySession>>,
     history_data: Option<HistoryData<'a>>,
     routing_info: &'a load_balancing::RoutingInfo<'a>,
     request_span: &'a RequestSpan,
 }
 
 impl ExecuteRequestContext<'_> {
+    fn retry_session(&mut self) -> &mut dyn RetrySession {
+        let retry_policy = self.retry_policy;
+        self.retry_session
+            .get_or_insert_with(|| retry_policy.new_session())
+            .as_mut()
+    }
+
     fn log_attempt_start(&self, node_addr: SocketAddr) -> Option<history::AttemptId> {
         self.history_data.as_ref().map(|hd| {
             hd.listener
@@ -432,7 +442,8 @@ impl<'a> RequestExecutionParams<'a> {
                             &shared_request_plan,
                             &run_request_once,
                             ExecuteRequestContext {
-                                retry_session: self.retry_policy.new_session(),
+                                retry_policy: self.retry_policy,
+                                retry_session: None,
                                 history_data,
                                 routing_info,
                                 request_span,
@@ -459,7 +470,8 @@ impl<'a> RequestExecutionParams<'a> {
                         request_plan,
                         &run_request_once,
                         ExecuteRequestContext {
-                            retry_session: self.retry_policy.new_session(),
+                            retry_policy: self.retry_policy,
+                            retry_session: None,
                             history_data,
                             routing_info,
                             request_span,
@@ -596,7 +608,7 @@ impl<'a> RequestExecutionParams<'a> {
                     consistency: current_consistency,
                 };
 
-                let retry_decision = context.retry_session.decide_should_retry(request_info);
+                let retry_decision = context.retry_session().decide_should_retry(request_info);
                 trace!(
                     parent: &span,
                     retry_decision = ?retry_decision
