@@ -43,12 +43,35 @@ pub(in super::super) enum MetadataChanges {
         /// state resulting from `metadata` has been published.
         refresh_responses: Vec<tokio::sync::oneshot::Sender<Result<(), MetadataError>>>,
     },
-    /// For know, only client_routes can be updates separately. Later we'll add more stuff here.
-    Partial {
-        /// Partial client-routes snapshots fetched in response to
-        /// CLIENT_ROUTES_CHANGE events.
-        client_routes_updates: ClientRoutesUpdate,
-    },
+    /// Partial updates: everything learned since the last full fetch, one field
+    /// per partial fetch type.
+    Partial(PartialMetadataChanges),
+}
+
+/// The partial counterpart of a full metadata fetch: independently fetched
+/// updates of individual metadata aspects, one field per partial fetch type.
+/// Currently only client routes can be fetched partially.
+///
+/// Each field merges on its own, without looking at the others. This makes
+/// merging commutative across types, which keeps this struct correct even when
+/// partial fetches of different types run concurrently and complete in an
+/// order different from the one they were started in.
+#[derive(Default)]
+pub(in super::super) struct PartialMetadataChanges {
+    /// Partial client-routes snapshots fetched in response to
+    /// CLIENT_ROUTES_CHANGE events.
+    pub(in super::super) client_routes_updates: Option<ClientRoutesUpdate>,
+}
+
+impl PartialMetadataChanges {
+    /// Records a partial client-routes snapshot, merging it into the one
+    /// already pending, if any.
+    fn merge_client_routes_update(&mut self, new_client_routes: ClientRoutesUpdate) {
+        match &mut self.client_routes_updates {
+            None => self.client_routes_updates = Some(new_client_routes),
+            Some(existing) => existing.merge(new_client_routes),
+        }
+    }
 }
 
 impl MetadataUpdate {
@@ -70,7 +93,7 @@ impl MetadataUpdate {
         // Newest wins: an older, not-yet-applied fetch is worthless now.
         // Caveat: We need to NOT drop the old refresh channel.
         match &mut update.metadata_changes {
-            None | Some(MetadataChanges::Partial { .. }) => {
+            None | Some(MetadataChanges::Partial(_)) => {
                 update.metadata_changes = Some(MetadataChanges::Full {
                     metadata,
                     refresh_responses: refresh_response.into_iter().collect(),
@@ -96,14 +119,12 @@ impl MetadataUpdate {
         let update = Self::slot_mut(slot);
         match &mut update.metadata_changes {
             None => {
-                update.metadata_changes = Some(MetadataChanges::Partial {
-                    client_routes_updates: new_client_routes,
-                });
+                let mut partial = PartialMetadataChanges::default();
+                partial.merge_client_routes_update(new_client_routes);
+                update.metadata_changes = Some(MetadataChanges::Partial(partial));
             }
-            Some(MetadataChanges::Partial {
-                client_routes_updates,
-            }) => {
-                client_routes_updates.merge(new_client_routes);
+            Some(MetadataChanges::Partial(partial)) => {
+                partial.merge_client_routes_update(new_client_routes);
             }
             Some(MetadataChanges::Full {
                 metadata,
@@ -195,12 +216,6 @@ impl ClientRoutesUpdate {
                     .into_iter()
                     .map(move |(connection_id, route)| (host_id, connection_id, route))
             })
-    }
-
-    /// Return self by value, leaving empty update in its place.
-    pub(crate) fn take(&mut self) -> Self {
-        let map = std::mem::take(&mut self.updates);
-        Self { updates: map }
     }
 
     /// Merges a newer update into this one. Entries of `newer` override entries of `self`

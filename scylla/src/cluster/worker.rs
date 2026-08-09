@@ -5,7 +5,7 @@ use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::cluster::control_connection::MetadataRequestTimeouts;
 use crate::cluster::metadata::SchemaMetadataFetchMode;
 use crate::cluster::metadata::update::{
-    MetadataChanges, MetadataUpdate, RefreshRequest, StatusHint,
+    MetadataChanges, MetadataUpdate, PartialMetadataChanges, RefreshRequest, StatusHint,
 };
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
@@ -424,9 +424,14 @@ impl ClusterWorker {
                         HashSet::new()
                     }
                 }
-                MetadataChanges::Partial {
+                MetadataChanges::Partial(PartialMetadataChanges {
                     client_routes_updates,
-                } => subscriber.merge_client_routes_update(client_routes_updates.take()),
+                }) => match client_routes_updates.take() {
+                    Some(client_routes_update) => {
+                        subscriber.merge_client_routes_update(client_routes_update)
+                    }
+                    None => HashSet::new(),
+                },
             }
         } else {
             HashSet::new()
@@ -466,10 +471,7 @@ impl ClusterWorker {
                     let _ = response_chan.send(Ok(()));
                 }
             }
-            None
-            | Some(MetadataChanges::Partial {
-                client_routes_updates: _,
-            }) => {
+            None | Some(MetadataChanges::Partial(_)) => {
                 // For now there is nothing that requires publishing new ClusterState.
                 // The only thing left to do is processing up hints.
                 process_up_hints(self.cluster_state.load().as_ref());
