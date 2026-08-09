@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 use std::ops::ControlFlow;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use tokio::time::Instant;
@@ -9,14 +11,15 @@ use uuid::Uuid;
 use crate::cluster::control_connection::{
     ControlConnection, ControlConnectionEvent, ControlConnectionEvents,
 };
-use crate::cluster::metadata::Metadata;
 use crate::cluster::metadata::update::{MetadataUpdate, RefreshRequest};
+use crate::cluster::metadata::{ClientRoutesUpdate, Metadata};
+use crate::errors::MetadataError;
 use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::frame::response::event::EventV2 as Event;
 use crate::frame::response::event::StatusChangeEvent;
 
 use super::merge_channel;
-use super::reader::MetadataReader;
+use super::reader::{MetadataReader, TopologyUpdateGuard};
 
 /// How often the worker attempts to establish a control connection while it has none.
 const CONTROL_CONNECTION_REPAIR_INTERVAL: Duration = Duration::from_secs(1);
@@ -34,9 +37,8 @@ const CONTROL_CONNECTION_REPAIR_INTERVAL: Duration = Duration::from_secs(1);
 /// The control connection is therefore not a field, but a value owned by the
 /// currently running loop.
 pub(in super::super) struct MetadataWorker {
-    /// Fetches metadata and (re-)establishes control connections. Also keeps the
-    /// known peers and the client-routes subscriber, which it needs for
-    /// connection ids and event registration.
+    /// Establishes control connections (fetching metadata in the process) and
+    /// keeps the known peers to establish them to.
     metadata_reader: MetadataReader,
 
     // This value determines how frequently the metadata
@@ -59,6 +61,11 @@ pub(in super::super) struct MetadataWorker {
     /// Invariant: at most one request is pending at a time - both loops take it
     /// (answering it, directly or through the cluster worker) before awaiting
     /// the next one.
+    ///
+    /// Within [`work_on_cc`](Self::work_on_cc) a stronger invariant holds: while
+    /// a request is pending, the full fetch in flight was started after (and
+    /// because of) its receipt - see the `refresh_channel` branch there for how
+    /// its guard upholds this.
     pending_request: Option<RefreshRequest>,
 }
 
@@ -73,6 +80,211 @@ enum EventAction {
     /// Fetch the client routes for these (connection id, host id) pairs, as
     /// listed in a CLIENT_ROUTES_CHANGE:UPDATE_NODES event.
     FetchClientRoutes { pairs: HashSet<(String, Uuid)> },
+}
+
+/// The fetch work that [`MetadataWorker::work_on_cc`] owes but has not started
+/// yet, because the fetch that must precede it is still in flight.
+///
+/// The starter step at the top of the loop drains this plan into
+/// [`PendingFetches`] as soon as the blocking fetch completes, so whenever the
+/// loop awaits, everything still recorded here is genuinely blocked.
+///
+/// There is deliberately no state for "a full fetch and partial work owed at
+/// once": a due full fetch subsumes all partial work (see
+/// [`note_full_needed`](Self::note_full_needed)), so recording both would keep
+/// data only to throw it away.
+#[derive(Default)]
+enum FetchPlan {
+    /// Nothing is owed.
+    #[default]
+    Idle,
+    /// A full metadata fetch is owed: requested explicitly, implied by a
+    /// server event, or owed because a partial fetch failed.
+    Full,
+    /// Partial fetch work is owed, at most one entry per partial fetch type.
+    /// Currently client routes is the only such type; when more are added,
+    /// the payload becomes a struct with one optional entry per type (like
+    /// `PartialMetadataChanges`).
+    Partial(ClientRoutesFetchRequest),
+}
+
+impl FetchPlan {
+    /// Records that a full fetch is owed.
+    ///
+    /// Any partial work recorded so far is dropped: the full fetch starts no
+    /// earlier than now - hence after the events that made the partial work
+    /// due - and reads everything a partial fetch would, so it subsumes that
+    /// work.
+    fn note_full_needed(&mut self) {
+        *self = FetchPlan::Full;
+    }
+
+    /// Records client-routes work, merging it into the work already owed.
+    ///
+    /// If a full fetch is already owed, the work is dropped - subsumed, by the
+    /// argument in [`note_full_needed`](Self::note_full_needed).
+    fn note_client_routes(&mut self, request: ClientRoutesFetchRequest) {
+        match self {
+            FetchPlan::Idle => *self = FetchPlan::Partial(request),
+            FetchPlan::Partial(pending) => pending.merge(request),
+            FetchPlan::Full => (),
+        }
+    }
+}
+
+/// The (connection id, host id) pairs accumulated from CLIENT_ROUTES_CHANGE
+/// events, to be resolved by one partial client-routes fetch.
+///
+/// A set: merging the work of several events is a plain union, and identical
+/// pairs listed repeatedly are deduplicated for free.
+struct ClientRoutesFetchRequest {
+    pairs: HashSet<(String, Uuid)>,
+}
+
+impl ClientRoutesFetchRequest {
+    /// Merges another event's pairs in.
+    fn merge(&mut self, newer: Self) {
+        self.pairs.extend(newer.pairs);
+    }
+
+    /// Performs the partial fetch for the accumulated pairs.
+    ///
+    /// Takes `self` by value so that the returned future borrows only the
+    /// control connection - it is stored in [`PendingFetches`] across
+    /// `select!` iterations.
+    async fn fetch_on(
+        self,
+        cc: &ControlConnection,
+    ) -> Result<Option<ClientRoutesUpdate>, MetadataError> {
+        cc.fetch_client_routes_update(&self.pairs).await
+    }
+}
+
+/// A full-metadata fetch in flight.
+///
+/// Boxed to give the anonymous `async fn` future a nameable type, which is
+/// what lets [`PendingFetches`] offer
+/// [`start_due_fetches`](PendingFetches::start_due_fetches) as a plain method.
+/// The allocation cost is negligible: a fetch starts at most once per refresh
+/// interval, server event or refresh request.
+type FullFetch<'cc> =
+    Pin<Box<dyn Future<Output = Result<TopologyUpdateGuard, MetadataError>> + Send + 'cc>>;
+
+/// A partial client-routes fetch in flight; boxed for the same reason as
+/// [`FullFetch`].
+type ClientRoutesFetch<'cc> =
+    Pin<Box<dyn Future<Output = Result<Option<ClientRoutesUpdate>, MetadataError>> + Send + 'cc>>;
+
+/// The fetches of [`MetadataWorker::work_on_cc`] currently in flight, owning
+/// their futures - which borrow the control connection, hence the lifetime.
+///
+/// The shape makes the scheduling rules structural:
+/// - a full fetch never has anything running beside it (it subsumes and
+///   preempts all partial work), and
+/// - per partial fetch type, at most one fetch runs at a time. Currently
+///   client routes is the only such type; when more are added, `Partial`
+///   becomes a struct variant with one optional future per type, which is
+///   also how partial fetches of different types get to run concurrently.
+///
+/// [`start_due_fetches`](Self::start_due_fetches) starts the fetches that the
+/// [`FetchPlan`] owes. As a [`Future`], `PendingFetches` resolves to the
+/// [`FetchOutcome`] of the in-flight fetch once it completes, emptying `self`
+/// back to [`Idle`](Self::Idle) - so a completed fetch is never polled again.
+/// While `Idle`, polling pends forever *without registering a waker*: an idle
+/// value alone never wakes the worker. This is sound in `work_on_cc` because
+/// fetches are only started between `select!`s, never while one is being
+/// awaited, and the `select!` always has branches that do register wakers
+/// (e.g. event draining).
+///
+/// Cancel-safe: the futures live in this value, not in the `select!` branch
+/// polling it, so losing the `select!` race leaves the in-flight fetch intact.
+enum PendingFetches<'cc> {
+    /// No fetch is in flight.
+    Idle,
+    /// A full metadata fetch is in flight.
+    Full { fetch: FullFetch<'cc> },
+    /// A partial client-routes fetch is in flight.
+    Partial {
+        client_routes_fetch: ClientRoutesFetch<'cc>,
+    },
+}
+
+impl<'cc> PendingFetches<'cc> {
+    /// The starter step of [`MetadataWorker::work_on_cc`]: starts every fetch
+    /// that is due per `plan` (or per the periodic refresh schedule) and not
+    /// blocked, so that the worker never awaits while startable work is owed.
+    fn start_due_fetches(
+        &mut self,
+        plan: &mut FetchPlan,
+        next_refresh_deadline: &mut Instant,
+        refresh_interval: Duration,
+        cc: &'cc ControlConnection,
+    ) {
+        // A full fetch is due when a server event or a refresh request
+        // demanded one, or when the periodic deadline has passed.
+        if !matches!(self, PendingFetches::Full { .. })
+            && (matches!(plan, FetchPlan::Full) || Instant::now() >= *next_refresh_deadline)
+        {
+            // Starting the full fetch drops both the partial work owed by the
+            // plan and any running partial fetch: the full fetch reads all of
+            // that data, and reads it after the events that made the partial
+            // work due, so both are subsumed.
+            *plan = FetchPlan::Idle;
+            *next_refresh_deadline = deadline_after(Instant::now(), refresh_interval);
+
+            debug!("Requesting metadata refresh");
+            *self = PendingFetches::Full {
+                fetch: Box::pin(cc.query_metadata()),
+            };
+            return;
+        }
+
+        // Partial client-routes work starts only when nothing at all is in flight.
+        if matches!(self, PendingFetches::Idle) {
+            let request = match std::mem::take(plan) {
+                FetchPlan::Idle => return, // Nothing to do.
+                FetchPlan::Partial(request) => request,
+                FetchPlan::Full => unreachable!("Covered by the previous block"),
+            };
+            *self = PendingFetches::Partial {
+                client_routes_fetch: Box::pin(request.fetch_on(cc)),
+            };
+        }
+    }
+}
+
+/// What [`PendingFetches`] resolves to: the output of whichever in-flight
+/// fetch completed, tagged with its fetch type.
+enum FetchOutcome {
+    Full(Result<TopologyUpdateGuard, MetadataError>),
+    ClientRoutes(Result<Option<ClientRoutesUpdate>, MetadataError>),
+}
+
+impl Future for PendingFetches<'_> {
+    type Output = FetchOutcome;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // `PendingFetches` is `Unpin` (the fetch futures are heap-pinned), so
+        // it can be worked on through a plain `&mut`.
+        let this = self.get_mut();
+        let outcome = match this {
+            PendingFetches::Idle => return Poll::Pending,
+            PendingFetches::Full { fetch } => match fetch.as_mut().poll(cx) {
+                Poll::Ready(result) => FetchOutcome::Full(result),
+                Poll::Pending => return Poll::Pending,
+            },
+            PendingFetches::Partial {
+                client_routes_fetch,
+            } => match client_routes_fetch.as_mut().poll(cx) {
+                Poll::Ready(result) => FetchOutcome::ClientRoutes(result),
+                Poll::Pending => return Poll::Pending,
+            },
+        };
+
+        // The completed fetch has been consumed; drop its future.
+        *this = PendingFetches::Idle;
+        Poll::Ready(outcome)
+    }
 }
 
 impl MetadataWorker {
@@ -166,9 +378,7 @@ impl MetadataWorker {
 
             // Wait until it's time for the next attempt, unless a refresh request
             // makes us attempt earlier.
-            let sleep_until = attempt_time
-                .checked_add(CONTROL_CONNECTION_REPAIR_INTERVAL)
-                .unwrap_or_else(Instant::now);
+            let sleep_until = deadline_after(attempt_time, CONTROL_CONNECTION_REPAIR_INTERVAL);
 
             tokio::select! {
                 _sleep_finished = tokio::time::sleep_until(sleep_until) => (),
@@ -186,6 +396,31 @@ impl MetadataWorker {
     /// Serves the given control connection: refreshes metadata on it (periodically,
     /// on request and in reaction to server events) and drains its events.
     ///
+    /// # This loop never blocks
+    ///
+    /// The connection's reader task delivers server events through a bounded
+    /// channel and blocks when the channel is full; blocked, it does not process
+    /// query responses either. If this loop awaited a fetch directly, a burst of
+    /// events could thus deadlock it: the fetch would wait for the reader task,
+    /// which waits for this loop to drain events, which waits for the fetch.
+    ///
+    /// Hence the rule: this loop awaits only in `select!`, with event draining as
+    /// one of the branches, and everything outside the `select!` is synchronous.
+    /// Fetches run as futures owned by a [`PendingFetches`] value, polled by the
+    /// `select!` alongside the other branches. Fetch work that cannot start yet
+    /// is recorded in a [`FetchPlan`]. On every iteration, before awaiting,
+    /// [`PendingFetches::start_due_fetches`] converts due plan entries into
+    /// pending fetches, under these rules:
+    ///
+    /// - At most one fetch per type runs at a time; work for a busy type waits
+    ///   in the plan.
+    /// - A due full fetch preempts everything: it abandons the running partial
+    ///   fetch and drops the plan's partial work. Both are subsumed - the full
+    ///   fetch reads all of that data, and reads it after the events that made
+    ///   the partial work due. Conversely, partial work that becomes due *while*
+    ///   a full fetch runs stays in the plan: the fetch may have read the
+    ///   corresponding tables before the triggering event arrived.
+    ///
     /// Returns [`ControlFlow::Continue`] once the control connection is deemed
     /// defunct and should be replaced, or [`ControlFlow::Break`] if the worker
     /// should stop.
@@ -194,25 +429,74 @@ impl MetadataWorker {
         cc: ControlConnection,
         mut cc_events: ControlConnectionEvents,
     ) -> ControlFlow<()> {
-        let mut last_refresh_time = Instant::now();
+        let mut plan = FetchPlan::default();
+        let mut next_refresh_deadline =
+            deadline_after(Instant::now(), self.cluster_metadata_refresh_interval);
+
+        // The in-flight fetches. Their futures borrow `cc` and nothing else,
+        // so the loop stays free to use `self` (in particular
+        // `self.metadata_reader`) while fetches are in flight.
+        let mut pending_fetches = PendingFetches::Idle;
 
         loop {
-            // Wait until it's time for the next refresh
-            let sleep_until: Instant = last_refresh_time
-                .checked_add(self.cluster_metadata_refresh_interval)
-                .unwrap_or_else(Instant::now);
+            pending_fetches.start_due_fetches(
+                &mut plan,
+                &mut next_refresh_deadline,
+                self.cluster_metadata_refresh_interval,
+                &cc,
+            );
 
-            let sleep_future = tokio::time::sleep_until(sleep_until);
-            tokio::pin!(sleep_future);
+            // Computed before `select!` for the branch guards, which cannot
+            // borrow `pending_fetches`: the fetch branch polls it mutably.
+            let full_fetch_in_flight = matches!(pending_fetches, PendingFetches::Full { .. });
 
             tokio::select! {
-                _sleep_finished = sleep_future => {
-                    // Time to do periodic refresh.
-                },
+                fetch_outcome = &mut pending_fetches => {
+                    match fetch_outcome {
+                        FetchOutcome::Full(Ok(topology_update)) => {
+                            debug!("Fetched new metadata");
+                            let metadata = topology_update.apply(&mut self.metadata_reader);
+                            self.publish_metadata(metadata)?;
+                        }
+                        FetchOutcome::Full(Err(err)) => {
+                            debug!(
+                                error = %err,
+                                "Failed to fetch metadata on the current control connection. \
+                                Will try to establish a new one."
+                            );
+                            // The control connection is considered defunct - drop it. The pending
+                            // request, if any, is retried (and answered) while establishing a new one.
+                            return ControlFlow::Continue(());
+                        }
+                        FetchOutcome::ClientRoutes(Ok(None)) => (), // Nothing to apply.
+                        FetchOutcome::ClientRoutes(Ok(Some(routes))) => {
+                            if self.send_update(|slot| MetadataUpdate::merge_client_routes_update(slot, routes)).is_err() {
+                                return ControlFlow::Break(());
+                            }
+                        }
+                        FetchOutcome::ClientRoutes(Err(err)) => {
+                            error!(
+                                "Error when fetching client route updates: {err}. \
+                                Scheduling a metadata refresh, because the control connection is likely defunct."
+                            );
+                            plan.note_full_needed();
+                        }
+                    }
+                }
 
-                maybe_refresh_request = self.refresh_channel.recv() => {
+                // While a full fetch is in flight, refresh requests wait in the
+                // channel (`Cluster::refresh_metadata` awaits the bounded send).
+                // Accepting one now would break the promise behind
+                // `pending_request`: the running fetch was started before the
+                // request, so its data may predate it. With this guard, a
+                // request is only received when the starter step can begin a
+                // full fetch for it right away.
+                maybe_refresh_request = self.refresh_channel.recv(), if !full_fetch_in_flight => {
                     match maybe_refresh_request {
-                        Some(request) => self.set_pending_request(request),
+                        Some(request) => {
+                            self.set_pending_request(request);
+                            plan.note_full_needed();
+                        }
                         None => return ControlFlow::Break(()), // If refresh_channel was closed then cluster was dropped, we can stop working
                     }
                 }
@@ -221,6 +505,12 @@ impl MetadataWorker {
                     match control_connection_event {
                         ControlConnectionEvent::Shutdown => {
                             // The runtime is shutting down. We can stop working.
+                            //
+                            // Known issue (predating this worker): if a refresh
+                            // request is pending, dropping it here makes the
+                            // requester's `Cluster::refresh_metadata` panic on the
+                            // response channel. During runtime shutdown the
+                            // requester task is being torn down anyway.
                             debug!("Got shutdown control connection event. Shutting down MetadataWorker.");
                             return ControlFlow::Break(());
                         },
@@ -228,57 +518,31 @@ impl MetadataWorker {
                             // The control connection was broken. Have a new one established;
                             // the first attempt will be immediate, and if it does not succeed,
                             // subsequent attempts will be issued every second.
+                            //
+                            // The in-flight fetches, if any, are abandoned: establishing
+                            // a new control connection fetches full metadata, which
+                            // subsumes them.
                             return ControlFlow::Continue(());
                         },
                         ControlConnectionEvent::ServerEvent(event) => {
                             match self.handle_server_event(event)? {
-                                EventAction::None => continue, // Don't go to refreshing.
-                                EventAction::FetchFull => (), // Refresh immediately.
+                                EventAction::None => (),
+                                EventAction::FetchFull => plan.note_full_needed(),
                                 EventAction::FetchClientRoutes { pairs } => {
-                                    let res = cc.fetch_client_routes_update(&pairs).await;
-                                    match res {
-                                        Ok(None) => continue, // Nothing to apply; don't go to refreshing.
-                                        Ok(Some(routes)) => {
-                                            if self.send_update(|slot| MetadataUpdate::merge_client_routes_update(slot, routes)).is_err() {
-                                                return ControlFlow::Break(());
-                                            }
-                                            continue; // Don't go to refreshing.
-                                        }
-                                        Err(err) =>
-                                        {
-                                            error!(
-                                                "Error when fetching client route updates: {err}. \
-                                                Proceeding with metadata refresh, because the control connection is likely defunct."
-                                            );
-                                            // Refresh immediately.
-                                        }
-                                    }
+                                    plan.note_client_routes(ClientRoutesFetchRequest { pairs })
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // Perform the refresh
-            debug!("Requesting metadata refresh");
-            last_refresh_time = Instant::now();
-
-            match cc.query_metadata().await {
-                Ok(topology_update) => {
-                    debug!("Fetched new metadata");
-                    let metadata = topology_update.apply(&mut self.metadata_reader);
-                    self.publish_metadata(metadata)?;
-                }
-                Err(err) => {
-                    debug!(
-                        error = %err,
-                        "Failed to fetch metadata on the current control connection. \
-                        Will try to establish a new one."
-                    );
-                    // The control connection is considered defunct - drop it. The pending
-                    // request, if any, is retried (and answered) while establishing a new one.
-                    return ControlFlow::Continue(());
+                // While a full fetch is in flight the deadline is irrelevant:
+                // it is reset when the next fetch starts. Once no full fetch
+                // runs, a passed deadline completes this branch immediately and
+                // the starter step begins the periodic fetch.
+                _deadline_passed = tokio::time::sleep_until(next_refresh_deadline), if !full_fetch_in_flight => {
+                    // Nothing to do here: the starter step notices the passed
+                    // deadline.
                 }
             }
         }
@@ -395,5 +659,76 @@ impl MetadataWorker {
         self.updates.modify(f).inspect_err(|_| {
             debug!("The cluster worker is gone. Shutting down MetadataWorker.");
         })
+    }
+}
+
+/// `start + interval`, saturating to "now" on overflow (as good as any instant
+/// that far in the future).
+fn deadline_after(start: Instant, interval: Duration) -> Instant {
+    start.checked_add(interval).unwrap_or_else(Instant::now)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::pending;
+    use std::pin::Pin;
+    use std::task::{Context, Poll, Waker};
+
+    use crate::cluster::metadata::Metadata;
+
+    use super::{FetchOutcome, PendingFetches, TopologyUpdateGuard};
+
+    fn poll_once(pending_fetches: &mut PendingFetches<'_>) -> Poll<FetchOutcome> {
+        Pin::new(pending_fetches).poll(&mut Context::from_waker(Waker::noop()))
+    }
+
+    fn dummy_topology_update() -> TopologyUpdateGuard {
+        TopologyUpdateGuard::new(Metadata::new_dummy(&[]))
+    }
+
+    /// While idle, `PendingFetches` must pend (and not panic or spin):
+    /// `work_on_cc` polls it in its `select!` unconditionally.
+    #[test]
+    fn idle_pends() {
+        let mut pending_fetches = PendingFetches::Idle;
+
+        assert!(poll_once(&mut pending_fetches).is_pending());
+    }
+
+    /// A completed fetch yields its output, tagged with the fetch type, and
+    /// empties the value back to `Idle`, so that the next starter step can
+    /// start another fetch (and the completed future is never polled again).
+    #[test]
+    fn completed_fetch_resolves_and_empties() {
+        let mut pending_fetches = PendingFetches::Full {
+            fetch: Box::pin(async { Ok(dummy_topology_update()) }),
+        };
+        assert!(matches!(
+            poll_once(&mut pending_fetches),
+            Poll::Ready(FetchOutcome::Full(Ok(_)))
+        ));
+        assert!(matches!(pending_fetches, PendingFetches::Idle));
+        assert!(poll_once(&mut pending_fetches).is_pending());
+
+        let mut pending_fetches = PendingFetches::Partial {
+            client_routes_fetch: Box::pin(async { Ok(None) }),
+        };
+        assert!(matches!(
+            poll_once(&mut pending_fetches),
+            Poll::Ready(FetchOutcome::ClientRoutes(Ok(None)))
+        ));
+        assert!(matches!(pending_fetches, PendingFetches::Idle));
+    }
+
+    /// Losing a `select!` race (the polling borrow being dropped) must leave
+    /// the in-flight fetch intact.
+    #[test]
+    fn unfinished_fetch_stays_in_flight() {
+        let mut pending_fetches = PendingFetches::Full {
+            fetch: Box::pin(pending()),
+        };
+
+        assert!(poll_once(&mut pending_fetches).is_pending());
+        assert!(matches!(pending_fetches, PendingFetches::Full { .. }));
     }
 }
