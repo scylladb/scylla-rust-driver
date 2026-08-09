@@ -24,7 +24,8 @@ use tracing::{debug, error, warn};
 use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::cluster::KnownNode;
 use crate::cluster::control_connection::{
-    ControlConnection, ControlConnectionCache, ControlConnectionEvents, MetadataRequestTimeouts,
+    ControlConnection, ControlConnectionCache, ControlConnectionConfig, ControlConnectionEvents,
+    MetadataRequestTimeouts,
 };
 use crate::cluster::metadata::{
     ClientRoutesUpdate, Metadata, PeerEndpoint, SchemaMetadataFetchMode, UntranslatedEndpoint,
@@ -45,15 +46,14 @@ pub(crate) struct MetadataReader {
     // Configuration values - they will stay the same during whole lifetime of MetadataReader.
     // =======================================================================================
     control_connection_config: ConnectionConfig,
-    request_timeouts: MetadataRequestTimeouts,
+    /// Configuration stamped onto every control connection this reader creates;
+    /// governs what the control connection's metadata queries fetch.
+    cc_config: ControlConnectionConfig,
     hostname_resolution_timeout: Option<Duration>,
-    keyspaces_to_fetch: Vec<String>,
-    schema_metadata_fetch_mode: SchemaMetadataFetchMode,
     host_filter: Option<Arc<dyn HostFilter>>,
     // When no known peer is reachable, initial known nodes are resolved once again as a fallback
     // and establishing control connection to them is attempted.
     initial_known_nodes: Vec<KnownNode>,
-    client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
 
     // ====================================================================
     // Mutable state of MetadataReader. It will change during its lifetime.
@@ -94,18 +94,20 @@ impl MetadataReader {
 
         Ok(MetadataReader {
             control_connection_config: connection_config,
-            request_timeouts,
+            cc_config: ControlConnectionConfig {
+                keyspaces_to_fetch,
+                schema_metadata_fetch_mode,
+                client_routes_subscriber,
+                request_timeouts,
+            },
             hostname_resolution_timeout,
             known_peers: initial_peers
                 .into_iter()
                 .map(UntranslatedEndpoint::ContactPoint)
                 .collect(),
-            keyspaces_to_fetch,
-            schema_metadata_fetch_mode,
             host_filter: host_filter.clone(),
             initial_known_nodes,
             cc_cache,
-            client_routes_subscriber,
         })
     }
 
@@ -249,9 +251,9 @@ impl MetadataReader {
             let (cc, cc_events) = match Self::make_control_connection(
                 peer,
                 self.control_connection_config.clone(),
-                self.request_timeouts,
+                self.cc_config.request_timeouts,
                 Arc::clone(&self.cc_cache),
-                self.client_routes_subscriber.is_some(),
+                self.cc_config.client_routes_subscriber.is_some(),
             )
             .await
             {
@@ -330,9 +332,10 @@ impl MetadataReader {
     ) -> Result<Metadata, MetadataError> {
         cc.query_metadata(
             cc.endpoint().address().port(),
-            &self.keyspaces_to_fetch,
-            self.schema_metadata_fetch_mode,
-            self.client_routes_subscriber
+            &self.cc_config.keyspaces_to_fetch,
+            self.cc_config.schema_metadata_fetch_mode,
+            self.cc_config
+                .client_routes_subscriber
                 .as_ref()
                 .map(|subscriber| subscriber.get_connection_ids()),
         )
@@ -455,7 +458,7 @@ impl MetadataReader {
         cc: &ControlConnection,
         evt: &ClientRoutesChangeEvent,
     ) -> Result<Option<ClientRoutesUpdate>, MetadataError> {
-        let Some(subscriber) = &self.client_routes_subscriber else {
+        let Some(subscriber) = &self.cc_config.client_routes_subscriber else {
             // No subscriber, but received an event? Strange enough, but nothing to be done here.
             warn!("BUG: Received ClientRoutesChange event, but no ClientRoutesSubscriber was set!");
             return Ok(None);

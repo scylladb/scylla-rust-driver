@@ -10,8 +10,9 @@ use dashmap::DashMap;
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
+use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::client::pager::QueryPager;
-use crate::cluster::metadata::UntranslatedEndpoint;
+use crate::cluster::metadata::{SchemaMetadataFetchMode, UntranslatedEndpoint};
 use crate::errors::{
     ConnectionError, NextPageError, NextRowError, RequestAttemptError, RequestError,
 };
@@ -72,6 +73,25 @@ pub(crate) enum ControlConnectionEvent {
     Broken(ConnectionError),
     ServerEvent(Event),
     Shutdown,
+}
+
+/// Configuration for the queries a [`ControlConnection`] runs on behalf of the
+/// driver: what metadata to fetch and how.
+///
+/// Not to be confused with [`ConnectionConfig`](crate::network::ConnectionConfig),
+/// which configures how the underlying network connection is opened.
+#[derive(Clone)]
+pub(super) struct ControlConnectionConfig {
+    /// Keyspaces to restrict the schema metadata fetch to. Empty means no restriction.
+    pub(super) keyspaces_to_fetch: Vec<String>,
+    /// Whether (and in what detail) to fetch schema metadata.
+    pub(super) schema_metadata_fetch_mode: SchemaMetadataFetchMode,
+    /// The subscriber interested in `system.client_routes`, if any. Provides the
+    /// connection ids to filter routes by; its presence also makes the control
+    /// connection register for CLIENT_ROUTES_CHANGE events.
+    pub(super) client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
+    /// The custom server-side timeout set for requests executed on the control connection.
+    pub(super) request_timeouts: MetadataRequestTimeouts,
 }
 
 /// The single connection used to fetch metadata and receive events from the cluster.
