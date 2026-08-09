@@ -12,7 +12,8 @@
 //! - Host filtering to ensure the control connection is established to an accepted node
 //!
 //! Ownership of the established control connection lives outside the reader (in the
-//! metadata worker); the reader only knows how to create one and fetch metadata on it.
+//! metadata worker); the reader only knows how to create one. The metadata queries
+//! themselves are methods on [`ControlConnection`], configured at its creation.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,11 +29,10 @@ use crate::cluster::control_connection::{
     MetadataRequestTimeouts,
 };
 use crate::cluster::metadata::{
-    ClientRoutesUpdate, Metadata, PeerEndpoint, SchemaMetadataFetchMode, UntranslatedEndpoint,
+    Metadata, PeerEndpoint, SchemaMetadataFetchMode, UntranslatedEndpoint,
 };
 use crate::cluster::node::resolve_contact_points;
 use crate::errors::{ConnectionPoolError, MetadataError, NewSessionError};
-use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::frame::server_event_type::EventTypeV2 as EventType;
 use crate::network::{ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
@@ -109,23 +109,6 @@ impl MetadataReader {
             initial_known_nodes,
             cc_cache,
         })
-    }
-
-    /// Fetches metadata using an already-established control connection.
-    ///
-    /// On success, updates `self.known_peers` with the peers from the fetched
-    /// metadata. Does **not** retry on other nodes — the caller should drop the
-    /// control connection and call
-    /// [`establish_cc_and_fetch_metadata`](Self::establish_cc_and_fetch_metadata)
-    /// if this fails.
-    pub(crate) async fn fetch_metadata_on_cc(
-        &mut self,
-        cc: &ControlConnection,
-    ) -> Result<Metadata, MetadataError> {
-        let metadata = self.query_metadata_on_cc(cc).await?;
-        debug!("Fetched new metadata");
-        self.update_known_peers(&metadata);
-        Ok(metadata)
     }
 
     /// Establishes a control connection and fetches metadata in one go.
@@ -251,9 +234,8 @@ impl MetadataReader {
             let (cc, cc_events) = match Self::make_control_connection(
                 peer,
                 self.control_connection_config.clone(),
-                self.cc_config.request_timeouts,
+                self.cc_config.clone(),
                 Arc::clone(&self.cc_cache),
-                self.cc_config.client_routes_subscriber.is_some(),
             )
             .await
             {
@@ -269,7 +251,7 @@ impl MetadataReader {
                 }
             };
 
-            let metadata = match self.query_metadata_on_cc(&cc).await {
+            let metadata = match cc.query_metadata().await {
                 Ok(metadata) => metadata,
                 Err(err) => {
                     if initial {
@@ -321,28 +303,7 @@ impl MetadataReader {
         }
     }
 
-    /// Queries metadata on the given control connection.
-    ///
-    /// This is a thin wrapper over [`ControlConnection::query_metadata`] that fills in
-    /// the reader's configuration (keyspaces to fetch, whether to fetch schema). It does
-    /// **not** update `known_peers` nor touch the control connection state.
-    async fn query_metadata_on_cc(
-        &self,
-        cc: &ControlConnection,
-    ) -> Result<Metadata, MetadataError> {
-        cc.query_metadata(
-            cc.endpoint().address().port(),
-            &self.cc_config.keyspaces_to_fetch,
-            self.cc_config.schema_metadata_fetch_mode,
-            self.cc_config
-                .client_routes_subscriber
-                .as_ref()
-                .map(|subscriber| subscriber.get_connection_ids()),
-        )
-        .await
-    }
-
-    fn update_known_peers(&mut self, metadata: &Metadata) {
+    pub(super) fn update_known_peers(&mut self, metadata: &Metadata) {
         let host_filter = self.host_filter.as_ref();
         self.known_peers = metadata
             .peers
@@ -407,9 +368,8 @@ impl MetadataReader {
     async fn make_control_connection(
         endpoint: UntranslatedEndpoint,
         mut config: ConnectionConfig,
-        request_timeouts: MetadataRequestTimeouts,
+        cc_config: ControlConnectionConfig,
         cache: Arc<ControlConnectionCache>,
-        register_for_client_routes_events: bool,
     ) -> Result<(ControlConnection, ControlConnectionEvents), MetadataError> {
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
         // setting event_sender field in connection config will cause control connection to
@@ -420,7 +380,7 @@ impl MetadataReader {
             EventType::StatusChange,
             EventType::SchemaChange,
         ];
-        if register_for_client_routes_events {
+        if cc_config.client_routes_subscriber.is_some() {
             events_to_register_for.push(EventType::ClientRoutesChange);
         }
 
@@ -433,75 +393,20 @@ impl MetadataReader {
         .await;
 
         match open_result {
-            Ok((con, recv)) => {
-                let (cc, cc_events) =
-                    ControlConnection::new(Arc::new(con), endpoint, cache, recv, receiver);
-                Ok((cc.with_request_timeouts(request_timeouts), cc_events))
-            }
+            Ok((con, recv)) => Ok(ControlConnection::new(
+                Arc::new(con),
+                endpoint,
+                cc_config,
+                cache,
+                recv,
+                receiver,
+            )),
             Err(conn_err) => Err(MetadataError::ConnectionPoolError(
                 ConnectionPoolError::Broken {
                     last_connection_error: conn_err,
                 },
             )),
         }
-    }
-
-    /// Performs a partial fetch of `system.client_routes`. Partial means that filtering is done
-    /// not only by connection ids known to the driver (which is always the case), but also
-    /// by host ids - only for the hosts whose ids are present in the event payload.
-    ///
-    /// Returns the resulting [`ClientRoutesUpdate`], or `None` if there is no subscriber
-    /// configured or the event contained no connection ids relevant to this driver. Merging
-    /// the update into the [`ClientRoutesSubscriber`]'s knowledge is the caller's job.
-    pub(in super::super) async fn fetch_client_routes_update_on_event(
-        &self,
-        cc: &ControlConnection,
-        evt: &ClientRoutesChangeEvent,
-    ) -> Result<Option<ClientRoutesUpdate>, MetadataError> {
-        let Some(subscriber) = &self.cc_config.client_routes_subscriber else {
-            // No subscriber, but received an event? Strange enough, but nothing to be done here.
-            warn!("BUG: Received ClientRoutesChange event, but no ClientRoutesSubscriber was set!");
-            return Ok(None);
-        };
-
-        #[deny(clippy::wildcard_enum_match_arm)]
-        let (connection_ids, host_ids) = match evt {
-            ClientRoutesChangeEvent::UpdateNodes {
-                connection_ids,
-                host_ids,
-            } => (connection_ids, host_ids),
-            _ => unreachable!("clippy testifies that the match is exhaustive"),
-        };
-
-        // TODO: this is wasteful - it allocates both strings and a vec.
-        // This won't be a performance problem, because UPDATE_NODES events are not frequent.
-        // As an optimization, we can implement ser/de for some special new iterator type,
-        // to avoid the need to allocate when serializing collections.
-        let connection_ids: Vec<String> = connection_ids
-            .iter()
-            .filter(|&conn_id| subscriber.get_connection_ids().contains(conn_id))
-            .cloned()
-            .collect();
-
-        if connection_ids.is_empty() {
-            // The event contained no relevant connection IDs.
-            // Nothing to be done.
-            return Ok(None);
-        }
-
-        // Although this is vaguely documented, the semantics of an event with connection ids [A, B, C] and host ids [X, Y, Z]
-        // is that the following entries were added/updated/removed: `[(A, X), (B, Y), (C, Z)]`.
-        // Unfortunately, we can't really query Scylla this way. Therefore, we do the query: `WHERE connection id IN ? AND host id IN ?`,
-        // which fetches possibly more routes than necessary, for example `(A, Z)` or `(C, Y)`.
-        // This is a tradeoff - the only alternative is issuing multiple queries, one per connection id.
-        // I believe the tradeoff here is correct.
-        let client_routes = cc.query_client_routes(&connection_ids, host_ids).await?;
-
-        Ok(Some(ClientRoutesUpdate::from_event(
-            evt,
-            subscriber.get_connection_ids(),
-            &client_routes,
-        )))
     }
 }
 

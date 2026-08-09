@@ -232,7 +232,7 @@ impl MetadataWorker {
                             match event {
                                 Event::TopologyChange(_) => (), // Refresh immediately
                                 Event::ClientRoutesChange(evt) => {
-                                    let res = self.metadata_reader.fetch_client_routes_update_on_event(&cc, &evt).await;
+                                    let res = cc.fetch_client_routes_update_on_event(&evt).await;
                                     match res {
                                         Ok(None) => continue, // Nothing to apply; don't go to refreshing.
                                         Ok(Some(routes)) => {
@@ -300,8 +300,10 @@ impl MetadataWorker {
             debug!("Requesting metadata refresh");
             last_refresh_time = Instant::now();
 
-            match self.metadata_reader.fetch_metadata_on_cc(&cc).await {
+            match cc.query_metadata().await {
                 Ok(metadata) => {
+                    debug!("Fetched new metadata");
+                    self.metadata_reader.update_known_peers(&metadata);
                     // The refresh request, if any, is answered by the cluster worker, once the
                     // state resulting from this metadata is published - this is what makes
                     // `Cluster::refresh_metadata` return only after the new state is visible.

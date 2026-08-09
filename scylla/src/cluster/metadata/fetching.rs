@@ -40,13 +40,14 @@ use crate::DeserializeRow;
 use crate::client::pager::QueryPager;
 use crate::cluster::NodeAddr;
 use crate::cluster::control_connection::ControlConnection;
-use crate::cluster::metadata::ClientRoutes;
+use crate::cluster::metadata::{ClientRoutes, ClientRoutesUpdate};
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{
     ClientRoutesMetadataError, DbError, KeyspaceStrategyError, KeyspacesMetadataError,
     MetadataError, MetadataFetchError, MetadataFetchErrorKind, NextPageError, NextRowError,
     PeersMetadataError, RequestAttemptError, RequestError, TablesMetadataError, UdtMetadataError,
 };
+use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::routing::Token;
 
 type PerKeyspace<T> = HashMap<String, T>;
@@ -156,20 +157,22 @@ impl fmt::Display for InvalidCqlType {
 }
 
 impl ControlConnection {
-    pub(crate) async fn query_metadata(
-        &self,
-        connect_port: u16,
-        keyspace_to_fetch: &[String],
-        schema_metadata_fetch_mode: SchemaMetadataFetchMode,
-        client_routes_connection_ids: Option<&[String]>,
-    ) -> Result<Metadata, MetadataError> {
+    /// Queries the cluster metadata (peers, schema, client routes) as configured
+    /// by this control connection's
+    /// [`ControlConnectionConfig`](crate::cluster::control_connection::ControlConnectionConfig).
+    pub(super) async fn query_metadata(&self) -> Result<Metadata, MetadataError> {
+        let connect_port = self.endpoint().address().port();
+
         let peers_query = self.query_peers(connect_port);
-        let keyspaces_query = self.query_keyspaces(keyspace_to_fetch, schema_metadata_fetch_mode);
+        let keyspaces_query = self.query_keyspaces(
+            &self.config.keyspaces_to_fetch,
+            self.config.schema_metadata_fetch_mode,
+        );
         let client_routes_query = async {
-            let Some(connection_ids) = client_routes_connection_ids else {
+            let Some(subscriber) = self.config.client_routes_subscriber.as_ref() else {
                 return Ok(None);
             };
-            self.query_client_routes(connection_ids, &[])
+            self.query_client_routes(subscriber.get_connection_ids(), &[])
                 .await
                 .map(Some)
         };
@@ -540,6 +543,65 @@ impl ControlConnection {
         let routes = query_client_routes_with_values(self, query_str, values).await?;
 
         Ok(routes)
+    }
+
+    /// Performs a partial fetch of `system.client_routes`. Partial means that filtering is done
+    /// not only by connection ids known to the driver (which is always the case), but also
+    /// by host ids - only for the hosts whose ids are present in the event payload.
+    ///
+    /// Returns the resulting [`ClientRoutesUpdate`], or `None` if there is no subscriber
+    /// configured or the event contained no connection ids relevant to this driver. Merging
+    /// the update into the [`ClientRoutesSubscriber`]'s knowledge is the caller's job.
+    ///
+    /// [`ClientRoutesSubscriber`]: crate::client::client_routes::ClientRoutesSubscriber
+    pub(super) async fn fetch_client_routes_update_on_event(
+        &self,
+        evt: &ClientRoutesChangeEvent,
+    ) -> Result<Option<ClientRoutesUpdate>, MetadataError> {
+        let Some(subscriber) = self.config.client_routes_subscriber.as_ref() else {
+            // No subscriber, but received an event? Strange enough, but nothing to be done here.
+            warn!("BUG: Received ClientRoutesChange event, but no ClientRoutesSubscriber was set!");
+            return Ok(None);
+        };
+
+        #[deny(clippy::wildcard_enum_match_arm)]
+        let (connection_ids, host_ids) = match evt {
+            ClientRoutesChangeEvent::UpdateNodes {
+                connection_ids,
+                host_ids,
+            } => (connection_ids, host_ids),
+            _ => unreachable!("clippy testifies that the match is exhaustive"),
+        };
+
+        // TODO: this is wasteful - it allocates both strings and a vec.
+        // This won't be a performance problem, because UPDATE_NODES events are not frequent.
+        // As an optimization, we can implement ser/de for some special new iterator type,
+        // to avoid the need to allocate when serializing collections.
+        let connection_ids: Vec<String> = connection_ids
+            .iter()
+            .filter(|&conn_id| subscriber.get_connection_ids().contains(conn_id))
+            .cloned()
+            .collect();
+
+        if connection_ids.is_empty() {
+            // The event contained no relevant connection IDs.
+            // Nothing to be done.
+            return Ok(None);
+        }
+
+        // Although this is vaguely documented, the semantics of an event with connection ids [A, B, C] and host ids [X, Y, Z]
+        // is that the following entries were added/updated/removed: `[(A, X), (B, Y), (C, Z)]`.
+        // Unfortunately, we can't really query Scylla this way. Therefore, we do the query: `WHERE connection id IN ? AND host id IN ?`,
+        // which fetches possibly more routes than necessary, for example `(A, Z)` or `(C, Y)`.
+        // This is a tradeoff - the only alternative is issuing multiple queries, one per connection id.
+        // I believe the tradeoff here is correct.
+        let client_routes = self.query_client_routes(&connection_ids, host_ids).await?;
+
+        Ok(Some(ClientRoutesUpdate::from_event(
+            evt,
+            subscriber.get_connection_ids(),
+            &client_routes,
+        )))
     }
 
     fn query_filter_keyspace_name<'a, R>(
