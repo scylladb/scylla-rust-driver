@@ -712,7 +712,7 @@ pub struct CqlDate(pub u32);
 /// Native CQL timestamp representation that allows full supported timestamp range.
 ///
 /// Represented as signed milliseconds since unix epoch.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct CqlTimestamp(pub i64);
 
 /// Native CQL time representation.
