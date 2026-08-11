@@ -303,6 +303,26 @@ impl MetadataWorker {
         }
     }
 
+    /// Establishes the initial control connection, fetching the initial
+    /// metadata in the process.
+    ///
+    /// Called by `Cluster::new` before the worker is spawned; the returned
+    /// control connection (if one could be kept) is handed back to
+    /// [`work`](Self::work) once the worker starts.
+    pub(in super::super) async fn establish_initial(
+        &mut self,
+    ) -> Result<
+        (
+            Option<(ControlConnection, ControlConnectionEvents)>,
+            Metadata,
+        ),
+        MetadataError,
+    > {
+        self.metadata_reader
+            .establish_cc_and_fetch_metadata(true)
+            .await
+    }
+
     /// Runs the worker until the cluster (or the runtime) is gone.
     ///
     /// `initial_cc` is the control connection that the initial metadata was fetched

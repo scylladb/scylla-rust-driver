@@ -127,7 +127,7 @@ impl MetadataReader {
     ///
     /// In both of these cases the caller is expected to re-establish the control
     /// connection at the repair cadence.
-    pub(crate) async fn establish_cc_and_fetch_metadata(
+    pub(super) async fn establish_cc_and_fetch_metadata(
         &mut self,
         initial: bool,
     ) -> Result<
