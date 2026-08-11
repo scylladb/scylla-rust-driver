@@ -525,13 +525,7 @@ impl MetadataWorker {
                             return ControlFlow::Continue(());
                         },
                         ControlConnectionEvent::ServerEvent(event) => {
-                            match self.handle_server_event(event)? {
-                                EventAction::None => (),
-                                EventAction::FetchFull => plan.note_full_needed(),
-                                EventAction::FetchClientRoutes { pairs } => {
-                                    plan.note_client_routes(ClientRoutesFetchRequest { pairs })
-                                }
-                            }
+                            Self::absorb_server_event(&mut self.updates, event, &mut plan)?;
                         }
                     }
                 }
@@ -551,9 +545,15 @@ impl MetadataWorker {
     /// Handles a single server event synchronously (status hints are published
     /// right away) and returns the fetch work the event implies.
     ///
+    /// An associated function taking just the updates sender, so that event
+    /// handling does not require exclusive access to the whole worker.
+    ///
     /// Returns [`ControlFlow::Break`] if the worker should stop (the cluster
     /// worker is gone).
-    fn handle_server_event(&mut self, event: Event) -> ControlFlow<(), EventAction> {
+    fn handle_server_event(
+        updates: &mut merge_channel::Sender<MetadataUpdate>,
+        event: Event,
+    ) -> ControlFlow<(), EventAction> {
         debug!("Received server event: {:?}", event);
         match event {
             Event::TopologyChange(_) => ControlFlow::Continue(EventAction::FetchFull),
@@ -588,9 +588,10 @@ impl MetadataWorker {
                         // then new connections will be opened to it, and if it is not reachable,
                         // then connection attempts will fail and the node will be marked as unreachable by `PoolRefiller`,
                         // so it won't be targeted by the load balancing policy.
-                        if self
-                            .send_update(|slot| MetadataUpdate::merge_up_hint(slot, addr))
-                            .is_err()
+                        if Self::send_update_on(updates, |slot| {
+                            MetadataUpdate::merge_up_hint(slot, addr)
+                        })
+                        .is_err()
                         {
                             return ControlFlow::Break(());
                         }
@@ -604,9 +605,10 @@ impl MetadataWorker {
                         // and thus the node will not be targeted by the LoadBalancingPolicy,
                         // which is the desired behaviour. However, if the keepalive query succeeds,
                         // then the node is likely still alive (got stale event?), and we keep targeting it.
-                        if self
-                            .send_update(|slot| MetadataUpdate::merge_down_hint(slot, addr))
-                            .is_err()
+                        if Self::send_update_on(updates, |slot| {
+                            MetadataUpdate::merge_down_hint(slot, addr)
+                        })
+                        .is_err()
                         {
                             return ControlFlow::Break(());
                         }
@@ -616,6 +618,26 @@ impl MetadataWorker {
             }
             _ => ControlFlow::Continue(EventAction::None),
         }
+    }
+
+    /// Handles a single server event and folds the fetch work it implies into
+    /// `plan`.
+    ///
+    /// Returns [`ControlFlow::Break`] if the worker should stop (the cluster
+    /// worker is gone).
+    fn absorb_server_event(
+        updates: &mut merge_channel::Sender<MetadataUpdate>,
+        event: Event,
+        plan: &mut FetchPlan,
+    ) -> ControlFlow<()> {
+        match Self::handle_server_event(updates, event)? {
+            EventAction::None => (),
+            EventAction::FetchFull => plan.note_full_needed(),
+            EventAction::FetchClientRoutes { pairs } => {
+                plan.note_client_routes(ClientRoutesFetchRequest { pairs })
+            }
+        }
+        ControlFlow::Continue(())
     }
 
     /// Publishes freshly fetched metadata to the cluster worker.
@@ -656,7 +678,16 @@ impl MetadataWorker {
         &mut self,
         f: impl FnOnce(&mut Option<MetadataUpdate>),
     ) -> Result<(), merge_channel::SendError> {
-        self.updates.modify(f).inspect_err(|_| {
+        Self::send_update_on(&mut self.updates, f)
+    }
+
+    /// [`send_update`](Self::send_update) for callers that hold the updates
+    /// sender rather than the whole worker.
+    fn send_update_on(
+        updates: &mut merge_channel::Sender<MetadataUpdate>,
+        f: impl FnOnce(&mut Option<MetadataUpdate>),
+    ) -> Result<(), merge_channel::SendError> {
+        updates.modify(f).inspect_err(|_| {
             debug!("The cluster worker is gone. Shutting down MetadataWorker.");
         })
     }
