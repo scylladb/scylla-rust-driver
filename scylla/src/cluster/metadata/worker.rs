@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::ops::ControlFlow;
-use std::pin::Pin;
+use std::pin::{Pin, pin};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -13,7 +13,9 @@ use crate::cluster::control_connection::{
 };
 use crate::cluster::metadata::update::{MetadataUpdate, RefreshRequest};
 use crate::cluster::metadata::{ClientRoutesUpdate, Metadata};
-use crate::errors::MetadataError;
+use crate::errors::{
+    BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, MetadataError,
+};
 use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::frame::response::event::EventV2 as Event;
 use crate::frame::response::event::StatusChangeEvent;
@@ -81,22 +83,22 @@ pub(in super::super) struct EstablishedCc {
     plan: FetchPlan,
 }
 
-/// The [`FetchOnCandidate`] implementation that
-/// [`MetadataReader::establish_cc_and_fetch_metadata`] runs on each candidate
-/// connection on the worker's behalf.
-struct CandidateFetcher;
+/// Adapts [`MetadataWorker::fetch_on_candidate`] to the [`FetchOnCandidate`]
+/// trait that [`MetadataReader::establish_cc_and_fetch_metadata`] consumes,
+/// lending it the worker's updates channel.
+struct CandidateFetcher<'a> {
+    updates: &'a mut merge_channel::Sender<MetadataUpdate>,
+}
 
-impl FetchOnCandidate for CandidateFetcher {
+impl FetchOnCandidate for CandidateFetcher<'_> {
     type Payload = FetchPlan;
 
     async fn fetch(
         &mut self,
         cc: &ControlConnection,
-        _cc_events: &mut ControlConnectionEvents,
+        cc_events: &mut ControlConnectionEvents,
     ) -> Result<(TopologyUpdateGuard, FetchPlan), MetadataError> {
-        cc.query_metadata()
-            .await
-            .map(|topology_update| (topology_update, FetchPlan::default()))
+        MetadataWorker::fetch_on_candidate(self.updates, cc, cc_events).await
     }
 }
 
@@ -114,7 +116,9 @@ enum EventAction {
 }
 
 /// The fetch work that [`MetadataWorker::work_on_cc`] owes but has not started
-/// yet, because the fetch that must precede it is still in flight.
+/// yet, because the fetch that must precede it is still in flight. Also
+/// produced by [`MetadataWorker::fetch_on_candidate`], recording the fetch
+/// work that accrued during establishment for `work_on_cc` to start from.
 ///
 /// The starter step at the top of the loop drains this plan into
 /// [`PendingFetches`] as soon as the blocking fetch completes, so whenever the
@@ -348,19 +352,87 @@ impl MetadataWorker {
 
     /// Establishes a control connection, fetching metadata in the process -
     /// see [`MetadataReader::establish_cc_and_fetch_metadata`], to which this
-    /// delegates the candidate iteration.
+    /// delegates the candidate iteration. Each candidate is fetched on (and
+    /// its events drained) by [`fetch_on_candidate`](Self::fetch_on_candidate).
     async fn establish(
         &mut self,
         initial: bool,
     ) -> Result<(Option<EstablishedCc>, Metadata), MetadataError> {
         let (kept, metadata) = self
             .metadata_reader
-            .establish_cc_and_fetch_metadata(initial, &mut CandidateFetcher)
+            .establish_cc_and_fetch_metadata(
+                initial,
+                &mut CandidateFetcher {
+                    updates: &mut self.updates,
+                },
+            )
             .await?;
         Ok((
             kept.map(|(cc, events, plan)| EstablishedCc { cc, events, plan }),
             metadata,
         ))
+    }
+
+    /// Function that fetches `Metadata` on a new potential CC,
+    /// while concurrently draining events and preparing initial `FetchPlan`.
+    ///
+    /// # Establishment never blocks either
+    ///
+    /// The rule of [`work_on_cc`](Self::work_on_cc) applies here too: the
+    /// connection's reader task delivers server events through a bounded
+    /// channel and blocks once it fills, no longer processing query responses
+    /// either - and events flow from the moment the connection is opened (it
+    /// REGISTERs during setup). Awaiting `query_metadata` without draining
+    /// events would thus let a burst of events deadlock the establishment.
+    /// Hence the fetch is awaited only in `select!`, with event draining as
+    /// the other branch.
+    async fn fetch_on_candidate(
+        updates: &mut merge_channel::Sender<MetadataUpdate>,
+        cc: &ControlConnection,
+        cc_events: &mut ControlConnectionEvents,
+    ) -> Result<(TopologyUpdateGuard, FetchPlan), MetadataError> {
+        let mut plan = FetchPlan::default();
+        let mut fetch = pin!(cc.query_metadata());
+        loop {
+            tokio::select! {
+                fetch_result = &mut fetch => {
+                    return fetch_result.map(|topology_update| (topology_update, plan));
+                }
+
+                cc_event = cc_events.wait_for_event() => match cc_event {
+                    ControlConnectionEvent::ServerEvent(event) => {
+                        // `Break` (the cluster worker is gone) is deliberately
+                        // ignored.
+                        // Returning Err will cause MetadataReader to move to the next
+                        // node in the plan, which is pointless on shutdown. It will only
+                        // cause unnecessary connections, and weird errors, potentially
+                        // even returning dummy metadata on initial fetch.
+                        // If ClusterWorker is shutting down (which is the only case this
+                        // could happen), then we will shutdown soon too, so ignoring is not a problem.
+                        let _ = Self::absorb_server_event(updates, event, &mut plan);
+                    }
+                    ControlConnectionEvent::Broken(err) => {
+                        return Err(MetadataError::ConnectionPoolError(
+                            ConnectionPoolError::Broken {
+                                last_connection_error: err,
+                            },
+                        ));
+                    }
+                    ControlConnectionEvent::Shutdown => {
+                        // The runtime is shutting down; the connection's router
+                        // is gone without a farewell. Fail the candidate with
+                        // the closest error the vocabulary offers.
+                        return Err(MetadataError::ConnectionPoolError(
+                            ConnectionPoolError::Broken {
+                                last_connection_error: ConnectionError::BrokenConnection(
+                                    BrokenConnectionErrorKind::ChannelError.into(),
+                                ),
+                            },
+                        ));
+                    }
+                },
+            }
+        }
     }
 
     /// Runs the worker until the cluster (or the runtime) is gone.
