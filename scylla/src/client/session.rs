@@ -454,7 +454,7 @@ impl SessionConfig {
             keyspaces_to_fetch: Vec::new(),
             fetch_schema_metadata: true,
             fetch_full_schema_metadata: true,
-            metadata_request_serverside_timeout: Some(Duration::from_secs(2)),
+            metadata_request_serverside_timeout: Some(Duration::from_secs(30)),
             metadata_request_clientside_timeout: None,
             keepalive_interval: Some(Duration::from_secs(30)),
             keepalive_timeout: Some(Duration::from_secs(30)),

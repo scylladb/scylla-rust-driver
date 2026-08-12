@@ -1050,8 +1050,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     }
 
     /// Set the server-side timeout for metadata queries.
-    /// The default is `Some(Duration::from_secs(2))`. It means that
-    /// the all metadata queries will be set the 2 seconds timeout
+    /// The default is `Some(Duration::from_secs(30))`. It means that
+    /// the all metadata queries will be set the 30 seconds timeout
     /// no matter what timeout is set as a cluster default.
     /// This prevents timeouts of schema queries when the schema is large
     /// and the default timeout is configured as tight.
