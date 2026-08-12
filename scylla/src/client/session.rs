@@ -298,8 +298,22 @@ pub struct SessionConfig {
     /// Whenever this timeout is configured, the driver additionally applies a client-side
     /// timeout of this value + 1s to control connection requests - on every target, even
     /// where the clause itself is ignored - as a guard against a node that stops
-    /// responding without breaking the connection.
+    /// responding without breaking the connection. See
+    /// [`Self::metadata_request_clientside_timeout`] for how to override that derived value.
     pub metadata_request_serverside_timeout: Option<Duration>,
+
+    /// Custom client-side timeout for each page fetch of a metadata or
+    /// `system.client_routes` query executed on the control connection (it bounds single
+    /// requests, not the whole multi-page iteration).
+    ///
+    /// If `None` (the default), the timeout is derived from
+    /// [`Self::metadata_request_serverside_timeout`] + 1s, or is 30s if no server-side
+    /// timeout is configured either. If `Some(d)`, `d` is applied instead.
+    ///
+    /// Setting it *below* [`Self::metadata_request_serverside_timeout`] is discouraged: the
+    /// driver would then abort the request before the server can report its own, more
+    /// informative timeout error.
+    pub metadata_request_clientside_timeout: Option<Duration>,
 
     /// Interval of sending keepalive requests.
     /// If `None`, keepalives are never sent, so `Self::keepalive_timeout` has no effect.
@@ -441,6 +455,7 @@ impl SessionConfig {
             fetch_schema_metadata: true,
             fetch_full_schema_metadata: true,
             metadata_request_serverside_timeout: Some(Duration::from_secs(2)),
+            metadata_request_clientside_timeout: None,
             keepalive_interval: Some(Duration::from_secs(30)),
             keepalive_timeout: Some(Duration::from_secs(30)),
             schema_agreement_timeout: Duration::from_secs(60),
@@ -556,6 +571,18 @@ impl SessionConfig {
             );
         }
 
+        if self.clientside_timeout_below_serverside() {
+            warn!(
+                clientside_timeout = ?self.metadata_request_clientside_timeout,
+                serverside_timeout = ?self.metadata_request_serverside_timeout,
+                "`metadata_request_clientside_timeout` is lower than `metadata_request_serverside_timeout`: \
+                against ScyllaDB, where the server-side timeout is honoured, requests on the control \
+                connection will be aborted client-side before the server has a chance to report its own, \
+                more informative timeout error. Set the client-side timeout to at least the server-side \
+                one (ideally higher, to leave the server some margin)."
+            );
+        }
+
         // Ensure no illegal configuration with Client Routes
         #[cfg(feature = "unstable-client-routes")]
         if self.client_routes_config.is_some() {
@@ -576,6 +603,18 @@ impl SessionConfig {
         }
 
         Ok(())
+    }
+
+    /// Whether the configured client-side timeout of control connection requests is lower
+    /// than the configured server-side one, which defeats the purpose of the latter.
+    fn clientside_timeout_below_serverside(&self) -> bool {
+        match (
+            self.metadata_request_clientside_timeout,
+            self.metadata_request_serverside_timeout,
+        ) {
+            (Some(clientside), Some(serverside)) => clientside < serverside,
+            _ => false,
+        }
     }
 }
 
@@ -1200,7 +1239,7 @@ impl Session {
             schema_metadata_fetch_mode,
             MetadataRequestTimeouts {
                 serverside_override: config.metadata_request_serverside_timeout,
-                clientside_override: None,
+                clientside_override: config.metadata_request_clientside_timeout,
             },
             config.hostname_resolution_timeout,
             config.host_filter,

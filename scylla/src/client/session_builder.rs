@@ -1060,7 +1060,9 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// itself has no effect on other targets (e.g. Cassandra). The driver does, however,
     /// additionally apply a client-side timeout of this value + 1s to control connection
     /// requests on every target, as a guard against a node that stops responding without
-    /// breaking the connection.
+    /// breaking the connection. See
+    /// [`GenericSessionBuilder::metadata_request_clientside_timeout`] for how to override
+    /// that derived value.
     ///
     /// # Example
     /// ```
@@ -1077,6 +1079,38 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn metadata_request_serverside_timeout(mut self, timeout: Duration) -> Self {
         self.config.metadata_request_serverside_timeout = Some(timeout);
+        self
+    }
+
+    /// Set the client-side timeout applied to each page fetch of a metadata or
+    /// `system.client_routes` query executed on the control connection.
+    ///
+    /// By default no explicit value is set, and the timeout is derived from
+    /// [`GenericSessionBuilder::metadata_request_serverside_timeout`] + 1s, or is 30s if no
+    /// server-side timeout is configured either. A value set here is used instead of that
+    /// derived one.
+    ///
+    /// This is a guard against a node that keeps its TCP connection accepted but stops
+    /// answering, which would otherwise stall metadata refresh forever. Raise it if metadata
+    /// pages legitimately take longer, e.g. for a large schema. Avoid setting it below the
+    /// server-side timeout: the driver would then abort the request before the server can
+    /// report its own, more informative timeout error.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .metadata_request_clientside_timeout(std::time::Duration::from_secs(10))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn metadata_request_clientside_timeout(mut self, timeout: Duration) -> Self {
+        self.config.metadata_request_clientside_timeout = Some(timeout);
         self
     }
 
@@ -1494,6 +1528,26 @@ mod tests {
 
         assert!(builder.config.known_nodes.is_empty());
         assert_eq!(builder.config.compression, None);
+    }
+
+    #[test]
+    fn metadata_request_clientside_timeout() {
+        setup_tracing();
+        assert_eq!(
+            SessionBuilder::new()
+                .config
+                .metadata_request_clientside_timeout,
+            None
+        );
+
+        let timeout = Duration::from_secs(7);
+        assert_eq!(
+            SessionBuilder::new()
+                .metadata_request_clientside_timeout(timeout)
+                .config
+                .metadata_request_clientside_timeout,
+            Some(timeout)
+        );
     }
 
     #[test]
