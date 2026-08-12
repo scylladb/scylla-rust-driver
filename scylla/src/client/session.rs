@@ -10,6 +10,7 @@ use crate::client::client_routes::ClientRoutesConfig;
 use crate::client::execution::{
     NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RunRequestResult,
 };
+use crate::cluster::control_connection::MetadataRequestTimeouts;
 use crate::cluster::metadata::{SchemaMetadataFetchLevel, SchemaMetadataFetchMode};
 use crate::cluster::node::KnownNode;
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
@@ -290,7 +291,9 @@ pub struct SessionConfig {
     /// If false, only lightweight metadata needed for routing (table names, partitioners, tablet info) is fetched.
     pub fetch_full_schema_metadata: bool,
 
-    /// Custom timeout for requests that query metadata.
+    /// Custom server-side timeout for requests that query metadata. It is appended to
+    /// metadata statements as a `USING TIMEOUT` clause, which is a ScyllaDB-only feature,
+    /// so it has no effect on other targets (e.g. Cassandra).
     pub metadata_request_serverside_timeout: Option<Duration>,
 
     /// Interval of sending keepalive requests.
@@ -1190,7 +1193,9 @@ impl Session {
             pool_config,
             config.keyspaces_to_fetch,
             schema_metadata_fetch_mode,
-            config.metadata_request_serverside_timeout,
+            MetadataRequestTimeouts {
+                serverside_override: config.metadata_request_serverside_timeout,
+            },
             config.hostname_resolution_timeout,
             config.host_filter,
             host_listener,
