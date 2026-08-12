@@ -80,6 +80,20 @@ impl RequestSpan {
         }
     }
 
+    pub(crate) fn new_cc_query<'ps, 'spec: 'ps>(contents: &str, request_size: usize) -> Self {
+        let span = trace_span!(
+            "Request on control connection",
+            kind = "prepared",
+            contents = contents,
+            request_size = request_size,
+        );
+
+        Self {
+            span,
+            speculative_executions: 0.into(),
+        }
+    }
+
     pub(crate) fn new_batch() -> Self {
         use tracing::field::Empty;
 

@@ -16,7 +16,10 @@ use tokio::sync::mpsc;
 use tracing::{Instrument, warn};
 use uuid::Uuid;
 
-use crate::client::execution::{RequestExecutionParams, RequestPaging, RunRequestResult};
+use crate::client::execution::{
+    NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RequestPaging,
+    RunRequestResult, SingleConnectionTarget,
+};
 use crate::client::session::Session;
 use crate::cluster::{ClusterState, Node};
 use crate::deserialize::DeserializeOwnedRow;
@@ -35,12 +38,13 @@ use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::HistoryListener;
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
-use crate::policies::retry::RetryPolicy;
+use crate::policies::retry::{FallthroughRetryPolicy, RetryPolicy};
 use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
-use crate::routing::{Shard, Token};
+use crate::routing::{NodeLocationPreference, Shard, Token};
 use crate::serialize::row::SerializedValues;
+use crate::statement::PageSize;
 use crate::statement::StatementConfig;
 use crate::statement::prepared::{PartitionKey, PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
@@ -213,13 +217,17 @@ impl PagingExecutor {
                 .await;
 
             let page_res = match page_res {
-                Ok((RunRequestResult::IgnoredWriteError, _)) => {
+                Ok(RequestExecutionOutcome {
+                    result: RunRequestResult::IgnoredWriteError,
+                    coordinator: _,
+                }) => {
                     warn!("Ignoring error during fetching pages; stopping fetching.");
                     return;
                 }
-                Ok((RunRequestResult::Completed(page), coordinator)) => {
-                    self.process_next_page(coordinator, &page_span, page)
-                }
+                Ok(RequestExecutionOutcome {
+                    result: RunRequestResult::Completed(page),
+                    coordinator,
+                }) => self.process_next_page(coordinator, &page_span, page),
                 Err(err) => Err(err),
             };
             match page_res {
@@ -263,7 +271,10 @@ impl PagingExecutor {
 
         match fetch_result {
             Err(e) => Err(e),
-            Ok((result, coordinator)) => match result {
+            Ok(RequestExecutionOutcome {
+                result,
+                coordinator,
+            }) => match result {
                 RunRequestResult::IgnoredWriteError => {
                     warn!("Ignoring error during fetching pages; stopping fetching.");
                     Ok((
@@ -294,7 +305,7 @@ impl PagingExecutor {
         routing_info: &RoutingInfo<'_>,
         page_span: &RequestSpan,
         page_query: &PageQuery,
-    ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), RequestError>
+    ) -> Result<RequestExecutionOutcome<Coordinator>, RequestError>
     where
         PageQuery: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
@@ -305,8 +316,10 @@ impl PagingExecutor {
             serial_consistency: self.serial_consistency,
             retry_policy: self.retry_policy.as_ref(),
             load_balancing_policy: self.load_balancing_policy.as_ref(),
-            metrics: &self.metrics,
-            speculative_policy: self.speculative_policy.as_deref(),
+            metrics_and_speculative_policy: Some((
+                &self.metrics,
+                self.speculative_policy.as_deref(),
+            )),
             request_timeout: self.request_timeout,
             history_listener: self.history_listener.as_deref(),
             request_kind: RequestPaging::Automatic,
@@ -348,7 +361,8 @@ impl PagingExecutor {
                             .shard()
                             .is_none_or(|last_shard| last_shard == shard))
                 })
-            }));
+            }))
+            .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
 
         exec_params
             .run_request_no_side_effects(routing_info, plan, run_request_once, page_span)
@@ -482,111 +496,188 @@ impl PagingExecutor {
     }
 }
 
+/// No-op LBP implementation, whose sole purpose is to enable plugging [SingleConnectionPagingExecutor]
+/// into the unified execution core.
+#[derive(Debug)]
+struct NoopLBP;
+impl LoadBalancingPolicy for NoopLBP {
+    fn pick<'a>(
+        &'a self,
+        _request: &'a RoutingInfo,
+        _cluster: &'a ClusterState,
+    ) -> Option<(crate::cluster::NodeRef<'a>, Option<Shard>)> {
+        None
+    }
+
+    fn fallback<'a>(
+        &'a self,
+        _request: &'a RoutingInfo,
+        _cluster: &'a ClusterState,
+    ) -> load_balancing::FallbackPlan<'a> {
+        Box::new(std::iter::empty())
+    }
+
+    fn name(&self) -> String {
+        "NoopLBP".into()
+    }
+}
+
 /// Drives paged execution over a single fixed connection, used by
 /// [`Connection::execute_iter`](crate::network::Connection::execute_iter).
 ///
 /// Unlike [`PagingExecutor`], it has no load balancing, retries, speculative
 /// execution, metrics or history: it simply fetches each page on the given
-/// connection, applying the client-side timeout.
+/// connection through the unified execution core, applying the client-side
+/// timeout.
 ///
 /// NOTE: This executor only supports executing SELECT statements. More
 /// specifically, it expects that each response is of Rows kind. Other kinds
 /// of responses will result in an error.
-struct SingleConnectionPagingExecutor<Fetcher> {
-    fetcher: Fetcher,
-    timeout: Option<Duration>,
+struct SingleConnectionPagingExecutor {
+    connection: Arc<Connection>,
+    prepared: PreparedStatement,
+    values: SerializedValues,
+    token: Option<Token>,
+    page_size: PageSize,
+    consistency: Consistency,
+    serial_consistency: Option<SerialConsistency>,
+    request_timeout: Option<Duration>,
 }
 
-impl<Fetcher> SingleConnectionPagingExecutor<Fetcher>
-where
-    Fetcher: AsyncFn(PagingState) -> Result<QueryResponse, RequestAttemptError> + Send + Sync,
-{
-    /// Fetches a single page. Returns the page and paging state response.
-    async fn query_one_page(
-        &mut self,
-        paging_state: PagingState,
-    ) -> Result<
-        Result<(NextReceivedPage, PagingStateResponse), RequestAttemptError>,
-        RequestTimeoutError,
-    > {
-        let runner = async {
-            (self.fetcher)(paging_state)
-                .await
-                .and_then(QueryResponse::into_non_error_query_response)
+impl SingleConnectionPagingExecutor {
+    /// Fetches exactly one page from the fixed connection by delegating to
+    /// [`run_request_no_side_effects`] with a single-connection plan.
+    async fn fetch_one_page(
+        &self,
+        paging_state: &PagingState,
+        request_span: &RequestSpan,
+    ) -> Result<RequestExecutionOutcome<()>, RequestError> {
+        // The control-connection-style path never retries: a fallthrough retry
+        // policy makes every attempt terminal.
+        let retry_policy = FallthroughRetryPolicy::new();
+        let exec_params = RequestExecutionParams {
+            is_idempotent: self.prepared.get_is_idempotent(),
+            consistency: self.consistency,
+            serial_consistency: self.serial_consistency,
+            retry_policy: &retry_policy,
+            load_balancing_policy: &NoopLBP,
+            metrics_and_speculative_policy: None,
+            request_timeout: self.request_timeout,
+            history_listener: None,
+            request_kind: RequestPaging::Automatic,
         };
-        let response_res = match self.timeout {
-            Some(timeout) => {
-                match tokio::time::timeout(timeout, runner).await {
-                    Ok(res) => res,
-                    Err(_) /* tokio::time::error::Elapsed */ => {
-                        return Err(RequestTimeoutError(timeout));
-                    }
-                }
-            }
-            None => runner.await,
+
+        let routing_info = RoutingInfo {
+            consistency: self.consistency,
+            serial_consistency: self.serial_consistency,
+            token: self.token,
+            table: self.prepared.get_table_spec(),
+            is_confirmed_lwt: self.prepared.is_confirmed_lwt(),
+            node_location_preference: &NodeLocationPreference::Any,
         };
-        let response = match response_res {
-            Ok(resp) => resp,
-            Err(err) => {
-                return Ok(Err(err));
+
+        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| {
+            let paging_state = paging_state.clone();
+            async move {
+                connection
+                    .execute_raw_with_consistency(
+                        &self.prepared,
+                        &self.values,
+                        consistency,
+                        self.serial_consistency,
+                        Some(self.page_size),
+                        paging_state,
+                    )
+                    .await
+                    .and_then(QueryResponse::into_non_error_query_response)
             }
         };
 
+        let plan = std::iter::once(SingleConnectionTarget::new(Arc::clone(&self.connection)));
+
+        exec_params
+            .run_request_no_side_effects(&routing_info, plan, run_request_once, request_span)
+            .await
+    }
+
+    /// Interprets a page outcome. Only Rows responses are valid here.
+    fn page_from_outcome(
+        outcome: RequestExecutionOutcome<()>,
+    ) -> Result<(NextReceivedPage, PagingStateResponse), NextPageError> {
+        let response = match outcome.result {
+            RunRequestResult::IgnoredWriteError => {
+                unreachable!(
+                    "FallthroughRetryPolicy is used, so errors are always propagated and never ignored."
+                )
+            }
+            RunRequestResult::Completed(response) => response,
+        };
+
+        let tracing_id = response.tracing_id;
         match response.response {
             NonErrorResponseWithDeserializedMetadata::Result(
                 result::ResultWithDeserializedMetadata::Rows((rows, paging_state_response)),
-            ) => {
-                let page = NextReceivedPage {
+            ) => Ok((
+                NextReceivedPage {
                     rows,
-                    tracing_id: response.tracing_id,
+                    tracing_id,
                     request_coordinator: None,
-                };
-                Ok(Ok((page, paging_state_response)))
-            }
-            _ => Ok(Err(RequestAttemptError::UnexpectedResponse(
-                response.response.to_response_kind(),
-            ))),
+                },
+                paging_state_response,
+            )),
+            other => Err(NextPageError::RequestFailure(
+                RequestError::LastAttemptError(RequestAttemptError::UnexpectedResponse(
+                    other.to_response_kind(),
+                )),
+            )),
         }
     }
 
-    /// Fetches remaining pages (pages 2+) and sends them through the channel.
-    async fn work(mut self, paging_state: PagingState, sender: mpsc::Sender<ResultNextPage>) {
-        let mut paging_state = paging_state;
-        loop {
-            let result = self.query_one_page(paging_state).await;
-            match result {
-                Err(RequestTimeoutError(timeout)) => {
-                    let _ = sender
-                        .send(Err(NextPageError::RequestFailure(
-                            RequestError::RequestTimeout(timeout),
-                        )))
-                        .await;
-                    return;
-                }
-                Ok(Err(err)) => {
-                    let _ = sender
-                        .send(Err(NextPageError::RequestFailure(
-                            RequestError::LastAttemptError(err),
-                        )))
-                        .await;
-                    return;
-                }
-                Ok(Ok((page, paging_state_response))) => {
-                    let send_result = sender.send(Ok(page)).await;
-                    if send_result.is_err() {
-                        // channel was closed, QueryPager was dropped - should shutdown
-                        return;
-                    }
+    fn make_span(&self) -> RequestSpan {
+        RequestSpan::new_cc_query(self.prepared.get_statement(), self.values.buffer_size())
+    }
 
-                    match paging_state_response.into_paging_control_flow() {
-                        ControlFlow::Continue(new_paging_state) => {
-                            paging_state = new_paging_state;
-                        }
-                        ControlFlow::Break(()) => {
-                            // Reached the last query, shutdown
-                            return;
-                        }
-                    }
+    /// Fetches remaining pages (pages 2+) and sends them through the channel.
+    async fn fetch_remaining_pages(
+        self,
+        mut paging_state: PagingState,
+        sender: mpsc::Sender<ResultNextPage>,
+    ) {
+        loop {
+            let request_span = self.make_span();
+            let outcome = self
+                .fetch_one_page(&paging_state, &request_span)
+                .instrument(request_span.span().clone())
+                .await;
+
+            let outcome = match outcome {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    let _ = sender.send(Err(NextPageError::RequestFailure(error))).await;
+                    return;
+                }
+            };
+
+            let (page, paging_state_response) = match Self::page_from_outcome(outcome) {
+                Ok(page) => page,
+                Err(error) => {
+                    let _ = sender.send(Err(error)).await;
+                    return;
+                }
+            };
+
+            if sender.send(Ok(page)).await.is_err() {
+                // Channel was closed, QueryPager was dropped - should shutdown.
+                return;
+            }
+
+            match paging_state_response.into_paging_control_flow() {
+                ControlFlow::Continue(new_paging_state) => {
+                    paging_state = new_paging_state;
+                }
+                ControlFlow::Break(()) => {
+                    // Reached the last query, shutdown
+                    return;
                 }
             }
         }
@@ -1003,38 +1094,42 @@ If you are using this API, you are probably doing something wrong."
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<Self, NextPageError> {
         let page_size = prepared.get_validated_page_size();
-        let timeout = prepared.get_request_timeout().or_else(|| {
+        let request_timeout = prepared.get_request_timeout().or_else(|| {
             prepared
                 .get_execution_profile_handle()?
                 .access()
                 .request_timeout
         });
 
-        let mut executor = SingleConnectionPagingExecutor {
-            fetcher: async move |paging_state: PagingState| {
-                connection
-                    .execute_raw_with_consistency(
-                        &prepared,
-                        &values,
-                        consistency,
-                        serial_consistency,
-                        Some(page_size),
-                        paging_state,
-                    )
-                    .await
-            },
-            timeout,
+        let (_, token) = match prepared
+            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), &values)
+        {
+            Ok(res) => res.unzip(),
+            Err(err) => {
+                return Err(NextPageError::PartitionKeyError(err));
+            }
         };
 
-        let (first_page, paging_state_response) = executor
-            .query_one_page(PagingState::start())
+        let executor = SingleConnectionPagingExecutor {
+            connection,
+            prepared,
+            values,
+            token,
+            page_size,
+            consistency,
+            serial_consistency,
+            request_timeout,
+        };
+
+        // Fetch the first page on the caller task (no spawning).
+        let request_span = executor.make_span();
+        let outcome = executor
+            .fetch_one_page(&PagingState::start(), &request_span)
+            .instrument(request_span.span().clone())
             .await
-            .map_err(|RequestTimeoutError(timeout)| {
-                NextPageError::RequestFailure(RequestError::RequestTimeout(timeout))
-            })?
-            .map_err(|attempt_error| {
-                NextPageError::RequestFailure(RequestError::LastAttemptError(attempt_error))
-            })?;
+            .map_err(NextPageError::RequestFailure)?;
+        let (first_page, paging_state_response) =
+            SingleConnectionPagingExecutor::page_from_outcome(outcome)?;
 
         /* PROCESS FIRST PAGE */
         let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
@@ -1045,7 +1140,10 @@ If you are using this API, you are probably doing something wrong."
             }
             PagingStateResponse::HasMorePages { state } => {
                 /* REMAINING PAGES */
-                let worker_task = async move { executor.work(state, sender).await };
+                let parent_span = tracing::Span::current();
+                let worker_task =
+                    async move { executor.fetch_remaining_pages(state, sender).await }
+                        .instrument(parent_span);
                 let _worker_handle = tokio::task::spawn(worker_task);
             }
         }
@@ -1241,14 +1339,6 @@ where
         Poll::Ready(Some(Ok(value)))
     }
 }
-
-/// Failed to run a request within a provided client timeout.
-#[derive(Error, Debug, Clone)]
-#[error(
-    "Request execution exceeded a client timeout of {}ms",
-    std::time::Duration::as_millis(.0)
-)]
-struct RequestTimeoutError(std::time::Duration);
 
 /// An error returned that occurred during next page fetch.
 #[derive(Error, Debug, Clone)]
