@@ -1056,6 +1056,12 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// This prevents timeouts of schema queries when the schema is large
     /// and the default timeout is configured as tight.
     ///
+    /// The `USING TIMEOUT` clause is a ScyllaDB-only feature, so the server-side timeout
+    /// itself has no effect on other targets (e.g. Cassandra). The driver does, however,
+    /// additionally apply a client-side timeout of this value + 1s to control connection
+    /// requests on every target, as a guard against a node that stops responding without
+    /// breaking the connection.
+    ///
     /// # Example
     /// ```
     /// # use scylla::client::session::Session;

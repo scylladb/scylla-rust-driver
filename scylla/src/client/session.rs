@@ -294,6 +294,11 @@ pub struct SessionConfig {
     /// Custom server-side timeout for requests that query metadata. It is appended to
     /// metadata statements as a `USING TIMEOUT` clause, which is a ScyllaDB-only feature,
     /// so it has no effect on other targets (e.g. Cassandra).
+    ///
+    /// Whenever this timeout is configured, the driver additionally applies a client-side
+    /// timeout of this value + 1s to control connection requests - on every target, even
+    /// where the clause itself is ignored - as a guard against a node that stops
+    /// responding without breaking the connection.
     pub metadata_request_serverside_timeout: Option<Duration>,
 
     /// Interval of sending keepalive requests.
@@ -1195,6 +1200,7 @@ impl Session {
             schema_metadata_fetch_mode,
             MetadataRequestTimeouts {
                 serverside_override: config.metadata_request_serverside_timeout,
+                clientside_override: None,
             },
             config.hostname_resolution_timeout,
             config.host_filter,
