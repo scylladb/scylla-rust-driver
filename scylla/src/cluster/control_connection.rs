@@ -23,6 +23,49 @@ use crate::statement::prepared::PreparedStatement;
 
 const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
 
+/// How much longer the client-side timeout of a control connection request is
+/// than the server-side one it is derived from.
+const CLIENTSIDE_TIMEOUT_MARGIN: Duration = Duration::from_secs(1);
+
+/// The client-side timeout of a control connection request when there is no
+/// server-side timeout configured to derive it from.
+const DEFAULT_CLIENTSIDE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Timeouts applied to requests executed on the control connection.
+///
+/// The server-side timeout is only an override of the server's own limit, appended
+/// to the statement as a `USING TIMEOUT` clause; it is a ScyllaDB-only feature, so
+/// it is silently inapplicable to other targets (e.g. Cassandra).
+///
+/// The client-side timeout is applicable to all targets.
+/// By default it is server-side timeout + CLIENTSIDE_TIMEOUT_MARGIN.
+/// If no server-side timeout is set, then a default of 30s is used for client-side timeout.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct MetadataRequestTimeouts {
+    pub(crate) serverside_override: Option<Duration>,
+    pub(crate) clientside_override: Option<Duration>,
+}
+
+impl MetadataRequestTimeouts {
+    /// The server-side timeout override actually in effect.
+    fn serverside(&self, target_is_scylladb: bool) -> Option<Duration> {
+        self.serverside_override.filter(|_| target_is_scylladb)
+    }
+
+    /// The client-side timeout actually in effect, derived from the configured
+    /// server-side timeout unless explicitly overridden.
+    fn clientside(&self) -> Duration {
+        self.clientside_override.unwrap_or_else(|| {
+            self.serverside_override.map_or(
+                DEFAULT_CLIENTSIDE_TIMEOUT,
+                // Saturating, as a pathologically large configured server-side timeout
+                // must not panic the driver.
+                |t| t.saturating_add(CLIENTSIDE_TIMEOUT_MARGIN),
+            )
+        })
+    }
+}
+
 pub(crate) type ControlConnectionCache = DashMap<String, PreparedStatement>;
 
 pub(crate) enum ControlConnectionEvent {
@@ -35,8 +78,8 @@ pub(crate) enum ControlConnectionEvent {
 pub(super) struct ControlConnection {
     conn: Arc<Connection>,
     endpoint: UntranslatedEndpoint,
-    /// The custom server-side timeout set for requests executed on the control connection.
-    overridden_serverside_timeout: Option<Duration>,
+    /// The timeouts applied to requests executed on the control connection.
+    request_timeouts: MetadataRequestTimeouts,
     cache: Arc<ControlConnectionCache>,
 }
 
@@ -63,7 +106,7 @@ impl ControlConnection {
             Self {
                 conn,
                 endpoint,
-                overridden_serverside_timeout: None,
+                request_timeouts: MetadataRequestTimeouts::default(),
                 cache,
             },
             ControlConnectionEvents {
@@ -77,10 +120,10 @@ impl ControlConnection {
         &self.endpoint
     }
 
-    /// Sets the custom server-side timeout set for requests executed on the control connection.
-    pub(super) fn override_serverside_timeout(self, overridden_timeout: Option<Duration>) -> Self {
+    /// Sets the timeouts applied to requests executed on the control connection.
+    pub(super) fn with_request_timeouts(self, timeouts: MetadataRequestTimeouts) -> Self {
         Self {
-            overridden_serverside_timeout: overridden_timeout,
+            request_timeouts: timeouts,
             ..self
         }
     }
@@ -97,9 +140,7 @@ impl ControlConnection {
     /// Appends the custom server-side timeout to the statement string, if such custom timeout
     /// is provided and we are connected to ScyllaDB (since custom timeouts is ScyllaDB-only feature).
     fn maybe_append_timeout_override(&self, statement: &mut Statement) {
-        if let Some(timeout) = self.overridden_serverside_timeout
-            && self.is_to_scylladb()
-        {
+        if let Some(timeout) = self.request_timeouts.serverside(self.is_to_scylladb()) {
             // SAFETY: io::fmt::Write impl for String is infallible.
             write!(
                 statement.contents,
@@ -142,12 +183,16 @@ impl ControlConnection {
         // Without this `Sync` compiler complains that cluster worker future is not Send.
         values: &(dyn SerializeRow + Sync),
     ) -> Result<QueryPager, NextRowError> {
-        let prepared: PreparedStatement =
-            self.get_or_prepare_statement(statement)
-                .await
-                .map_err(|attempt_err| {
-                    NextRowError::NextPageError(NextPageError::RequestFailure(attempt_err.into()))
-                })?;
+        let mut prepared: PreparedStatement = self
+            .get_or_prepare_statement(statement)
+            .await
+            .map_err(|attempt_err| {
+                NextRowError::NextPageError(NextPageError::RequestFailure(attempt_err.into()))
+            })?;
+
+        // Set on this per-use clone rather than in `get_or_prepare_statement`, so that
+        // the shared cache never bakes a timeout in.
+        prepared.set_request_timeout(Some(self.request_timeouts.clientside()));
 
         let serialized_values = prepared.serialize_values(&values).map_err(|ser_err| {
             NextRowError::NextPageError(NextPageError::RequestFailure(
@@ -220,7 +265,7 @@ mod tests {
     use crate::routing::ShardInfo;
     use crate::test_utils::setup_tracing;
 
-    use super::ControlConnection;
+    use super::{ControlConnection, MetadataRequestTimeouts};
 
     /// Tests that ControlConnection enforces the provided custom timeout
     /// iff ScyllaDB is the target node (else ignores the custom timeout).
@@ -377,7 +422,10 @@ mod tests {
             {
                 let custom_timeout = Duration::from_millis(2137);
                 let conn_with_custom_timeout =
-                    conn_with_default_timeout.override_serverside_timeout(Some(custom_timeout));
+                    conn_with_default_timeout.with_request_timeouts(MetadataRequestTimeouts {
+                        serverside_override: Some(custom_timeout),
+                        clientside_override: None,
+                    });
 
                 conn_with_custom_timeout
                     .query_iter(QUERY_STR, &())

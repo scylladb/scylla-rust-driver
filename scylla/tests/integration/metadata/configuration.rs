@@ -24,7 +24,7 @@ use tokio::sync::mpsc::error::TryRecvError;
 use tracing::info;
 
 // By default, custom metadata request timeout is set to 2 seconds.
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn map_fedback_message<'a, T, F: Fn(RequestFrame) -> T + 'a>(
     rx: &'a mut UnboundedReceiver<(RequestFrame, Option<u16>)>,

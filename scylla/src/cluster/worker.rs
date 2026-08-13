@@ -2,6 +2,7 @@ use crate::client::client_routes::{
     ClientRoutesAddressTranslator, ClientRoutesConfig, ClientRoutesSubscriber,
 };
 use crate::client::session::TABLET_CHANNEL_SIZE;
+use crate::cluster::control_connection::MetadataRequestTimeouts;
 use crate::cluster::metadata::SchemaMetadataFetchMode;
 use crate::cluster::metadata::update::{
     MetadataChanges, MetadataUpdate, RefreshRequest, StatusHint,
@@ -65,7 +66,7 @@ impl Cluster {
         mut pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         schema_metadata_fetch_mode: SchemaMetadataFetchMode,
-        metadata_request_serverside_timeout: Option<Duration>,
+        metadata_request_timeouts: MetadataRequestTimeouts,
         hostname_resolution_timeout: Option<Duration>,
         host_filter: Option<Arc<dyn HostFilter>>,
         host_listener: Option<Arc<dyn HostListener>>,
@@ -103,7 +104,7 @@ impl Cluster {
             known_nodes,
             hostname_resolution_timeout,
             pool_config.connection_config.clone(),
-            metadata_request_serverside_timeout,
+            metadata_request_timeouts,
             keyspaces_to_fetch,
             schema_metadata_fetch_mode,
             &host_filter,

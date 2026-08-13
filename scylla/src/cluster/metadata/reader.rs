@@ -24,7 +24,7 @@ use tracing::{debug, error, warn};
 use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::cluster::KnownNode;
 use crate::cluster::control_connection::{
-    ControlConnection, ControlConnectionCache, ControlConnectionEvents,
+    ControlConnection, ControlConnectionCache, ControlConnectionEvents, MetadataRequestTimeouts,
 };
 use crate::cluster::metadata::{
     ClientRoutesUpdate, Metadata, PeerEndpoint, SchemaMetadataFetchMode, UntranslatedEndpoint,
@@ -45,7 +45,7 @@ pub(crate) struct MetadataReader {
     // Configuration values - they will stay the same during whole lifetime of MetadataReader.
     // =======================================================================================
     control_connection_config: ConnectionConfig,
-    request_serverside_timeout: Option<Duration>,
+    request_timeouts: MetadataRequestTimeouts,
     hostname_resolution_timeout: Option<Duration>,
     keyspaces_to_fetch: Vec<String>,
     schema_metadata_fetch_mode: SchemaMetadataFetchMode,
@@ -75,7 +75,7 @@ impl MetadataReader {
         initial_known_nodes: Vec<KnownNode>,
         hostname_resolution_timeout: Option<Duration>,
         connection_config: ConnectionConfig,
-        request_serverside_timeout: Option<Duration>,
+        request_timeouts: MetadataRequestTimeouts,
         keyspaces_to_fetch: Vec<String>,
         schema_metadata_fetch_mode: SchemaMetadataFetchMode,
         host_filter: &Option<Arc<dyn HostFilter>>,
@@ -94,7 +94,7 @@ impl MetadataReader {
 
         Ok(MetadataReader {
             control_connection_config: connection_config,
-            request_serverside_timeout,
+            request_timeouts,
             hostname_resolution_timeout,
             known_peers: initial_peers
                 .into_iter()
@@ -249,7 +249,7 @@ impl MetadataReader {
             let (cc, cc_events) = match Self::make_control_connection(
                 peer,
                 self.control_connection_config.clone(),
-                self.request_serverside_timeout,
+                self.request_timeouts,
                 Arc::clone(&self.cc_cache),
                 self.client_routes_subscriber.is_some(),
             )
@@ -404,7 +404,7 @@ impl MetadataReader {
     async fn make_control_connection(
         endpoint: UntranslatedEndpoint,
         mut config: ConnectionConfig,
-        request_serverside_timeout: Option<Duration>,
+        request_timeouts: MetadataRequestTimeouts,
         cache: Arc<ControlConnectionCache>,
         register_for_client_routes_events: bool,
     ) -> Result<(ControlConnection, ControlConnectionEvents), MetadataError> {
@@ -433,10 +433,7 @@ impl MetadataReader {
             Ok((con, recv)) => {
                 let (cc, cc_events) =
                     ControlConnection::new(Arc::new(con), endpoint, cache, recv, receiver);
-                Ok((
-                    cc.override_serverside_timeout(request_serverside_timeout),
-                    cc_events,
-                ))
+                Ok((cc.with_request_timeouts(request_timeouts), cc_events))
             }
             Err(conn_err) => Err(MetadataError::ConnectionPoolError(
                 ConnectionPoolError::Broken {
