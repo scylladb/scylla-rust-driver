@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 use tracing::{debug, error};
+use uuid::Uuid;
 
 use crate::cluster::control_connection::{
     ControlConnection, ControlConnectionEvent, ControlConnectionEvents,
@@ -59,6 +60,19 @@ pub(in super::super) struct MetadataWorker {
     /// (answering it, directly or through the cluster worker) before awaiting
     /// the next one.
     pending_request: Option<RefreshRequest>,
+}
+
+/// What a server event obliges the worker to fetch, as classified by
+/// [`MetadataWorker::handle_server_event`].
+enum EventAction {
+    /// Nothing to fetch - the event was fully handled synchronously.
+    None,
+    /// Fetch full metadata: the event describes a change (e.g. in topology)
+    /// that only a full fetch picks up.
+    FetchFull,
+    /// Fetch the client routes for these (connection id, host id) pairs, as
+    /// listed in a CLIENT_ROUTES_CHANGE:UPDATE_NODES event.
+    FetchClientRoutes { pairs: HashSet<(String, Uuid)> },
 }
 
 impl MetadataWorker {
@@ -217,22 +231,10 @@ impl MetadataWorker {
                             return ControlFlow::Continue(());
                         },
                         ControlConnectionEvent::ServerEvent(event) => {
-                            debug!("Received server event: {:?}", event);
-                            match event {
-                                Event::TopologyChange(_) => (), // Refresh immediately
-                                Event::ClientRoutesChange(evt) => {
-                                    // An UPDATE_NODES event pairs `connection_ids[i]`
-                                    // with `host_ids[i]`.
-                                    #[deny(clippy::wildcard_enum_match_arm)]
-                                    let pairs: HashSet<_> = match evt {
-                                        ClientRoutesChangeEvent::UpdateNodes {
-                                            connection_ids,
-                                            host_ids,
-                                        } => connection_ids.into_iter().zip(host_ids).collect(),
-                                        _ => unreachable!(
-                                            "clippy testifies that the match is exhaustive"
-                                        ),
-                                    };
+                            match self.handle_server_event(event)? {
+                                EventAction::None => continue, // Don't go to refreshing.
+                                EventAction::FetchFull => (), // Refresh immediately.
+                                EventAction::FetchClientRoutes { pairs } => {
                                     let res = cc.fetch_client_routes_update(&pairs).await;
                                     match res {
                                         Ok(None) => continue, // Nothing to apply; don't go to refreshing.
@@ -252,45 +254,6 @@ impl MetadataWorker {
                                         }
                                     }
                                 }
-                                Event::StatusChange(status) => {
-                                    // Tracking node status using events is unreliable because of the possibility of losing events
-                                    // when control connection is broken. A better thing to do here is to treat those events as hints
-                                    // for:
-                                    // - PoolRefiller - UP triggers immediate pool refill attempt, and
-                                    // - Keepaliver - DOWN triggers immediate keepalive query attempt.
-
-                                    match status {
-                                        StatusChangeEvent::Up(addr) => {
-                                            // When receiving an UP event, it is likely that the node just came back up and is now reachable.
-                                            // We optimistically trigger pool refill for this node.
-                                            // This is not guaranteed to be correct. It is for example possible that a network partition happened,
-                                            // the node lost connectivity to the cluster and driver; then it regained connectivity to the cluster,
-                                            // but not to the driver, and thus is still unreachable from the driver's perspective.
-                                            // However, in this case triggering pool refill is not harmful - if the node is actually reachable,
-                                            // then new connections will be opened to it, and if it is not reachable,
-                                            // then connection attempts will fail and the node will be marked as unreachable by `PoolRefiller`,
-                                            // so it won't be targeted by the load balancing policy.
-                                            if self.send_update(|slot| MetadataUpdate::merge_up_hint(slot, addr)).is_err() {
-                                                return ControlFlow::Break(());
-                                            }
-                                        },
-                                        StatusChangeEvent::Down(addr) => {
-                                            // When receiving a DOWN event, and the driver still sees the node as connected,
-                                            // we send a keepalive query on its connections to verify their liveness.
-                                            // The node is supposedly DOWN, so connections to this node are likely defunct.
-                                            // We expect that the keepalive query fails, in which case connections will be closed.
-                                            // As a result, the connection pool will report 0 connections to this node,
-                                            // and thus the node will not be targeted by the LoadBalancingPolicy,
-                                            // which is the desired behaviour. However, if the keepalive query succeeds,
-                                            // then the node is likely still alive (got stale event?), and we keep targeting it.
-                                            if self.send_update(|slot| MetadataUpdate::merge_down_hint(slot, addr)).is_err() {
-                                                return ControlFlow::Break(());
-                                            }
-                                        },
-                                    }
-                                    continue; // Don't go to refreshing.
-                                },
-                                _ => continue, // Don't go to refreshing.
                             }
                         }
                     }
@@ -318,6 +281,76 @@ impl MetadataWorker {
                     return ControlFlow::Continue(());
                 }
             }
+        }
+    }
+
+    /// Handles a single server event synchronously (status hints are published
+    /// right away) and returns the fetch work the event implies.
+    ///
+    /// Returns [`ControlFlow::Break`] if the worker should stop (the cluster
+    /// worker is gone).
+    fn handle_server_event(&mut self, event: Event) -> ControlFlow<(), EventAction> {
+        debug!("Received server event: {:?}", event);
+        match event {
+            Event::TopologyChange(_) => ControlFlow::Continue(EventAction::FetchFull),
+            Event::ClientRoutesChange(evt) => {
+                // An UPDATE_NODES event pairs `connection_ids[i]` with
+                // `host_ids[i]`.
+                #[deny(clippy::wildcard_enum_match_arm)]
+                let pairs = match evt {
+                    ClientRoutesChangeEvent::UpdateNodes {
+                        connection_ids,
+                        host_ids,
+                    } => connection_ids.into_iter().zip(host_ids).collect(),
+                    _ => unreachable!("clippy testifies that the match is exhaustive"),
+                };
+                ControlFlow::Continue(EventAction::FetchClientRoutes { pairs })
+            }
+            Event::StatusChange(status) => {
+                // Tracking node status using events is unreliable because of the possibility of losing events
+                // when control connection is broken. A better thing to do here is to treat those events as hints
+                // for:
+                // - PoolRefiller - UP triggers immediate pool refill attempt, and
+                // - Keepaliver - DOWN triggers immediate keepalive query attempt.
+
+                match status {
+                    StatusChangeEvent::Up(addr) => {
+                        // When receiving an UP event, it is likely that the node just came back up and is now reachable.
+                        // We optimistically trigger pool refill for this node.
+                        // This is not guaranteed to be correct. It is for example possible that a network partition happened,
+                        // the node lost connectivity to the cluster and driver; then it regained connectivity to the cluster,
+                        // but not to the driver, and thus is still unreachable from the driver's perspective.
+                        // However, in this case triggering pool refill is not harmful - if the node is actually reachable,
+                        // then new connections will be opened to it, and if it is not reachable,
+                        // then connection attempts will fail and the node will be marked as unreachable by `PoolRefiller`,
+                        // so it won't be targeted by the load balancing policy.
+                        if self
+                            .send_update(|slot| MetadataUpdate::merge_up_hint(slot, addr))
+                            .is_err()
+                        {
+                            return ControlFlow::Break(());
+                        }
+                    }
+                    StatusChangeEvent::Down(addr) => {
+                        // When receiving a DOWN event, and the driver still sees the node as connected,
+                        // we send a keepalive query on its connections to verify their liveness.
+                        // The node is supposedly DOWN, so connections to this node are likely defunct.
+                        // We expect that the keepalive query fails, in which case connections will be closed.
+                        // As a result, the connection pool will report 0 connections to this node,
+                        // and thus the node will not be targeted by the LoadBalancingPolicy,
+                        // which is the desired behaviour. However, if the keepalive query succeeds,
+                        // then the node is likely still alive (got stale event?), and we keep targeting it.
+                        if self
+                            .send_update(|slot| MetadataUpdate::merge_down_hint(slot, addr))
+                            .is_err()
+                        {
+                            return ControlFlow::Break(());
+                        }
+                    }
+                }
+                ControlFlow::Continue(EventAction::None)
+            }
+            _ => ControlFlow::Continue(EventAction::None),
         }
     }
 
