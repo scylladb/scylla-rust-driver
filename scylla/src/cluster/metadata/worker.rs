@@ -19,7 +19,7 @@ use crate::frame::response::event::EventV2 as Event;
 use crate::frame::response::event::StatusChangeEvent;
 
 use super::merge_channel;
-use super::reader::{MetadataReader, TopologyUpdateGuard};
+use super::reader::{FetchOnCandidate, MetadataReader, TopologyUpdateGuard};
 
 /// How often the worker attempts to establish a control connection while it has none.
 const CONTROL_CONNECTION_REPAIR_INTERVAL: Duration = Duration::from_secs(1);
@@ -74,6 +74,30 @@ pub(in super::super) struct MetadataWorker {
 pub(in super::super) struct EstablishedCc {
     cc: ControlConnection,
     events: ControlConnectionEvents,
+    /// The fetch work implied by server events that arrived while the
+    /// establishment fetch was in flight. Such events may postdate the data
+    /// that fetch read, so [`MetadataWorker::work_on_cc`] starts from this
+    /// plan rather than from an empty one.
+    plan: FetchPlan,
+}
+
+/// The [`FetchOnCandidate`] implementation that
+/// [`MetadataReader::establish_cc_and_fetch_metadata`] runs on each candidate
+/// connection on the worker's behalf.
+struct CandidateFetcher;
+
+impl FetchOnCandidate for CandidateFetcher {
+    type Payload = FetchPlan;
+
+    async fn fetch(
+        &mut self,
+        cc: &ControlConnection,
+        _cc_events: &mut ControlConnectionEvents,
+    ) -> Result<(TopologyUpdateGuard, FetchPlan), MetadataError> {
+        cc.query_metadata()
+            .await
+            .map(|topology_update| (topology_update, FetchPlan::default()))
+    }
 }
 
 /// What a server event obliges the worker to fetch, as classified by
@@ -331,10 +355,10 @@ impl MetadataWorker {
     ) -> Result<(Option<EstablishedCc>, Metadata), MetadataError> {
         let (kept, metadata) = self
             .metadata_reader
-            .establish_cc_and_fetch_metadata(initial)
+            .establish_cc_and_fetch_metadata(initial, &mut CandidateFetcher)
             .await?;
         Ok((
-            kept.map(|(cc, events)| EstablishedCc { cc, events }),
+            kept.map(|(cc, events, plan)| EstablishedCc { cc, events, plan }),
             metadata,
         ))
     }
@@ -448,6 +472,10 @@ impl MetadataWorker {
     ///   a full fetch runs stays in the plan: the fetch may have read the
     ///   corresponding tables before the triggering event arrived.
     ///
+    /// The plan starts seeded from the [`EstablishedCc`]: events that arrived
+    /// while the establishment fetch was in flight may postdate its data, so
+    /// the fetch work they imply is still owed.
+    ///
     /// Returns [`ControlFlow::Continue`] once the control connection is deemed
     /// defunct and should be replaced, or [`ControlFlow::Break`] if the worker
     /// should stop.
@@ -455,8 +483,8 @@ impl MetadataWorker {
         let EstablishedCc {
             cc,
             events: mut cc_events,
+            mut plan,
         } = established;
-        let mut plan = FetchPlan::default();
         let mut next_refresh_deadline =
             deadline_after(Instant::now(), self.cluster_metadata_refresh_interval);
 

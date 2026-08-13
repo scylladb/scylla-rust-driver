@@ -63,6 +63,34 @@ pub(crate) struct MetadataReader {
     cc_cache: Arc<ControlConnectionCache>,
 }
 
+/// The per-candidate metadata fetch that
+/// [`MetadataReader::establish_cc_and_fetch_metadata`] runs on each candidate
+/// connection - implemented by the metadata worker.
+///
+/// When `MetadataReader` open a new `Connection`, it needs to fetch initial
+/// `Metadata` on it before returning it as a new CC. A candidate is such
+/// potential CC until the `Metadata` is done fetching.
+///
+/// This trait allows the caller to customize the behavior of the fetch
+/// and return a custom type alongisde the new CC. Intended usage is draining
+/// the event channel concurrently to the fetch to avoid a deadlock.
+///
+/// A trait rather than an `AsyncFnMut` bound: the implementor lends state
+/// (e.g. the updates channel) to each call, and a capturing async closure
+/// defeats `Send` inference for every future built on top of it (rustc's
+/// "implementation of `Send` is not general enough").
+pub(super) trait FetchOnCandidate {
+    /// Whatever the fetch produces besides the metadata itself; handed back
+    /// with the kept connection.
+    type Payload;
+
+    async fn fetch(
+        &mut self,
+        cc: &ControlConnection,
+        cc_events: &mut ControlConnectionEvents,
+    ) -> Result<(TopologyUpdateGuard, Self::Payload), MetadataError>;
+}
+
 impl MetadataReader {
     /// Creates a new MetadataReader.
     ///
@@ -113,26 +141,35 @@ impl MetadataReader {
 
     /// Establishes a control connection and fetches metadata in one go.
     ///
-    /// Iterates over known peers (shuffled), trying to connect and fetch metadata
-    /// on each. If `initial` is false and all known peers are exhausted, falls back
-    /// to re-resolving the initial contact points.
+    /// Iterates over known peers (shuffled), trying to connect and run
+    /// `fetcher` on each. If `initial` is false and all known peers are
+    /// exhausted, falls back to re-resolving the initial contact points.
+    ///
+    /// `fetcher` is invoked once per candidate connection and must perform the
+    /// metadata fetch on it; it is also free to consume the connection's server
+    /// events meanwhile. Its payload is returned alongside the connection
+    /// it was produced on, so a payload never outlives its candidate. On
+    /// success the connection is handed onward together with its event
+    /// channels, which must remain pollable: `fetcher` must not consume a
+    /// lifecycle event (`Broken`/`Shutdown`) and still return `Ok`.
     ///
     /// On success, updates `known_peers` and returns the fetched metadata together
     /// with a control connection to use going forward. The returned control
     /// connection is `None` when metadata was obtained but no usable control
     /// connection remains:
-    /// - on an `initial` read whose metadata query failed (dummy metadata is
+    /// - on an `initial` read whose metadata fetch failed (dummy metadata is
     ///   returned so the session can still start), or
     /// - when every node that yielded metadata is rejected by the host filter.
     ///
     /// In both of these cases the caller is expected to re-establish the control
     /// connection at the repair cadence.
-    pub(super) async fn establish_cc_and_fetch_metadata(
+    pub(super) async fn establish_cc_and_fetch_metadata<F: FetchOnCandidate>(
         &mut self,
         initial: bool,
+        fetcher: &mut F,
     ) -> Result<
         (
-            Option<(ControlConnection, ControlConnectionEvents)>,
+            Option<(ControlConnection, ControlConnectionEvents, F::Payload)>,
             Metadata,
         ),
         MetadataError,
@@ -149,7 +186,7 @@ impl MetadataReader {
         // failed to resolve). We carry the most recent error across attempts and only
         // synthesize a fallback error if no connection was ever attempted.
         let known_peers_err = match self
-            .try_establish_on_nodes(initial, self.known_peers.clone().into_iter())
+            .try_establish_on_nodes(initial, self.known_peers.clone().into_iter(), fetcher)
             .await
         {
             Ok(result) => return Ok(result),
@@ -180,6 +217,7 @@ impl MetadataReader {
                 initial_peers
                     .into_iter()
                     .map(UntranslatedEndpoint::ContactPoint),
+                fetcher,
             )
             .await
         {
@@ -197,26 +235,27 @@ impl MetadataReader {
         }
     }
 
-    /// Tries to establish a control connection and fetch metadata on each node from
-    /// the given iterator.
+    /// Tries to establish a control connection and fetch metadata (through the
+    /// caller-provided `fetch`) on each node from the given iterator.
     ///
-    /// Returns the first working, host-filter-accepted control connection together
-    /// with its metadata. Two situations yield metadata but no control connection
-    /// (`Ok((None, metadata))`):
+    /// Returns the first working, host-filter-accepted control connection
+    /// together with its metadata and the payload `fetch` produced on it. Two
+    /// situations yield metadata but no control connection (`Ok((None, metadata))`):
     /// - every node that could be queried is rejected by the host filter — the
     ///   metadata is valid cluster-wide, but none of the connections may be kept;
-    /// - `initial` is true and a connection was established but its metadata query
+    /// - `initial` is true and a connection was established but its metadata fetch
     ///   failed — dummy metadata is returned so the session can still start.
     ///
     /// Returns `Err(None)` if the iterator was empty (no connection was ever
     /// attempted), or `Err(Some(err))` with the most recent error otherwise.
-    async fn try_establish_on_nodes(
+    async fn try_establish_on_nodes<F: FetchOnCandidate>(
         &mut self,
         initial: bool,
         nodes: impl Iterator<Item = UntranslatedEndpoint>,
+        fetcher: &mut F,
     ) -> Result<
         (
-            Option<(ControlConnection, ControlConnectionEvents)>,
+            Option<(ControlConnection, ControlConnectionEvents, F::Payload)>,
             Metadata,
         ),
         Option<MetadataError>,
@@ -231,7 +270,7 @@ impl MetadataReader {
             let peer_address = peer.address();
             debug!("Trying to establish control connection on {peer_address}");
 
-            let (cc, cc_events) = match Self::make_control_connection(
+            let (cc, mut cc_events) = match Self::make_control_connection(
                 peer,
                 self.control_connection_config.clone(),
                 self.cc_config.clone(),
@@ -251,12 +290,12 @@ impl MetadataReader {
                 }
             };
 
-            let metadata = match cc.query_metadata().await {
-                Ok(topology_update) => topology_update.apply(self),
+            let (topology_update, payload) = match fetcher.fetch(&cc, &mut cc_events).await {
+                Ok(fetched) => fetched,
                 Err(err) => {
                     if initial {
                         // The control connection was established, but the initial
-                        // metadata query failed. Prefer any valid metadata already
+                        // metadata fetch failed. Prefer any valid metadata already
                         // obtained from a rejected node; otherwise fall back to dummy
                         // metadata so the session can still start. Either way, drop the
                         // control connection so it is re-established at the repair cadence.
@@ -283,6 +322,7 @@ impl MetadataReader {
                 }
             };
 
+            let metadata = topology_update.apply(self);
             debug!("Fetched new metadata");
 
             if self.is_cc_endpoint_rejected(cc.endpoint(), &metadata) {
@@ -293,7 +333,7 @@ impl MetadataReader {
                 continue;
             }
 
-            return Ok((Some((cc, cc_events)), metadata));
+            return Ok((Some((cc, cc_events, payload)), metadata));
         }
 
         match rejected_metadata {
