@@ -99,7 +99,7 @@ impl QueryResult {
     ///
     /// Rationale: driver uses [QueryResult] internally even if it does not have a [Node](crate::cluster::Node)
     /// corresponding to the connection that it executes requests on. This happens in
-    /// non-[Session](crate::client::session::Session) APIs (`MetadataReader::query_metadata()`,
+    /// non-[Session](crate::client::session::Session) APIs (`ControlConnectionEstablisher::query_metadata()`,
     /// `Connection::query_iter()`, etc.), most notably for a control connection upon initial metadata fetch.
     /// However, [QueryResult::request_coordinator] panics if [Coordinator] stored is [None].
     /// Therefore, extra care must be taken not to leak such [QueryResult] to the user.

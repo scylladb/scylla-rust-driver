@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 
 use tokio::sync::oneshot;
@@ -7,7 +7,6 @@ use uuid::Uuid;
 
 use crate::cluster::metadata::{ClientRoute, ClientRoutes, Metadata};
 use crate::errors::MetadataError;
-use crate::frame::response::event::ClientRoutesChangeEvent;
 
 /// An explicit request to refresh cluster metadata, sent by
 /// [`Cluster::refresh_metadata`](crate::cluster::worker::Cluster::refresh_metadata).
@@ -44,12 +43,35 @@ pub(in super::super) enum MetadataChanges {
         /// state resulting from `metadata` has been published.
         refresh_responses: Vec<tokio::sync::oneshot::Sender<Result<(), MetadataError>>>,
     },
-    /// For know, only client_routes can be updates separately. Later we'll add more stuff here.
-    Partial {
-        /// Partial client-routes snapshots fetched in response to
-        /// CLIENT_ROUTES_CHANGE events.
-        client_routes_updates: ClientRoutesUpdate,
-    },
+    /// Partial updates: everything learned since the last full fetch, one field
+    /// per partial fetch type.
+    Partial(PartialMetadataChanges),
+}
+
+/// The partial counterpart of a full metadata fetch: independently fetched
+/// updates of individual metadata aspects, one field per partial fetch type.
+/// Currently only client routes can be fetched partially.
+///
+/// Each field merges on its own, without looking at the others. This makes
+/// merging commutative across types, which keeps this struct correct even when
+/// partial fetches of different types run concurrently and complete in an
+/// order different from the one they were started in.
+#[derive(Default)]
+pub(in super::super) struct PartialMetadataChanges {
+    /// Partial client-routes snapshots fetched in response to
+    /// CLIENT_ROUTES_CHANGE events.
+    pub(in super::super) client_routes_updates: Option<ClientRoutesUpdate>,
+}
+
+impl PartialMetadataChanges {
+    /// Records a partial client-routes snapshot, merging it into the one
+    /// already pending, if any.
+    fn merge_client_routes_update(&mut self, new_client_routes: ClientRoutesUpdate) {
+        match &mut self.client_routes_updates {
+            None => self.client_routes_updates = Some(new_client_routes),
+            Some(existing) => existing.merge(new_client_routes),
+        }
+    }
 }
 
 impl MetadataUpdate {
@@ -71,7 +93,7 @@ impl MetadataUpdate {
         // Newest wins: an older, not-yet-applied fetch is worthless now.
         // Caveat: We need to NOT drop the old refresh channel.
         match &mut update.metadata_changes {
-            None | Some(MetadataChanges::Partial { .. }) => {
+            None | Some(MetadataChanges::Partial(_)) => {
                 update.metadata_changes = Some(MetadataChanges::Full {
                     metadata,
                     refresh_responses: refresh_response.into_iter().collect(),
@@ -97,14 +119,12 @@ impl MetadataUpdate {
         let update = Self::slot_mut(slot);
         match &mut update.metadata_changes {
             None => {
-                update.metadata_changes = Some(MetadataChanges::Partial {
-                    client_routes_updates: new_client_routes,
-                });
+                let mut partial = PartialMetadataChanges::default();
+                partial.merge_client_routes_update(new_client_routes);
+                update.metadata_changes = Some(MetadataChanges::Partial(partial));
             }
-            Some(MetadataChanges::Partial {
-                client_routes_updates,
-            }) => {
-                client_routes_updates.merge(new_client_routes);
+            Some(MetadataChanges::Partial(partial)) => {
+                partial.merge_client_routes_update(new_client_routes);
             }
             Some(MetadataChanges::Full {
                 metadata,
@@ -136,12 +156,14 @@ impl MetadataUpdate {
     }
 }
 
-/// A partial, mergeable update of client routes, derived from a
-/// CLIENT_ROUTES_CHANGE:UPDATE_NODES event and from the partial snapshot of
-/// `system.client_routes` fetched in response to that event.
+/// A partial, mergeable update of client routes, derived from the
+/// (connection id, host id) pairs listed by CLIENT_ROUTES_CHANGE:UPDATE_NODES
+/// events and from the partial snapshot of `system.client_routes` fetched in
+/// response to them.
 ///
-/// Each entry corresponds to a (host id, connection id) pair listed in the event
-/// and relevant to the driver (i.e. with a connection id the driver monitors):
+/// Each entry corresponds to a (host id, connection id) pair listed by an
+/// event and relevant to the driver (i.e. with a connection id the driver
+/// monitors):
 /// - `Some(route)` - the route was created or updated;
 /// - `None` - the route was removed.
 #[derive(Debug, Default)]
@@ -151,40 +173,33 @@ pub(crate) struct ClientRoutesUpdate {
 }
 
 impl ClientRoutesUpdate {
-    /// Builds an update from the event and the partial snapshot fetched in response to it.
+    /// Builds an update from the (connection id, host id) pairs listed by
+    /// CLIENT_ROUTES_CHANGE:UPDATE_NODES events and the partial snapshot
+    /// fetched in response to them.
     ///
-    /// Only the (connection id, host id) pairs actually listed in the event and having
-    /// a connection id monitored by the driver are taken into account. Routes present in
-    /// `fetched` that do not correspond to any such pair are ignored: the fetch query is
-    /// `WHERE connection_id IN ? AND host_id IN ?`, so it returns the full cross product,
-    /// while the event's semantics is a zip of both lists.
-    pub(crate) fn from_event(
-        event: &ClientRoutesChangeEvent,
+    /// Only the pairs with a connection id monitored by the driver (i.e.
+    /// present in `relevant_connection_ids`) are taken into account. Routes
+    /// present in `fetched` that do not correspond to any such pair are
+    /// ignored: the fetch query is `WHERE connection_id IN ? AND host_id IN ?`,
+    /// so it returns the full cross product of the ids, while the events'
+    /// semantics is the pairs.
+    pub(crate) fn from_pairs(
+        pairs: &HashSet<(String, Uuid)>,
         relevant_connection_ids: &[String],
         fetched: &ClientRoutes,
     ) -> Self {
-        #[deny(clippy::wildcard_enum_match_arm)]
-        let (connection_ids, host_ids) = match event {
-            ClientRoutesChangeEvent::UpdateNodes {
-                connection_ids,
-                host_ids,
-            } => (connection_ids, host_ids),
-            _ => unreachable!("clippy testifies that the match is exhaustive"),
-        };
-
         let mut updates: HashMap<Uuid, HashMap<String, Option<ClientRoute>>> = HashMap::new();
 
-        for (connection_id, &host_id) in connection_ids
+        for (connection_id, host_id) in pairs
             .iter()
-            .zip(host_ids)
-            .filter(|(connection_id, _host_id)| relevant_connection_ids.contains(connection_id))
+            .filter(|(conn_id, _host_id)| relevant_connection_ids.contains(conn_id))
         {
             let route = fetched
                 .routes
-                .get(&host_id)
+                .get(host_id)
                 .and_then(|routes_for_host| routes_for_host.get(connection_id).cloned());
             updates
-                .entry(host_id)
+                .entry(*host_id)
                 .or_default()
                 .insert(connection_id.clone(), route);
         }
@@ -201,12 +216,6 @@ impl ClientRoutesUpdate {
                     .into_iter()
                     .map(move |(connection_id, route)| (host_id, connection_id, route))
             })
-    }
-
-    /// Return self by value, leaving empty update in its place.
-    pub(crate) fn take(&mut self) -> Self {
-        let map = std::mem::take(&mut self.updates);
-        Self { updates: map }
     }
 
     /// Merges a newer update into this one. Entries of `newer` override entries of `self`
@@ -250,7 +259,7 @@ mod tests {
     }
 
     // Builds a ClientRoutesUpdate directly from (host, connection id, entry) triples,
-    // bypassing `from_event` — the merge logic is independent of how the update
+    // bypassing `from_pairs` — the merge logic is independent of how the update
     // was derived.
     fn update_from_entries(entries: Vec<(Uuid, &str, Option<ClientRoute>)>) -> ClientRoutesUpdate {
         let mut updates: HashMap<Uuid, HashMap<String, Option<ClientRoute>>> = HashMap::new();
@@ -311,7 +320,22 @@ mod tests {
         event: &ClientRoutesChangeEvent,
         fetched: ClientRoutes,
     ) -> ClientRoutesUpdate {
-        ClientRoutesUpdate::from_event(event, translator.get_connection_ids(), &fetched)
+        let ClientRoutesChangeEvent::UpdateNodes {
+            connection_ids,
+            host_ids,
+        } = event
+        else {
+            unreachable!("tests only construct UpdateNodes events")
+        };
+        ClientRoutesUpdate::from_pairs(
+            &connection_ids
+                .iter()
+                .cloned()
+                .zip(host_ids.iter().copied())
+                .collect(),
+            translator.get_connection_ids(),
+            &fetched,
+        )
     }
 
     // `ClientRoutesUpdate::merge`: entries of the newer update override entries of
@@ -524,12 +548,12 @@ mod tests {
         assert!(!sequential.routes.contains_key(&host_b));
     }
 
-    // `ClientRoutesUpdate::from_event` must only pick up (host id, connection id)
-    // pairs listed in the event and relevant to the driver; routes returned by the
+    // `ClientRoutesUpdate::from_pairs` must only pick up (host id, connection id)
+    // pairs listed by the event and relevant to the driver; routes returned by the
     // re-fetch that do not correspond to an event pair are cross-product artifacts
     // of the `WHERE connection_id IN ? AND host_id IN ?` query and must be ignored.
     #[test]
-    fn update_from_event_ignores_cross_product_artifacts_and_irrelevant_conn_ids() {
+    fn update_from_pairs_ignores_cross_product_artifacts_and_irrelevant_conn_ids() {
         let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
             "conn-1".to_string(),
         )]);
@@ -562,10 +586,10 @@ mod tests {
         );
     }
 
-    // `ClientRoutesUpdate::from_event`: an event pair with no matching route in the
-    // re-fetch yields an explicit `None` entry, i.e. a deletion.
+    // `ClientRoutesUpdate::from_pairs`: an event pair with no matching route in
+    // the re-fetch yields an explicit `None` entry, i.e. a deletion.
     #[test]
-    fn update_from_event_yields_none_for_missing_route() {
+    fn update_from_pairs_yields_none_for_missing_route() {
         let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
             "conn-1".to_string(),
         )]);

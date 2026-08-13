@@ -1,4 +1,4 @@
-//! This module contains the [`MetadataReader`] struct, which is responsible for
+//! This module contains the [`ControlConnectionEstablisher`] struct, which is responsible for
 //! creating control connections and fetching cluster metadata through them.
 //!
 //! The control connection is a dedicated connection to one of the cluster nodes
@@ -6,13 +6,14 @@
 //! - Fetch cluster metadata (topology, schema, token ring information)
 //! - Receive server-side events (topology changes, schema changes, status changes)
 //!
-//! [`MetadataReader`] establishes control connections, including:
+//! [`ControlConnectionEstablisher`] establishes control connections, including:
 //! - Connection establishment to contact points or known peers
 //! - Iterating over known peers and initial contact points on connection failure
 //! - Host filtering to ensure the control connection is established to an accepted node
 //!
-//! Ownership of the established control connection lives outside the reader (in the
-//! metadata worker); the reader only knows how to create one and fetch metadata on it.
+//! Ownership of the established control connection lives outside the establisher (in the
+//! metadata worker); the establisher only knows how to create one. The metadata queries
+//! themselves are methods on [`ControlConnection`], configured at its creation.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,14 +25,14 @@ use tracing::{debug, error, warn};
 use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::cluster::KnownNode;
 use crate::cluster::control_connection::{
-    ControlConnection, ControlConnectionCache, ControlConnectionEvents, MetadataRequestTimeouts,
+    ControlConnection, ControlConnectionCache, ControlConnectionConfig, ControlConnectionEvents,
+    MetadataRequestTimeouts,
 };
 use crate::cluster::metadata::{
-    ClientRoutesUpdate, Metadata, PeerEndpoint, SchemaMetadataFetchMode, UntranslatedEndpoint,
+    Metadata, PeerEndpoint, SchemaMetadataFetchMode, UntranslatedEndpoint,
 };
 use crate::cluster::node::resolve_contact_points;
 use crate::errors::{ConnectionPoolError, MetadataError, NewSessionError};
-use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::frame::server_event_type::EventTypeV2 as EventType;
 use crate::network::{ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
@@ -39,32 +40,59 @@ use crate::utils::safe_format::IteratorSafeFormatExt;
 
 /// Maintains the persistent state needed to create control connections and
 /// fetch cluster metadata. The established control connection itself is owned by
-/// the caller (the metadata worker), not by the reader.
-pub(crate) struct MetadataReader {
+/// the caller (the metadata worker), not by the establisher.
+pub(crate) struct ControlConnectionEstablisher {
     // =======================================================================================
-    // Configuration values - they will stay the same during whole lifetime of MetadataReader.
+    // Configuration values - they will stay the same during whole lifetime of ControlConnectionEstablisher.
     // =======================================================================================
     control_connection_config: ConnectionConfig,
-    request_timeouts: MetadataRequestTimeouts,
+    /// Configuration stamped onto every control connection this establisher creates;
+    /// governs what the control connection's metadata queries fetch.
+    cc_config: ControlConnectionConfig,
     hostname_resolution_timeout: Option<Duration>,
-    keyspaces_to_fetch: Vec<String>,
-    schema_metadata_fetch_mode: SchemaMetadataFetchMode,
     host_filter: Option<Arc<dyn HostFilter>>,
     // When no known peer is reachable, initial known nodes are resolved once again as a fallback
     // and establishing control connection to them is attempted.
     initial_known_nodes: Vec<KnownNode>,
-    client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
 
     // ====================================================================
-    // Mutable state of MetadataReader. It will change during its lifetime.
+    // Mutable state of ControlConnectionEstablisher. It will change during its lifetime.
     // ====================================================================
-    // when a control connection fails, MetadataReader tries to connect to one of known_peers
+    // when a control connection fails, ControlConnectionEstablisher tries to connect to one of known_peers
     known_peers: Vec<UntranslatedEndpoint>,
     cc_cache: Arc<ControlConnectionCache>,
 }
 
-impl MetadataReader {
-    /// Creates a new MetadataReader.
+/// The per-candidate metadata fetch that
+/// [`ControlConnectionEstablisher::establish_cc_and_fetch_metadata`] runs on each candidate
+/// connection - implemented by the metadata worker.
+///
+/// When `ControlConnectionEstablisher` open a new `Connection`, it needs to fetch initial
+/// `Metadata` on it before returning it as a new CC. A candidate is such
+/// potential CC until the `Metadata` is done fetching.
+///
+/// This trait allows the caller to customize the behavior of the fetch
+/// and return a custom type alongisde the new CC. Intended usage is draining
+/// the event channel concurrently to the fetch to avoid a deadlock.
+///
+/// A trait rather than an `AsyncFnMut` bound: the implementor lends state
+/// (e.g. the updates channel) to each call, and a capturing async closure
+/// defeats `Send` inference for every future built on top of it (rustc's
+/// "implementation of `Send` is not general enough").
+pub(super) trait FetchOnCandidate {
+    /// Whatever the fetch produces besides the metadata itself; handed back
+    /// with the kept connection.
+    type Payload;
+
+    async fn fetch(
+        &mut self,
+        cc: &ControlConnection,
+        cc_events: &mut ControlConnectionEvents,
+    ) -> Result<(TopologyUpdateGuard, Self::Payload), MetadataError>;
+}
+
+impl ControlConnectionEstablisher {
+    /// Creates a new ControlConnectionEstablisher.
     ///
     /// Resolves the initial contact points and populates the initial known peers
     /// list. Does **not** establish a control connection — use
@@ -92,62 +120,56 @@ impl MetadataReader {
 
         let cc_cache = Arc::new(ControlConnectionCache::new());
 
-        Ok(MetadataReader {
+        Ok(ControlConnectionEstablisher {
             control_connection_config: connection_config,
-            request_timeouts,
+            cc_config: ControlConnectionConfig {
+                keyspaces_to_fetch,
+                schema_metadata_fetch_mode,
+                client_routes_subscriber,
+                request_timeouts,
+            },
             hostname_resolution_timeout,
             known_peers: initial_peers
                 .into_iter()
                 .map(UntranslatedEndpoint::ContactPoint)
                 .collect(),
-            keyspaces_to_fetch,
-            schema_metadata_fetch_mode,
             host_filter: host_filter.clone(),
             initial_known_nodes,
             cc_cache,
-            client_routes_subscriber,
         })
-    }
-
-    /// Fetches metadata using an already-established control connection.
-    ///
-    /// On success, updates `self.known_peers` with the peers from the fetched
-    /// metadata. Does **not** retry on other nodes — the caller should drop the
-    /// control connection and call
-    /// [`establish_cc_and_fetch_metadata`](Self::establish_cc_and_fetch_metadata)
-    /// if this fails.
-    pub(crate) async fn fetch_metadata_on_cc(
-        &mut self,
-        cc: &ControlConnection,
-    ) -> Result<Metadata, MetadataError> {
-        let metadata = self.query_metadata_on_cc(cc).await?;
-        debug!("Fetched new metadata");
-        self.update_known_peers(&metadata);
-        Ok(metadata)
     }
 
     /// Establishes a control connection and fetches metadata in one go.
     ///
-    /// Iterates over known peers (shuffled), trying to connect and fetch metadata
-    /// on each. If `initial` is false and all known peers are exhausted, falls back
-    /// to re-resolving the initial contact points.
+    /// Iterates over known peers (shuffled), trying to connect and run
+    /// `fetcher` on each. If `initial` is false and all known peers are
+    /// exhausted, falls back to re-resolving the initial contact points.
+    ///
+    /// `fetcher` is invoked once per candidate connection and must perform the
+    /// metadata fetch on it; it is also free to consume the connection's server
+    /// events meanwhile. Its payload is returned alongside the connection
+    /// it was produced on, so a payload never outlives its candidate. On
+    /// success the connection is handed onward together with its event
+    /// channels, which must remain pollable: `fetcher` must not consume a
+    /// lifecycle event (`Broken`/`Shutdown`) and still return `Ok`.
     ///
     /// On success, updates `known_peers` and returns the fetched metadata together
     /// with a control connection to use going forward. The returned control
     /// connection is `None` when metadata was obtained but no usable control
     /// connection remains:
-    /// - on an `initial` read whose metadata query failed (dummy metadata is
+    /// - on an `initial` read whose metadata fetch failed (dummy metadata is
     ///   returned so the session can still start), or
     /// - when every node that yielded metadata is rejected by the host filter.
     ///
     /// In both of these cases the caller is expected to re-establish the control
     /// connection at the repair cadence.
-    pub(crate) async fn establish_cc_and_fetch_metadata(
+    pub(super) async fn establish_cc_and_fetch_metadata<F: FetchOnCandidate>(
         &mut self,
         initial: bool,
+        fetcher: &mut F,
     ) -> Result<
         (
-            Option<(ControlConnection, ControlConnectionEvents)>,
+            Option<(ControlConnection, ControlConnectionEvents, F::Payload)>,
             Metadata,
         ),
         MetadataError,
@@ -164,7 +186,7 @@ impl MetadataReader {
         // failed to resolve). We carry the most recent error across attempts and only
         // synthesize a fallback error if no connection was ever attempted.
         let known_peers_err = match self
-            .try_establish_on_nodes(initial, self.known_peers.clone().into_iter())
+            .try_establish_on_nodes(initial, self.known_peers.clone().into_iter(), fetcher)
             .await
         {
             Ok(result) => return Ok(result),
@@ -195,6 +217,7 @@ impl MetadataReader {
                 initial_peers
                     .into_iter()
                     .map(UntranslatedEndpoint::ContactPoint),
+                fetcher,
             )
             .await
         {
@@ -212,26 +235,27 @@ impl MetadataReader {
         }
     }
 
-    /// Tries to establish a control connection and fetch metadata on each node from
-    /// the given iterator.
+    /// Tries to establish a control connection and fetch metadata (through the
+    /// caller-provided `fetch`) on each node from the given iterator.
     ///
-    /// Returns the first working, host-filter-accepted control connection together
-    /// with its metadata. Two situations yield metadata but no control connection
-    /// (`Ok((None, metadata))`):
+    /// Returns the first working, host-filter-accepted control connection
+    /// together with its metadata and the payload `fetch` produced on it. Two
+    /// situations yield metadata but no control connection (`Ok((None, metadata))`):
     /// - every node that could be queried is rejected by the host filter — the
     ///   metadata is valid cluster-wide, but none of the connections may be kept;
-    /// - `initial` is true and a connection was established but its metadata query
+    /// - `initial` is true and a connection was established but its metadata fetch
     ///   failed — dummy metadata is returned so the session can still start.
     ///
     /// Returns `Err(None)` if the iterator was empty (no connection was ever
     /// attempted), or `Err(Some(err))` with the most recent error otherwise.
-    async fn try_establish_on_nodes(
+    async fn try_establish_on_nodes<F: FetchOnCandidate>(
         &mut self,
         initial: bool,
         nodes: impl Iterator<Item = UntranslatedEndpoint>,
+        fetcher: &mut F,
     ) -> Result<
         (
-            Option<(ControlConnection, ControlConnectionEvents)>,
+            Option<(ControlConnection, ControlConnectionEvents, F::Payload)>,
             Metadata,
         ),
         Option<MetadataError>,
@@ -246,12 +270,11 @@ impl MetadataReader {
             let peer_address = peer.address();
             debug!("Trying to establish control connection on {peer_address}");
 
-            let (cc, cc_events) = match Self::make_control_connection(
+            let (cc, mut cc_events) = match Self::make_control_connection(
                 peer,
                 self.control_connection_config.clone(),
-                self.request_timeouts,
+                self.cc_config.clone(),
                 Arc::clone(&self.cc_cache),
-                self.client_routes_subscriber.is_some(),
             )
             .await
             {
@@ -267,12 +290,12 @@ impl MetadataReader {
                 }
             };
 
-            let metadata = match self.query_metadata_on_cc(&cc).await {
-                Ok(metadata) => metadata,
+            let (topology_update, payload) = match fetcher.fetch(&cc, &mut cc_events).await {
+                Ok(fetched) => fetched,
                 Err(err) => {
                     if initial {
                         // The control connection was established, but the initial
-                        // metadata query failed. Prefer any valid metadata already
+                        // metadata fetch failed. Prefer any valid metadata already
                         // obtained from a rejected node; otherwise fall back to dummy
                         // metadata so the session can still start. Either way, drop the
                         // control connection so it is re-established at the repair cadence.
@@ -299,8 +322,8 @@ impl MetadataReader {
                 }
             };
 
+            let metadata = topology_update.apply(self);
             debug!("Fetched new metadata");
-            self.update_known_peers(&metadata);
 
             if self.is_cc_endpoint_rejected(cc.endpoint(), &metadata) {
                 // The node hosting this control connection is rejected by the host
@@ -310,33 +333,13 @@ impl MetadataReader {
                 continue;
             }
 
-            return Ok((Some((cc, cc_events)), metadata));
+            return Ok((Some((cc, cc_events, payload)), metadata));
         }
 
         match rejected_metadata {
             Some(metadata) => Ok((None, metadata)),
             None => Err(last_err),
         }
-    }
-
-    /// Queries metadata on the given control connection.
-    ///
-    /// This is a thin wrapper over [`ControlConnection::query_metadata`] that fills in
-    /// the reader's configuration (keyspaces to fetch, whether to fetch schema). It does
-    /// **not** update `known_peers` nor touch the control connection state.
-    async fn query_metadata_on_cc(
-        &self,
-        cc: &ControlConnection,
-    ) -> Result<Metadata, MetadataError> {
-        cc.query_metadata(
-            cc.endpoint().address().port(),
-            &self.keyspaces_to_fetch,
-            self.schema_metadata_fetch_mode,
-            self.client_routes_subscriber
-                .as_ref()
-                .map(|subscriber| subscriber.get_connection_ids()),
-        )
-        .await
     }
 
     fn update_known_peers(&mut self, metadata: &Metadata) {
@@ -404,9 +407,8 @@ impl MetadataReader {
     async fn make_control_connection(
         endpoint: UntranslatedEndpoint,
         mut config: ConnectionConfig,
-        request_timeouts: MetadataRequestTimeouts,
+        cc_config: ControlConnectionConfig,
         cache: Arc<ControlConnectionCache>,
-        register_for_client_routes_events: bool,
     ) -> Result<(ControlConnection, ControlConnectionEvents), MetadataError> {
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
         // setting event_sender field in connection config will cause control connection to
@@ -417,7 +419,7 @@ impl MetadataReader {
             EventType::StatusChange,
             EventType::SchemaChange,
         ];
-        if register_for_client_routes_events {
+        if cc_config.client_routes_subscriber.is_some() {
             events_to_register_for.push(EventType::ClientRoutesChange);
         }
 
@@ -430,11 +432,14 @@ impl MetadataReader {
         .await;
 
         match open_result {
-            Ok((con, recv)) => {
-                let (cc, cc_events) =
-                    ControlConnection::new(Arc::new(con), endpoint, cache, recv, receiver);
-                Ok((cc.with_request_timeouts(request_timeouts), cc_events))
-            }
+            Ok((con, recv)) => Ok(ControlConnection::new(
+                Arc::new(con),
+                endpoint,
+                cc_config,
+                cache,
+                recv,
+                receiver,
+            )),
             Err(conn_err) => Err(MetadataError::ConnectionPoolError(
                 ConnectionPoolError::Broken {
                     last_connection_error: conn_err,
@@ -442,63 +447,29 @@ impl MetadataReader {
             )),
         }
     }
+}
 
-    /// Performs a partial fetch of `system.client_routes`. Partial means that filtering is done
-    /// not only by connection ids known to the driver (which is always the case), but also
-    /// by host ids - only for the hosts whose ids are present in the event payload.
-    ///
-    /// Returns the resulting [`ClientRoutesUpdate`], or `None` if there is no subscriber
-    /// configured or the event contained no connection ids relevant to this driver. Merging
-    /// the update into the [`ClientRoutesSubscriber`]'s knowledge is the caller's job.
-    pub(in super::super) async fn fetch_client_routes_update_on_event(
-        &self,
-        cc: &ControlConnection,
-        evt: &ClientRoutesChangeEvent,
-    ) -> Result<Option<ClientRoutesUpdate>, MetadataError> {
-        let Some(subscriber) = &self.client_routes_subscriber else {
-            // No subscriber, but received an event? Strange enough, but nothing to be done here.
-            warn!("BUG: Received ClientRoutesChange event, but no ClientRoutesSubscriber was set!");
-            return Ok(None);
-        };
+/// Freshly fetched [`Metadata`] that the [`ControlConnectionEstablisher`] has not yet absorbed.
+///
+/// [`ControlConnection::query_metadata`] returns its result wrapped in this
+/// guard, so that the fetched metadata cannot be used without the establisher
+/// updating its known peers from it first: the only way to extract the
+/// [`Metadata`] is [`apply`](Self::apply).
+#[must_use = "the fetched metadata must be applied to the ControlConnectionEstablisher"]
+pub(super) struct TopologyUpdateGuard {
+    metadata: Metadata,
+}
 
-        #[deny(clippy::wildcard_enum_match_arm)]
-        let (connection_ids, host_ids) = match evt {
-            ClientRoutesChangeEvent::UpdateNodes {
-                connection_ids,
-                host_ids,
-            } => (connection_ids, host_ids),
-            _ => unreachable!("clippy testifies that the match is exhaustive"),
-        };
+impl TopologyUpdateGuard {
+    pub(super) fn new(metadata: Metadata) -> Self {
+        Self { metadata }
+    }
 
-        // TODO: this is wasteful - it allocates both strings and a vec.
-        // This won't be a performance problem, because UPDATE_NODES events are not frequent.
-        // As an optimization, we can implement ser/de for some special new iterator type,
-        // to avoid the need to allocate when serializing collections.
-        let connection_ids: Vec<String> = connection_ids
-            .iter()
-            .filter(|&conn_id| subscriber.get_connection_ids().contains(conn_id))
-            .cloned()
-            .collect();
-
-        if connection_ids.is_empty() {
-            // The event contained no relevant connection IDs.
-            // Nothing to be done.
-            return Ok(None);
-        }
-
-        // Although this is vaguely documented, the semantics of an event with connection ids [A, B, C] and host ids [X, Y, Z]
-        // is that the following entries were added/updated/removed: `[(A, X), (B, Y), (C, Z)]`.
-        // Unfortunately, we can't really query Scylla this way. Therefore, we do the query: `WHERE connection id IN ? AND host id IN ?`,
-        // which fetches possibly more routes than necessary, for example `(A, Z)` or `(C, Y)`.
-        // This is a tradeoff - the only alternative is issuing multiple queries, one per connection id.
-        // I believe the tradeoff here is correct.
-        let client_routes = cc.query_client_routes(&connection_ids, host_ids).await?;
-
-        Ok(Some(ClientRoutesUpdate::from_event(
-            evt,
-            subscriber.get_connection_ids(),
-            &client_routes,
-        )))
+    /// Updates the establisher's known peers from the fetched metadata and releases
+    /// the metadata itself.
+    pub(super) fn apply(self, establisher: &mut ControlConnectionEstablisher) -> Metadata {
+        establisher.update_known_peers(&self.metadata);
+        self.metadata
     }
 }
 

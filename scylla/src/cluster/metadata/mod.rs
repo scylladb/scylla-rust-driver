@@ -17,9 +17,9 @@
 //  - client routes:
 //    - [ClientRoute]
 
+pub(super) mod cc_establisher;
 mod fetching;
 pub(crate) mod merge_channel;
-pub(super) mod reader;
 pub(crate) mod update;
 pub(super) mod worker;
 

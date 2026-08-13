@@ -481,7 +481,22 @@ mod tests {
         event: &ClientRoutesChangeEvent,
         fetched: ClientRoutes,
     ) -> ClientRoutesUpdate {
-        ClientRoutesUpdate::from_event(event, translator.get_connection_ids(), &fetched)
+        let ClientRoutesChangeEvent::UpdateNodes {
+            connection_ids,
+            host_ids,
+        } = event
+        else {
+            unreachable!("tests only construct UpdateNodes events")
+        };
+        ClientRoutesUpdate::from_pairs(
+            &connection_ids
+                .iter()
+                .cloned()
+                .zip(host_ids.iter().copied())
+                .collect(),
+            translator.get_connection_ids(),
+            &fetched,
+        )
     }
 
     fn make_config(proxies: Vec<ClientRoutesProxy>) -> ClientRoutesConfig {

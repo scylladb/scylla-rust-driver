@@ -1,3 +1,4 @@
+use bytes::{Bytes, BytesMut};
 use futures::Future;
 use futures::future::try_join_all;
 use itertools::Either;
@@ -694,4 +695,35 @@ impl RetrySession for CapturingRetrySession {
     fn reset(&mut self) {
         self.call_count = 0;
     }
+}
+
+/// Builds the body of a `STATUS_CHANGE` / `DOWN` EVENT frame for `addr`:
+/// `[string] "STATUS_CHANGE"`, `[string] "DOWN"`, `[inet] addr`.
+pub(crate) fn status_change_down_event_body(addr: SocketAddr) -> Bytes {
+    use scylla_cql::frame::types::{write_inet, write_string};
+
+    let mut body = BytesMut::new();
+    write_string("STATUS_CHANGE", &mut body).unwrap();
+    write_string("DOWN", &mut body).unwrap();
+    write_inet(addr, &mut body);
+    body.freeze()
+}
+
+/// Injects a forged `STATUS_CHANGE DOWN` event for `addr` into every proxy
+/// node's control connections.
+///
+/// Only one of the proxied nodes hosts the driver's control connection, hence
+/// the broadcast; at least one injection must have found a registered control
+/// connection.
+pub(crate) fn inject_status_change_down(running_proxy: &RunningProxy, addr: SocketAddr) {
+    let body = status_change_down_event_body(addr);
+    let injected = running_proxy
+        .running_nodes
+        .iter()
+        .filter(|node| node.inject_event_to_cc(body.clone()))
+        .count();
+    assert!(
+        injected > 0,
+        "no proxy node had a registered control connection to inject the event into"
+    );
 }

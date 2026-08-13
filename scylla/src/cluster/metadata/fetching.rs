@@ -40,7 +40,7 @@ use crate::DeserializeRow;
 use crate::client::pager::QueryPager;
 use crate::cluster::NodeAddr;
 use crate::cluster::control_connection::ControlConnection;
-use crate::cluster::metadata::ClientRoutes;
+use crate::cluster::metadata::{ClientRoutes, ClientRoutesUpdate};
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{
     ClientRoutesMetadataError, DbError, KeyspaceStrategyError, KeyspacesMetadataError,
@@ -48,6 +48,8 @@ use crate::errors::{
     PeersMetadataError, RequestAttemptError, RequestError, TablesMetadataError, UdtMetadataError,
 };
 use crate::routing::Token;
+
+use super::cc_establisher::TopologyUpdateGuard;
 
 type PerKeyspace<T> = HashMap<String, T>;
 type PerKeyspaceResult<T, E> = PerKeyspace<Result<T, E>>;
@@ -156,20 +158,27 @@ impl fmt::Display for InvalidCqlType {
 }
 
 impl ControlConnection {
-    pub(crate) async fn query_metadata(
-        &self,
-        connect_port: u16,
-        keyspace_to_fetch: &[String],
-        schema_metadata_fetch_mode: SchemaMetadataFetchMode,
-        client_routes_connection_ids: Option<&[String]>,
-    ) -> Result<Metadata, MetadataError> {
+    /// Queries the cluster metadata (peers, schema, client routes) as configured
+    /// by this control connection's
+    /// [`ControlConnectionConfig`](crate::cluster::control_connection::ControlConnectionConfig).
+    ///
+    /// The result comes wrapped in a [`TopologyUpdateGuard`]: the fetched metadata
+    /// affects which peers the [`ControlConnectionEstablisher`](super::cc_establisher::ControlConnectionEstablisher)
+    /// establishes control connections to, so the establisher must absorb it before
+    /// anything else can use it.
+    pub(super) async fn query_metadata(&self) -> Result<TopologyUpdateGuard, MetadataError> {
+        let connect_port = self.endpoint().address().port();
+
         let peers_query = self.query_peers(connect_port);
-        let keyspaces_query = self.query_keyspaces(keyspace_to_fetch, schema_metadata_fetch_mode);
+        let keyspaces_query = self.query_keyspaces(
+            &self.config.keyspaces_to_fetch,
+            self.config.schema_metadata_fetch_mode,
+        );
         let client_routes_query = async {
-            let Some(connection_ids) = client_routes_connection_ids else {
+            let Some(subscriber) = self.config.client_routes_subscriber.as_ref() else {
                 return Ok(None);
             };
-            self.query_client_routes(connection_ids, &[])
+            self.query_client_routes(subscriber.get_connection_ids(), &[])
                 .await
                 .map(Some)
         };
@@ -193,12 +202,12 @@ impl ControlConnection {
             return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists));
         }
 
-        Ok(Metadata {
+        Ok(TopologyUpdateGuard::new(Metadata {
             peers,
             keyspaces,
             cluster_name,
             client_routes,
-        })
+        }))
     }
 }
 
@@ -540,6 +549,64 @@ impl ControlConnection {
         let routes = query_client_routes_with_values(self, query_str, values).await?;
 
         Ok(routes)
+    }
+
+    /// Performs a partial fetch of `system.client_routes`.
+    ///
+    /// Such partial fetch is restricted to the given (connection id, host id) pairs, as accumulated from
+    /// CLIENT_ROUTES_CHANGE:UPDATE_NODES events. Those pairs are additionally filtered
+    /// to only query connection ids that the driver is interested in.
+    ///
+    /// Returns the resulting [`ClientRoutesUpdate`], or `None` if there is no subscriber
+    /// configured or no pair has a connection id relevant to this driver. Merging
+    /// the update into the [`ClientRoutesSubscriber`]'s knowledge is the caller's job.
+    ///
+    /// [`ClientRoutesSubscriber`]: crate::client::client_routes::ClientRoutesSubscriber
+    pub(super) async fn fetch_client_routes_update(
+        &self,
+        pairs: &HashSet<(String, Uuid)>,
+    ) -> Result<Option<ClientRoutesUpdate>, MetadataError> {
+        let Some(subscriber) = self.config.client_routes_subscriber.as_ref() else {
+            // No subscriber, but received an event? Strange enough, but nothing to be done here.
+            warn!("BUG: Received ClientRoutesChange event, but no ClientRoutesSubscriber was set!");
+            return Ok(None);
+        };
+
+        let monitored_pairs = pairs
+            .iter()
+            .filter(|(conn_id, _host_id)| subscriber.get_connection_ids().contains(conn_id));
+
+        // The pairs cannot be queried as such: the query is
+        // `WHERE connection id IN ? AND host id IN ?`, which fetches the whole
+        // cross product of the listed ids - possibly more routes than the
+        // pairs name, for example `(A, Y)` for pairs `[(A, X), (B, Y)]`. This
+        // is a tradeoff - the only alternative is issuing multiple queries,
+        // one per connection id. The surplus routes are ignored when the
+        // update is built from the pairs - see
+        // [`ClientRoutesUpdate::from_pairs`].
+        //
+        // TODO: this is wasteful - it allocates strings and vecs.
+        // This won't be a performance problem, because UPDATE_NODES events are not frequent.
+        // As an optimization, we can implement ser/de for some special new iterator type,
+        // to avoid the need to allocate when serializing collections.
+        let (connection_ids, host_ids): (HashSet<String>, HashSet<Uuid>) =
+            monitored_pairs.cloned().unzip();
+
+        if connection_ids.is_empty() {
+            // The events contained no relevant connection IDs.
+            // Nothing to be done.
+            return Ok(None);
+        }
+
+        let client_routes = self
+            .query_client_routes(&Vec::from_iter(connection_ids), &Vec::from_iter(host_ids))
+            .await?;
+
+        Ok(Some(ClientRoutesUpdate::from_pairs(
+            pairs,
+            subscriber.get_connection_ids(),
+            &client_routes,
+        )))
     }
 
     fn query_filter_keyspace_name<'a, R>(

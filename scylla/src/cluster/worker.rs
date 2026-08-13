@@ -5,7 +5,7 @@ use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::cluster::control_connection::MetadataRequestTimeouts;
 use crate::cluster::metadata::SchemaMetadataFetchMode;
 use crate::cluster::metadata::update::{
-    MetadataChanges, MetadataUpdate, RefreshRequest, StatusHint,
+    MetadataChanges, MetadataUpdate, PartialMetadataChanges, RefreshRequest, StatusHint,
 };
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
@@ -28,8 +28,8 @@ use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
 use super::metadata::Metadata;
+use super::metadata::cc_establisher::ControlConnectionEstablisher;
 use super::metadata::merge_channel::{self, merge_channel};
-use super::metadata::reader::MetadataReader;
 use super::metadata::worker::MetadataWorker;
 use super::state::ClusterState;
 
@@ -100,7 +100,7 @@ impl Cluster {
         let client_routes_subscriber = client_routes_address_translator
             .map(|translator| translator as Arc<dyn ClientRoutesSubscriber>);
 
-        let mut metadata_reader = MetadataReader::new(
+        let cc_establisher = ControlConnectionEstablisher::new(
             known_nodes,
             hostname_resolution_timeout,
             pool_config.connection_config.clone(),
@@ -114,13 +114,20 @@ impl Cluster {
 
         let mut node_status = HashMap::new();
 
-        let (cc, mut metadata) = metadata_reader
-            .establish_cc_and_fetch_metadata(true)
-            .await?;
+        let (metadata_updates_sender, metadata_updates_receiver) = merge_channel();
 
-        // The initial metadata is fetched before the worker exists, so the routes must be
-        // applied here - `ClusterState::new` below creates connection pools, which translate
-        // addresses through the subscriber.
+        let mut metadata_worker = MetadataWorker::new(
+            cc_establisher,
+            cluster_metadata_refresh_interval,
+            refresh_receiver,
+            metadata_updates_sender,
+        );
+
+        let (cc, mut metadata) = metadata_worker.establish_initial().await?;
+
+        // The initial metadata is fetched before the metadata worker is spawned, so the routes
+        // must be applied here - `ClusterState::new` below creates connection pools, which
+        // translate addresses through the subscriber.
         if let (Some(subscriber), Some(routes)) = (
             client_routes_subscriber.as_ref(),
             metadata.client_routes.take(),
@@ -154,8 +161,6 @@ impl Cluster {
         let cluster_state: Arc<ArcSwap<ClusterState>> =
             Arc::new(ArcSwap::from(Arc::new(cluster_state)));
 
-        let (metadata_updates_sender, metadata_updates_receiver) = merge_channel();
-
         let worker = ClusterWorker {
             cluster_state: cluster_state.clone(),
             node_status,
@@ -176,13 +181,6 @@ impl Cluster {
 
             metrics,
         };
-
-        let metadata_worker = MetadataWorker::new(
-            metadata_reader,
-            cluster_metadata_refresh_interval,
-            refresh_receiver,
-            metadata_updates_sender,
-        );
 
         let (fut, worker_handle) = worker.work().remote_handle();
         tokio::spawn(fut);
@@ -424,9 +422,14 @@ impl ClusterWorker {
                         HashSet::new()
                     }
                 }
-                MetadataChanges::Partial {
+                MetadataChanges::Partial(PartialMetadataChanges {
                     client_routes_updates,
-                } => subscriber.merge_client_routes_update(client_routes_updates.take()),
+                }) => match client_routes_updates.take() {
+                    Some(client_routes_update) => {
+                        subscriber.merge_client_routes_update(client_routes_update)
+                    }
+                    None => HashSet::new(),
+                },
             }
         } else {
             HashSet::new()
@@ -466,10 +469,7 @@ impl ClusterWorker {
                     let _ = response_chan.send(Ok(()));
                 }
             }
-            None
-            | Some(MetadataChanges::Partial {
-                client_routes_updates: _,
-            }) => {
+            None | Some(MetadataChanges::Partial(_)) => {
                 // For now there is nothing that requires publishing new ClusterState.
                 // The only thing left to do is processing up hints.
                 process_up_hints(self.cluster_state.load().as_ref());

@@ -10,8 +10,9 @@ use dashmap::DashMap;
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
+use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::client::pager::QueryPager;
-use crate::cluster::metadata::UntranslatedEndpoint;
+use crate::cluster::metadata::{SchemaMetadataFetchMode, UntranslatedEndpoint};
 use crate::errors::{
     ConnectionError, NextPageError, NextRowError, RequestAttemptError, RequestError,
 };
@@ -74,12 +75,30 @@ pub(crate) enum ControlConnectionEvent {
     Shutdown,
 }
 
+/// Configuration for the queries a [`ControlConnection`] runs on behalf of the
+/// driver: what metadata to fetch and how.
+///
+/// Not to be confused with [`ConnectionConfig`](crate::network::ConnectionConfig),
+/// which configures how the underlying network connection is opened.
+#[derive(Clone)]
+pub(super) struct ControlConnectionConfig {
+    /// Keyspaces to restrict the schema metadata fetch to. Empty means no restriction.
+    pub(super) keyspaces_to_fetch: Vec<String>,
+    /// Whether (and in what detail) to fetch schema metadata.
+    pub(super) schema_metadata_fetch_mode: SchemaMetadataFetchMode,
+    /// The subscriber interested in `system.client_routes`, if any. Provides the
+    /// connection ids to filter routes by; its presence also makes the control
+    /// connection register for CLIENT_ROUTES_CHANGE events.
+    pub(super) client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
+    /// The custom server-side timeout set for requests executed on the control connection.
+    pub(super) request_timeouts: MetadataRequestTimeouts,
+}
+
 /// The single connection used to fetch metadata and receive events from the cluster.
 pub(super) struct ControlConnection {
     conn: Arc<Connection>,
     endpoint: UntranslatedEndpoint,
-    /// The timeouts applied to requests executed on the control connection.
-    request_timeouts: MetadataRequestTimeouts,
+    pub(super) config: ControlConnectionConfig,
     cache: Arc<ControlConnectionCache>,
 }
 
@@ -98,6 +117,7 @@ impl ControlConnection {
     pub(super) fn new(
         conn: Arc<Connection>,
         endpoint: UntranslatedEndpoint,
+        config: ControlConnectionConfig,
         cache: Arc<ControlConnectionCache>,
         error_channel: oneshot::Receiver<ConnectionError>,
         events_channel: mpsc::Receiver<Event>,
@@ -106,7 +126,7 @@ impl ControlConnection {
             Self {
                 conn,
                 endpoint,
-                request_timeouts: MetadataRequestTimeouts::default(),
+                config,
                 cache,
             },
             ControlConnectionEvents {
@@ -118,14 +138,6 @@ impl ControlConnection {
 
     pub(super) fn endpoint(&self) -> &UntranslatedEndpoint {
         &self.endpoint
-    }
-
-    /// Sets the timeouts applied to requests executed on the control connection.
-    pub(super) fn with_request_timeouts(self, timeouts: MetadataRequestTimeouts) -> Self {
-        Self {
-            request_timeouts: timeouts,
-            ..self
-        }
     }
 
     pub(super) fn get_connect_address(&self) -> SocketAddr {
@@ -140,7 +152,11 @@ impl ControlConnection {
     /// Appends the custom server-side timeout to the statement string, if such custom timeout
     /// is provided and we are connected to ScyllaDB (since custom timeouts is ScyllaDB-only feature).
     fn maybe_append_timeout_override(&self, statement: &mut Statement) {
-        if let Some(timeout) = self.request_timeouts.serverside(self.is_to_scylladb()) {
+        if let Some(timeout) = self
+            .config
+            .request_timeouts
+            .serverside(self.is_to_scylladb())
+        {
             // SAFETY: io::fmt::Write impl for String is infallible.
             write!(
                 statement.contents,
@@ -192,7 +208,7 @@ impl ControlConnection {
 
         // Set on this per-use clone rather than in `get_or_prepare_statement`, so that
         // the shared cache never bakes a timeout in.
-        prepared.set_request_timeout(Some(self.request_timeouts.clientside()));
+        prepared.set_request_timeout(Some(self.config.request_timeouts.clientside()));
 
         let serialized_values = prepared.serialize_values(&values).map_err(|ser_err| {
             NextRowError::NextPageError(NextPageError::RequestFailure(
@@ -257,15 +273,15 @@ mod tests {
 
     use std::num::NonZeroU16;
 
-    use crate::cluster::control_connection::ControlConnectionCache;
-    use crate::cluster::metadata::UntranslatedEndpoint;
+    use crate::cluster::control_connection::{ControlConnectionCache, MetadataRequestTimeouts};
+    use crate::cluster::metadata::{SchemaMetadataFetchMode, UntranslatedEndpoint};
     use crate::cluster::node::ResolvedContactPoint;
     use crate::network::HostConnectionConfig;
     use crate::network::open_connection;
     use crate::routing::ShardInfo;
     use crate::test_utils::setup_tracing;
 
-    use super::{ControlConnection, MetadataRequestTimeouts};
+    use super::{ControlConnection, ControlConnectionConfig, ControlConnectionEvents};
 
     /// Tests that ControlConnection enforces the provided custom timeout
     /// iff ScyllaDB is the target node (else ignores the custom timeout).
@@ -380,10 +396,17 @@ mod tests {
             }
         }
 
-        async fn test_metadata_timeouts(
+        /// Opens a fresh connection to the proxy and builds a `ControlConnection`
+        /// configured with the given custom server-side timeout. Returns whether the
+        /// (simulated) target node is a ScyllaDB node, too.
+        ///
+        /// The `ControlConnectionEvents` are returned only to be kept alive by the
+        /// caller: dropping the events channel would break the connection on an
+        /// incoming event.
+        async fn make_control_connection(
             proxy_addr: SocketAddr,
-            feedback_rx: &mut mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>,
-        ) {
+            overridden_serverside_timeout: Option<Duration>,
+        ) -> (ControlConnection, ControlConnectionEvents, bool) {
             let endpoint = UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                 address: proxy_addr,
             });
@@ -400,20 +423,34 @@ mod tests {
             .unwrap();
 
             let connected_to_scylladb = conn.get_shard_info().is_some();
-            let (conn_with_default_timeout, _events) = ControlConnection::new(
+            let (cc, cc_events) = ControlConnection::new(
                 Arc::new(conn),
                 endpoint,
+                ControlConnectionConfig {
+                    keyspaces_to_fetch: Vec::new(),
+                    schema_metadata_fetch_mode: SchemaMetadataFetchMode::Disabled,
+                    client_routes_subscriber: None,
+                    request_timeouts: MetadataRequestTimeouts {
+                        serverside_override: overridden_serverside_timeout,
+                        clientside_override: None,
+                    },
+                },
                 Arc::new(ControlConnectionCache::new()),
                 error_receiver,
                 events_receiver,
             );
+            (cc, cc_events, connected_to_scylladb)
+        }
 
+        async fn test_metadata_timeouts(
+            proxy_addr: SocketAddr,
+            feedback_rx: &mut mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>,
+        ) {
             // No custom timeout set.
             {
-                conn_with_default_timeout
-                    .query_iter(QUERY_STR, &())
-                    .await
-                    .unwrap_err();
+                let (cc, _events, _) = make_control_connection(proxy_addr, None).await;
+
+                cc.query_iter(QUERY_STR, &()).await.unwrap_err();
 
                 assert_no_custom_timeout(feedback_rx).await;
             }
@@ -421,16 +458,10 @@ mod tests {
             // Custom timeout set, so it should be set in query strings iff the target node is ScyllaDB.
             {
                 let custom_timeout = Duration::from_millis(2137);
-                let conn_with_custom_timeout =
-                    conn_with_default_timeout.with_request_timeouts(MetadataRequestTimeouts {
-                        serverside_override: Some(custom_timeout),
-                        clientside_override: None,
-                    });
+                let (cc, _events, connected_to_scylladb) =
+                    make_control_connection(proxy_addr, Some(custom_timeout)).await;
 
-                conn_with_custom_timeout
-                    .query_iter(QUERY_STR, &())
-                    .await
-                    .unwrap_err();
+                cc.query_iter(QUERY_STR, &()).await.unwrap_err();
 
                 assert_custom_timeout_iff_scylladb(
                     feedback_rx,
