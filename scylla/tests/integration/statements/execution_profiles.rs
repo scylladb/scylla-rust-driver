@@ -180,74 +180,75 @@ async fn test_execution_profiles() {
         while profile_rx.try_recv().is_ok() {}
         consistency_rx.try_recv().unwrap_err();
 
+        // On the happy path (no attempt fails), the driver never creates a RetrySession
+        // (it is instantiated lazily, upon the first attempt error), so only the load
+        // balancing policy reports itself.
+        async fn assert_lb_report(
+            profile_rx: &mut mpsc::UnboundedReceiver<(Report, u8)>,
+            expected_node: u8,
+        ) {
+            let report = profile_rx.recv().await.unwrap();
+            assert_matches!(report, (Report::LoadBalancing, node) if node == expected_node);
+            profile_rx.try_recv().unwrap_err();
+        }
 
-        /* Test load balancing and retry policy */
+        // Once an attempt fails, the RetrySession is created, so both policies report themselves.
+        async fn assert_lb_and_retry_reports(
+            profile_rx: &mut mpsc::UnboundedReceiver<(Report, u8)>,
+            expected_node: u8,
+        ) {
+            let report1 = profile_rx.recv().await.unwrap();
+            let report2 = profile_rx.recv().await.unwrap();
+            assert_matches!(
+                (report1, report2),
+                ((Report::LoadBalancing, n1), (Report::RetryPolicy, n2))
+                    | ((Report::RetryPolicy, n1), (Report::LoadBalancing, n2))
+                    if n1 == expected_node && n2 == expected_node
+            );
+            profile_rx.try_recv().unwrap_err();
+        }
+
+
+        /* Test load balancing policy */
 
         // Run on default per-session execution profile
         session.query_unpaged(query.clone(), &[]).await.unwrap();
-        let report1 = profile_rx.recv().await.unwrap();
-        let report2 = profile_rx.recv().await.unwrap();
-        assert_matches!((report1, report2), ((Report::LoadBalancing, 1), (Report::RetryPolicy, 1)) | ((Report::RetryPolicy, 1), (Report::LoadBalancing, 1)));
-        profile_rx.try_recv().unwrap_err();
+        assert_lb_report(&mut profile_rx, 1).await;
 
         session.execute_unpaged(&prepared, &[]).await.unwrap();
-        let report1 = profile_rx.recv().await.unwrap();
-        let report2 = profile_rx.recv().await.unwrap();
-        assert_matches!((report1, report2), ((Report::LoadBalancing, 1), (Report::RetryPolicy, 1)) | ((Report::RetryPolicy, 1), (Report::LoadBalancing, 1)));
-        profile_rx.try_recv().unwrap_err();
+        assert_lb_report(&mut profile_rx, 1).await;
 
         session.batch(&batch, ((),)).await.unwrap();
-        let report1 = profile_rx.recv().await.unwrap();
-        let report2 = profile_rx.recv().await.unwrap();
-        assert_matches!((report1, report2), ((Report::LoadBalancing, 1), (Report::RetryPolicy, 1)) | ((Report::RetryPolicy, 1), (Report::LoadBalancing, 1)));
-        profile_rx.try_recv().unwrap_err();
+        assert_lb_report(&mut profile_rx, 1).await;
 
         // Run on query-specific execution profile
         query.set_execution_profile_handle(Some(profile2.clone().into_handle()));
         session.query_unpaged(query.clone(), &[]).await.unwrap();
-        let report1 = profile_rx.recv().await.unwrap();
-        let report2 = profile_rx.recv().await.unwrap();
-        assert_matches!((report1, report2), ((Report::LoadBalancing, 2), (Report::RetryPolicy, 2)) | ((Report::RetryPolicy, 2), (Report::LoadBalancing, 2)));
-        profile_rx.try_recv().unwrap_err();
+        assert_lb_report(&mut profile_rx, 2).await;
 
         prepared.set_execution_profile_handle(Some(profile2.clone().into_handle()));
         session.execute_unpaged(&prepared, &[]).await.unwrap();
-        let report1 = profile_rx.recv().await.unwrap();
-        let report2 = profile_rx.recv().await.unwrap();
-        assert_matches!((report1, report2), ((Report::LoadBalancing, 2), (Report::RetryPolicy, 2)) | ((Report::RetryPolicy, 2), (Report::LoadBalancing, 2)));
-        profile_rx.try_recv().unwrap_err();
+        assert_lb_report(&mut profile_rx, 2).await;
 
         batch.set_execution_profile_handle(Some(profile2.clone().into_handle()));
         session.batch(&batch, ((),)).await.unwrap();
-        let report1 = profile_rx.recv().await.unwrap();
-        let report2 = profile_rx.recv().await.unwrap();
-        assert_matches!((report1, report2), ((Report::LoadBalancing, 2), (Report::RetryPolicy, 2)) | ((Report::RetryPolicy, 2), (Report::LoadBalancing, 2)));
-        profile_rx.try_recv().unwrap_err();
+        assert_lb_report(&mut profile_rx, 2).await;
 
         // Run again on default per-session execution profile
         query.set_execution_profile_handle(None);
         session.query_unpaged(query.clone(), &[]).await.unwrap();
-        let report1 = profile_rx.recv().await.unwrap();
-        let report2 = profile_rx.recv().await.unwrap();
-        assert_matches!((report1, report2), ((Report::LoadBalancing, 1), (Report::RetryPolicy, 1)) | ((Report::RetryPolicy, 1), (Report::LoadBalancing, 1)));
-        profile_rx.try_recv().unwrap_err();
+        assert_lb_report(&mut profile_rx, 1).await;
 
         prepared.set_execution_profile_handle(None);
         session.execute_unpaged(&prepared, &[]).await.unwrap();
-        let report1 = profile_rx.recv().await.unwrap();
-        let report2 = profile_rx.recv().await.unwrap();
-        assert_matches!((report1, report2), ((Report::LoadBalancing, 1), (Report::RetryPolicy, 1)) | ((Report::RetryPolicy, 1), (Report::LoadBalancing, 1)));
-        profile_rx.try_recv().unwrap_err();
+        assert_lb_report(&mut profile_rx, 1).await;
 
         batch.set_execution_profile_handle(None);
         session.batch(&batch, ((),)).await.unwrap();
-        let report1 = profile_rx.recv().await.unwrap();
-        let report2 = profile_rx.recv().await.unwrap();
-        assert_matches!((report1, report2), ((Report::LoadBalancing, 1), (Report::RetryPolicy, 1)) | ((Report::RetryPolicy, 1), (Report::LoadBalancing, 1)));
-        profile_rx.try_recv().unwrap_err();
+        assert_lb_report(&mut profile_rx, 1).await;
 
 
-        /* Test consistencies */
+        /* Test retry policy and consistencies */
         let rule_overloaded = RequestRule(
             Condition::True,
             RequestReaction::forge().overloaded()
@@ -263,16 +264,19 @@ async fn test_execution_profiles() {
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::One);
         consistency_rx.try_recv().unwrap_err();
+        assert_lb_and_retry_reports(&mut profile_rx, 1).await;
 
         session.execute_unpaged(&prepared, &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::One);
         consistency_rx.try_recv().unwrap_err();
+        assert_lb_and_retry_reports(&mut profile_rx, 1).await;
 
         session.batch(&batch, ((),)).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::One);
         consistency_rx.try_recv().unwrap_err();
+        assert_lb_and_retry_reports(&mut profile_rx, 1).await;
 
         // Run on statement-specific execution profile
         query.set_execution_profile_handle(Some(profile2.clone().into_handle()));
@@ -280,18 +284,21 @@ async fn test_execution_profiles() {
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::Two);
         consistency_rx.try_recv().unwrap_err();
+        assert_lb_and_retry_reports(&mut profile_rx, 2).await;
 
         prepared.set_execution_profile_handle(Some(profile2.clone().into_handle()));
         session.execute_unpaged(&prepared, &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::Two);
         consistency_rx.try_recv().unwrap_err();
+        assert_lb_and_retry_reports(&mut profile_rx, 2).await;
 
         batch.set_execution_profile_handle(Some(profile2.clone().into_handle()));
         session.batch(&batch, ((),)).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::Two);
         consistency_rx.try_recv().unwrap_err();
+        assert_lb_and_retry_reports(&mut profile_rx, 2).await;
 
         // Run with statement-set specific options
         query.set_consistency(Consistency::Three);
@@ -299,18 +306,21 @@ async fn test_execution_profiles() {
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::Three);
         consistency_rx.try_recv().unwrap_err();
+        assert_lb_and_retry_reports(&mut profile_rx, 2).await;
 
         prepared.set_consistency(Consistency::Three);
         session.execute_unpaged(&prepared, &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::Three);
         consistency_rx.try_recv().unwrap_err();
+        assert_lb_and_retry_reports(&mut profile_rx, 2).await;
 
         batch.set_consistency(Consistency::Three);
         session.batch(&batch, ((),)).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::Three);
         consistency_rx.try_recv().unwrap_err();
+        assert_lb_and_retry_reports(&mut profile_rx, 2).await;
 
         for i in 0..=2 {
             running_proxy.running_nodes[i].change_request_rules(None);
