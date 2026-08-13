@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use darling::FromAttributes;
 use proc_macro::TokenStream;
-use syn::parse_quote;
+use syn::{WherePredicate, parse_quote};
 
 use crate::Flavor;
 
@@ -94,14 +94,14 @@ struct Context {
 pub(crate) fn derive_serialize_value(
     tokens_input: TokenStream,
 ) -> Result<syn::ItemImpl, syn::Error> {
-    let input: syn::DeriveInput = syn::parse(tokens_input)?;
+    let mut input: syn::DeriveInput = syn::parse(tokens_input)?;
     let struct_name = input.ident.clone();
     let named_fields = crate::parser::parse_named_fields(&input, "SerializeValue")?;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let attributes = Attributes::from_attributes(&input.attrs)?;
 
     let crate_path = attributes.crate_path();
     let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeValue);
+    let constraining_trait: syn::Path = parse_quote!(#crate_path::SerializeValue);
 
     let fields = named_fields
         .named
@@ -126,6 +126,26 @@ pub(crate) fn derive_serialize_value(
     };
 
     let serialize_item = generator.generate_serialize();
+
+    // If the struct is generic, we need to ensure that its type parameters
+    // implement constraining trait (SerializeValue). For each such type,
+    // we have to add a predicate to the `where` clause.
+    let type_constraints = input
+        .generics
+        .type_params()
+        .map(move |t| -> WherePredicate {
+            let t_ident = &t.ident;
+            parse_quote!(#t_ident: #constraining_trait)
+        })
+        .collect::<Vec<_>>();
+
+    input
+        .generics
+        .make_where_clause()
+        .predicates
+        .extend(type_constraints);
+
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     let res = parse_quote! {
         #[automatically_derived]

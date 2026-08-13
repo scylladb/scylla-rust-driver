@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use darling::FromAttributes;
 use proc_macro::TokenStream;
 use quote::format_ident;
-use syn::parse_quote;
+use syn::{WherePredicate, parse_quote};
 
 use crate::Flavor;
 
@@ -83,11 +83,12 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
     let input: syn::DeriveInput = syn::parse(tokens_input)?;
     let struct_name = input.ident.clone();
     let named_fields = crate::parser::parse_named_fields(&input, "SerializeRow")?;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let (impl_generics, ty_generics, _) = input.generics.split_for_impl();
     let attributes = Attributes::from_attributes(&input.attrs)?;
 
     let crate_path = attributes.crate_path();
     let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeRow);
+    let constraining_trait: syn::Path = parse_quote!(#crate_path::SerializeValue);
 
     let fields = named_fields
         .named
@@ -103,11 +104,33 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
         // as it's less error prone - we just filter in one place instead of N places.
         .filter(|f| f.as_ref().map(|f| !f.attrs.skip).unwrap_or(true))
         .collect::<Result<_, _>>()?;
+
+    let result_generics = {
+        // If the struct is generic, we need to ensure that its type parameters
+        // implement constraining trait (SerializeValue). For each such type,
+        // we have to add a predicate to the `where` clause.
+        let type_constraints = input
+            .generics
+            .type_params()
+            .map(move |t| -> WherePredicate {
+                let t_ident = &t.ident;
+                parse_quote!(#t_ident: #constraining_trait)
+            });
+        let mut result_generics = input.generics.clone();
+        result_generics
+            .make_where_clause()
+            .predicates
+            .extend(type_constraints);
+        result_generics
+    };
+
+    let impl_where = result_generics.where_clause.clone();
+
     let ctx = Context {
         attributes,
         fields,
         struct_name: struct_name.clone(),
-        generics: input.generics.clone(),
+        generics: result_generics,
     };
     ctx.validate(&input.ident)?;
 
@@ -121,7 +144,7 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
 
     let res = parse_quote! {
         #[automatically_derived]
-        impl #impl_generics #implemented_trait for #struct_name #ty_generics #where_clause {
+        impl #impl_generics #implemented_trait for #struct_name #ty_generics #impl_where {
             #serialize_item
             #is_empty_item
         }
