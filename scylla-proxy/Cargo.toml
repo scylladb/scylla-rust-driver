@@ -17,7 +17,7 @@ all-features = true
 defaults = []
 
 [dependencies]
-scylla-cql = { version = "1.7.0", path = "../scylla-cql" }
+scylla-cql = { version = "1.8.0", path = "../scylla-cql" }
 bytes = "1.10"
 futures = "0.3.6"
 tokio = { version = "1.40", features = [

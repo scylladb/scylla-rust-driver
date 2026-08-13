@@ -45,7 +45,7 @@ itertools = "0.15.0"
 
 # Needed for client routes feature only
 scylla = { version = "1.7.0", path = "../scylla", optional = true }
-scylla-cql = { version = "1.7.0", path = "../scylla-cql", optional = true }
+scylla-cql = { version = "1.8.0", path = "../scylla-cql", optional = true }
 scylla-proxy = { version = "0.0.6", path = "../scylla-proxy", optional = true }
 
 [package.metadata.cargo-semver-checks.lints]
