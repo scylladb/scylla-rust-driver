@@ -69,6 +69,13 @@ pub(in super::super) struct MetadataWorker {
     pending_request: Option<RefreshRequest>,
 }
 
+/// A [`ControlConnection`] established by [`MetadataWorker::establish`],
+/// bundled with everything the worker needs to serve it.
+pub(in super::super) struct EstablishedCc {
+    cc: ControlConnection,
+    events: ControlConnectionEvents,
+}
+
 /// What a server event obliges the worker to fetch, as classified by
 /// [`MetadataWorker::handle_server_event`].
 enum EventAction {
@@ -311,38 +318,44 @@ impl MetadataWorker {
     /// [`work`](Self::work) once the worker starts.
     pub(in super::super) async fn establish_initial(
         &mut self,
-    ) -> Result<
-        (
-            Option<(ControlConnection, ControlConnectionEvents)>,
-            Metadata,
-        ),
-        MetadataError,
-    > {
-        self.metadata_reader
-            .establish_cc_and_fetch_metadata(true)
-            .await
+    ) -> Result<(Option<EstablishedCc>, Metadata), MetadataError> {
+        self.establish(true).await
+    }
+
+    /// Establishes a control connection, fetching metadata in the process -
+    /// see [`MetadataReader::establish_cc_and_fetch_metadata`], to which this
+    /// delegates the candidate iteration.
+    async fn establish(
+        &mut self,
+        initial: bool,
+    ) -> Result<(Option<EstablishedCc>, Metadata), MetadataError> {
+        let (kept, metadata) = self
+            .metadata_reader
+            .establish_cc_and_fetch_metadata(initial)
+            .await?;
+        Ok((
+            kept.map(|(cc, events)| EstablishedCc { cc, events }),
+            metadata,
+        ))
     }
 
     /// Runs the worker until the cluster (or the runtime) is gone.
     ///
     /// `initial_cc` is the control connection that the initial metadata was fetched
     /// on; `None` means none could be kept, in which case one is established first.
-    pub(in super::super) async fn work(
-        mut self,
-        initial_cc: Option<(ControlConnection, ControlConnectionEvents)>,
-    ) {
+    pub(in super::super) async fn work(mut self, initial_cc: Option<EstablishedCc>) {
         let mut next_cc = initial_cc;
 
         loop {
-            let (cc, cc_events) = match next_cc.take() {
-                Some(cc) => cc,
+            let established = match next_cc.take() {
+                Some(established) => established,
                 None => match self.work_without_cc().await {
                     ControlFlow::Break(()) => return,
-                    ControlFlow::Continue(cc) => cc,
+                    ControlFlow::Continue(established) => established,
                 },
             };
 
-            match self.work_on_cc(cc, cc_events).await {
+            match self.work_on_cc(established).await {
                 ControlFlow::Break(()) => return,
                 // The control connection is defunct - establish a new one.
                 ControlFlow::Continue(()) => (),
@@ -360,23 +373,17 @@ impl MetadataWorker {
     /// pending refresh request (through the cluster worker) and publishes an update.
     ///
     /// Returns [`ControlFlow::Break`] if the worker should stop.
-    async fn work_without_cc(
-        &mut self,
-    ) -> ControlFlow<(), (ControlConnection, ControlConnectionEvents)> {
+    async fn work_without_cc(&mut self) -> ControlFlow<(), EstablishedCc> {
         loop {
             debug!("Attempting to establish a new control connection");
             let attempt_time = Instant::now();
 
-            match self
-                .metadata_reader
-                .establish_cc_and_fetch_metadata(false)
-                .await
-            {
-                Ok((cc, metadata)) => {
+            match self.establish(false).await {
+                Ok((kept, metadata)) => {
                     self.publish_metadata(metadata)?;
 
-                    if let Some(cc) = cc {
-                        return ControlFlow::Continue(cc);
+                    if let Some(established) = kept {
+                        return ControlFlow::Continue(established);
                     }
                     // Metadata was fetched, but no control connection could be kept
                     // (e.g. every reachable node is rejected by the host filter).
@@ -444,11 +451,11 @@ impl MetadataWorker {
     /// Returns [`ControlFlow::Continue`] once the control connection is deemed
     /// defunct and should be replaced, or [`ControlFlow::Break`] if the worker
     /// should stop.
-    async fn work_on_cc(
-        &mut self,
-        cc: ControlConnection,
-        mut cc_events: ControlConnectionEvents,
-    ) -> ControlFlow<()> {
+    async fn work_on_cc(&mut self, established: EstablishedCc) -> ControlFlow<()> {
+        let EstablishedCc {
+            cc,
+            events: mut cc_events,
+        } = established;
         let mut plan = FetchPlan::default();
         let mut next_refresh_deadline =
             deadline_after(Instant::now(), self.cluster_metadata_refresh_interval);
