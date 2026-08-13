@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::ops::ControlFlow;
-use std::pin::{Pin, pin};
+use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -358,15 +358,20 @@ impl MetadataWorker {
         &mut self,
         initial: bool,
     ) -> Result<(Option<EstablishedCc>, Metadata), MetadataError> {
-        let (kept, metadata) = self
-            .cc_establisher
-            .establish_cc_and_fetch_metadata(
-                initial,
-                &mut CandidateFetcher {
-                    updates: &mut self.updates,
-                },
-            )
-            .await?;
+        let mut fetcher = CandidateFetcher {
+            updates: &mut self.updates,
+        };
+        // Boxed AND `dyn`-erased for the same reason as the `query_metadata`
+        // future in [`fetch_on_candidate`](Self::fetch_on_candidate): this
+        // severs the whole establishment machinery (candidate iteration,
+        // connection opening, handshake) from the future type of
+        // `Session::connect`, which downstream crates compute the layout of.
+        // One allocation per establishment attempt.
+        let fetch: Pin<Box<dyn Future<Output = _> + Send>> = Box::pin(
+            self.cc_establisher
+                .establish_cc_and_fetch_metadata(initial, &mut fetcher),
+        );
+        let (kept, metadata) = fetch.await?;
         Ok((
             kept.map(|(cc, events, plan)| EstablishedCc { cc, events, plan }),
             metadata,
@@ -392,7 +397,17 @@ impl MetadataWorker {
         cc_events: &mut ControlConnectionEvents,
     ) -> Result<(TopologyUpdateGuard, FetchPlan), MetadataError> {
         let mut plan = FetchPlan::default();
-        let mut fetch = pin!(cc.query_metadata());
+        // Boxed AND `dyn`-erased (rather than `pin!`ed) to cut the future-type
+        // nesting here: `query_metadata`'s future tree is ~75 levels deep, and
+        // exposing it in this future's type - which every caller of
+        // `Session::connect` awaits through - used to blow past rustc's
+        // default 128 `recursion_limit` when computing layouts in downstream
+        // crates (including doctests, which cannot raise the limit). Note that
+        // the coercion to `dyn Future` is what actually cuts the layout
+        // recursion; a `Pin<Box<ConcreteFuture>>` is still recursed into. The
+        // cost is one allocation per establishment attempt, as negligible as
+        // in [`PendingFetches`].
+        let mut fetch: FullFetch<'_> = Box::pin(cc.query_metadata());
         loop {
             tokio::select! {
                 fetch_result = &mut fetch => {
