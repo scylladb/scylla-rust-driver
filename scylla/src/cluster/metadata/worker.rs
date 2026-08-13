@@ -20,8 +20,8 @@ use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::frame::response::event::EventV2 as Event;
 use crate::frame::response::event::StatusChangeEvent;
 
+use super::cc_establisher::{ControlConnectionEstablisher, FetchOnCandidate, TopologyUpdateGuard};
 use super::merge_channel;
-use super::reader::{FetchOnCandidate, MetadataReader, TopologyUpdateGuard};
 
 /// How often the worker attempts to establish a control connection while it has none.
 const CONTROL_CONNECTION_REPAIR_INTERVAL: Duration = Duration::from_secs(1);
@@ -41,7 +41,7 @@ const CONTROL_CONNECTION_REPAIR_INTERVAL: Duration = Duration::from_secs(1);
 pub(in super::super) struct MetadataWorker {
     /// Establishes control connections (fetching metadata in the process) and
     /// keeps the known peers to establish them to.
-    metadata_reader: MetadataReader,
+    cc_establisher: ControlConnectionEstablisher,
 
     // This value determines how frequently the metadata
     // worker will refresh the cluster metadata
@@ -84,7 +84,7 @@ pub(in super::super) struct EstablishedCc {
 }
 
 /// Adapts [`MetadataWorker::fetch_on_candidate`] to the [`FetchOnCandidate`]
-/// trait that [`MetadataReader::establish_cc_and_fetch_metadata`] consumes,
+/// trait that [`ControlConnectionEstablisher::establish_cc_and_fetch_metadata`] consumes,
 /// lending it the worker's updates channel.
 struct CandidateFetcher<'a> {
     updates: &'a mut merge_channel::Sender<MetadataUpdate>,
@@ -324,13 +324,13 @@ impl Future for PendingFetches<'_> {
 
 impl MetadataWorker {
     pub(in super::super) fn new(
-        metadata_reader: MetadataReader,
+        cc_establisher: ControlConnectionEstablisher,
         cluster_metadata_refresh_interval: Duration,
         refresh_channel: tokio::sync::mpsc::Receiver<RefreshRequest>,
         updates: merge_channel::Sender<MetadataUpdate>,
     ) -> Self {
         Self {
-            metadata_reader,
+            cc_establisher,
             cluster_metadata_refresh_interval,
             refresh_channel,
             updates,
@@ -351,7 +351,7 @@ impl MetadataWorker {
     }
 
     /// Establishes a control connection, fetching metadata in the process -
-    /// see [`MetadataReader::establish_cc_and_fetch_metadata`], to which this
+    /// see [`ControlConnectionEstablisher::establish_cc_and_fetch_metadata`], to which this
     /// delegates the candidate iteration. Each candidate is fetched on (and
     /// its events drained) by [`fetch_on_candidate`](Self::fetch_on_candidate).
     async fn establish(
@@ -359,7 +359,7 @@ impl MetadataWorker {
         initial: bool,
     ) -> Result<(Option<EstablishedCc>, Metadata), MetadataError> {
         let (kept, metadata) = self
-            .metadata_reader
+            .cc_establisher
             .establish_cc_and_fetch_metadata(
                 initial,
                 &mut CandidateFetcher {
@@ -403,7 +403,7 @@ impl MetadataWorker {
                     ControlConnectionEvent::ServerEvent(event) => {
                         // `Break` (the cluster worker is gone) is deliberately
                         // ignored.
-                        // Returning Err will cause MetadataReader to move to the next
+                        // Returning Err will cause ControlConnectionEstablisher to move to the next
                         // node in the plan, which is pointless on shutdown. It will only
                         // cause unnecessary connections, and weird errors, potentially
                         // even returning dummy metadata on initial fetch.
@@ -562,7 +562,7 @@ impl MetadataWorker {
 
         // The in-flight fetches. Their futures borrow `cc` and nothing else,
         // so the loop stays free to use `self` (in particular
-        // `self.metadata_reader`) while fetches are in flight.
+        // `self.cc_establisher`) while fetches are in flight.
         let mut pending_fetches = PendingFetches::Idle;
 
         loop {
@@ -582,7 +582,7 @@ impl MetadataWorker {
                     match fetch_outcome {
                         FetchOutcome::Full(Ok(topology_update)) => {
                             debug!("Fetched new metadata");
-                            let metadata = topology_update.apply(&mut self.metadata_reader);
+                            let metadata = topology_update.apply(&mut self.cc_establisher);
                             self.publish_metadata(metadata)?;
                         }
                         FetchOutcome::Full(Err(err)) => {

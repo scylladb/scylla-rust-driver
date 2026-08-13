@@ -49,7 +49,7 @@ use crate::errors::{
 };
 use crate::routing::Token;
 
-use super::reader::TopologyUpdateGuard;
+use super::cc_establisher::TopologyUpdateGuard;
 
 type PerKeyspace<T> = HashMap<String, T>;
 type PerKeyspaceResult<T, E> = PerKeyspace<Result<T, E>>;
@@ -163,8 +163,8 @@ impl ControlConnection {
     /// [`ControlConnectionConfig`](crate::cluster::control_connection::ControlConnectionConfig).
     ///
     /// The result comes wrapped in a [`TopologyUpdateGuard`]: the fetched metadata
-    /// affects which peers the [`MetadataReader`](super::reader::MetadataReader)
-    /// establishes control connections to, so the reader must absorb it before
+    /// affects which peers the [`ControlConnectionEstablisher`](super::cc_establisher::ControlConnectionEstablisher)
+    /// establishes control connections to, so the establisher must absorb it before
     /// anything else can use it.
     pub(super) async fn query_metadata(&self) -> Result<TopologyUpdateGuard, MetadataError> {
         let connect_port = self.endpoint().address().port();

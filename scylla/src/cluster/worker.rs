@@ -28,8 +28,8 @@ use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
 use super::metadata::Metadata;
+use super::metadata::cc_establisher::ControlConnectionEstablisher;
 use super::metadata::merge_channel::{self, merge_channel};
-use super::metadata::reader::MetadataReader;
 use super::metadata::worker::MetadataWorker;
 use super::state::ClusterState;
 
@@ -100,7 +100,7 @@ impl Cluster {
         let client_routes_subscriber = client_routes_address_translator
             .map(|translator| translator as Arc<dyn ClientRoutesSubscriber>);
 
-        let metadata_reader = MetadataReader::new(
+        let cc_establisher = ControlConnectionEstablisher::new(
             known_nodes,
             hostname_resolution_timeout,
             pool_config.connection_config.clone(),
@@ -117,7 +117,7 @@ impl Cluster {
         let (metadata_updates_sender, metadata_updates_receiver) = merge_channel();
 
         let mut metadata_worker = MetadataWorker::new(
-            metadata_reader,
+            cc_establisher,
             cluster_metadata_refresh_interval,
             refresh_receiver,
             metadata_updates_sender,

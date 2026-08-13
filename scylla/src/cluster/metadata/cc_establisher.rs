@@ -1,4 +1,4 @@
-//! This module contains the [`MetadataReader`] struct, which is responsible for
+//! This module contains the [`ControlConnectionEstablisher`] struct, which is responsible for
 //! creating control connections and fetching cluster metadata through them.
 //!
 //! The control connection is a dedicated connection to one of the cluster nodes
@@ -6,13 +6,13 @@
 //! - Fetch cluster metadata (topology, schema, token ring information)
 //! - Receive server-side events (topology changes, schema changes, status changes)
 //!
-//! [`MetadataReader`] establishes control connections, including:
+//! [`ControlConnectionEstablisher`] establishes control connections, including:
 //! - Connection establishment to contact points or known peers
 //! - Iterating over known peers and initial contact points on connection failure
 //! - Host filtering to ensure the control connection is established to an accepted node
 //!
-//! Ownership of the established control connection lives outside the reader (in the
-//! metadata worker); the reader only knows how to create one. The metadata queries
+//! Ownership of the established control connection lives outside the establisher (in the
+//! metadata worker); the establisher only knows how to create one. The metadata queries
 //! themselves are methods on [`ControlConnection`], configured at its creation.
 
 use std::sync::Arc;
@@ -40,13 +40,13 @@ use crate::utils::safe_format::IteratorSafeFormatExt;
 
 /// Maintains the persistent state needed to create control connections and
 /// fetch cluster metadata. The established control connection itself is owned by
-/// the caller (the metadata worker), not by the reader.
-pub(crate) struct MetadataReader {
+/// the caller (the metadata worker), not by the establisher.
+pub(crate) struct ControlConnectionEstablisher {
     // =======================================================================================
-    // Configuration values - they will stay the same during whole lifetime of MetadataReader.
+    // Configuration values - they will stay the same during whole lifetime of ControlConnectionEstablisher.
     // =======================================================================================
     control_connection_config: ConnectionConfig,
-    /// Configuration stamped onto every control connection this reader creates;
+    /// Configuration stamped onto every control connection this establisher creates;
     /// governs what the control connection's metadata queries fetch.
     cc_config: ControlConnectionConfig,
     hostname_resolution_timeout: Option<Duration>,
@@ -56,18 +56,18 @@ pub(crate) struct MetadataReader {
     initial_known_nodes: Vec<KnownNode>,
 
     // ====================================================================
-    // Mutable state of MetadataReader. It will change during its lifetime.
+    // Mutable state of ControlConnectionEstablisher. It will change during its lifetime.
     // ====================================================================
-    // when a control connection fails, MetadataReader tries to connect to one of known_peers
+    // when a control connection fails, ControlConnectionEstablisher tries to connect to one of known_peers
     known_peers: Vec<UntranslatedEndpoint>,
     cc_cache: Arc<ControlConnectionCache>,
 }
 
 /// The per-candidate metadata fetch that
-/// [`MetadataReader::establish_cc_and_fetch_metadata`] runs on each candidate
+/// [`ControlConnectionEstablisher::establish_cc_and_fetch_metadata`] runs on each candidate
 /// connection - implemented by the metadata worker.
 ///
-/// When `MetadataReader` open a new `Connection`, it needs to fetch initial
+/// When `ControlConnectionEstablisher` open a new `Connection`, it needs to fetch initial
 /// `Metadata` on it before returning it as a new CC. A candidate is such
 /// potential CC until the `Metadata` is done fetching.
 ///
@@ -91,8 +91,8 @@ pub(super) trait FetchOnCandidate {
     ) -> Result<(TopologyUpdateGuard, Self::Payload), MetadataError>;
 }
 
-impl MetadataReader {
-    /// Creates a new MetadataReader.
+impl ControlConnectionEstablisher {
+    /// Creates a new ControlConnectionEstablisher.
     ///
     /// Resolves the initial contact points and populates the initial known peers
     /// list. Does **not** establish a control connection — use
@@ -120,7 +120,7 @@ impl MetadataReader {
 
         let cc_cache = Arc::new(ControlConnectionCache::new());
 
-        Ok(MetadataReader {
+        Ok(ControlConnectionEstablisher {
             control_connection_config: connection_config,
             cc_config: ControlConnectionConfig {
                 keyspaces_to_fetch,
@@ -449,13 +449,13 @@ impl MetadataReader {
     }
 }
 
-/// Freshly fetched [`Metadata`] that the [`MetadataReader`] has not yet absorbed.
+/// Freshly fetched [`Metadata`] that the [`ControlConnectionEstablisher`] has not yet absorbed.
 ///
 /// [`ControlConnection::query_metadata`] returns its result wrapped in this
-/// guard, so that the fetched metadata cannot be used without the reader
+/// guard, so that the fetched metadata cannot be used without the establisher
 /// updating its known peers from it first: the only way to extract the
 /// [`Metadata`] is [`apply`](Self::apply).
-#[must_use = "the fetched metadata must be applied to the MetadataReader"]
+#[must_use = "the fetched metadata must be applied to the ControlConnectionEstablisher"]
 pub(super) struct TopologyUpdateGuard {
     metadata: Metadata,
 }
@@ -465,10 +465,10 @@ impl TopologyUpdateGuard {
         Self { metadata }
     }
 
-    /// Updates the reader's known peers from the fetched metadata and releases
+    /// Updates the establisher's known peers from the fetched metadata and releases
     /// the metadata itself.
-    pub(super) fn apply(self, reader: &mut MetadataReader) -> Metadata {
-        reader.update_known_peers(&self.metadata);
+    pub(super) fn apply(self, establisher: &mut ControlConnectionEstablisher) -> Metadata {
+        establisher.update_known_peers(&self.metadata);
         self.metadata
     }
 }
