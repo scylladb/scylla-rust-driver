@@ -8,6 +8,7 @@ use tracing::{debug, error};
 use crate::cluster::control_connection::{
     ControlConnection, ControlConnectionEvent, ControlConnectionEvents,
 };
+use crate::cluster::metadata::Metadata;
 use crate::cluster::metadata::update::{MetadataUpdate, RefreshRequest};
 use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::frame::response::event::EventV2 as Event;
@@ -126,21 +127,7 @@ impl MetadataWorker {
                 .await
             {
                 Ok((cc, metadata)) => {
-                    // The refresh request, if any, is answered by the cluster worker, once the
-                    // state resulting from this metadata is published - this is what makes
-                    // `Cluster::refresh_metadata` return only after the new state is visible.
-                    let response_chan = self
-                        .pending_request
-                        .take()
-                        .map(|request| request.response_chan);
-                    if self
-                        .send_update(|slot| {
-                            MetadataUpdate::merge_metadata(slot, metadata, response_chan)
-                        })
-                        .is_err()
-                    {
-                        return ControlFlow::Break(());
-                    }
+                    self.publish_metadata(metadata)?;
 
                     if let Some(cc) = cc {
                         return ControlFlow::Continue(cc);
@@ -318,21 +305,7 @@ impl MetadataWorker {
                 Ok(topology_update) => {
                     debug!("Fetched new metadata");
                     let metadata = topology_update.apply(&mut self.metadata_reader);
-                    // The refresh request, if any, is answered by the cluster worker, once the
-                    // state resulting from this metadata is published - this is what makes
-                    // `Cluster::refresh_metadata` return only after the new state is visible.
-                    let response_chan = self
-                        .pending_request
-                        .take()
-                        .map(|request| request.response_chan);
-                    if self
-                        .send_update(|slot| {
-                            MetadataUpdate::merge_metadata(slot, metadata, response_chan)
-                        })
-                        .is_err()
-                    {
-                        return ControlFlow::Break(());
-                    }
+                    self.publish_metadata(metadata)?;
                 }
                 Err(err) => {
                     debug!(
@@ -345,6 +318,27 @@ impl MetadataWorker {
                     return ControlFlow::Continue(());
                 }
             }
+        }
+    }
+
+    /// Publishes freshly fetched metadata to the cluster worker.
+    ///
+    /// The pending refresh request, if any, is attached: it is answered by the
+    /// cluster worker once the state resulting from this metadata is published -
+    /// this is what makes `Cluster::refresh_metadata` return only after the new
+    /// state is visible.
+    ///
+    /// Returns [`ControlFlow::Break`] if the worker should stop (the cluster
+    /// worker is gone).
+    fn publish_metadata(&mut self, metadata: Metadata) -> ControlFlow<()> {
+        let response_chan = self
+            .pending_request
+            .take()
+            .map(|request| request.response_chan);
+        match self.send_update(|slot| MetadataUpdate::merge_metadata(slot, metadata, response_chan))
+        {
+            Ok(()) => ControlFlow::Continue(()),
+            Err(_) => ControlFlow::Break(()),
         }
     }
 
