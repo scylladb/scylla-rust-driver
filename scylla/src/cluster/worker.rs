@@ -123,7 +123,7 @@ impl Cluster {
             metadata_updates_sender,
         );
 
-        let (cc, mut metadata) = metadata_worker.establish_initial().await?;
+        let (cc, mut metadata) = metadata_worker.establish(true).await?;
 
         // The initial metadata is fetched before the metadata worker is spawned, so the routes
         // must be applied here - `ClusterState::new` below creates connection pools, which

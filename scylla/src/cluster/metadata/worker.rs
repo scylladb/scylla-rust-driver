@@ -338,23 +338,11 @@ impl MetadataWorker {
         }
     }
 
-    /// Establishes the initial control connection, fetching the initial
-    /// metadata in the process.
-    ///
-    /// Called by `Cluster::new` before the worker is spawned; the returned
-    /// control connection (if one could be kept) is handed back to
-    /// [`work`](Self::work) once the worker starts.
-    pub(in super::super) async fn establish_initial(
-        &mut self,
-    ) -> Result<(Option<EstablishedCc>, Metadata), MetadataError> {
-        self.establish(true).await
-    }
-
     /// Establishes a control connection, fetching metadata in the process -
     /// see [`ControlConnectionEstablisher::establish_cc_and_fetch_metadata`], to which this
     /// delegates the candidate iteration. Each candidate is fetched on (and
     /// its events drained) by [`fetch_on_candidate`](Self::fetch_on_candidate).
-    async fn establish(
+    pub(in super::super) async fn establish(
         &mut self,
         initial: bool,
     ) -> Result<(Option<EstablishedCc>, Metadata), MetadataError> {
