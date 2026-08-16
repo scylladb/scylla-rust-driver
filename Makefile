@@ -75,6 +75,42 @@ test: up
 ccm-test:
 	cargo nextest run --all-features -E 'test(ccm::)' --ignore-default-filter --status-level pass
 
+# Coverage-instrumented counterparts of test/ccm-test, using cargo-llvm-cov
+# (LLVM source-based coverage -- unlike ptrace-based tools it handles async,
+# multi-threaded code correctly). test-coverage starts from a clean slate;
+# ccm-test-coverage deliberately does not clean, so it accumulates onto
+# whatever test-coverage already collected instead of replacing it. Run
+# test-coverage first, then optionally ccm-test-coverage, then coverage-report.
+#
+# --no-fail-fast matters here specifically: nextest's default is to stop the
+# whole run after the first failing binary. With --no-report, that means a
+# single failure can throw away coverage data for everything that would have
+# run after it, not just fail that one test.
+.PHONY: test-coverage
+test-coverage: up
+	cargo llvm-cov clean --workspace
+	cargo llvm-cov nextest --all-features --no-report --no-fail-fast
+	# Doctests aren't measured: cargo-llvm-cov's doctest coverage support
+	# requires nightly Rust, and this repo targets stable. They still run
+	# here for correctness, same as in `test`.
+	cargo test --doc --all-features
+
+.PHONY: ccm-test-coverage
+ccm-test-coverage:
+	cargo llvm-cov nextest --all-features --no-report --no-fail-fast -E 'test(ccm::)' --ignore-default-filter --status-level pass
+
+.PHONY: coverage-report
+coverage-report:
+	mkdir -p target/llvm-cov
+	cargo llvm-cov report --summary-only
+	cargo llvm-cov report --html --output-dir target/llvm-cov
+	cargo llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
+
+.PHONY: clean-coverage
+clean-coverage:
+	cargo llvm-cov clean --workspace
+	rm -rf target/llvm-cov
+
 .PHONY: run-examples
 run-examples: up
 	./scripts/run-examples.sh
