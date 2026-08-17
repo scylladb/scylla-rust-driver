@@ -1424,7 +1424,7 @@ mod tests {
         pub(crate) async fn mock_cluster_state_for_token_aware_tests() -> ClusterState {
             let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
             let metadata = mock_metadata_for_token_aware_tests();
-            let state = ClusterState::new(
+            let state = ClusterState::new_updated(
                 metadata,
                 &Default::default(),
                 &HashMap::new(),
@@ -1467,7 +1467,7 @@ mod tests {
             };
 
             let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
-            let state = ClusterState::new(
+            let state = ClusterState::new_updated(
                 info,
                 &Default::default(),
                 &HashMap::new(),
@@ -2607,7 +2607,7 @@ mod tests {
         }
 
         let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
-        let cluster_with_disabled_node_f = ClusterState::new(
+        let cluster_with_disabled_node_f = ClusterState::new_updated(
             mock_metadata_for_token_aware_tests(),
             &Default::default(),
             &HashMap::new(),

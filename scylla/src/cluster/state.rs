@@ -158,7 +158,7 @@ impl ClusterState {
     // This allow(clippy::type_complexity) is here because I can't satisfy borrow checker while
     // having the closure type be a type alias.
     #[allow(clippy::type_complexity)]
-    pub(crate) async fn new(
+    pub(crate) async fn new_updated(
         metadata: Metadata,
         pool_config: &PoolConfig,
         known_nodes: &HashMap<Uuid, Arc<Node>>,
@@ -715,7 +715,7 @@ mod tests {
         host_filter: Option<&dyn HostFilter>,
     ) -> ClusterState {
         let (tx, _rx) = mpsc::unbounded_channel();
-        ClusterState::new(
+        ClusterState::new_updated(
             metadata,
             &Default::default(),
             known_nodes,

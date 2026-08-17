@@ -136,7 +136,7 @@ impl Cluster {
             let _ = subscriber.replace_client_routes(routes);
         }
 
-        let cluster_state = ClusterState::new(
+        let cluster_state = ClusterState::new_updated(
             metadata,
             &pool_config,
             &HashMap::new(),
@@ -493,7 +493,7 @@ impl ClusterWorker {
         let cluster_state: Arc<ClusterState> = self.cluster_state.load_full();
 
         let new_cluster_state = Arc::new(
-            ClusterState::new(
+            ClusterState::new_updated(
                 metadata,
                 &self.pool_config,
                 &cluster_state.known_nodes,
