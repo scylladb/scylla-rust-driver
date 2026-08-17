@@ -422,15 +422,9 @@ impl ClusterWorker {
                 refresh_responses,
             }) => {
                 let new_cluster_state = Arc::new(
-                    ClusterState::new_updated(
-                        metadata,
-                        &self.node_config,
-                        &cluster_state.known_nodes,
-                        self.host_filter.as_deref(),
-                        cluster_state.locator.tablets.clone(),
-                        &cluster_state.keyspaces,
-                    )
-                    .await,
+                    cluster_state
+                        .new_updated(metadata, &self.node_config, self.host_filter.as_deref())
+                        .await,
                 );
                 Some((new_cluster_state, refresh_responses))
             }
