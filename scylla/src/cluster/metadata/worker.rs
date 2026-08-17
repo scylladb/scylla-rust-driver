@@ -102,19 +102,6 @@ impl FetchOnCandidate for CandidateFetcher<'_> {
     }
 }
 
-/// What a server event obliges the worker to fetch, as classified by
-/// [`MetadataWorker::handle_server_event`].
-enum EventAction {
-    /// Nothing to fetch - the event was fully handled synchronously.
-    None,
-    /// Fetch full metadata: the event describes a change (e.g. in topology)
-    /// that only a full fetch picks up.
-    FetchFull,
-    /// Fetch the client routes for these (connection id, host id) pairs, as
-    /// listed in a CLIENT_ROUTES_CHANGE:UPDATE_NODES event.
-    FetchClientRoutes { pairs: HashSet<(String, Uuid)> },
-}
-
 /// The fetch work that [`MetadataWorker::work_on_cc`] owes but has not started
 /// yet, because the fetch that must precede it is still in flight. Also
 /// produced by [`MetadataWorker::fetch_on_candidate`], recording the fetch
@@ -412,7 +399,7 @@ impl MetadataWorker {
                         // even returning dummy metadata on initial fetch.
                         // If ClusterWorker is shutting down (which is the only case this
                         // could happen), then we will shutdown soon too, so ignoring is not a problem.
-                        let _ = Self::absorb_server_event(updates, event, &mut plan);
+                        let _ = Self::handle_server_event(updates, event, &mut plan);
                     }
                     ControlConnectionEvent::Broken(err) => {
                         return Err(MetadataError::ConnectionPoolError(
@@ -655,7 +642,7 @@ impl MetadataWorker {
                             return ControlFlow::Continue(());
                         },
                         ControlConnectionEvent::ServerEvent(event) => {
-                            Self::absorb_server_event(&mut self.updates, event, &mut plan)?;
+                            Self::handle_server_event(&mut self.updates, event, &mut plan)?;
                         }
                     }
                 }
@@ -683,10 +670,11 @@ impl MetadataWorker {
     fn handle_server_event(
         updates: &mut merge_channel::Sender<MetadataUpdate>,
         event: Event,
-    ) -> ControlFlow<(), EventAction> {
+        plan: &mut FetchPlan,
+    ) -> ControlFlow<()> {
         debug!("Received server event: {:?}", event);
         match event {
-            Event::TopologyChange(_) => ControlFlow::Continue(EventAction::FetchFull),
+            Event::TopologyChange(_) => plan.note_full_needed(),
             Event::ClientRoutesChange(evt) => {
                 // An UPDATE_NODES event pairs `connection_ids[i]` with
                 // `host_ids[i]`.
@@ -698,7 +686,7 @@ impl MetadataWorker {
                     } => connection_ids.into_iter().zip(host_ids).collect(),
                     _ => unreachable!("clippy testifies that the match is exhaustive"),
                 };
-                ControlFlow::Continue(EventAction::FetchClientRoutes { pairs })
+                plan.note_client_routes(ClientRoutesFetchRequest { pairs })
             }
             Event::StatusChange(status) => {
                 // Tracking node status using events is unreliable because of the possibility of losing events
@@ -744,29 +732,9 @@ impl MetadataWorker {
                         }
                     }
                 }
-                ControlFlow::Continue(EventAction::None)
             }
-            _ => ControlFlow::Continue(EventAction::None),
-        }
-    }
-
-    /// Handles a single server event and folds the fetch work it implies into
-    /// `plan`.
-    ///
-    /// Returns [`ControlFlow::Break`] if the worker should stop (the cluster
-    /// worker is gone).
-    fn absorb_server_event(
-        updates: &mut merge_channel::Sender<MetadataUpdate>,
-        event: Event,
-        plan: &mut FetchPlan,
-    ) -> ControlFlow<()> {
-        match Self::handle_server_event(updates, event)? {
-            EventAction::None => (),
-            EventAction::FetchFull => plan.note_full_needed(),
-            EventAction::FetchClientRoutes { pairs } => {
-                plan.note_client_routes(ClientRoutesFetchRequest { pairs })
-            }
-        }
+            _ => (), // TODO: unknown event. Probably should use `unreachable!`.
+        };
         ControlFlow::Continue(())
     }
 
