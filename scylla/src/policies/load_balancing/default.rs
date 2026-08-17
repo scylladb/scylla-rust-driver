@@ -1175,6 +1175,7 @@ impl<'a> TokenWithStrategy<'a> {
 mod tests {
     use std::collections::HashMap;
 
+    use crate::cluster::NodeConfig;
     use crate::frame::types::{Consistency, SerialConsistency};
     use tracing::info;
 
@@ -1200,6 +1201,7 @@ mod tests {
     use super::{DefaultPolicy, NodeLocationPreference};
 
     pub(crate) mod framework {
+        use crate::cluster::NodeConfig;
         use crate::routing::locator::test::{
             id_to_invalid_addr, mock_metadata_for_token_aware_tests,
         };
@@ -1424,16 +1426,19 @@ mod tests {
         pub(crate) async fn mock_cluster_state_for_token_aware_tests() -> ClusterState {
             let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
             let metadata = mock_metadata_for_token_aware_tests();
+            let node_config = NodeConfig {
+                pool_config: Default::default(),
+                used_keyspace: None,
+                connectivity_events_sender,
+                metrics: Default::default(),
+            };
             let state = ClusterState::new_updated(
                 metadata,
-                &Default::default(),
+                &node_config,
                 &HashMap::new(),
-                &None,
                 None,
-                &connectivity_events_sender,
                 TabletsInfo::new(),
                 &HashMap::new(),
-                &Default::default(),
             )
             .await;
 
@@ -1466,16 +1471,19 @@ mod tests {
             };
 
             let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
+            let node_config = NodeConfig {
+                pool_config: Default::default(),
+                used_keyspace: None,
+                connectivity_events_sender,
+                metrics: Default::default(),
+            };
             let state = ClusterState::new_updated(
                 info,
-                &Default::default(),
+                &node_config,
                 &HashMap::new(),
-                &None,
                 None,
-                &connectivity_events_sender,
                 TabletsInfo::new(),
                 &HashMap::new(),
-                &Default::default(),
             )
             .await;
 
@@ -2605,11 +2613,16 @@ mod tests {
         }
 
         let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let node_config = NodeConfig {
+            pool_config: Default::default(),
+            used_keyspace: None,
+            connectivity_events_sender,
+            metrics: Default::default(),
+        };
         let cluster_with_disabled_node_f = ClusterState::new_updated(
             mock_metadata_for_token_aware_tests(),
-            &Default::default(),
+            &node_config,
             &HashMap::new(),
-            &None,
             {
                 struct FHostFilter;
                 impl HostFilter for FHostFilter {
@@ -2620,10 +2633,8 @@ mod tests {
 
                 Some(&FHostFilter)
             },
-            &connectivity_events_sender,
             TabletsInfo::new(),
             &HashMap::new(),
-            &Default::default(),
         )
         .await;
 

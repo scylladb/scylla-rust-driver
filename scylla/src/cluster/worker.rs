@@ -7,6 +7,7 @@ use crate::cluster::metadata::SchemaMetadataFetchMode;
 use crate::cluster::metadata::update::{
     MetadataChanges, MetadataUpdate, PartialMetadataChanges, RefreshRequest, StatusHint,
 };
+use crate::cluster::state::NodeConfig;
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
@@ -135,16 +136,20 @@ impl Cluster {
             let _ = subscriber.replace_client_routes(routes);
         }
 
+        let node_config = NodeConfig {
+            pool_config,
+            used_keyspace: None,
+            connectivity_events_sender,
+            metrics,
+        };
+
         let cluster_state = ClusterState::new_updated(
             metadata,
-            &pool_config,
+            &node_config,
             &HashMap::new(),
-            &None,
             host_filter.as_deref(),
-            &connectivity_events_sender,
             TabletsInfo::new(),
             &HashMap::new(),
-            &metrics,
         )
         .await;
         ClusterWorker::handle_topology_changes(
@@ -164,20 +169,16 @@ impl Cluster {
             node_status,
 
             client_routes_subscriber,
-            pool_config,
+            node_config,
 
             metadata_updates: metadata_updates_receiver,
-            connectivity_events_sender,
             connectivity_events_receiver,
             tablets_channel: tablet_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
-            used_keyspace: None,
 
             host_filter,
             host_listener,
-
-            metrics,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
@@ -261,7 +262,9 @@ struct ClusterWorker {
     /// The applier of client routes snapshots fetched from `system.client_routes`.
     /// `None` if client routes are not configured.
     client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
-    pool_config: PoolConfig,
+
+    /// Used to create all the `Node` objects.
+    node_config: NodeConfig,
 
     // Channel over which the metadata worker delivers everything it learned
     // about the cluster.
@@ -272,15 +275,10 @@ struct ClusterWorker {
 
     // Channel used to receive signals that node is no longer reachable or became reachable.
     connectivity_events_receiver: tokio::sync::mpsc::UnboundedReceiver<ConnectivityChangeEvent>,
-    // Sender part of that channel to pass to `PoolRefiller`s.
-    connectivity_events_sender: tokio::sync::mpsc::UnboundedSender<ConnectivityChangeEvent>,
 
     // Channel used to receive info about new tablets from custom payload in responses
     // sent by server.
     tablets_channel: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
-
-    // Keyspace send in "USE <keyspace name>" when opening each connection
-    used_keyspace: Option<VerifiedKeyspaceName>,
 
     // The host filter determines towards which nodes we should open
     // connections
@@ -288,8 +286,6 @@ struct ClusterWorker {
 
     // The host listener allows to listen for topology and node status changes.
     host_listener: Option<Arc<dyn HostListener>>,
-
-    metrics: Metrics,
 }
 
 #[derive(Debug)]
@@ -360,7 +356,7 @@ impl ClusterWorker {
                 maybe_use_keyspace_request = self.use_keyspace_channel.recv() => {
                     match maybe_use_keyspace_request {
                         Some(request) => {
-                            self.used_keyspace = Some(request.keyspace_name.clone());
+                            self.node_config.used_keyspace = Some(request.keyspace_name.clone());
 
                             let cluster_state = self.cluster_state.load_full();
                             let use_keyspace_future = Self::handle_use_keyspace_request(cluster_state, request);
@@ -436,14 +432,11 @@ impl ClusterWorker {
                 let new_cluster_state = Arc::new(
                     ClusterState::new_updated(
                         metadata,
-                        &self.pool_config,
+                        &self.node_config,
                         &cluster_state.known_nodes,
-                        &self.used_keyspace,
                         self.host_filter.as_deref(),
-                        &self.connectivity_events_sender,
                         cluster_state.locator.tablets.clone(),
                         &cluster_state.keyspaces,
-                        &self.metrics,
                     )
                     .await,
                 );

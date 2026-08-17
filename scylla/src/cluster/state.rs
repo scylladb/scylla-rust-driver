@@ -21,6 +21,19 @@ use uuid::Uuid;
 use super::metadata::{Keyspace, Metadata, Strategy, Table};
 use super::node::{Node, NodeRef};
 
+/// Helper struct to group parameters that are only needed to
+/// construct `Node` objects.
+pub(crate) struct NodeConfig {
+    // Config for `NodeConnectioPool` for all new nodes.
+    pub(crate) pool_config: PoolConfig,
+    // Keyspace send in "USE <keyspace name>" when opening each connection.
+    pub(crate) used_keyspace: Option<VerifiedKeyspaceName>,
+    // Sender part of that channel to pass to `PoolRefiller`s.
+    pub(crate) connectivity_events_sender: mpsc::UnboundedSender<ConnectivityChangeEvent>,
+    // Metrics passed to each new `NodeConnectionPool`.
+    pub(crate) metrics: Metrics,
+}
+
 /// Represents the state of the cluster, including known nodes, keyspaces, and replica locator.
 ///
 /// It is immutable after creation, and is replaced atomically upon a metadata refresh.
@@ -160,14 +173,11 @@ impl ClusterState {
     #[allow(clippy::type_complexity)]
     pub(crate) async fn new_updated(
         metadata: Metadata,
-        pool_config: &PoolConfig,
+        node_config: &NodeConfig,
         known_nodes: &HashMap<Uuid, Arc<Node>>,
-        used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
-        connectivity_events_sender: &mpsc::UnboundedSender<ConnectivityChangeEvent>,
         mut tablets: TabletsInfo,
         old_keyspaces: &HashMap<String, Keyspace>,
-        metrics: &Metrics,
     ) -> Self {
         // Create new updated known_nodes and ring
         let mut new_known_nodes: HashMap<Uuid, Arc<Node>> =
@@ -215,10 +225,10 @@ impl ClusterState {
                 }
                 (true, _) => Arc::new(Node::new(
                     peer_endpoint,
-                    pool_config,
-                    connectivity_events_sender.clone(),
-                    used_keyspace.clone(),
-                    metrics.clone(),
+                    &node_config.pool_config,
+                    node_config.connectivity_events_sender.clone(),
+                    node_config.used_keyspace.clone(),
+                    node_config.metrics.clone(),
                 )),
             };
 
@@ -709,16 +719,19 @@ mod tests {
         host_filter: Option<&dyn HostFilter>,
     ) -> ClusterState {
         let (tx, _rx) = mpsc::unbounded_channel();
+        let node_config = NodeConfig {
+            pool_config: Default::default(),
+            used_keyspace: None,
+            connectivity_events_sender: tx,
+            metrics: Default::default(),
+        };
         ClusterState::new_updated(
             metadata,
-            &Default::default(),
+            &node_config,
             known_nodes,
-            &None,
             host_filter,
-            &tx,
             TabletsInfo::new(),
             &HashMap::new(),
-            &Default::default(),
         )
         .await
     }
