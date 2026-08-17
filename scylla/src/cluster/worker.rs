@@ -27,7 +27,6 @@ use std::time::Duration;
 use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
-use super::metadata::Metadata;
 use super::metadata::cc_establisher::ControlConnectionEstablisher;
 use super::metadata::merge_channel::{self, merge_channel};
 use super::metadata::worker::MetadataWorker;
@@ -434,18 +433,17 @@ impl ClusterWorker {
             HashSet::new()
         };
 
+        let cluster_state = self.cluster_state.load_full();
+
         // Unlike UP hints, DOWN hints are applied to the *current* state: a keepalive
         // query only makes sense for a node the driver still holds connections to, so
         // there is nothing a freshly built state could add, and waiting for the refresh
         // (which awaits pool initialization) would only delay the liveness probe.
-        {
-            let cluster_state = self.cluster_state.load();
-            update
-                .status_hints
-                .iter()
-                .filter(|(_k, v)| **v == StatusHint::Down)
-                .for_each(|(addr, _)| cluster_state.trigger_keepalive_for_addr(*addr));
-        }
+        update
+            .status_hints
+            .iter()
+            .filter(|(_k, v)| **v == StatusHint::Down)
+            .for_each(|(addr, _)| cluster_state.trigger_keepalive_for_addr(*addr));
 
         let process_up_hints = |state: &ClusterState| {
             state.trigger_pool_refills_for_hosts(client_routes_hosts_to_refill.into_iter());
@@ -456,55 +454,41 @@ impl ClusterWorker {
                 .for_each(|(addr, _)| state.trigger_pool_refill_for_addr(*addr));
         };
 
-        match update.metadata_changes {
+        let new_state_with_requests = match update.metadata_changes {
             Some(MetadataChanges::Full {
                 metadata,
                 refresh_responses,
             }) => {
-                self.perform_refresh(metadata, process_up_hints).await;
-                // The new state is published, so the awaited refreshes are complete.
-                for response_chan in refresh_responses {
-                    // We can ignore sending error - if no one waits for the response we can drop it
-                    let _ = response_chan.send(Ok(()));
-                }
+                let new_cluster_state = Arc::new(
+                    ClusterState::new_updated(
+                        metadata,
+                        &self.pool_config,
+                        &cluster_state.known_nodes,
+                        &self.used_keyspace,
+                        self.host_filter.as_deref(),
+                        &self.connectivity_events_sender,
+                        cluster_state.locator.tablets.clone(),
+                        &cluster_state.keyspaces,
+                        &self.metrics,
+                    )
+                    .await,
+                );
+                Some((new_cluster_state, refresh_responses))
             }
             None | Some(MetadataChanges::Partial(_)) => {
                 // For now there is nothing that requires publishing new ClusterState.
-                // The only thing left to do is processing up hints.
-                process_up_hints(self.cluster_state.load().as_ref());
+                None
             }
-        }
-    }
+        };
 
-    /// Builds a new [`ClusterState`] from freshly fetched metadata and publishes it.
-    ///
-    /// The client routes carried by `metadata` must already have been applied by the
-    /// caller - `ClusterState::new` creates connection pools, which translate addresses
-    /// through the subscriber.
-    ///
-    /// `process_up_hints` triggers pool refills for hosts for which we received UP events.
-    /// It is called after new ClusterState is created.
-    async fn perform_refresh(
-        &mut self,
-        metadata: Metadata,
-        process_up_hints: impl FnOnce(&ClusterState),
-    ) {
-        let cluster_state: Arc<ClusterState> = self.cluster_state.load_full();
+        // Regardless of wheter we have a new state or not, we need to publish UP hints.
+        // If no new state - publish using new one.
+        let Some((new_cluster_state, refresh_responses)) = new_state_with_requests else {
+            process_up_hints(&cluster_state);
+            return;
+        };
 
-        let new_cluster_state = Arc::new(
-            ClusterState::new_updated(
-                metadata,
-                &self.pool_config,
-                &cluster_state.known_nodes,
-                &self.used_keyspace,
-                self.host_filter.as_deref(),
-                &self.connectivity_events_sender,
-                cluster_state.locator.tablets.clone(),
-                &cluster_state.keyspaces,
-                &self.metrics,
-            )
-            .await,
-        );
+        process_up_hints(&new_cluster_state);
 
         ClusterWorker::handle_topology_changes(
             &cluster_state.known_nodes,
@@ -513,13 +497,17 @@ impl ClusterWorker {
             &mut self.node_status,
         );
 
-        process_up_hints(&new_cluster_state);
-
         new_cluster_state
             .wait_until_all_pools_are_initialized()
             .await;
 
         self.update_cluster_state(new_cluster_state);
+
+        // The new state is published, so the awaited refreshes are complete.
+        for response_chan in refresh_responses {
+            // We can ignore sending error - if no one waits for the response we can drop it
+            let _ = response_chan.send(Ok(()));
+        }
     }
 
     fn update_cluster_state(&mut self, new_cluster_state: Arc<ClusterState>) {
