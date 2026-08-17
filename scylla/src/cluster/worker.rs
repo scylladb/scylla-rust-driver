@@ -140,14 +140,6 @@ impl Cluster {
             metadata,
             &pool_config,
             &HashMap::new(),
-            &mut |old_nodes, new_nodes| {
-                ClusterWorker::handle_topology_changes(
-                    old_nodes,
-                    new_nodes,
-                    host_listener.as_deref(),
-                    &mut node_status,
-                )
-            },
             &None,
             host_filter.as_deref(),
             &connectivity_events_sender,
@@ -156,6 +148,13 @@ impl Cluster {
             &metrics,
         )
         .await;
+        ClusterWorker::handle_topology_changes(
+            &HashMap::new(),
+            &cluster_state.known_nodes,
+            host_listener.as_deref(),
+            &mut node_status,
+        );
+
         cluster_state.wait_until_all_pools_are_initialized().await;
 
         let cluster_state: Arc<ArcSwap<ClusterState>> =
@@ -497,14 +496,6 @@ impl ClusterWorker {
                 metadata,
                 &self.pool_config,
                 &cluster_state.known_nodes,
-                &mut |old_nodes, new_nodes| {
-                    ClusterWorker::handle_topology_changes(
-                        old_nodes,
-                        new_nodes,
-                        self.host_listener.as_deref(),
-                        &mut self.node_status,
-                    )
-                },
                 &self.used_keyspace,
                 self.host_filter.as_deref(),
                 &self.connectivity_events_sender,
@@ -513,6 +504,13 @@ impl ClusterWorker {
                 &self.metrics,
             )
             .await,
+        );
+
+        ClusterWorker::handle_topology_changes(
+            &cluster_state.known_nodes,
+            &new_cluster_state.known_nodes,
+            self.host_listener.as_deref(),
+            &mut self.node_status,
         );
 
         process_up_hints(&new_cluster_state);

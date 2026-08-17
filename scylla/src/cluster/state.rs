@@ -162,10 +162,6 @@ impl ClusterState {
         metadata: Metadata,
         pool_config: &PoolConfig,
         known_nodes: &HashMap<Uuid, Arc<Node>>,
-        // Takes old and new known_nodes maps as arguments.
-        handle_topology_changes: &mut (
-                 dyn FnMut(&HashMap<Uuid, Arc<Node>>, &HashMap<Uuid, Arc<Node>>) + Send + Sync
-             ),
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
         connectivity_events_sender: &mpsc::UnboundedSender<ConnectivityChangeEvent>,
@@ -232,8 +228,6 @@ impl ClusterState {
                 ring.push((token, Arc::clone(&node)));
             }
         }
-
-        handle_topology_changes(known_nodes, &new_known_nodes);
 
         let keyspaces: HashMap<String, Keyspace> = metadata
             .keyspaces
@@ -719,7 +713,6 @@ mod tests {
             metadata,
             &Default::default(),
             known_nodes,
-            &mut |_, _| (),
             &None,
             host_filter,
             &tx,
