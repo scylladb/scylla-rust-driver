@@ -1,3 +1,4 @@
+use crate::cluster::metadata::{Peer, SingleKeyspaceMetadataError};
 use crate::errors::{ClusterStateTokenError, ConnectionPoolError};
 use crate::network::{Connection, ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::metrics::Metrics;
@@ -86,6 +87,9 @@ impl std::fmt::Debug for ClusterState {
     }
 }
 
+type KnownNodes = HashMap<Uuid, Arc<Node>>;
+type Ring = Vec<(Token, Arc<Node>)>;
+
 impl ClusterState {
     pub(crate) async fn wait_until_all_pools_are_initialized(&self) {
         for node in self.locator.unique_nodes_in_global_ring().iter() {
@@ -167,24 +171,47 @@ impl ClusterState {
 
     /// Creates new ClusterState using information about topology held in `metadata`.
     /// Uses provided `known_nodes` hashmap to recycle nodes if possible.
-    #[allow(clippy::too_many_arguments)]
-    // This allow(clippy::type_complexity) is here because I can't satisfy borrow checker while
-    // having the closure type be a type alias.
-    #[allow(clippy::type_complexity)]
     pub(crate) async fn new_updated(
         metadata: Metadata,
         node_config: &NodeConfig,
-        known_nodes: &HashMap<Uuid, Arc<Node>>,
+        known_nodes: &KnownNodes,
         host_filter: Option<&dyn HostFilter>,
         mut tablets: TabletsInfo,
         old_keyspaces: &HashMap<String, Keyspace>,
     ) -> Self {
-        // Create new updated known_nodes and ring
-        let mut new_known_nodes: HashMap<Uuid, Arc<Node>> =
-            HashMap::with_capacity(metadata.peers.len());
-        let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
+        let (new_known_nodes, ring) =
+            Self::calculate_new_topology(metadata.peers, known_nodes, node_config, host_filter);
 
-        for peer in metadata.peers {
+        let keyspaces = Self::resolve_metadata_keyspaces(metadata.keyspaces, old_keyspaces);
+
+        Self::perform_tablets_maintenance(&mut tablets, known_nodes, &new_known_nodes, &keyspaces);
+
+        let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
+
+        ClusterState {
+            all_nodes: new_known_nodes.values().cloned().collect(),
+            known_nodes: new_known_nodes,
+            keyspaces,
+            locator,
+            cluster_name: metadata.cluster_name,
+        }
+    }
+
+    /// Creates a new topology (`Node` objects and token ring) from metadata peers,
+    /// and previous topology.
+    ///
+    /// Previous topology is used to reuse connection pools and `Node` objects when possible.
+    fn calculate_new_topology(
+        peers: Vec<Peer>,
+        known_nodes: &KnownNodes,
+        node_config: &NodeConfig,
+        host_filter: Option<&dyn HostFilter>,
+    ) -> (KnownNodes, Ring) {
+        // Create new updated known_nodes and ring
+        let mut new_known_nodes: KnownNodes = HashMap::with_capacity(peers.len());
+        let mut ring: Ring = Vec::new();
+
+        for peer in peers {
             // Take existing Arc<Node> if possible, otherwise create new one.
             let peer_host_id = peer.host_id;
             let is_enabled = host_filter.is_none_or(|f| f.accept(&peer));
@@ -239,8 +266,16 @@ impl ClusterState {
             }
         }
 
-        let keyspaces: HashMap<String, Keyspace> = metadata
-            .keyspaces
+        (new_known_nodes, ring)
+    }
+
+    /// Handles single-keyspace errors by reusing old `Keyspace` objects for such
+    /// broken keyspaces and warns about it.
+    fn resolve_metadata_keyspaces(
+        meta_keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
+        old_keyspaces: &HashMap<String, Keyspace>,
+    ) -> HashMap<String, Keyspace> {
+        meta_keyspaces
             .into_iter()
             .filter_map(|(ks_name, ks)| match ks {
                 Ok(ks) => Some((ks_name, ks)),
@@ -263,43 +298,48 @@ impl ClusterState {
                     }
                 }
             })
-            .collect();
+            .collect()
+    }
 
-        // Tablets maintenance.
-        {
-            let removed_nodes = {
-                let mut removed_nodes = HashSet::new();
-                for old_peer in known_nodes {
-                    if !new_known_nodes.contains_key(old_peer.0) {
-                        removed_nodes.insert(*old_peer.0);
-                    }
+    fn perform_tablets_maintenance(
+        tablets: &mut TabletsInfo,
+        old_known_nodes: &KnownNodes,
+        new_known_nodes: &KnownNodes,
+        keyspaces: &HashMap<String, Keyspace>,
+    ) {
+        let removed_nodes = {
+            let mut removed_nodes = HashSet::new();
+            for old_peer in old_known_nodes {
+                if !new_known_nodes.contains_key(old_peer.0) {
+                    removed_nodes.insert(*old_peer.0);
                 }
+            }
 
-                removed_nodes
-            };
+            removed_nodes
+        };
 
-            let recreated_nodes = {
-                let mut recreated_nodes = HashMap::new();
-                for (old_peer_id, old_peer_node) in known_nodes {
-                    if let Some(new_peer_node) = new_known_nodes.get(old_peer_id)
-                        && !Arc::ptr_eq(old_peer_node, new_peer_node)
-                    {
-                        recreated_nodes.insert(*old_peer_id, Arc::clone(new_peer_node));
-                    }
+        let recreated_nodes = {
+            let mut recreated_nodes = HashMap::new();
+            for (old_peer_id, old_peer_node) in old_known_nodes {
+                if let Some(new_peer_node) = new_known_nodes.get(old_peer_id)
+                    && !Arc::ptr_eq(old_peer_node, new_peer_node)
+                {
+                    recreated_nodes.insert(*old_peer_id, Arc::clone(new_peer_node));
                 }
+            }
 
-                recreated_nodes
-            };
+            recreated_nodes
+        };
 
-            tablets.perform_maintenance(
-                &keyspaces,
-                &removed_nodes,
-                &new_known_nodes,
-                &recreated_nodes,
-            )
-        }
+        tablets.perform_maintenance(keyspaces, &removed_nodes, new_known_nodes, &recreated_nodes)
+    }
 
-        let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
+    async fn calculate_new_locator(
+        keyspaces: HashMap<String, Keyspace>,
+        ring: Ring,
+        tablets: TabletsInfo,
+    ) -> (ReplicaLocator, HashMap<String, Keyspace>) {
+        tokio::task::spawn_blocking(move || {
             let keyspace_strategies = keyspaces
                 .values()
                 .filter(|ks| !ks.tablet_based)
@@ -308,15 +348,7 @@ impl ClusterState {
             (locator, keyspaces)
         })
         .await
-        .unwrap();
-
-        ClusterState {
-            all_nodes: new_known_nodes.values().cloned().collect(),
-            known_nodes: new_known_nodes,
-            keyspaces,
-            locator,
-            cluster_name: metadata.cluster_name,
-        }
+        .unwrap()
     }
 
     /// Returns the name of the cluster, as reported by the `cluster_name` column in `system.local`.
