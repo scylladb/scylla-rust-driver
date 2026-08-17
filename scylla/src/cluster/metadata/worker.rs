@@ -124,10 +124,10 @@ enum FetchPlan {
     /// server event, or owed because a partial fetch failed.
     Full,
     /// Partial fetch work is owed, at most one entry per partial fetch type.
-    /// Currently client routes is the only such type; when more are added,
-    /// the payload becomes a struct with one optional entry per type (like
-    /// `PartialMetadataChanges`).
-    Partial(ClientRoutesFetchRequest),
+    /// Currently client routes is the only such type.
+    Partial {
+        client_routes: Option<ClientRoutesFetchRequest>,
+    },
 }
 
 impl FetchPlan {
@@ -147,8 +147,15 @@ impl FetchPlan {
     /// argument in [`note_full_needed`](Self::note_full_needed).
     fn note_client_routes(&mut self, request: ClientRoutesFetchRequest) {
         match self {
-            FetchPlan::Idle => *self = FetchPlan::Partial(request),
-            FetchPlan::Partial(pending) => pending.merge(request),
+            FetchPlan::Idle => {
+                *self = FetchPlan::Partial {
+                    client_routes: Some(request),
+                }
+            }
+            FetchPlan::Partial { client_routes, .. } => match client_routes {
+                None => *client_routes = Some(request),
+                Some(client_routes) => client_routes.merge(request),
+            },
             FetchPlan::Full => (),
         }
     }
@@ -265,7 +272,12 @@ impl<'cc> PendingFetches<'cc> {
         if matches!(self, PendingFetches::Idle) {
             let request = match std::mem::take(plan) {
                 FetchPlan::Idle => return, // Nothing to do.
-                FetchPlan::Partial(request) => request,
+                FetchPlan::Partial {
+                    client_routes: Some(request),
+                } => request,
+                FetchPlan::Partial {
+                    client_routes: None,
+                } => return, // Nothing to do.
                 FetchPlan::Full => unreachable!("Covered by the previous block"),
             };
             *self = PendingFetches::Partial {
