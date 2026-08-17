@@ -1,4 +1,5 @@
 use anyhow::Result;
+use scylla::DeserializeRow;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::deserialize::value::DeserializeValue;
@@ -32,7 +33,11 @@ async fn main() -> Result<()> {
     #[derive(PartialEq, Eq, Debug)]
     struct MyType<'a>(&'a str);
 
-    impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for MyType<'frame> {
+    // The value may borrow for any lifetime shorter than the response frame.
+    impl<'frame, 'metadata, 'a> DeserializeValue<'frame, 'metadata> for MyType<'a>
+    where
+        'frame: 'a,
+    {
         fn type_check(
             typ: &scylla::frame::response::result::ColumnType,
         ) -> std::result::Result<(), scylla::deserialize::TypeCheckError> {
@@ -57,8 +62,15 @@ async fn main() -> Result<()> {
         .await?
         .into_rows_result()?;
 
-    let (v,) = rows_result.single_row::<(MyType,)>()?;
-    assert_eq!(v, MyType("asdf"));
+    // DeserializeRow can be derived for a struct representing a whole row.
+    #[derive(Debug, DeserializeRow)]
+    struct MyRow<'a> {
+        // Field name must correspond to the CQL column's name.
+        v: MyType<'a>,
+    }
+
+    let row = rows_result.single_row::<MyRow>()?;
+    assert_eq!(row.v, MyType("asdf"));
 
     println!("Ok.");
 

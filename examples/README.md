@@ -40,9 +40,9 @@ cargo run -p examples --example basic
 | `compare_tokens` | Computing a partition key's token in the driver, checking it against the token the cluster reports, and listing the replicas that own it. |
 | `cql_time_types` | Reading and writing `date`, `time` and `timestamp` using `chrono`, `time`, and the raw `CqlDate`/`CqlTime`/`CqlTimestamp` types. |
 | `cqlsh_rs` | A miniature `cqlsh`: a REPL with CQL keyword completion that executes whatever you type. |
-| `custom_deserialization` | Implementing `DeserializeValue` by hand so that a column can be read directly into your own type. |
+| `custom_deserialization` | Implementing `DeserializeValue` by hand for a column value and deriving `DeserializeRow` for a whole row. |
 | `custom_load_balancing_policy` | Writing a load balancing policy of your own - here one restricted to a single datacenter - and checking which node really coordinated each request. |
-| `custom_serialization` | Deriving `SerializeRow` for your own structs, including generic ones, and passing them as statement values. |
+| `custom_serialization` | Implementing `SerializeValue` by hand for a column value and deriving `SerializeRow` for structs of statement values. |
 | `enforce_coordinator` | Forcing a request onto a chosen node, and inspecting the coordinator that executed it. |
 | `execution_profile` | Bundling consistency, timeout, retry, load balancing and speculative execution settings into profiles, and attaching them to sessions and statements. |
 | `get_by_name` | Locating columns in a result by name rather than by position. |

@@ -2,6 +2,9 @@ use anyhow::Result;
 use futures::StreamExt;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
+use scylla::frame::response::result::ColumnType;
+use scylla::serialize::value::SerializeValue;
+use scylla::serialize::writers::{CellWriter, WrittenCellProof};
 use std::env;
 
 #[tokio::main]
@@ -21,15 +24,30 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    #[derive(scylla::SerializeRow)]
-    struct MyType<'a> {
-        k: i32,
-        my: Option<&'a str>,
+    // You can implement SerializeValue for your own types.
+    struct MyText<'a>(&'a str);
+
+    impl SerializeValue for MyText<'_> {
+        fn serialize<'b>(
+            &self,
+            typ: &ColumnType,
+            writer: CellWriter<'b>,
+        ) -> std::result::Result<WrittenCellProof<'b>, scylla::serialize::SerializationError>
+        {
+            self.0.serialize(typ, writer)
+        }
     }
 
-    let to_insert = MyType {
+    // SerializeRow can be derived for a struct of statement values.
+    #[derive(scylla::SerializeRow)]
+    struct MyRow<'a> {
+        k: i32,
+        my: Option<MyText<'a>>,
+    }
+
+    let to_insert = MyRow {
         k: 17,
-        my: Some("Some str"),
+        my: Some(MyText("Some str")),
     };
 
     session
