@@ -673,7 +673,9 @@ impl MetadataWorker {
         plan: &mut FetchPlan,
     ) -> ControlFlow<()> {
         debug!("Received server event: {:?}", event);
+        #[deny(clippy::wildcard_enum_match_arm)]
         match event {
+            Event::SchemaChange(_) => (), // For now only fetched during periodic refresh.
             Event::TopologyChange(_) => plan.note_full_needed(),
             Event::ClientRoutesChange(evt) => {
                 // An UPDATE_NODES event pairs `connection_ids[i]` with
@@ -733,7 +735,7 @@ impl MetadataWorker {
                     }
                 }
             }
-            _ => (), // TODO: unknown event. Probably should use `unreachable!`.
+            _ => unreachable!("clippy testifies that the match is exhaustive"),
         };
         ControlFlow::Continue(())
     }
