@@ -405,33 +405,7 @@ impl ClusterWorker {
         // Apply the client routes BEFORE constructing the new `ClusterState` below,
         // because `ClusterState::new` creates connection pools, which translate addresses
         // through the subscriber.
-        let client_routes_hosts_to_refill = if let Some(subscriber) =
-            self.client_routes_subscriber.as_ref()
-            && let Some(metadata_changes) = update.metadata_changes.as_mut()
-        {
-            match metadata_changes {
-                MetadataChanges::Full {
-                    metadata,
-                    refresh_responses: _,
-                } => {
-                    if let Some(client_routes) = metadata.client_routes.take() {
-                        subscriber.replace_client_routes(client_routes)
-                    } else {
-                        HashSet::new()
-                    }
-                }
-                MetadataChanges::Partial(PartialMetadataChanges {
-                    client_routes_updates,
-                }) => match client_routes_updates.take() {
-                    Some(client_routes_update) => {
-                        subscriber.merge_client_routes_update(client_routes_update)
-                    }
-                    None => HashSet::new(),
-                },
-            }
-        } else {
-            HashSet::new()
-        };
+        let client_routes_hosts_to_refill = self.handle_client_route_update(&mut update);
 
         let cluster_state = self.cluster_state.load_full();
 
@@ -507,6 +481,39 @@ impl ClusterWorker {
         for response_chan in refresh_responses {
             // We can ignore sending error - if no one waits for the response we can drop it
             let _ = response_chan.send(Ok(()));
+        }
+    }
+
+    /// Applies the provided `update` to client route subscriber, if any.
+    ///
+    /// Returns a set of hosts to which UP hint should be applied.
+    fn handle_client_route_update(&self, update: &mut MetadataUpdate) -> HashSet<Uuid> {
+        let (Some(subscriber), Some(metadata_changes)) = (
+            self.client_routes_subscriber.as_ref(),
+            update.metadata_changes.as_mut(),
+        ) else {
+            return HashSet::new();
+        };
+
+        match metadata_changes {
+            MetadataChanges::Full {
+                metadata,
+                refresh_responses: _,
+            } => {
+                if let Some(client_routes) = metadata.client_routes.take() {
+                    subscriber.replace_client_routes(client_routes)
+                } else {
+                    HashSet::new()
+                }
+            }
+            MetadataChanges::Partial(PartialMetadataChanges {
+                client_routes_updates,
+            }) => match client_routes_updates.take() {
+                Some(client_routes_update) => {
+                    subscriber.merge_client_routes_update(client_routes_update)
+                }
+                None => HashSet::new(),
+            },
         }
     }
 
