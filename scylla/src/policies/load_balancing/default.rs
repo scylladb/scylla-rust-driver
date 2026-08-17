@@ -1173,8 +1173,6 @@ impl<'a> TokenWithStrategy<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use crate::cluster::NodeConfig;
     use crate::frame::types::{Consistency, SerialConsistency};
     use tracing::info;
@@ -1184,7 +1182,6 @@ mod tests {
         mock_cluster_state_for_token_unaware_tests,
     };
     use crate::policies::host_filter::HostFilter;
-    use crate::routing::locator::tablets::TabletsInfo;
     use crate::routing::locator::test::{
         TABLE_NTS_RF_2, TABLE_NTS_RF_3, TABLE_SS_RF_2, id_to_invalid_addr,
         mock_metadata_for_token_aware_tests,
@@ -1218,8 +1215,6 @@ mod tests {
             routing::Token,
             test_utils::setup_tracing,
         };
-
-        use super::TabletsInfo;
 
         #[derive(Debug)]
         enum ExpectedGroup {
@@ -1432,15 +1427,7 @@ mod tests {
                 connectivity_events_sender,
                 metrics: Default::default(),
             };
-            let state = ClusterState::new_updated(
-                metadata,
-                &node_config,
-                &HashMap::new(),
-                None,
-                TabletsInfo::new(),
-                &HashMap::new(),
-            )
-            .await;
+            let state = ClusterState::new(metadata, &node_config, None).await;
 
             for node in state.get_nodes_info() {
                 node.use_enabled_as_connected();
@@ -1477,15 +1464,7 @@ mod tests {
                 connectivity_events_sender,
                 metrics: Default::default(),
             };
-            let state = ClusterState::new_updated(
-                info,
-                &node_config,
-                &HashMap::new(),
-                None,
-                TabletsInfo::new(),
-                &HashMap::new(),
-            )
-            .await;
+            let state = ClusterState::new(info, &node_config, None).await;
 
             for node in state.get_nodes_info() {
                 node.use_enabled_as_connected();
@@ -2619,11 +2598,8 @@ mod tests {
             connectivity_events_sender,
             metrics: Default::default(),
         };
-        let cluster_with_disabled_node_f = ClusterState::new_updated(
-            mock_metadata_for_token_aware_tests(),
-            &node_config,
-            &HashMap::new(),
-            {
+        let cluster_with_disabled_node_f =
+            ClusterState::new(mock_metadata_for_token_aware_tests(), &node_config, {
                 struct FHostFilter;
                 impl HostFilter for FHostFilter {
                     fn accept(&self, peer: &crate::cluster::metadata::Peer) -> bool {
@@ -2632,11 +2608,8 @@ mod tests {
                 }
 
                 Some(&FHostFilter)
-            },
-            TabletsInfo::new(),
-            &HashMap::new(),
-        )
-        .await;
+            })
+            .await;
 
         for node in cluster_with_disabled_node_f.get_nodes_info() {
             node.use_enabled_as_connected();

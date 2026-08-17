@@ -169,6 +169,22 @@ impl ClusterState {
         node.trigger_keepalive();
     }
 
+    pub(crate) async fn new(
+        metadata: Metadata,
+        node_config: &NodeConfig,
+        host_filter: Option<&dyn HostFilter>,
+    ) -> Self {
+        Self::new_updated(
+            metadata,
+            node_config,
+            &HashMap::new(),
+            host_filter,
+            TabletsInfo::new(),
+            &HashMap::new(),
+        )
+        .await
+    }
+
     /// Creates new ClusterState using information about topology held in `metadata`.
     /// Uses provided `known_nodes` hashmap to recycle nodes if possible.
     pub(crate) async fn new_updated(

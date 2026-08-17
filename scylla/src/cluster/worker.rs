@@ -15,7 +15,7 @@ use crate::observability::metrics::Metrics;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::host_listener::{HostEvent, HostEventContext, HostListener};
-use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
+use crate::routing::locator::tablets::RawTablet;
 
 use crate::frame::response::result::TableSpec;
 use arc_swap::ArcSwap;
@@ -143,15 +143,7 @@ impl Cluster {
             metrics,
         };
 
-        let cluster_state = ClusterState::new_updated(
-            metadata,
-            &node_config,
-            &HashMap::new(),
-            host_filter.as_deref(),
-            TabletsInfo::new(),
-            &HashMap::new(),
-        )
-        .await;
+        let cluster_state = ClusterState::new(metadata, &node_config, host_filter.as_deref()).await;
         ClusterWorker::handle_topology_changes(
             &HashMap::new(),
             &cluster_state.known_nodes,
