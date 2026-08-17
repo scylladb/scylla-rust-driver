@@ -28,7 +28,7 @@ jobs:
     - name: Setup rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
     - name: Install mdbook
-      uses: taiki-e/install-action@3771e22aa892e03fd35585fae288baad1755695c # v2.78.2
+      uses: taiki-e/install-action@213ccc1a076163c093f914550b94feb90fab916d # v2.79.2
       with:
         tool: mdbook
     - name: Build the book
