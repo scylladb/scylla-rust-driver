@@ -213,6 +213,11 @@ deny = [
 skip = [
     #"ansi_term@0.11.0",
     #{ crate = "ansi_term@0.11.0", reason = "you can specify a reason why it can't be updated/removed" },
+    { crate = "hashbrown@0.14.x", reason = "dashmap 6.2.1 (newest) depends on old hashbrown" },
+    { crate = "syn@2.x", reason = "the entire ecosystem slowly migrates to syn 3.x" },
+    { crate = "num-bigint@0.3.x", reason = "we also support num-bigint 0.4.x under another feature flag" },
+    { crate = "secrecy@0.8.x", reason = "we also support secrecy 0.10.x under another feature flag" },
+
 ]
 # Similarly to `skip` allows you to skip certain crates during duplicate
 # detection. Unlike skip, it also includes the entire tree of transitive
@@ -221,6 +226,7 @@ skip = [
 skip-tree = [
     #"ansi_term@0.11.0", # will be skipped along with _all_ of its direct and transitive dependencies
     #{ crate = "ansi_term@0.11.0", depth = 20 },
+    { crate = "rand@0.9.x", reason = "part of the public API - can't bump it before 2.x" },
 ]
 
 # This section is considered when running `cargo deny check sources`.
