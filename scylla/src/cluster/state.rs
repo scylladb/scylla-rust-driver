@@ -199,22 +199,22 @@ impl ClusterState {
         }
     }
 
-    /// Creates new ClusterState using information about topology held in `metadata`.
-    /// Uses `self` to reuse data when possible.
+    /// Creates new ClusterState using information about topology and schema held
+    /// in `metadata`. Uses `self` to reuse data when possible.
     pub(crate) async fn new_updated(
         &self,
         metadata: Metadata,
         node_config: &NodeConfig,
         host_filter: Option<&dyn HostFilter>,
     ) -> Self {
+        let keyspaces = Self::resolve_metadata_keyspaces(metadata.keyspaces, &self.keyspaces);
+
         let (new_known_nodes, ring) = Self::calculate_new_topology(
             metadata.peers,
             &self.known_nodes,
             node_config,
             host_filter,
         );
-
-        let keyspaces = Self::resolve_metadata_keyspaces(metadata.keyspaces, &self.keyspaces);
 
         let mut tablets = self.locator.tablets.clone();
         Self::perform_tablets_maintenance(
@@ -232,6 +232,39 @@ impl ClusterState {
             keyspaces,
             locator,
             cluster_name: metadata.cluster_name,
+        }
+    }
+
+    /// Creates new ClusterState from a freshly fetched topology (the peer list),
+    /// reusing the schema metadata and cluster name of `self` - the counterpart
+    /// of [`new_updated`](Self::new_updated) for a partial topology fetch, which
+    /// reads nothing but the peers.
+    pub(crate) async fn new_with_updated_topology(
+        &self,
+        peers: Vec<Peer>,
+        node_config: &NodeConfig,
+        host_filter: Option<&dyn HostFilter>,
+    ) -> Self {
+        let (new_known_nodes, ring) =
+            Self::calculate_new_topology(peers, &self.known_nodes, node_config, host_filter);
+
+        let mut tablets = self.locator.tablets.clone();
+        Self::perform_tablets_maintenance(
+            &mut tablets,
+            &self.known_nodes,
+            &new_known_nodes,
+            &self.keyspaces,
+        );
+
+        let (locator, keyspaces) =
+            Self::calculate_new_locator(self.keyspaces.clone(), ring, tablets).await;
+
+        ClusterState {
+            all_nodes: new_known_nodes.values().cloned().collect(),
+            known_nodes: new_known_nodes,
+            keyspaces,
+            locator,
+            cluster_name: self.cluster_name.clone(),
         }
     }
 

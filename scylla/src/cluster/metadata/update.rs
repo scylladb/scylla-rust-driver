@@ -5,7 +5,7 @@ use tokio::sync::oneshot;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::cluster::metadata::{ClientRoute, ClientRoutes, Metadata};
+use crate::cluster::metadata::{ClientRoute, ClientRoutes, Metadata, Peer};
 use crate::errors::MetadataError;
 
 /// An explicit request to refresh cluster metadata, sent by
@@ -50,7 +50,6 @@ pub(in super::super) enum MetadataChanges {
 
 /// The partial counterpart of a full metadata fetch: independently fetched
 /// updates of individual metadata aspects, one field per partial fetch type.
-/// Currently only client routes can be fetched partially.
 ///
 /// Each field merges on its own, without looking at the others. This makes
 /// merging commutative across types, which keeps this struct correct even when
@@ -61,6 +60,12 @@ pub(in super::super) struct PartialMetadataChanges {
     /// Partial client-routes snapshots fetched in response to
     /// CLIENT_ROUTES_CHANGE events.
     pub(in super::super) client_routes_updates: Option<ClientRoutesUpdate>,
+    /// The peer list fetched in response to TOPOLOGY_CHANGE events.
+    ///
+    /// Not partial within its own aspect: a topology fetch always reads the
+    /// whole peer list, so this replaces the topology of the state it is
+    /// applied to.
+    pub(in super::super) peers: Option<Vec<Peer>>,
 }
 
 impl PartialMetadataChanges {
@@ -71,6 +76,12 @@ impl PartialMetadataChanges {
             None => self.client_routes_updates = Some(new_client_routes),
             Some(existing) => existing.merge(new_client_routes),
         }
+    }
+
+    /// Records a freshly fetched peer list, dropping the one pending so far:
+    /// each fetch reads the whole list, so the newest one subsumes the rest.
+    fn merge_peers(&mut self, peers: Vec<Peer>) {
+        self.peers = Some(peers);
     }
 }
 
@@ -137,6 +148,30 @@ impl MetadataUpdate {
                     return;
                 };
                 metadata_routes.merge(new_client_routes);
+            }
+        }
+    }
+
+    /// Records a freshly fetched peer list, obtained by a partial topology
+    /// fetch performed in response to TOPOLOGY_CHANGE events.
+    pub(crate) fn merge_topology_update(slot: &mut Option<Self>, peers: Vec<Peer>) {
+        let update = Self::slot_mut(slot);
+        match &mut update.metadata_changes {
+            None => {
+                let mut partial = PartialMetadataChanges::default();
+                partial.merge_peers(peers);
+                update.metadata_changes = Some(MetadataChanges::Partial(partial));
+            }
+            Some(MetadataChanges::Partial(partial)) => partial.merge_peers(peers),
+            Some(MetadataChanges::Full {
+                metadata,
+                refresh_responses: _,
+            }) => {
+                // The partial fetch is necessarily newer: a full fetch preempts
+                // the partial ones in flight, so a partial fetch can only
+                // complete after a pending full fetch if it was started after
+                // that fetch completed.
+                metadata.peers = peers;
             }
         }
     }
