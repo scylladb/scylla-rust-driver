@@ -444,27 +444,29 @@ impl ControlConnectionEstablisher {
     }
 }
 
-/// Freshly fetched [`Metadata`] that the [`ControlConnectionEstablisher`] has not yet absorbed.
+/// Freshly fetched topology that the [`ControlConnectionEstablisher`] has not yet absorbed.
 ///
 /// [`ControlConnection::query_metadata`] returns its result wrapped in this
 /// guard, so that the fetched metadata cannot be used without the establisher
 /// updating its known peers from it first: the only way to extract the
 /// [`Metadata`] is [`apply`](Self::apply).
 #[must_use = "the fetched metadata must be applied to the ControlConnectionEstablisher"]
-pub(super) struct TopologyUpdateGuard {
-    metadata: Metadata,
+pub(super) struct TopologyUpdateGuard<T = Metadata> {
+    inner: T,
 }
 
-impl TopologyUpdateGuard {
-    pub(super) fn new(metadata: Metadata) -> Self {
-        Self { metadata }
+impl<T> TopologyUpdateGuard<T> {
+    pub(super) fn new(inner: T) -> Self {
+        Self { inner }
     }
+}
 
+impl TopologyUpdateGuard<Metadata> {
     /// Updates the establisher's known peers from the fetched metadata and releases
     /// the metadata itself.
     pub(super) fn apply(self, establisher: &mut ControlConnectionEstablisher) -> Metadata {
-        establisher.update_known_peers(&self.metadata.peers);
-        self.metadata
+        establisher.update_known_peers(&self.inner.peers);
+        self.inner
     }
 }
 
