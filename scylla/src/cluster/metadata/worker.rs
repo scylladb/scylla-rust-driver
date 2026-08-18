@@ -787,6 +787,9 @@ impl MetadataWorker {
                 // for:
                 // - PoolRefiller - UP triggers immediate pool refill attempt, and
                 // - Keepaliver - DOWN triggers immediate keepalive query attempt.
+                //
+                // Besides the hint, a status change also schedules a topology
+                // re-read - see below the `match`.
 
                 match status {
                     StatusChangeEvent::Up(addr) => {
@@ -825,6 +828,12 @@ impl MetadataWorker {
                         }
                     }
                 }
+
+                // A node's `rpc_address` can change while the node itself is
+                // neither added nor removed (e.g. it is restarted with a new
+                // address), and no TOPOLOGY_CHANGE announces that - the only
+                // events it produces are this DOWN/UP pair.
+                plan.note_topology();
             }
             _ => unreachable!("clippy testifies that the match is exhaustive"),
         };

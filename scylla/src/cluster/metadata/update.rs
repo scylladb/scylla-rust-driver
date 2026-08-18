@@ -60,7 +60,7 @@ pub(in super::super) struct PartialMetadataChanges {
     /// Partial client-routes snapshots fetched in response to
     /// CLIENT_ROUTES_CHANGE events.
     pub(in super::super) client_routes_updates: Option<ClientRoutesUpdate>,
-    /// The peer list fetched in response to TOPOLOGY_CHANGE events.
+    /// The peer list fetched in response to TOPOLOGY_CHANGE / STATUS_CHANGE events.
     ///
     /// Not partial within its own aspect: a topology fetch always reads the
     /// whole peer list, so this replaces the topology of the state it is
