@@ -115,11 +115,7 @@ impl FetchOnCandidate for CandidateFetcher<'_> {
 /// once": a due full fetch subsumes all partial work (see
 /// [`note_full_needed`](Self::note_full_needed)), so recording both would keep
 /// data only to throw it away.
-#[derive(Default)]
 enum FetchPlan {
-    /// Nothing is owed.
-    #[default]
-    Idle,
     /// A full metadata fetch is owed: requested explicitly, implied by a
     /// server event, or owed because a partial fetch failed.
     Full,
@@ -147,16 +143,17 @@ impl FetchPlan {
     /// argument in [`note_full_needed`](Self::note_full_needed).
     fn note_client_routes(&mut self, request: ClientRoutesFetchRequest) {
         match self {
-            FetchPlan::Idle => {
-                *self = FetchPlan::Partial {
-                    client_routes: Some(request),
-                }
-            }
             FetchPlan::Partial { client_routes, .. } => match client_routes {
                 None => *client_routes = Some(request),
                 Some(client_routes) => client_routes.merge(request),
             },
             FetchPlan::Full => (),
+        }
+    }
+
+    const fn empty() -> Self {
+        Self::Partial {
+            client_routes: None,
         }
     }
 }
@@ -211,30 +208,20 @@ type ClientRoutesFetch<'cc> =
 /// - a full fetch never has anything running beside it (it subsumes and
 ///   preempts all partial work), and
 /// - per partial fetch type, at most one fetch runs at a time. Currently
-///   client routes is the only such type; when more are added, `Partial`
-///   becomes a struct variant with one optional future per type, which is
-///   also how partial fetches of different types get to run concurrently.
+///   client routes is the only such type;
 ///
 /// [`start_due_fetches`](Self::start_due_fetches) starts the fetches that the
 /// [`FetchPlan`] owes. As a [`Future`], `PendingFetches` resolves to the
-/// [`FetchOutcome`] of the in-flight fetch once it completes, emptying `self`
-/// back to [`Idle`](Self::Idle) - so a completed fetch is never polled again.
-/// While `Idle`, polling pends forever *without registering a waker*: an idle
-/// value alone never wakes the worker. This is sound in `work_on_cc` because
-/// fetches are only started between `select!`s, never while one is being
-/// awaited, and the `select!` always has branches that do register wakers
-/// (e.g. event draining).
+/// [`FetchOutcome`] of the in-flight fetch once it completes.
 ///
 /// Cancel-safe: the futures live in this value, not in the `select!` branch
 /// polling it, so losing the `select!` race leaves the in-flight fetch intact.
 enum PendingFetches<'cc> {
-    /// No fetch is in flight.
-    Idle,
     /// A full metadata fetch is in flight.
     Full { fetch: FullFetch<'cc> },
-    /// A partial client-routes fetch is in flight.
+    /// Some partial fetches may be in progress.
     Partial {
-        client_routes_fetch: ClientRoutesFetch<'cc>,
+        client_routes_fetch: Option<ClientRoutesFetch<'cc>>,
     },
 }
 
@@ -258,7 +245,7 @@ impl<'cc> PendingFetches<'cc> {
             // plan and any running partial fetch: the full fetch reads all of
             // that data, and reads it after the events that made the partial
             // work due, so both are subsumed.
-            *plan = FetchPlan::Idle;
+            *plan = FetchPlan::empty();
             *next_refresh_deadline = deadline_after(Instant::now(), refresh_interval);
 
             debug!("Requesting metadata refresh");
@@ -268,21 +255,22 @@ impl<'cc> PendingFetches<'cc> {
             return;
         }
 
-        // Partial client-routes work starts only when nothing at all is in flight.
-        if matches!(self, PendingFetches::Idle) {
-            let request = match std::mem::take(plan) {
-                FetchPlan::Idle => return, // Nothing to do.
-                FetchPlan::Partial {
-                    client_routes: Some(request),
-                } => request,
-                FetchPlan::Partial {
-                    client_routes: None,
-                } => return, // Nothing to do.
-                FetchPlan::Full => unreachable!("Covered by the previous block"),
-            };
+        // Partial client-routes work starts when isn't already in flight.
+        if let PendingFetches::Partial {
+            client_routes_fetch: None,
+        } = self
+            && let FetchPlan::Partial { client_routes } = plan
+            && let Some(request) = client_routes.take()
+        {
             *self = PendingFetches::Partial {
-                client_routes_fetch: Box::pin(request.fetch_on(cc)),
+                client_routes_fetch: Some(Box::pin(request.fetch_on(cc))),
             };
+        }
+    }
+
+    const fn empty() -> Self {
+        Self::Partial {
+            client_routes_fetch: None,
         }
     }
 }
@@ -301,23 +289,27 @@ impl Future for PendingFetches<'_> {
         // `PendingFetches` is `Unpin` (the fetch futures are heap-pinned), so
         // it can be worked on through a plain `&mut`.
         let this = self.get_mut();
-        let outcome = match this {
-            PendingFetches::Idle => return Poll::Pending,
-            PendingFetches::Full { fetch } => match fetch.as_mut().poll(cx) {
-                Poll::Ready(result) => FetchOutcome::Full(result),
-                Poll::Pending => return Poll::Pending,
-            },
+        match this {
+            PendingFetches::Full { fetch } => {
+                if let Poll::Ready(result) = fetch.as_mut().poll(cx) {
+                    *this = PendingFetches::empty();
+                    return Poll::Ready(FetchOutcome::Full(result));
+                }
+            }
             PendingFetches::Partial {
                 client_routes_fetch,
-            } => match client_routes_fetch.as_mut().poll(cx) {
-                Poll::Ready(result) => FetchOutcome::ClientRoutes(result),
-                Poll::Pending => return Poll::Pending,
-            },
+            } => {
+                if let Some(client_routes) = client_routes_fetch
+                    && let Poll::Ready(result) = client_routes.as_mut().poll(cx)
+                {
+                    // The completed fetch has been consumed; drop its future.
+                    *client_routes_fetch = None;
+                    return Poll::Ready(FetchOutcome::ClientRoutes(result));
+                }
+            }
         };
 
-        // The completed fetch has been consumed; drop its future.
-        *this = PendingFetches::Idle;
-        Poll::Ready(outcome)
+        Poll::Pending
     }
 }
 
@@ -383,7 +375,7 @@ impl MetadataWorker {
         cc: &ControlConnection,
         cc_events: &mut ControlConnectionEvents,
     ) -> Result<(TopologyUpdateGuard, FetchPlan), MetadataError> {
-        let mut plan = FetchPlan::default();
+        let mut plan = FetchPlan::empty();
         // Boxed AND `dyn`-erased (rather than `pin!`ed) to cut the future-type
         // nesting here: `query_metadata`'s future tree is ~75 levels deep, and
         // exposing it in this future's type - which every caller of
@@ -565,7 +557,7 @@ impl MetadataWorker {
         // The in-flight fetches. Their futures borrow `cc` and nothing else,
         // so the loop stays free to use `self` (in particular
         // `self.cc_establisher`) while fetches are in flight.
-        let mut pending_fetches = PendingFetches::Idle;
+        let mut pending_fetches = PendingFetches::empty();
 
         loop {
             pending_fetches.start_due_fetches(
@@ -833,7 +825,7 @@ mod tests {
     /// `work_on_cc` polls it in its `select!` unconditionally.
     #[test]
     fn idle_pends() {
-        let mut pending_fetches = PendingFetches::Idle;
+        let mut pending_fetches = PendingFetches::empty();
 
         assert!(poll_once(&mut pending_fetches).is_pending());
     }
@@ -850,17 +842,27 @@ mod tests {
             poll_once(&mut pending_fetches),
             Poll::Ready(FetchOutcome::Full(Ok(_)))
         ));
-        assert!(matches!(pending_fetches, PendingFetches::Idle));
+        assert!(matches!(
+            pending_fetches,
+            PendingFetches::Partial {
+                client_routes_fetch: None
+            }
+        ));
         assert!(poll_once(&mut pending_fetches).is_pending());
 
         let mut pending_fetches = PendingFetches::Partial {
-            client_routes_fetch: Box::pin(async { Ok(None) }),
+            client_routes_fetch: Some(Box::pin(async { Ok(None) })),
         };
         assert!(matches!(
             poll_once(&mut pending_fetches),
             Poll::Ready(FetchOutcome::ClientRoutes(Ok(None)))
         ));
-        assert!(matches!(pending_fetches, PendingFetches::Idle));
+        assert!(matches!(
+            pending_fetches,
+            PendingFetches::Partial {
+                client_routes_fetch: None
+            }
+        ));
     }
 
     /// Losing a `select!` race (the polling borrow being dropped) must leave
