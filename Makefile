@@ -6,7 +6,7 @@ export RUSTFLAGS
 all: test
 
 .PHONY: static
-static: fmt-check check check-without-features check-without-unstable check-without-unstable-and-features check-all-features clippy clippy-all-features check-book-tests check-rustdoc-leaks check-cql-imports
+static: fmt-check check check-without-features check-without-unstable check-without-unstable-and-features check-all-features clippy clippy-all-features check-book-tests check-rustdoc-leaks check-cql-imports deny
 
 .PHONY: ci
 ci: static test
@@ -63,6 +63,10 @@ check-cql-imports:
 check-rustdoc-leaks:
 	RUSTDOCFLAGS="-Zunstable-options" cargo +nightly rustdoc -p scylla -- --output-format json
 	python3 ./scripts/check-rustdoc-cql-leaks.py target/doc/scylla.json
+
+.PHONY: deny
+deny:
+	cargo deny --all-features check
 
 .PHONY: test
 test: up
