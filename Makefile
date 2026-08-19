@@ -100,22 +100,26 @@ ccm-test:
 # the process's own exit code though: a failing test still makes the
 # `cargo llvm-cov nextest` invocation itself exit non-zero, which (without
 # the status-capturing below) would make `make` abort the recipe right there
-# and skip the doctest line entirely. --branch turns on branch coverage
-# (nightly-only, like doctests); it only needs to be passed where the test
-# binaries are actually built/run, not on any report command below --
-# report already reflects whatever instrumentation was baked in at
-# collection time regardless of report-time flags.
+# and skip the doctest line entirely.
+#
+# Branch coverage (--branch) was tried and reverted: it made cargo-llvm-cov's
+# lcov export crash (an LLVM segfault, not our code) on the CI runner's
+# x86_64 Linux + LLVM 23.1.0 nightly, even though the exact same command
+# succeeded locally on aarch64 macOS -- an architecture-specific LLVM bug in
+# handling branch-coverage regions across this many binaries/crates, not
+# something to work around here. Revisit once nightly's LLVM version moves
+# past this, or the upstream bug is understood.
 .PHONY: test-coverage
 test-coverage: up
 	cargo +nightly llvm-cov clean --workspace
 	set +e; \
-	cargo +nightly llvm-cov nextest --all-features --branch --no-report --no-fail-fast; nextest_status=$$?; \
-	cargo +nightly llvm-cov --no-report --branch --doc --all-features; doctest_status=$$?; \
+	cargo +nightly llvm-cov nextest --all-features --no-report --no-fail-fast; nextest_status=$$?; \
+	cargo +nightly llvm-cov --no-report --doc --all-features; doctest_status=$$?; \
 	test $$nextest_status -eq 0 && test $$doctest_status -eq 0
 
 .PHONY: ccm-test-coverage
 ccm-test-coverage:
-	cargo +nightly llvm-cov nextest --all-features --branch --no-report --no-fail-fast -E 'test(ccm::)' --ignore-default-filter --status-level pass
+	cargo +nightly llvm-cov nextest --all-features --no-report --no-fail-fast -E 'test(ccm::)' --ignore-default-filter --status-level pass
 
 .PHONY: coverage-report
 coverage-report:
