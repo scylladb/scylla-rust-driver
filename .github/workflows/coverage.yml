@@ -55,6 +55,11 @@ jobs:
       - name: Install scylla-ccm
         if: always()
         run: pip3 install https://github.com/scylladb/scylla-ccm/archive/master.zip
+      # continue-on-error is scoped to just this step: its only purpose is the
+      # side effect of creating ~/.ccm on first run, it is not itself a test,
+      # and `ccm status` legitimately exits non-zero here (no cluster exists
+      # yet). Every other step in this job is a real test/report-generation
+      # step whose failure should still surface in the job's overall status.
       - name: Run CCM command to create the ~/.ccm dir
         if: always()
         continue-on-error: true
@@ -71,7 +76,7 @@ jobs:
           {
             echo '## Coverage report'
             echo '```'
-            cargo llvm-cov report --summary-only
+            cargo llvm-cov report
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload coverage report

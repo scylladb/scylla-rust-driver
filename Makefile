@@ -102,7 +102,7 @@ ccm-test-coverage:
 .PHONY: coverage-report
 coverage-report:
 	mkdir -p target/llvm-cov
-	cargo llvm-cov report --summary-only
+	cargo llvm-cov report
 	cargo llvm-cov report --html --output-dir target/llvm-cov
 	cargo llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
 
