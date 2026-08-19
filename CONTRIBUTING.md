@@ -75,7 +75,7 @@ We use [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) for code cove
 source-based coverage, so unlike ptrace-based tools it handles this driver's async,
 multi-threaded tests correctly. It runs on the **nightly** toolchain -- only for this coverage
 tooling, the rest of the repo (and its MSRV) is unaffected -- because nightly is required to
-include doctests in the coverage data. Install everything needed with:
+include doctests and branch coverage in the data. Install everything needed with:
 ```bash
 rustup toolchain install nightly --component llvm-tools-preview
 cargo install cargo-llvm-cov cargo-nextest --locked
