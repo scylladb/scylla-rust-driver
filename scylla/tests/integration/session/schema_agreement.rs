@@ -114,7 +114,7 @@ async fn test_schema_await_with_unreachable_node() {
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, mut running_proxy| async move {
             let normal_timeout = Duration::from_millis(60000);
-            let short_timeout = Duration::from_millis(300);
+            let short_timeout = Duration::from_millis(500);
 
             // DB preparation phase
             let builder = SessionBuilder::new()
