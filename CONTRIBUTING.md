@@ -73,8 +73,11 @@ To point them at a different version ad hoc, set `SCYLLA_TEST_CLUSTER` to a full
 
 We use [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) for code coverage: it's LLVM
 source-based coverage, so unlike ptrace-based tools it handles this driver's async,
-multi-threaded tests correctly. Install it (and cargo-nextest, if you haven't already) with:
+multi-threaded tests correctly. It runs on the **nightly** toolchain -- only for this coverage
+tooling, the rest of the repo (and its MSRV) is unaffected -- because nightly is required to
+include doctests in the coverage data. Install everything needed with:
 ```bash
+rustup toolchain install nightly --component llvm-tools-preview
 cargo install cargo-llvm-cov cargo-nextest --locked
 ```
 
@@ -87,9 +90,6 @@ make coverage-report
 `coverage-report` prints a per-file summary and writes an HTML report to `target/llvm-cov/html/index.html`
 (open it in a browser for a line-by-line view) and an lcov file to `target/llvm-cov/lcov.info`.
 `make clean-coverage` resets the collected data.
-
-Doctests aren't measured -- cargo-llvm-cov's doctest coverage support requires nightly Rust, and
-this repo targets stable -- but `test-coverage` still runs them for correctness, same as `test` does.
 
 ### Writing tests that need to connect to Scylla
 

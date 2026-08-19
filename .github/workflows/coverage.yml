@@ -23,8 +23,14 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      # nightly is required so cargo-llvm-cov can instrument doctests (its
+      # doctest coverage support is nightly-only); the rest of this repo's CI
+      # keeps using stable, this job is the only one that needs nightly.
       - name: Setup rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          toolchain: nightly
+          components: llvm-tools
       - name: Install cargo-nextest and cargo-llvm-cov
         uses: taiki-e/install-action@3771e22aa892e03fd35585fae288baad1755695c # v2.78.2
         with:
@@ -76,7 +82,7 @@ jobs:
           {
             echo '## Coverage report'
             echo '```'
-            cargo llvm-cov report
+            cargo +nightly llvm-cov report
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload coverage report

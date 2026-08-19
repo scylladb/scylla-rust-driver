@@ -82,33 +82,41 @@ ccm-test:
 # whatever test-coverage already collected instead of replacing it. Run
 # test-coverage first, then optionally ccm-test-coverage, then coverage-report.
 #
+# Everything here runs on the nightly toolchain (+nightly), independently of
+# whatever toolchain is the ambient default: nightly is required to include
+# doctests in the coverage data (cargo-llvm-cov's doctest support is
+# nightly-only), and mixing coverage data recorded by different toolchains'
+# bundled LLVM versions is not something to rely on, so every instrumented
+# run and every read of that data (report/clean) uses the same toolchain.
+# This does not affect `test`/`ccm-test`, which keep using the default
+# (stable) toolchain as before. Requires nightly + its llvm-tools-preview
+# component locally: `rustup toolchain install nightly --component
+# llvm-tools-preview`.
+#
 # --no-fail-fast matters here specifically: nextest's default is to stop the
 # whole run after the first failing binary. With --no-report, that means a
 # single failure can throw away coverage data for everything that would have
 # run after it, not just fail that one test.
 .PHONY: test-coverage
 test-coverage: up
-	cargo llvm-cov clean --workspace
-	cargo llvm-cov nextest --all-features --no-report --no-fail-fast
-	# Doctests aren't measured: cargo-llvm-cov's doctest coverage support
-	# requires nightly Rust, and this repo targets stable. They still run
-	# here for correctness, same as in `test`.
-	cargo test --doc --all-features
+	cargo +nightly llvm-cov clean --workspace
+	cargo +nightly llvm-cov nextest --all-features --no-report --no-fail-fast
+	cargo +nightly llvm-cov --no-report --doc --all-features
 
 .PHONY: ccm-test-coverage
 ccm-test-coverage:
-	cargo llvm-cov nextest --all-features --no-report --no-fail-fast -E 'test(ccm::)' --ignore-default-filter --status-level pass
+	cargo +nightly llvm-cov nextest --all-features --no-report --no-fail-fast -E 'test(ccm::)' --ignore-default-filter --status-level pass
 
 .PHONY: coverage-report
 coverage-report:
 	mkdir -p target/llvm-cov
-	cargo llvm-cov report
-	cargo llvm-cov report --html --output-dir target/llvm-cov
-	cargo llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
+	cargo +nightly llvm-cov report
+	cargo +nightly llvm-cov report --html --output-dir target/llvm-cov
+	cargo +nightly llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
 
 .PHONY: clean-coverage
 clean-coverage:
-	cargo llvm-cov clean --workspace
+	cargo +nightly llvm-cov clean --workspace
 	rm -rf target/llvm-cov
 
 .PHONY: run-examples
