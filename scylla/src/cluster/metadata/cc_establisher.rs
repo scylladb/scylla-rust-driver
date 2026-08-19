@@ -29,7 +29,7 @@ use crate::cluster::control_connection::{
     MetadataRequestTimeouts,
 };
 use crate::cluster::metadata::{
-    Metadata, PeerEndpoint, SchemaMetadataFetchMode, UntranslatedEndpoint,
+    Metadata, Peer, PeerEndpoint, SchemaMetadataFetchMode, UntranslatedEndpoint,
 };
 use crate::cluster::node::resolve_contact_points;
 use crate::errors::{ConnectionPoolError, MetadataError, NewSessionError};
@@ -342,10 +342,9 @@ impl ControlConnectionEstablisher {
         }
     }
 
-    fn update_known_peers(&mut self, metadata: &Metadata) {
+    fn update_known_peers(&mut self, peers: &[Peer]) {
         let host_filter = self.host_filter.as_ref();
-        self.known_peers = metadata
-            .peers
+        self.known_peers = peers
             .iter()
             .filter(|peer| host_filter.is_none_or(|f| f.accept(peer)))
             .map(|peer| UntranslatedEndpoint::Peer(peer.to_peer_endpoint()))
@@ -353,14 +352,10 @@ impl ControlConnectionEstablisher {
 
         // Check if the host filter isn't accidentally too restrictive,
         // and print an error message about this fact
-        if !metadata.peers.is_empty() && self.known_peers.is_empty() {
+        if !peers.is_empty() && self.known_peers.is_empty() {
             error!(
                 node_ips = tracing::field::display(
-                    metadata
-                        .peers
-                        .iter()
-                        .map(|peer| peer.address)
-                        .safe_format(", ")
+                    peers.iter().map(|peer| peer.address).safe_format(", ")
                 ),
                 "The host filter rejected all nodes in the cluster, \
                 no connections that can serve user queries have been \
@@ -449,27 +444,29 @@ impl ControlConnectionEstablisher {
     }
 }
 
-/// Freshly fetched [`Metadata`] that the [`ControlConnectionEstablisher`] has not yet absorbed.
+/// Freshly fetched topology that the [`ControlConnectionEstablisher`] has not yet absorbed.
 ///
 /// [`ControlConnection::query_metadata`] returns its result wrapped in this
 /// guard, so that the fetched metadata cannot be used without the establisher
 /// updating its known peers from it first: the only way to extract the
 /// [`Metadata`] is [`apply`](Self::apply).
 #[must_use = "the fetched metadata must be applied to the ControlConnectionEstablisher"]
-pub(super) struct TopologyUpdateGuard {
-    metadata: Metadata,
+pub(super) struct TopologyUpdateGuard<T = Metadata> {
+    inner: T,
 }
 
-impl TopologyUpdateGuard {
-    pub(super) fn new(metadata: Metadata) -> Self {
-        Self { metadata }
+impl<T> TopologyUpdateGuard<T> {
+    pub(super) fn new(inner: T) -> Self {
+        Self { inner }
     }
+}
 
+impl TopologyUpdateGuard<Metadata> {
     /// Updates the establisher's known peers from the fetched metadata and releases
     /// the metadata itself.
     pub(super) fn apply(self, establisher: &mut ControlConnectionEstablisher) -> Metadata {
-        establisher.update_known_peers(&self.metadata);
-        self.metadata
+        establisher.update_known_peers(&self.inner.peers);
+        self.inner
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::cluster::metadata::{Peer, SingleKeyspaceMetadataError};
 use crate::errors::{ClusterStateTokenError, ConnectionPoolError};
 use crate::network::{Connection, ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::metrics::Metrics;
@@ -20,6 +21,19 @@ use uuid::Uuid;
 
 use super::metadata::{Keyspace, Metadata, Strategy, Table};
 use super::node::{Node, NodeRef};
+
+/// Helper struct to group parameters that are only needed to
+/// construct `Node` objects.
+pub(crate) struct NodeConfig {
+    // Config for `NodeConnectioPool` for all new nodes.
+    pub(crate) pool_config: PoolConfig,
+    // Keyspace send in "USE <keyspace name>" when opening each connection.
+    pub(crate) used_keyspace: Option<VerifiedKeyspaceName>,
+    // Sender part of that channel to pass to `PoolRefiller`s.
+    pub(crate) connectivity_events_sender: mpsc::UnboundedSender<ConnectivityChangeEvent>,
+    // Metrics passed to each new `NodeConnectionPool`.
+    pub(crate) metrics: Metrics,
+}
 
 /// Represents the state of the cluster, including known nodes, keyspaces, and replica locator.
 ///
@@ -72,6 +86,9 @@ impl std::fmt::Debug for ClusterState {
             .finish_non_exhaustive()
     }
 }
+
+type KnownNodes = HashMap<Uuid, Arc<Node>>;
+type Ring = Vec<(Token, Arc<Node>)>;
 
 impl ClusterState {
     pub(crate) async fn wait_until_all_pools_are_initialized(&self) {
@@ -152,33 +169,87 @@ impl ClusterState {
         node.trigger_keepalive();
     }
 
-    /// Creates new ClusterState using information about topology held in `metadata`.
-    /// Uses provided `known_nodes` hashmap to recycle nodes if possible.
-    #[allow(clippy::too_many_arguments)]
-    // This allow(clippy::type_complexity) is here because I can't satisfy borrow checker while
-    // having the closure type be a type alias.
-    #[allow(clippy::type_complexity)]
     pub(crate) async fn new(
         metadata: Metadata,
-        pool_config: &PoolConfig,
-        known_nodes: &HashMap<Uuid, Arc<Node>>,
-        // Takes old and new known_nodes maps as arguments.
-        handle_topology_changes: &mut (
-                 dyn FnMut(&HashMap<Uuid, Arc<Node>>, &HashMap<Uuid, Arc<Node>>) + Send + Sync
-             ),
-        used_keyspace: &Option<VerifiedKeyspaceName>,
+        node_config: &NodeConfig,
         host_filter: Option<&dyn HostFilter>,
-        connectivity_events_sender: &mpsc::UnboundedSender<ConnectivityChangeEvent>,
-        mut tablets: TabletsInfo,
-        old_keyspaces: &HashMap<String, Keyspace>,
-        metrics: &Metrics,
     ) -> Self {
-        // Create new updated known_nodes and ring
-        let mut new_known_nodes: HashMap<Uuid, Arc<Node>> =
-            HashMap::with_capacity(metadata.peers.len());
-        let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
+        let (new_known_nodes, ring) =
+            Self::calculate_new_topology(metadata.peers, &HashMap::new(), node_config, host_filter);
 
-        for peer in metadata.peers {
+        let keyspaces = Self::resolve_metadata_keyspaces(metadata.keyspaces, &HashMap::new());
+
+        let mut tablets = TabletsInfo::new();
+        // Perform maintenance to create empty entries for all tablets-based tables.
+        Self::perform_tablets_maintenance(
+            &mut tablets,
+            &HashMap::new(),
+            &new_known_nodes,
+            &keyspaces,
+        );
+
+        let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
+
+        ClusterState {
+            all_nodes: new_known_nodes.values().cloned().collect(),
+            known_nodes: new_known_nodes,
+            keyspaces,
+            locator,
+            cluster_name: metadata.cluster_name,
+        }
+    }
+
+    /// Creates new ClusterState using information about topology held in `metadata`.
+    /// Uses `self` to reuse data when possible.
+    pub(crate) async fn new_updated(
+        &self,
+        metadata: Metadata,
+        node_config: &NodeConfig,
+        host_filter: Option<&dyn HostFilter>,
+    ) -> Self {
+        let (new_known_nodes, ring) = Self::calculate_new_topology(
+            metadata.peers,
+            &self.known_nodes,
+            node_config,
+            host_filter,
+        );
+
+        let keyspaces = Self::resolve_metadata_keyspaces(metadata.keyspaces, &self.keyspaces);
+
+        let mut tablets = self.locator.tablets.clone();
+        Self::perform_tablets_maintenance(
+            &mut tablets,
+            &self.known_nodes,
+            &new_known_nodes,
+            &keyspaces,
+        );
+
+        let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
+
+        ClusterState {
+            all_nodes: new_known_nodes.values().cloned().collect(),
+            known_nodes: new_known_nodes,
+            keyspaces,
+            locator,
+            cluster_name: metadata.cluster_name,
+        }
+    }
+
+    /// Creates a new topology (`Node` objects and token ring) from metadata peers,
+    /// and previous topology.
+    ///
+    /// Previous topology is used to reuse connection pools and `Node` objects when possible.
+    fn calculate_new_topology(
+        peers: Vec<Peer>,
+        known_nodes: &KnownNodes,
+        node_config: &NodeConfig,
+        host_filter: Option<&dyn HostFilter>,
+    ) -> (KnownNodes, Ring) {
+        // Create new updated known_nodes and ring
+        let mut new_known_nodes: KnownNodes = HashMap::with_capacity(peers.len());
+        let mut ring: Ring = Vec::new();
+
+        for peer in peers {
             // Take existing Arc<Node> if possible, otherwise create new one.
             let peer_host_id = peer.host_id;
             let is_enabled = host_filter.is_none_or(|f| f.accept(&peer));
@@ -219,10 +290,10 @@ impl ClusterState {
                 }
                 (true, _) => Arc::new(Node::new(
                     peer_endpoint,
-                    pool_config,
-                    connectivity_events_sender.clone(),
-                    used_keyspace.clone(),
-                    metrics.clone(),
+                    &node_config.pool_config,
+                    node_config.connectivity_events_sender.clone(),
+                    node_config.used_keyspace.clone(),
+                    node_config.metrics.clone(),
                 )),
             };
 
@@ -233,10 +304,16 @@ impl ClusterState {
             }
         }
 
-        handle_topology_changes(known_nodes, &new_known_nodes);
+        (new_known_nodes, ring)
+    }
 
-        let keyspaces: HashMap<String, Keyspace> = metadata
-            .keyspaces
+    /// Handles single-keyspace errors by reusing old `Keyspace` objects for such
+    /// broken keyspaces and warns about it.
+    fn resolve_metadata_keyspaces(
+        meta_keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
+        old_keyspaces: &HashMap<String, Keyspace>,
+    ) -> HashMap<String, Keyspace> {
+        meta_keyspaces
             .into_iter()
             .filter_map(|(ks_name, ks)| match ks {
                 Ok(ks) => Some((ks_name, ks)),
@@ -259,43 +336,48 @@ impl ClusterState {
                     }
                 }
             })
-            .collect();
+            .collect()
+    }
 
-        // Tablets maintenance.
-        {
-            let removed_nodes = {
-                let mut removed_nodes = HashSet::new();
-                for old_peer in known_nodes {
-                    if !new_known_nodes.contains_key(old_peer.0) {
-                        removed_nodes.insert(*old_peer.0);
-                    }
+    fn perform_tablets_maintenance(
+        tablets: &mut TabletsInfo,
+        old_known_nodes: &KnownNodes,
+        new_known_nodes: &KnownNodes,
+        keyspaces: &HashMap<String, Keyspace>,
+    ) {
+        let removed_nodes = {
+            let mut removed_nodes = HashSet::new();
+            for old_peer in old_known_nodes {
+                if !new_known_nodes.contains_key(old_peer.0) {
+                    removed_nodes.insert(*old_peer.0);
                 }
+            }
 
-                removed_nodes
-            };
+            removed_nodes
+        };
 
-            let recreated_nodes = {
-                let mut recreated_nodes = HashMap::new();
-                for (old_peer_id, old_peer_node) in known_nodes {
-                    if let Some(new_peer_node) = new_known_nodes.get(old_peer_id)
-                        && !Arc::ptr_eq(old_peer_node, new_peer_node)
-                    {
-                        recreated_nodes.insert(*old_peer_id, Arc::clone(new_peer_node));
-                    }
+        let recreated_nodes = {
+            let mut recreated_nodes = HashMap::new();
+            for (old_peer_id, old_peer_node) in old_known_nodes {
+                if let Some(new_peer_node) = new_known_nodes.get(old_peer_id)
+                    && !Arc::ptr_eq(old_peer_node, new_peer_node)
+                {
+                    recreated_nodes.insert(*old_peer_id, Arc::clone(new_peer_node));
                 }
+            }
 
-                recreated_nodes
-            };
+            recreated_nodes
+        };
 
-            tablets.perform_maintenance(
-                &keyspaces,
-                &removed_nodes,
-                &new_known_nodes,
-                &recreated_nodes,
-            )
-        }
+        tablets.perform_maintenance(keyspaces, &removed_nodes, new_known_nodes, &recreated_nodes)
+    }
 
-        let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
+    async fn calculate_new_locator(
+        keyspaces: HashMap<String, Keyspace>,
+        ring: Ring,
+        tablets: TabletsInfo,
+    ) -> (ReplicaLocator, HashMap<String, Keyspace>) {
+        tokio::task::spawn_blocking(move || {
             let keyspace_strategies = keyspaces
                 .values()
                 .filter(|ks| !ks.tablet_based)
@@ -304,15 +386,7 @@ impl ClusterState {
             (locator, keyspaces)
         })
         .await
-        .unwrap();
-
-        ClusterState {
-            all_nodes: new_known_nodes.values().cloned().collect(),
-            known_nodes: new_known_nodes,
-            keyspaces,
-            locator,
-            cluster_name: metadata.cluster_name,
-        }
+        .unwrap()
     }
 
     /// Returns the name of the cluster, as reported by the `cluster_name` column in `system.local`.
@@ -654,7 +728,6 @@ mod tests {
     use crate::cluster::metadata::{Metadata, Peer};
     use crate::cluster::node::NodeAddr;
     use crate::policies::host_filter::HostFilter;
-    use crate::routing::locator::tablets::TabletsInfo;
     use crate::test_utils::setup_tracing;
 
     use std::collections::{HashMap, HashSet};
@@ -708,26 +781,37 @@ mod tests {
         }
     }
 
-    /// Helper: build a ClusterState from metadata, old known_nodes, and an optional host filter.
-    async fn build_cluster_state(
+    /// Helper: build a ClusterState from metadata and an optional host filter.
+    async fn new_cluster_state(
         metadata: Metadata,
-        known_nodes: &HashMap<Uuid, Arc<Node>>,
         host_filter: Option<&dyn HostFilter>,
     ) -> ClusterState {
         let (tx, _rx) = mpsc::unbounded_channel();
-        ClusterState::new(
-            metadata,
-            &Default::default(),
-            known_nodes,
-            &mut |_, _| (),
-            &None,
-            host_filter,
-            &tx,
-            TabletsInfo::new(),
-            &HashMap::new(),
-            &Default::default(),
-        )
-        .await
+        let node_config = NodeConfig {
+            pool_config: Default::default(),
+            used_keyspace: None,
+            connectivity_events_sender: tx,
+            metrics: Default::default(),
+        };
+        ClusterState::new(metadata, &node_config, host_filter).await
+    }
+
+    /// Helper: build a ClusterState from metadata, old state, and an optional host filter.
+    async fn update_cluster_state(
+        previous: &ClusterState,
+        metadata: Metadata,
+        host_filter: Option<&dyn HostFilter>,
+    ) -> ClusterState {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let node_config = NodeConfig {
+            pool_config: Default::default(),
+            used_keyspace: None,
+            connectivity_events_sender: tx,
+            metrics: Default::default(),
+        };
+        previous
+            .new_updated(metadata, &node_config, host_filter)
+            .await
     }
 
     // Node's address changes so that host filter no longer rejects it.
@@ -748,8 +832,7 @@ mod tests {
             Some("dc1"),
             Some("r1"),
         )]);
-        let initial_state =
-            build_cluster_state(initial_metadata, &HashMap::new(), Some(&filter)).await;
+        let initial_state = new_cluster_state(initial_metadata, Some(&filter)).await;
         let old_node = initial_state.known_nodes().get(&host_id).unwrap().clone();
         assert!(
             !old_node.is_enabled(),
@@ -763,8 +846,7 @@ mod tests {
             Some("dc1"),
             Some("r1"),
         )]);
-        let new_state =
-            build_cluster_state(new_metadata, initial_state.known_nodes(), Some(&filter)).await;
+        let new_state = update_cluster_state(&initial_state, new_metadata, Some(&filter)).await;
         let new_node = new_state.known_nodes().get(&host_id).unwrap();
 
         assert!(
@@ -795,8 +877,7 @@ mod tests {
             Some("dc1"),
             Some("r1"),
         )]);
-        let initial_state =
-            build_cluster_state(initial_metadata, &HashMap::new(), Some(&filter)).await;
+        let initial_state = new_cluster_state(initial_metadata, Some(&filter)).await;
         let old_node = initial_state.known_nodes().get(&host_id).unwrap().clone();
         assert!(
             old_node.is_enabled(),
@@ -810,8 +891,7 @@ mod tests {
             Some("dc1"),
             Some("r1"),
         )]);
-        let new_state =
-            build_cluster_state(new_metadata, initial_state.known_nodes(), Some(&filter)).await;
+        let new_state = update_cluster_state(&initial_state, new_metadata, Some(&filter)).await;
         let new_node = new_state.known_nodes().get(&host_id).unwrap();
 
         assert!(
@@ -837,15 +917,13 @@ mod tests {
         // Build initial state: peer at addr ⇒ disabled.
         let initial_metadata =
             make_metadata(vec![make_peer(host_id, addr, Some("dc1"), Some("r1"))]);
-        let initial_state =
-            build_cluster_state(initial_metadata, &HashMap::new(), Some(&filter)).await;
+        let initial_state = new_cluster_state(initial_metadata, Some(&filter)).await;
         let old_node = initial_state.known_nodes().get(&host_id).unwrap().clone();
         assert!(!old_node.is_enabled(), "node should be disabled");
 
         // Refresh with identical attributes, still filtered out.
         let new_metadata = make_metadata(vec![make_peer(host_id, addr, Some("dc1"), Some("r1"))]);
-        let new_state =
-            build_cluster_state(new_metadata, initial_state.known_nodes(), Some(&filter)).await;
+        let new_state = update_cluster_state(&initial_state, new_metadata, Some(&filter)).await;
         let new_node = new_state.known_nodes().get(&host_id).unwrap();
 
         assert!(!new_node.is_enabled(), "node should still be disabled");

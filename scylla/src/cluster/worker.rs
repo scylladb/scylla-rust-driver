@@ -7,6 +7,7 @@ use crate::cluster::metadata::SchemaMetadataFetchMode;
 use crate::cluster::metadata::update::{
     MetadataChanges, MetadataUpdate, PartialMetadataChanges, RefreshRequest, StatusHint,
 };
+use crate::cluster::state::NodeConfig;
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
@@ -14,7 +15,7 @@ use crate::observability::metrics::Metrics;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::host_listener::{HostEvent, HostEventContext, HostListener};
-use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
+use crate::routing::locator::tablets::RawTablet;
 
 use crate::frame::response::result::TableSpec;
 use arc_swap::ArcSwap;
@@ -27,7 +28,6 @@ use std::time::Duration;
 use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
-use super::metadata::Metadata;
 use super::metadata::cc_establisher::ControlConnectionEstablisher;
 use super::metadata::merge_channel::{self, merge_channel};
 use super::metadata::worker::MetadataWorker;
@@ -123,7 +123,7 @@ impl Cluster {
             metadata_updates_sender,
         );
 
-        let (cc, mut metadata) = metadata_worker.establish_initial().await?;
+        let (cc, mut metadata) = metadata_worker.establish(true).await?;
 
         // The initial metadata is fetched before the metadata worker is spawned, so the routes
         // must be applied here - `ClusterState::new` below creates connection pools, which
@@ -136,26 +136,21 @@ impl Cluster {
             let _ = subscriber.replace_client_routes(routes);
         }
 
-        let cluster_state = ClusterState::new(
-            metadata,
-            &pool_config,
+        let node_config = NodeConfig {
+            pool_config,
+            used_keyspace: None,
+            connectivity_events_sender,
+            metrics,
+        };
+
+        let cluster_state = ClusterState::new(metadata, &node_config, host_filter.as_deref()).await;
+        ClusterWorker::handle_topology_changes(
             &HashMap::new(),
-            &mut |old_nodes, new_nodes| {
-                ClusterWorker::handle_topology_changes(
-                    old_nodes,
-                    new_nodes,
-                    host_listener.as_deref(),
-                    &mut node_status,
-                )
-            },
-            &None,
-            host_filter.as_deref(),
-            &connectivity_events_sender,
-            TabletsInfo::new(),
-            &HashMap::new(),
-            &metrics,
-        )
-        .await;
+            &cluster_state.known_nodes,
+            host_listener.as_deref(),
+            &mut node_status,
+        );
+
         cluster_state.wait_until_all_pools_are_initialized().await;
 
         let cluster_state: Arc<ArcSwap<ClusterState>> =
@@ -166,20 +161,16 @@ impl Cluster {
             node_status,
 
             client_routes_subscriber,
-            pool_config,
+            node_config,
 
             metadata_updates: metadata_updates_receiver,
-            connectivity_events_sender,
             connectivity_events_receiver,
             tablets_channel: tablet_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
-            used_keyspace: None,
 
             host_filter,
             host_listener,
-
-            metrics,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
@@ -263,7 +254,9 @@ struct ClusterWorker {
     /// The applier of client routes snapshots fetched from `system.client_routes`.
     /// `None` if client routes are not configured.
     client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
-    pool_config: PoolConfig,
+
+    /// Used to create all the `Node` objects.
+    node_config: NodeConfig,
 
     // Channel over which the metadata worker delivers everything it learned
     // about the cluster.
@@ -274,15 +267,10 @@ struct ClusterWorker {
 
     // Channel used to receive signals that node is no longer reachable or became reachable.
     connectivity_events_receiver: tokio::sync::mpsc::UnboundedReceiver<ConnectivityChangeEvent>,
-    // Sender part of that channel to pass to `PoolRefiller`s.
-    connectivity_events_sender: tokio::sync::mpsc::UnboundedSender<ConnectivityChangeEvent>,
 
     // Channel used to receive info about new tablets from custom payload in responses
     // sent by server.
     tablets_channel: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
-
-    // Keyspace send in "USE <keyspace name>" when opening each connection
-    used_keyspace: Option<VerifiedKeyspaceName>,
 
     // The host filter determines towards which nodes we should open
     // connections
@@ -290,8 +278,6 @@ struct ClusterWorker {
 
     // The host listener allows to listen for topology and node status changes.
     host_listener: Option<Arc<dyn HostListener>>,
-
-    metrics: Metrics,
 }
 
 #[derive(Debug)]
@@ -362,7 +348,7 @@ impl ClusterWorker {
                 maybe_use_keyspace_request = self.use_keyspace_channel.recv() => {
                     match maybe_use_keyspace_request {
                         Some(request) => {
-                            self.used_keyspace = Some(request.keyspace_name.clone());
+                            self.node_config.used_keyspace = Some(request.keyspace_name.clone());
 
                             let cluster_state = self.cluster_state.load_full();
                             let use_keyspace_future = Self::handle_use_keyspace_request(cluster_state, request);
@@ -407,46 +393,19 @@ impl ClusterWorker {
         // Apply the client routes BEFORE constructing the new `ClusterState` below,
         // because `ClusterState::new` creates connection pools, which translate addresses
         // through the subscriber.
-        let client_routes_hosts_to_refill = if let Some(subscriber) =
-            self.client_routes_subscriber.as_ref()
-            && let Some(metadata_changes) = update.metadata_changes.as_mut()
-        {
-            match metadata_changes {
-                MetadataChanges::Full {
-                    metadata,
-                    refresh_responses: _,
-                } => {
-                    if let Some(client_routes) = metadata.client_routes.take() {
-                        subscriber.replace_client_routes(client_routes)
-                    } else {
-                        HashSet::new()
-                    }
-                }
-                MetadataChanges::Partial(PartialMetadataChanges {
-                    client_routes_updates,
-                }) => match client_routes_updates.take() {
-                    Some(client_routes_update) => {
-                        subscriber.merge_client_routes_update(client_routes_update)
-                    }
-                    None => HashSet::new(),
-                },
-            }
-        } else {
-            HashSet::new()
-        };
+        let client_routes_hosts_to_refill = self.handle_client_route_update(&mut update);
+
+        let cluster_state = self.cluster_state.load_full();
 
         // Unlike UP hints, DOWN hints are applied to the *current* state: a keepalive
         // query only makes sense for a node the driver still holds connections to, so
         // there is nothing a freshly built state could add, and waiting for the refresh
         // (which awaits pool initialization) would only delay the liveness probe.
-        {
-            let cluster_state = self.cluster_state.load();
-            update
-                .status_hints
-                .iter()
-                .filter(|(_k, v)| **v == StatusHint::Down)
-                .for_each(|(addr, _)| cluster_state.trigger_keepalive_for_addr(*addr));
-        }
+        update
+            .status_hints
+            .iter()
+            .filter(|(_k, v)| **v == StatusHint::Down)
+            .for_each(|(addr, _)| cluster_state.trigger_keepalive_for_addr(*addr));
 
         let process_up_hints = |state: &ClusterState| {
             state.trigger_pool_refills_for_hosts(client_routes_hosts_to_refill.into_iter());
@@ -457,71 +416,84 @@ impl ClusterWorker {
                 .for_each(|(addr, _)| state.trigger_pool_refill_for_addr(*addr));
         };
 
-        match update.metadata_changes {
+        let new_state_with_requests = match update.metadata_changes {
             Some(MetadataChanges::Full {
                 metadata,
                 refresh_responses,
             }) => {
-                self.perform_refresh(metadata, process_up_hints).await;
-                // The new state is published, so the awaited refreshes are complete.
-                for response_chan in refresh_responses {
-                    // We can ignore sending error - if no one waits for the response we can drop it
-                    let _ = response_chan.send(Ok(()));
-                }
+                let new_cluster_state = Arc::new(
+                    cluster_state
+                        .new_updated(metadata, &self.node_config, self.host_filter.as_deref())
+                        .await,
+                );
+                Some((new_cluster_state, refresh_responses))
             }
             None | Some(MetadataChanges::Partial(_)) => {
                 // For now there is nothing that requires publishing new ClusterState.
-                // The only thing left to do is processing up hints.
-                process_up_hints(self.cluster_state.load().as_ref());
+                None
             }
-        }
-    }
+        };
 
-    /// Builds a new [`ClusterState`] from freshly fetched metadata and publishes it.
-    ///
-    /// The client routes carried by `metadata` must already have been applied by the
-    /// caller - `ClusterState::new` creates connection pools, which translate addresses
-    /// through the subscriber.
-    ///
-    /// `process_up_hints` triggers pool refills for hosts for which we received UP events.
-    /// It is called after new ClusterState is created.
-    async fn perform_refresh(
-        &mut self,
-        metadata: Metadata,
-        process_up_hints: impl FnOnce(&ClusterState),
-    ) {
-        let cluster_state: Arc<ClusterState> = self.cluster_state.load_full();
-
-        let new_cluster_state = Arc::new(
-            ClusterState::new(
-                metadata,
-                &self.pool_config,
-                &cluster_state.known_nodes,
-                &mut |old_nodes, new_nodes| {
-                    ClusterWorker::handle_topology_changes(
-                        old_nodes,
-                        new_nodes,
-                        self.host_listener.as_deref(),
-                        &mut self.node_status,
-                    )
-                },
-                &self.used_keyspace,
-                self.host_filter.as_deref(),
-                &self.connectivity_events_sender,
-                cluster_state.locator.tablets.clone(),
-                &cluster_state.keyspaces,
-                &self.metrics,
-            )
-            .await,
-        );
+        // Regardless of wheter we have a new state or not, we need to publish UP hints.
+        // If no new state - publish using new one.
+        let Some((new_cluster_state, refresh_responses)) = new_state_with_requests else {
+            process_up_hints(&cluster_state);
+            return;
+        };
 
         process_up_hints(&new_cluster_state);
+
+        ClusterWorker::handle_topology_changes(
+            &cluster_state.known_nodes,
+            &new_cluster_state.known_nodes,
+            self.host_listener.as_deref(),
+            &mut self.node_status,
+        );
 
         new_cluster_state
             .wait_until_all_pools_are_initialized()
             .await;
 
         self.update_cluster_state(new_cluster_state);
+
+        // The new state is published, so the awaited refreshes are complete.
+        for response_chan in refresh_responses {
+            // We can ignore sending error - if no one waits for the response we can drop it
+            let _ = response_chan.send(Ok(()));
+        }
+    }
+
+    /// Applies the provided `update` to client route subscriber, if any.
+    ///
+    /// Returns a set of hosts to which UP hint should be applied.
+    fn handle_client_route_update(&self, update: &mut MetadataUpdate) -> HashSet<Uuid> {
+        let (Some(subscriber), Some(metadata_changes)) = (
+            self.client_routes_subscriber.as_ref(),
+            update.metadata_changes.as_mut(),
+        ) else {
+            return HashSet::new();
+        };
+
+        match metadata_changes {
+            MetadataChanges::Full {
+                metadata,
+                refresh_responses: _,
+            } => {
+                if let Some(client_routes) = metadata.client_routes.take() {
+                    subscriber.replace_client_routes(client_routes)
+                } else {
+                    HashSet::new()
+                }
+            }
+            MetadataChanges::Partial(PartialMetadataChanges {
+                client_routes_updates,
+            }) => match client_routes_updates.take() {
+                Some(client_routes_update) => {
+                    subscriber.merge_client_routes_update(client_routes_update)
+                }
+                None => HashSet::new(),
+            },
+        }
     }
 
     fn update_cluster_state(&mut self, new_cluster_state: Arc<ClusterState>) {

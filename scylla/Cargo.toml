@@ -20,7 +20,7 @@ workspace = true
 [lints.rust]
 unnameable_types = "warn"
 unreachable_pub = "warn"
-missing-docs = "warn"
+missing_docs = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(scylla_unstable)',
     'cfg(cassandra_tests)',

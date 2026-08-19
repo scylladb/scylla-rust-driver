@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0"
 
 [lints.rust]
 unreachable_pub = "warn"
-missing-docs = "warn"
+missing_docs = "warn"
 
 [features]
 default = []
