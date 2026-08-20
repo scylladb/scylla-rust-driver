@@ -26,6 +26,7 @@ use std::time::Instant;
 use crate::frame::response::result::{ColumnSpec, TableSpec};
 use crate::parse_utils::{ParseErrorCause, ParseResult, ParserState};
 use futures::{FutureExt, Stream, StreamExt, TryStreamExt, future, stream};
+use itertools::{Either, Itertools};
 use rand::Rng;
 use tracing::{debug, trace, warn};
 use uuid::Uuid;
@@ -40,6 +41,7 @@ use crate::DeserializeRow;
 use crate::client::pager::QueryPager;
 use crate::cluster::NodeAddr;
 use crate::cluster::control_connection::ControlConnection;
+use crate::cluster::metadata::update::{FetchedKeyspace, SchemaUpdate};
 use crate::cluster::metadata::{ClientRoutes, ClientRoutesUpdate};
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{
@@ -513,6 +515,16 @@ impl TryFrom<ClientRoutesEntry> for super::ClientRoute {
     }
 }
 
+/// What the last SCHEMA_CHANGE event seen for a keyspace did to it.
+pub(crate) enum LastKeyspaceChange {
+    /// The keyspace itself was dropped, so it is to be removed from the schema
+    /// metadata rather than re-read.
+    Dropped,
+    /// Anything else - the keyspace was created or altered, or an object in it
+    /// was created, altered or dropped - so its metadata is to be re-read.
+    Altered,
+}
+
 impl ControlConnection {
     pub(super) async fn query_client_routes(
         &self,
@@ -635,6 +647,74 @@ impl ControlConnection {
             subscriber.get_connection_ids(),
             &client_routes,
         )))
+    }
+
+    /// Performs a partial fetch of the schema metadata: re-reads the schema
+    /// parts described by `request`.
+    ///
+    /// Each keyspace in `request` is marked as either dropped, or altered.
+    /// The altered keyspaces are fetched from the cluster.
+    /// The dropped ones will be reported as `FetchedKeyspace::Absent`,
+    /// without asking cluster for them.
+    /// If a keyspace marked as `altered` is not present in the cluster,
+    /// it will also be reported as `FetchedKeyspace::Absent`.
+    ///
+    /// Keyspaces in `request` are filtered by this control connection's configuration.
+    ///
+    /// Returns `None` when the configuration leaves nothing to do at all -
+    /// there is then no update to publish.
+    pub(super) async fn fetch_schema_update(
+        &self,
+        request: HashMap<String, LastKeyspaceChange>,
+    ) -> Result<Option<SchemaUpdate>, MetadataError> {
+        if matches!(
+            self.config.schema_metadata_fetch_mode,
+            SchemaMetadataFetchMode::Disabled
+        ) {
+            // No schema metadata is kept at all, so there is nothing to update.
+            return Ok(None);
+        }
+
+        // An empty `keyspaces_to_fetch` means "no restriction".
+        let is_fetched = |keyspace: &String| {
+            self.config.keyspaces_to_fetch.is_empty()
+                || self.config.keyspaces_to_fetch.contains(keyspace)
+        };
+
+        // Split the request into a list of keyspaces to fetch,
+        // and a map containing keyspaces that were dropped.
+        // Later this map will be extended with a fetch result.
+        let (to_fetch, mut keyspaces): (Vec<_>, HashMap<_, _>) = request
+            .into_iter()
+            .filter(|(name, _)| is_fetched(name))
+            .partition_map(|(name, state)| match state {
+                LastKeyspaceChange::Altered => Either::Left(name),
+                LastKeyspaceChange::Dropped => Either::Right((name, FetchedKeyspace::Absent)),
+            });
+
+        if to_fetch.is_empty() {
+            // Careful: an empty keyspace list means "every keyspace" to
+            // `query_keyspaces`, so it must not be called with one.
+            return Ok((!keyspaces.is_empty()).then_some(SchemaUpdate { keyspaces }));
+        }
+
+        let mut fetched = self
+            .query_keyspaces(&to_fetch, self.config.schema_metadata_fetch_mode)
+            .await?;
+
+        keyspaces.extend(to_fetch.into_iter().map(|keyspace| {
+            // A keyspace the fetch found no row for is gone: either the event
+            // announcing its drop is still on its way, or it was dropped
+            // without one. Either way it is dropped from the metadata rather
+            // than left stale.
+            let entry = match fetched.remove(&keyspace) {
+                Some(metadata) => FetchedKeyspace::Present(metadata),
+                None => FetchedKeyspace::Absent,
+            };
+            (keyspace, entry)
+        }));
+
+        Ok(Some(SchemaUpdate { keyspaces }))
     }
 
     fn query_filter_keyspace_name<'a, R>(

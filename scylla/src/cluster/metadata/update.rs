@@ -99,7 +99,6 @@ impl PartialMetadataChanges {
     }
 }
 
-#[expect(dead_code)]
 impl MetadataUpdate {
     fn slot_mut(slot: &mut Option<Self>) -> &mut Self {
         slot.get_or_insert_with(Self::default)
@@ -376,7 +375,6 @@ pub(crate) struct SchemaUpdate {
 // `ClusterState`. This will change if / when we decide to put keyspaces
 // in `ClusterState` inside `Arc`. Until then, let's just ignore clippy.
 #[expect(clippy::large_enum_variant)]
-#[expect(dead_code)]
 pub(crate) enum FetchedKeyspace {
     /// The keyspace exists; this is its freshly read metadata.
     ///
