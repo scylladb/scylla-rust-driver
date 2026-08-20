@@ -13,7 +13,7 @@ use crate::cluster::control_connection::{
 };
 use crate::cluster::metadata::fetching::LastKeyspaceChange;
 use crate::cluster::metadata::update::{MetadataUpdate, RefreshRequest, SchemaUpdate};
-use crate::cluster::metadata::{ClientRoutesUpdate, Metadata, Peer};
+use crate::cluster::metadata::{ClientRoutesUpdate, Metadata, Peer, PeriodicFetchMode};
 use crate::errors::{
     BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, MetadataError,
 };
@@ -46,10 +46,14 @@ pub(in super::super) struct MetadataWorker {
     /// keeps the known peers to establish them to.
     cc_establisher: ControlConnectionEstablisher,
 
-    /// How often the periodic refresh tick fires. The tick paces the partial
-    /// schema fetches; everything else is re-read in reaction to server events
-    /// or on request.
+    /// How often the periodic refresh tick fires, and what it re-reads.
+    ///
+    /// By default the tick paces the partial schema fetches, everything else
+    /// being re-read in reaction to server events or on request; with
+    /// [`PeriodicFetchMode::FullMetadata`] it re-reads the whole metadata
+    /// instead.
     cluster_metadata_refresh_interval: Duration,
+    periodic_fetch_mode: PeriodicFetchMode,
 
     // To listen for refresh requests
     refresh_channel: tokio::sync::mpsc::Receiver<RefreshRequest>,
@@ -324,14 +328,20 @@ impl<'cc> PendingFetches<'cc> {
         plan: &mut FetchPlan,
         next_refresh_deadline: &mut Instant,
         refresh_interval: Duration,
+        periodic_fetch_mode: PeriodicFetchMode,
         cc: &'cc ControlConnection,
     ) {
         let periodic_tick_due = Instant::now() >= *next_refresh_deadline;
 
         // A full fetch is due when a refresh request demanded one or a partial
-        // fetch failed. The periodic tick no longer implies one: everything it
-        // used to re-read is now re-read in reaction to server events.
-        if !matches!(self, PendingFetches::Full { .. }) && matches!(plan, FetchPlan::Full) {
+        // fetch failed. The periodic tick implies one only for a session that
+        // opted out of partial schema fetching; otherwise everything the tick
+        // used to re-read is by now re-read in reaction to server events.
+        let periodic_full_fetch_due =
+            periodic_tick_due && matches!(periodic_fetch_mode, PeriodicFetchMode::FullMetadata);
+        if !matches!(self, PendingFetches::Full { .. })
+            && (matches!(plan, FetchPlan::Full) || periodic_full_fetch_due)
+        {
             // Starting the full fetch drops both the partial work owed by the
             // plan and any running partial fetch: the full fetch reads all of
             // that data, and reads it after the events that made the partial
@@ -483,12 +493,14 @@ impl MetadataWorker {
     pub(in super::super) fn new(
         cc_establisher: ControlConnectionEstablisher,
         cluster_metadata_refresh_interval: Duration,
+        periodic_fetch_mode: PeriodicFetchMode,
         refresh_channel: tokio::sync::mpsc::Receiver<RefreshRequest>,
         updates: merge_channel::Sender<MetadataUpdate>,
     ) -> Self {
         Self {
             cc_establisher,
             cluster_metadata_refresh_interval,
+            periodic_fetch_mode,
             refresh_channel,
             updates,
             pending_request: None,
@@ -732,6 +744,7 @@ impl MetadataWorker {
                 &mut plan,
                 &mut next_refresh_deadline,
                 self.cluster_metadata_refresh_interval,
+                self.periodic_fetch_mode,
                 &cc,
             );
 

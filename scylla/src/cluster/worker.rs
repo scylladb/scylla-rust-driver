@@ -3,10 +3,10 @@ use crate::client::client_routes::{
 };
 use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::cluster::control_connection::MetadataRequestTimeouts;
-use crate::cluster::metadata::SchemaMetadataFetchMode;
 use crate::cluster::metadata::update::{
     MetadataChanges, MetadataUpdate, PartialMetadataChanges, RefreshRequest, StatusHint,
 };
+use crate::cluster::metadata::{PeriodicFetchMode, SchemaMetadataFetchMode};
 use crate::cluster::state::NodeConfig;
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
@@ -71,6 +71,7 @@ impl Cluster {
         host_filter: Option<Arc<dyn HostFilter>>,
         host_listener: Option<Arc<dyn HostListener>>,
         cluster_metadata_refresh_interval: Duration,
+        periodic_fetch_mode: PeriodicFetchMode,
         tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
         metrics: Metrics,
         client_routes_config: Option<ClientRoutesConfig>,
@@ -119,6 +120,7 @@ impl Cluster {
         let mut metadata_worker = MetadataWorker::new(
             cc_establisher,
             cluster_metadata_refresh_interval,
+            periodic_fetch_mode,
             refresh_receiver,
             metadata_updates_sender,
         );
