@@ -88,6 +88,15 @@ impl PartialMetadataChanges {
     fn merge_peers(&mut self, peers: Vec<Peer>) {
         self.peers = Some(peers);
     }
+
+    /// Records a partial schema snapshot, merging it into the one already
+    /// pending, if any.
+    fn merge_schema_update(&mut self, new_schema: SchemaUpdate) {
+        match &mut self.schema {
+            None => self.schema = Some(new_schema),
+            Some(existing) => existing.merge(new_schema),
+        }
+    }
 }
 
 impl MetadataUpdate {
@@ -177,6 +186,37 @@ impl MetadataUpdate {
                 // complete after a pending full fetch if it was started after
                 // that fetch completed.
                 metadata.peers = peers;
+            }
+        }
+    }
+
+    /// Records the per-keyspace schema obtained by a partial schema fetch
+    /// performed in response to SCHEMA_CHANGE events.
+    pub(crate) fn merge_schema_update(slot: &mut Option<Self>, schema: SchemaUpdate) {
+        let update = Self::slot_mut(slot);
+        match &mut update.metadata_changes {
+            None => {
+                let mut partial = PartialMetadataChanges::default();
+                partial.merge_schema_update(schema);
+                update.metadata_changes = Some(MetadataChanges::Partial(partial));
+            }
+            Some(MetadataChanges::Partial(partial)) => partial.merge_schema_update(schema),
+            Some(MetadataChanges::Full {
+                metadata,
+                refresh_responses: _,
+            }) => {
+                // The partial fetch is necessarily newer, by the argument in
+                // `merge_topology_update`.
+                for (name, keyspace) in schema.keyspaces {
+                    match keyspace {
+                        FetchedKeyspace::Present(keyspace) => {
+                            metadata.keyspaces.insert(name, keyspace);
+                        }
+                        FetchedKeyspace::Absent => {
+                            metadata.keyspaces.remove(&name);
+                        }
+                    }
+                }
             }
         }
     }
@@ -302,6 +342,15 @@ pub(crate) enum FetchedKeyspace {
     /// The keyspace does not exist: its last event dropped it, or the fetch
     /// found no row for it.
     Absent,
+}
+
+impl SchemaUpdate {
+    /// Merges a newer update into this one: the newer statement about a
+    /// keyspace overrides the older one, which is exactly what
+    /// [`HashMap::extend`] does.
+    pub(crate) fn merge(&mut self, newer: SchemaUpdate) {
+        self.keyspaces.extend(newer.keyspaces);
+    }
 }
 
 #[cfg(test)]
