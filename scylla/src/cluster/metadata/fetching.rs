@@ -192,15 +192,7 @@ impl ControlConnection {
 
         let (peers, cluster_name) = peers_and_cluster_name;
 
-        // There must be at least one peer
-        if peers.is_empty() {
-            return Err(MetadataError::Peers(PeersMetadataError::EmptyPeers));
-        }
-
-        // At least one peer has to have some tokens
-        if peers.iter().all(|peer| peer.tokens.is_empty()) {
-            return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists));
-        }
+        Self::validate_peers(&peers)?;
 
         Ok(TopologyUpdateGuard::new(Metadata {
             peers,
@@ -208,6 +200,22 @@ impl ControlConnection {
             cluster_name,
             client_routes,
         }))
+    }
+
+    /// Rejects a peer list that could not describe a working cluster, so that
+    /// the caller treats the fetch as failed instead of publishing it.
+    fn validate_peers(peers: &[Peer]) -> Result<(), PeersMetadataError> {
+        // There must be at least one peer
+        if peers.is_empty() {
+            return Err(PeersMetadataError::EmptyPeers);
+        }
+
+        // At least one peer has to have some tokens
+        if peers.iter().all(|peer| peer.tokens.is_empty()) {
+            return Err(PeersMetadataError::EmptyTokenLists);
+        }
+
+        Ok(())
     }
 }
 
