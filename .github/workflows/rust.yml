@@ -122,6 +122,10 @@ jobs:
         # so we only check the main target.
         run: RUSTFLAGS="-Dwarnings" cargo clippy -p scylla
 
+      # cargo-deny checks (licenses, advisories, bans, sources) based on deny.toml
+      - name: cargo-deny check
+        uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
+
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 60

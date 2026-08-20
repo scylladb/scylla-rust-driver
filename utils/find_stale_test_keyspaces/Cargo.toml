@@ -3,6 +3,7 @@ edition = "2024"
 name = "find_stale_test_keyspaces"
 publish = false
 version = "0.0.0"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 scylla = { path = "../../scylla" }

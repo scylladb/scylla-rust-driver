@@ -4,6 +4,7 @@ name = "examples"
 publish = false
 version = "0.0.0"
 rust-version = "1.88"
+license = "MIT OR Apache-2.0"
 
 [dev-dependencies]
 anyhow = "1.0.33"

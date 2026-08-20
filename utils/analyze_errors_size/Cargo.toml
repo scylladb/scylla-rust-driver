@@ -4,6 +4,7 @@ name = "analyze_errors_size"
 publish = false
 version = "0.0.0"
 build = "build.rs"
+license = "MIT OR Apache-2.0"
 
 [build-dependencies]
 syn = { version = "3", features = ["full", "visit"] }

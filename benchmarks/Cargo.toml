@@ -4,6 +4,7 @@ name = "benchmarks"
 publish = false
 version = "0.0.0"
 rust-version = "1.88"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 scylla = { path = "../scylla" }
