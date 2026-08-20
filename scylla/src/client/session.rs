@@ -11,7 +11,9 @@ use crate::client::execution::{
     NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RunRequestResult,
 };
 use crate::cluster::control_connection::MetadataRequestTimeouts;
-use crate::cluster::metadata::{SchemaMetadataFetchLevel, SchemaMetadataFetchMode};
+use crate::cluster::metadata::{
+    PeriodicFetchMode, SchemaMetadataFetchLevel, SchemaMetadataFetchMode,
+};
 use crate::cluster::node::KnownNode;
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::DbError;
@@ -408,6 +410,10 @@ pub struct SessionConfig {
     /// or they expect the topology to change frequently.
     pub cluster_metadata_refresh_interval: Duration,
 
+    /// What the periodic metadata refresh re-reads. By default only the
+    /// keyspaces whose schema `SCHEMA_CHANGE` events reported as changed.
+    pub periodic_metadata_fetch_mode: PeriodicFetchMode,
+
     /// Driver and application self-identifying information,
     /// to be sent to server in STARTUP message.
     pub identity: SelfIdentity<'static>,
@@ -471,6 +477,7 @@ impl SessionConfig {
             tracing_info_fetch_interval: Duration::from_millis(3),
             tracing_info_fetch_consistency: Consistency::One,
             cluster_metadata_refresh_interval: Duration::from_secs(60),
+            periodic_metadata_fetch_mode: PeriodicFetchMode::AffectedKeyspaces,
             identity: SelfIdentity::default(),
             #[cfg(feature = "unstable-client-routes")]
             client_routes_config: None,
@@ -1244,6 +1251,7 @@ impl Session {
             config.host_filter,
             host_listener,
             config.cluster_metadata_refresh_interval,
+            config.periodic_metadata_fetch_mode,
             tablet_receiver,
             metrics.as_ref().clone(),
             client_routes_config,
