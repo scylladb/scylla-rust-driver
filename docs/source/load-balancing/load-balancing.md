@@ -126,4 +126,5 @@ again until it's recovered.
    :glob:
 
    default-policy
+   tablets
 ```

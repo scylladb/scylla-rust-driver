@@ -1,3 +1,76 @@
+//! Tablet routing information and the tablet-version tracking used to keep it fresh.
+//!
+//! For a tablet-enabled table the driver caches, per tablet, the token range and the replica
+//! set so it can route each request straight to a replica. The server keeps that cache
+//! correct by piggy-backing routing information on responses, negotiated through one of two
+//! protocol extensions:
+//!
+//! - `TABLETS_ROUTING_V1`: whenever the driver contacts a shard that does not own the target
+//!   tablet, the response carries a `tablets-routing-v1` custom payload describing the tablet
+//!   so the driver can correct its cache.
+//! - `TABLETS_ROUTING_V2` (experimental; negotiated on the wire as
+//!   `TABLETS_ROUTING_V2_EXPERIMENTAL`): V2 subsumes V1 and adds *tablet-version tracking*.
+//!   The driver attaches a one-byte "tablet-version block" to every `EXECUTE` (see
+//!   [`TabletVersion`]); the server compares it against its own tablet version and returns a
+//!   fresh `tablets-routing-v2` payload only when the driver's cached version is stale. The
+//!   block encodes one randomly chosen nibble of the version, so successive requests probe
+//!   the whole version and detect any change without the driver having to contact a wrong
+//!   replica first.
+//!
+//! The tablet version is an opaque 64-bit hash of the tablet's ordered replica list (not a
+//! monotonic counter); only its bit pattern is meaningful. Because V2 is experimental its wire
+//! name and payload are subject to change.
+//!
+//! # Leader-aware routing for strongly-consistent tables
+//!
+//! For a strongly-consistent (Raft-based) keyspace — one created with `consistency = 'global'`,
+//! reflected in [`Keyspace::consistency_mode`] as [`ConsistencyMode::Global`] — one replica of
+//! each tablet is the Raft leader that coordinates its writes and its linearizable reads.
+//!
+//! The server does not publish which replica that is: it is absent from schema and from
+//! `system.tablets`, and it can change at any time through a Raft re-election. The one place it
+//! surfaces is the `tablets-routing-v2` payload, which lists the leader first. The driver stores
+//! the replicas in that payload order, so `replicas[0]` of a cached tablet is the leader, and the
+//! built-in load balancing policy uses it to route leader-requiring requests straight there,
+//! saving the extra coordinator-to-leader hop.
+//!
+//! A request to such a keyspace is routed to the leader whenever its consistency level is
+//! anything other than `ONE` or `LOCAL_ONE`:
+//!
+//! - writes to such a keyspace must use `QUORUM`/`LOCAL_QUORUM` (the server rejects
+//!   `ONE`/`LOCAL_ONE` writes), so they always reach the leader — and a write sent to a follower
+//!   would only be bounced to it anyway;
+//! - reads at `ONE`/`LOCAL_ONE` may be served by any replica, so they keep the normal
+//!   load-spreading routing;
+//! - all other reads go to the leader.
+//!
+//! The leader outranks *distance*: it is targeted ahead of nearer replicas, a leader in a remote
+//! datacenter ahead of one in the preferred rack. Every write and every linearizable read on such
+//! a table has to be coordinated by the leader anyway, so contacting a nearer replica only adds a
+//! forwarding hop -- and because the table is globally consistent, keeping the request inside one
+//! datacenter buys no consistency either.
+//!
+//! It does not override the policy's own filter, though. A leader the policy would never contact
+//! is left alone: with a preferred datacenter and datacenter failover disabled, a leader elsewhere
+//! is skipped, the request goes to a local replica, and the server forwards it to the leader --
+//! exactly as it would without the extension. Only the leader is promoted; the remaining replicas
+//! keep their usual ordering, so retries after it still spread.
+//!
+//! This mirrors the Python driver's `TokenAwarePolicy` behavior, so the two drivers agree on how
+//! leader awareness interacts with locality preferences. The decision itself lives in the load
+//! balancing policy.
+//!
+//! Note that the leader-first order only holds for a mapping learned from a
+//! `TABLETS_ROUTING_V2` payload. For one left over from the older `TABLETS_ROUTING_V1` path
+//! `replicas[0]` is an arbitrary replica, so such a request is routed to a *consistent* -- but
+//! not necessarily leading -- replica and the server bounces it to the leader, exactly as it
+//! would for any other target. That is no worse than spreading the request across replicas, and
+//! it is a transient state anyway: strong consistency implies V2 in practice, and the mapping is
+//! replaced as soon as the version changes.
+//!
+//! [`Keyspace::consistency_mode`]: crate::cluster::metadata::Keyspace::consistency_mode
+//! [`ConsistencyMode::Global`]: crate::cluster::metadata::ConsistencyMode::Global
+
 use crate::cluster::metadata::Keyspace;
 use crate::deserialize::value::{DeserializeValue, ListlikeIterator};
 use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
@@ -10,6 +83,7 @@ use uuid::Uuid;
 use crate::cluster::Node;
 use crate::routing::{Shard, Token};
 use crate::utils::safe_format::IteratorSafeFormatExt;
+use rand::Rng as _;
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
@@ -41,12 +115,46 @@ pub(crate) struct RawTablet {
     /// Last token belonging to the tablet, inclusive
     last_token: Token,
     replicas: RawTabletReplicas,
+    /// Tablet version, present only when the tablet was learned via the
+    /// TABLETS_ROUTING_V2 extension. Used to keep the driver's routing cache fresh -
+    /// see [`TabletVersion`].
+    tablet_version: Option<TabletVersion>,
 }
 
-type RawTabletPayload<'frame, 'metadata> =
+#[cfg(test)]
+impl RawTablet {
+    /// Builds a raw tablet directly, for tests that need to inject tablet mappings
+    /// (with a chosen replica order and version) into a `ClusterState`.
+    ///
+    /// `tablet_version` is given as the signed `bigint` the server would have sent.
+    pub(crate) fn new_for_test(
+        first_token: i64,
+        last_token: i64,
+        replicas: Vec<(Uuid, Shard)>,
+        tablet_version: Option<i64>,
+    ) -> Self {
+        Self {
+            first_token: Token::new(first_token),
+            last_token: Token::new(last_token),
+            replicas: RawTabletReplicas { replicas },
+            tablet_version: tablet_version.map(TabletVersion::from_server_value),
+        }
+    }
+}
+
+type RawTabletPayloadV1<'frame, 'metadata> =
     (i64, i64, ListlikeIterator<'frame, 'metadata, (Uuid, i32)>);
 
-static RAW_TABLETS_CQL_TYPE: LazyLock<ColumnType<'static>> = LazyLock::new(|| {
+/// TABLETS_ROUTING_V2 payload is the V1 tuple with an extra trailing `bigint`
+/// carrying the tablet version (its bits are reinterpreted as `u64`).
+type RawTabletPayloadV2<'frame, 'metadata> = (
+    i64,
+    i64,
+    ListlikeIterator<'frame, 'metadata, (Uuid, i32)>,
+    i64,
+);
+
+static RAW_TABLETS_V1_CQL_TYPE: LazyLock<ColumnType<'static>> = LazyLock::new(|| {
     ColumnType::Tuple(vec![
         ColumnType::Native(NativeType::BigInt),
         ColumnType::Native(NativeType::BigInt),
@@ -60,40 +168,150 @@ static RAW_TABLETS_CQL_TYPE: LazyLock<ColumnType<'static>> = LazyLock::new(|| {
     ])
 });
 
+static RAW_TABLETS_V2_CQL_TYPE: LazyLock<ColumnType<'static>> = LazyLock::new(|| {
+    ColumnType::Tuple(vec![
+        ColumnType::Native(NativeType::BigInt),
+        ColumnType::Native(NativeType::BigInt),
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Tuple(vec![
+                ColumnType::Native(NativeType::Uuid),
+                ColumnType::Native(NativeType::Int),
+            ]))),
+        },
+        ColumnType::Native(NativeType::BigInt),
+    ])
+});
+
 const CUSTOM_PAYLOAD_TABLETS_V1_KEY: &str = "tablets-routing-v1";
+const CUSTOM_PAYLOAD_TABLETS_V2_KEY: &str = "tablets-routing-v2";
+
+/// An opaque tablet version learned via the `TABLETS_ROUTING_V2` protocol extension.
+///
+/// It is a 64-bit hash of the tablet's ordered replica list -- not a numeric counter -- so only
+/// its bit pattern is ever meaningful, never its value as an integer. It is therefore stored as
+/// the raw big-endian bytes the server sent (a CQL `bigint`), which makes that explicit and
+/// keeps the type free of sign-changing casts.
+///
+/// The driver uses it to keep its tablet-routing cache fresh: a "block" byte sampled from the
+/// version is sent with every `EXECUTE`, and the server replies with fresh routing information
+/// whenever the sampled nibble disagrees with its own version. See
+/// [`block_for`](TabletVersion::block_for).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct TabletVersion([u8; 8]);
+
+impl TabletVersion {
+    /// Builds a version from the signed `bigint` the server sends in a TABLETS_ROUTING_V2
+    /// payload. Only the bit pattern matters, so the sign carries no meaning.
+    pub(crate) fn from_server_value(raw: i64) -> Self {
+        Self(raw.to_be_bytes())
+    }
+
+    /// Chooses a tablet-version "block" byte to send with an `EXECUTE` on a
+    /// TABLETS_ROUTING_V2 connection.
+    ///
+    /// The byte encodes `(index << 4) | nibble`, where `index` (high nibble) selects one of the
+    /// 16 nibbles of the version and `nibble` (low nibble) is the value of that nibble. The
+    /// server compares this against its own tablet version and only returns fresh routing
+    /// information in the response custom payload when they differ. The index is randomized so
+    /// that, over successive requests, the driver eventually probes every nibble and detects
+    /// any version change.
+    fn choose_block(self) -> u8 {
+        let index: u8 = rand::rng().random::<u8>() & 0x0F; // 0..=15
+        // Bytes are big-endian, so nibble `index` (counted from the least significant one)
+        // lives in byte `7 - index / 2`: its low half for an even index, its high half for an
+        // odd one.
+        let byte = self.0[7 - (index / 2) as usize];
+        let nibble = if index.is_multiple_of(2) {
+            byte & 0xF
+        } else {
+            byte >> 4
+        };
+        (index << 4) | nibble
+    }
+
+    /// Returns a random tablet-version block byte, used when the driver has nothing to probe:
+    /// either no tablet version is cached for the target token, or the request has no single
+    /// partition to route by (in which case the server ignores the byte). A random block
+    /// maximizes the chance of a mismatch, which prompts the server to return fresh routing
+    /// information.
+    pub(crate) fn random_block() -> u8 {
+        rand::rng().random::<u8>()
+    }
+
+    /// Returns the tablet-version block byte to attach to an `EXECUTE` on a
+    /// TABLETS_ROUTING_V2 connection: the cached version's block when known (see
+    /// [`choose_block`](TabletVersion::choose_block)), or a random probe byte on a cache miss
+    /// (see [`random_block`](TabletVersion::random_block)).
+    pub(crate) fn block_for(version: Option<Self>) -> u8 {
+        match version {
+            Some(version) => version.choose_block(),
+            None => Self::random_block(),
+        }
+    }
+}
 
 impl RawTablet {
     pub(crate) fn from_custom_payload(
         payload: &HashMap<String, Bytes>,
     ) -> Option<Result<RawTablet, TabletParsingError>> {
-        let payload = payload.get(CUSTOM_PAYLOAD_TABLETS_V1_KEY)?;
+        // A V2 connection receives the V2 key, a V1 connection the V1 key. The keys are
+        // mutually exclusive and self-describing (V2 carries an extra `bigint` version),
+        // so prefer V2 and fall back to V1.
+        if let Some(payload) = payload.get(CUSTOM_PAYLOAD_TABLETS_V2_KEY) {
+            Some(Self::parse_v2(payload))
+        } else {
+            let payload = payload.get(CUSTOM_PAYLOAD_TABLETS_V1_KEY)?;
+            Some(Self::parse_v1(payload))
+        }
+    }
 
-        if let Err(err) =
-            <RawTabletPayload as DeserializeValue<'_, '_>>::type_check(RAW_TABLETS_CQL_TYPE.deref())
-        {
-            return Some(Err(err.into()));
-        };
-
-        let (first_token, last_token, replicas): RawTabletPayload =
-            match <RawTabletPayload as DeserializeValue<'_, '_>>::deserialize(
-                RAW_TABLETS_CQL_TYPE.deref(),
+    fn parse_v1(payload: &Bytes) -> Result<RawTablet, TabletParsingError> {
+        <RawTabletPayloadV1 as DeserializeValue<'_, '_>>::type_check(
+            RAW_TABLETS_V1_CQL_TYPE.deref(),
+        )?;
+        let (first_token, last_token, replicas): RawTabletPayloadV1 =
+            <RawTabletPayloadV1 as DeserializeValue<'_, '_>>::deserialize(
+                RAW_TABLETS_V1_CQL_TYPE.deref(),
                 Some(FrameSlice::new(payload)),
-            ) {
-                Ok(tuple) => tuple,
-                Err(err) => return Some(Err(err.into())),
-            };
+            )?;
+        Self::build(first_token, last_token, replicas, None)
+    }
 
+    fn parse_v2(payload: &Bytes) -> Result<RawTablet, TabletParsingError> {
+        <RawTabletPayloadV2 as DeserializeValue<'_, '_>>::type_check(
+            RAW_TABLETS_V2_CQL_TYPE.deref(),
+        )?;
+        let (first_token, last_token, replicas, tablet_version): RawTabletPayloadV2 =
+            <RawTabletPayloadV2 as DeserializeValue<'_, '_>>::deserialize(
+                RAW_TABLETS_V2_CQL_TYPE.deref(),
+                Some(FrameSlice::new(payload)),
+            )?;
+        // The server encodes the tablet version as a signed `bigint`. It is an opaque 64-bit
+        // hash of the tablet's ordered replica list (not a numeric counter), so
+        // `TabletVersion` keeps only its raw bytes.
+        Self::build(
+            first_token,
+            last_token,
+            replicas,
+            Some(TabletVersion::from_server_value(tablet_version)),
+        )
+    }
+
+    fn build(
+        first_token: i64,
+        last_token: i64,
+        replicas: ListlikeIterator<'_, '_, (Uuid, i32)>,
+        tablet_version: Option<TabletVersion>,
+    ) -> Result<RawTablet, TabletParsingError> {
         // Important invariant. That way we guarantee that:
         // - Token range is not empty.
         // - Token range doesn't cross the i64::MAX/i64::MIN boundary.
         if last_token <= first_token {
-            return Some(Err(TabletParsingError::WrongTokenRange(
-                first_token,
-                last_token,
-            )));
+            return Err(TabletParsingError::WrongTokenRange(first_token, last_token));
         }
 
-        let replicas = match replicas
+        let replicas = replicas
             .map(|res| {
                 res.map_err(TabletParsingError::from)
                     .and_then(|(uuid, shard_num)| match shard_num.try_into() {
@@ -101,13 +319,9 @@ impl RawTablet {
                         Err(_) => Err(TabletParsingError::ShardNum(shard_num)),
                     })
             })
-            .collect::<Result<Vec<(Uuid, Shard)>, TabletParsingError>>()
-        {
-            Ok(r) => r,
-            Err(err) => return Some(Err(err)),
-        };
+            .collect::<Result<Vec<(Uuid, Shard)>, TabletParsingError>>()?;
 
-        Some(Ok(RawTablet {
+        Ok(RawTablet {
             // +1 because ScyllaDB sends left-open range, so received
             // number is the last token not belonging to this tablet.
             // This won't overflow because we checked that first token
@@ -116,7 +330,8 @@ impl RawTablet {
             first_token: Token::new(first_token + 1),
             last_token: Token::new(last_token),
             replicas: RawTabletReplicas { replicas },
-        }))
+            tablet_version,
+        })
     }
 }
 
@@ -237,6 +452,9 @@ pub(crate) struct Tablet {
     /// Last token belonging to the tablet, inclusive
     last_token: Token,
     replicas: TabletReplicas,
+    /// Tablet version, present only when the tablet was learned via the
+    /// TABLETS_ROUTING_V2 extension.
+    tablet_version: Option<TabletVersion>,
     /// If any of the replicas failed to resolve to a Node,
     /// then this field will contain the original list of replicas.
     failed: Option<RawTabletReplicas>,
@@ -260,6 +478,7 @@ impl Tablet {
                 first_token: raw_tablet.first_token,
                 last_token: raw_tablet.last_token,
                 replicas,
+                tablet_version: raw_tablet.tablet_version,
                 failed: None,
             }),
             Err((replicas, failed_replicas)) => Err((
@@ -267,6 +486,7 @@ impl Tablet {
                     first_token: raw_tablet.first_token,
                     last_token: raw_tablet.last_token,
                     replicas,
+                    tablet_version: raw_tablet.tablet_version,
                     failed: Some(raw_tablet.replicas),
                 },
                 failed_replicas,
@@ -329,6 +549,7 @@ impl Tablet {
             first_token: Token::new(token),
             last_token: Token::new(token),
             replicas: TabletReplicas::new_for_test(replicas),
+            tablet_version: None,
             failed: failed.map(|vec| RawTabletReplicas {
                 replicas: vec.into_iter().map(|id| (id, 0)).collect::<Vec<_>>(),
             }),
@@ -392,6 +613,15 @@ impl TableTablets {
                 .map(|x| x.as_slice())
                 .unwrap_or(&[])
         })
+    }
+
+    /// Returns the tablet version for the tablet owning `token`, if known.
+    ///
+    /// `None` means either no tablet is cached for the token, or the cached tablet was
+    /// learned via TABLETS_ROUTING_V1 (which carries no version).
+    pub(crate) fn tablet_version_for_token(&self, token: Token) -> Option<TabletVersion> {
+        self.tablet_for_token(token)
+            .and_then(|tablet| tablet.tablet_version)
     }
 
     /// This method:
@@ -667,7 +897,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
 
-    use crate::cluster::metadata::{Keyspace, Strategy, Table};
+    use crate::cluster::metadata::{ConsistencyMode, Keyspace, Strategy, Table};
     use crate::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
     use crate::serialize::value::SerializeValue;
     use crate::serialize::writers::CellWriter;
@@ -678,8 +908,8 @@ mod tests {
     use crate::cluster::Node;
     use crate::routing::Token;
     use crate::routing::locator::tablets::{
-        CUSTOM_PAYLOAD_TABLETS_V1_KEY, RAW_TABLETS_CQL_TYPE, RawTablet, RawTabletReplicas,
-        TabletParsingError,
+        CUSTOM_PAYLOAD_TABLETS_V1_KEY, CUSTOM_PAYLOAD_TABLETS_V2_KEY, RAW_TABLETS_V1_CQL_TYPE,
+        RAW_TABLETS_V2_CQL_TYPE, RawTablet, RawTabletReplicas, TabletParsingError, TabletVersion,
     };
     use crate::test_utils::setup_tracing;
     use crate::value::CqlValue;
@@ -749,7 +979,7 @@ mod tests {
             Some(CqlValue::BigInt(last_token)),
             Some(CqlValue::List(vec![])),
         ]);
-        SerializeValue::serialize(&value, &RAW_TABLETS_CQL_TYPE, CellWriter::new(&mut data))
+        SerializeValue::serialize(&value, &RAW_TABLETS_V1_CQL_TYPE, CellWriter::new(&mut data))
             .unwrap();
         // Skip the 4-byte length prefix added by SerializeValue::serialize,
         // because ScyllaDB sends the value without it.
@@ -810,7 +1040,7 @@ mod tests {
             ])),
         ]);
 
-        SerializeValue::serialize(&value, &RAW_TABLETS_CQL_TYPE, CellWriter::new(&mut data))
+        SerializeValue::serialize(&value, &RAW_TABLETS_V1_CQL_TYPE, CellWriter::new(&mut data))
             .unwrap();
         tracing::debug!("{:?}", data);
 
@@ -836,7 +1066,104 @@ mod tests {
                         (Uuid::from_u64_pair(1, 2), 15),
                         (Uuid::from_u64_pair(3, 4), 19)
                     ]
-                }
+                },
+                tablet_version: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_choose_tablet_version_block_encoding() {
+        // The block byte encodes `(index << 4) | nibble`, where `index` (high nibble)
+        // selects one of the 16 nibbles of the version and `nibble` (low nibble) is that
+        // nibble's value. This must match ScyllaDB's `compare_tablet_version_block`.
+        let versions = [
+            0x0000_0000_0000_0000u64,
+            0x0123_4567_89AB_CDEFu64,
+            0xFFFF_FFFF_FFFF_FFFFu64,
+            0xDEAD_BEEF_CAFE_BABEu64,
+        ];
+        for version in versions {
+            let tablet_version = TabletVersion::from_server_value(version as i64);
+            let mut seen_indices = HashSet::new();
+            for _ in 0..1000 {
+                let block = tablet_version.choose_block();
+                let index = block >> 4;
+                let nibble = block & 0x0F;
+                // This invariant holds for every possible RNG outcome, so the assertion
+                // is deterministic regardless of which index happened to be drawn.
+                let expected_nibble = ((version >> (index * 4)) & 0xF) as u8;
+                assert_eq!(
+                    nibble, expected_nibble,
+                    "version={version:#018x} index={index} block={block:#04x}"
+                );
+                seen_indices.insert(index);
+            }
+            // Liveness: confirm the index is actually randomized. With 1000 draws over 16
+            // possible indices, seeing only one is impossible in practice
+            // (probability < 16 * (1/16)^999).
+            assert!(
+                seen_indices.len() >= 2,
+                "index did not vary across draws for version {version:#018x}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_tablet_version_block_for_cache_miss_is_random() {
+        // With no cached version there is nothing to probe, so the block is drawn at random -
+        // over the whole byte, not just the nibble, since the index is meaningless too.
+        let blocks: HashSet<u8> = (0..1000).map(|_| TabletVersion::block_for(None)).collect();
+        assert!(
+            blocks.len() >= 2,
+            "block did not vary across draws on a cache miss"
+        );
+    }
+
+    #[test]
+    fn test_raw_tablet_deser_v2_correct() {
+        // TABLETS_ROUTING_V2 payload: the V1 tuple plus a trailing bigint tablet version.
+        let mut data = vec![];
+
+        const FIRST_TOKEN: i64 = 1234;
+        const LAST_TOKEN: i64 = 5678;
+        const TABLET_VERSION: u64 = 0x0123_4567_89AB_CDEF;
+
+        let value = CqlValue::Tuple(vec![
+            Some(CqlValue::BigInt(FIRST_TOKEN)),
+            Some(CqlValue::BigInt(LAST_TOKEN)),
+            Some(CqlValue::List(vec![CqlValue::Tuple(vec![
+                Some(CqlValue::Uuid(Uuid::from_u64_pair(1, 2))),
+                Some(CqlValue::Int(15)),
+            ])])),
+            Some(CqlValue::BigInt(TABLET_VERSION as i64)),
+        ]);
+
+        SerializeValue::serialize(&value, &RAW_TABLETS_V2_CQL_TYPE, CellWriter::new(&mut data))
+            .unwrap();
+
+        let custom_payload = HashMap::from([(
+            CUSTOM_PAYLOAD_TABLETS_V2_KEY.to_string(),
+            // Skip the 4-byte length prefix, matching what ScyllaDB sends on the wire.
+            Bytes::copy_from_slice(&data[4..]),
+        )]);
+
+        let tablet = RawTablet::from_custom_payload(&custom_payload)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            tablet,
+            RawTablet {
+                // Note: +1 because ScyllaDB sends left-open range, so received
+                //       number is the last token not belonging to this tablet.
+                //       See `RawTablet::build`, which performs the shift.
+                first_token: Token::new(FIRST_TOKEN + 1),
+                last_token: Token::new(LAST_TOKEN),
+                replicas: RawTabletReplicas {
+                    replicas: vec![(Uuid::from_u64_pair(1, 2), 15)],
+                },
+                tablet_version: Some(TabletVersion::from_server_value(TABLET_VERSION as i64)),
             }
         );
     }
@@ -958,6 +1285,7 @@ mod tests {
                 first_token: Token::new(*first),
                 last_token: Token::new(*last),
                 replicas: Default::default(),
+                tablet_version: None,
                 failed: None,
             });
         }
@@ -1521,6 +1849,7 @@ mod tests {
                     strategy: Strategy::LocalStrategy,
                     durable_writes: false,
                     tablet_based: true,
+                    consistency_mode: ConsistencyMode::Eventual,
                     tables: HashMap::from([(
                         spec.table_name().to_owned(),
                         Table {

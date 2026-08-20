@@ -31,9 +31,9 @@ use tracing::{debug, trace, warn};
 use uuid::Uuid;
 
 use super::{
-    CollectionType, Column, ColumnKind, ColumnType, Keyspace, MaterializedView, Metadata,
-    MissingUserDefinedType, NativeType, Peer, SchemaMetadataFetchLevel, SchemaMetadataFetchMode,
-    SingleKeyspaceMetadataError, Strategy, Table, UserDefinedType,
+    CollectionType, Column, ColumnKind, ColumnType, ConsistencyMode, Keyspace, MaterializedView,
+    Metadata, MissingUserDefinedType, NativeType, Peer, SchemaMetadataFetchLevel,
+    SchemaMetadataFetchMode, SingleKeyspaceMetadataError, Strategy, Table, UserDefinedType,
 };
 
 use crate::DeserializeRow;
@@ -182,7 +182,6 @@ impl ControlConnection {
                 .await
                 .map(Some)
         };
-
         let peers_and_cluster_name;
         let client_routes: Option<ClientRoutes>;
         let keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>;
@@ -670,9 +669,9 @@ impl ControlConnection {
                 table: "system_schema.keyspaces",
             });
 
-        // Fetching the schema (UDTs, tables, views) and the per-keyspace tablet information
-        // are independent of each other, so we run them concurrently to minimize the
-        // critical path length.
+        // Fetching the schema (UDTs, tables, views) and the ScyllaDB-specific per-keyspace
+        // metadata (tablet-based flag, consistency mode) are independent of each other, so we
+        // run them concurrently to minimize the critical path length.
         let schema_query = async {
             match schema_metadata_fetch_level {
                 SchemaMetadataFetchLevel::Full => {
@@ -726,14 +725,14 @@ impl ControlConnection {
                 }
             }
         };
-        let tablets_query = async {
-            self.query_keyspaces_tablets(keyspaces_to_fetch)
+        let scylla_specific_query = async {
+            self.query_keyspaces_scylla_specific(keyspaces_to_fetch)
                 .await
                 .map_err(MetadataError::from)
         };
 
-        let ((mut all_tables, mut all_views, mut all_user_defined_types), tablets_keyspaces) =
-            tokio::try_join!(schema_query, tablets_query)?;
+        let ((mut all_tables, mut all_views, mut all_user_defined_types), scylla_specific) =
+            tokio::try_join!(schema_query, scylla_specific_query)?;
 
         rows.map(|row_result| {
             let (keyspace_name, strategy_map, durable_writes) = row_result?;
@@ -775,7 +774,12 @@ impl ControlConnection {
             let keyspace = Keyspace {
                 strategy,
                 durable_writes,
-                tablet_based: tablets_keyspaces.contains(&keyspace_name),
+                tablet_based: scylla_specific.tablet_based.contains(&keyspace_name),
+                consistency_mode: scylla_specific
+                    .consistency_modes
+                    .get(&keyspace_name)
+                    .cloned()
+                    .unwrap_or(ConsistencyMode::Eventual),
                 tables,
                 views,
                 user_defined_types,
@@ -1684,37 +1688,100 @@ impl ControlConnection {
             .await;
 
         match result {
-            // FIXME: This match catches all database errors with this error code despite the fact
-            // that we are only interested in the ones resulting from non-existent table
-            // system_schema.scylla_tables.
-            // For more information please refer to https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262
-            Err(MetadataFetchError {
-                error:
-                    MetadataFetchErrorKind::NextRowError(NextRowError::NextPageError(
-                        NextPageError::RequestFailure(RequestError::LastAttemptError(
-                            RequestAttemptError::DbError(DbError::Invalid, _),
-                        )),
-                    )),
-                ..
-            }) => Ok(HashMap::new()),
+            // `system_schema.scylla_tables` does not exist on Cassandra.
+            Err(error) if is_missing_table_or_column(&error) => Ok(HashMap::new()),
             result => result,
         }
     }
 
-    /// Fetches a (possibly filtered) set of tablet-based keyspaces.
+    /// Fetches the (possibly filtered) per-keyspace ScyllaDB-specific metadata held in
+    /// `system_schema.scylla_keyspaces`: which keyspaces are tablet-based, and which use a
+    /// strong-consistency mode.
     ///
-    /// A keyspace is tablet-based if its `initial_tablets` column in
-    /// `system_schema.scylla_keyspaces` is not NULL.
+    /// Both live in the same table, so a single query reads them together - there is no reason
+    /// to spend a second round trip on the second column.
     ///
-    /// On Cassandra and old ScyllaDB versions the `system_schema.scylla_keyspaces`
-    /// table does not exist. This is handled the same way as in
-    /// [`Self::query_table_partitioners`]: the resulting `DbError::Invalid` is caught
-    /// and an empty set is returned (so all keyspaces default to non-tablet-based).
-    #[expect(clippy::result_large_err)]
-    async fn query_keyspaces_tablets(
+    /// The `consistency` column was introduced much later than `initial_tablets`, though, so it
+    /// is only selected when this control connection negotiated `TABLETS_ROUTING_V2`. Even then
+    /// a server could have the extension but not the column (strong consistency is a separate,
+    /// experimental feature), so that case falls back to reading `initial_tablets` alone: tablet
+    /// detection never depends on strong-consistency support being present.
+    ///
+    /// On Cassandra and old ScyllaDB versions the table does not exist at all. This is handled
+    /// the same way as in [`Self::query_table_partitioners`]: the resulting `DbError::Invalid`
+    /// is caught and empty metadata is returned, so every keyspace defaults to non-tablet-based
+    /// and eventually consistent.
+    async fn query_keyspaces_scylla_specific(
         &self,
         keyspaces_to_fetch: &[String],
-    ) -> Result<HashSet<String>, MetadataFetchError> {
+    ) -> Result<ScyllaKeyspacesMetadata, MetadataFetchError> {
+        if self.tablets_v2_supported() {
+            match self
+                .query_scylla_keyspaces_with_consistency(keyspaces_to_fetch)
+                .await
+            {
+                // The `consistency` column (or the whole table) is not there - retry without it.
+                // Note that a missing *table* cannot realistically reach this point, since
+                // TABLETS_ROUTING_V2 is a ScyllaDB extension and every ScyllaDB version that
+                // offers it has `system_schema.scylla_keyspaces`.
+                Err(error) if is_missing_table_or_column(&error) => (),
+                result => return result,
+            }
+        }
+
+        match self
+            .query_scylla_keyspaces_tablets_only(keyspaces_to_fetch)
+            .await
+        {
+            Err(error) if is_missing_table_or_column(&error) => {
+                Ok(ScyllaKeyspacesMetadata::default())
+            }
+            result => result,
+        }
+    }
+
+    /// Reads `system_schema.scylla_keyspaces` including the `consistency` column. Fails with a
+    /// [`DbError::Invalid`] if the server does not have that column.
+    async fn query_scylla_keyspaces_with_consistency(
+        &self,
+        keyspaces_to_fetch: &[String],
+    ) -> Result<ScyllaKeyspacesMetadata, MetadataFetchError> {
+        let rows = self
+            .query_filter_keyspace_name::<(String, Option<i32>, Option<String>)>(
+                "SELECT keyspace_name, initial_tablets, consistency FROM system_schema.scylla_keyspaces",
+                keyspaces_to_fetch,
+            )
+            .map_err(|error| MetadataFetchError {
+                error,
+                table: "system_schema.scylla_keyspaces",
+            });
+
+        rows.try_fold(
+            ScyllaKeyspacesMetadata::default(),
+            |mut acc, (keyspace_name, initial_tablets, consistency)| {
+                let consistency_mode = consistency_mode_from_str(consistency.as_deref());
+                // Only non-eventual modes are stored; keyspaces missing from the map are
+                // eventually consistent.
+                if consistency_mode != ConsistencyMode::Eventual {
+                    acc.consistency_modes
+                        .insert(keyspace_name.clone(), consistency_mode);
+                }
+                if initial_tablets.is_some() {
+                    acc.tablet_based.insert(keyspace_name);
+                }
+                future::ready(Ok(acc))
+            },
+        )
+        .await
+    }
+
+    /// Reads `system_schema.scylla_keyspaces` without the `consistency` column, for servers
+    /// that have tablets but no strong consistency. Every keyspace is then reported as
+    /// eventually consistent.
+    async fn query_scylla_keyspaces_tablets_only(
+        &self,
+        keyspaces_to_fetch: &[String],
+    ) -> Result<ScyllaKeyspacesMetadata, MetadataFetchError> {
         let rows = self
             .query_filter_keyspace_name::<(String, Option<i32>)>(
                 "SELECT keyspace_name, initial_tablets FROM system_schema.scylla_keyspaces",
@@ -1725,36 +1792,60 @@ impl ControlConnection {
                 table: "system_schema.scylla_keyspaces",
             });
 
-        let result = rows
-            .filter_map(|row_result| {
-                let result = match row_result {
-                    Ok((keyspace_name, initial_tablets)) => {
-                        initial_tablets.map(|_| Ok(keyspace_name))
-                    }
-                    Err(e) => Some(Err(e)),
-                };
-                future::ready(result)
-            })
-            .try_collect::<HashSet<_, _>>()
-            .await;
-
-        match result {
-            // FIXME: This match catches all database errors with this error code despite the fact
-            // that we are only interested in the ones resulting from non-existent table
-            // system_schema.scylla_keyspaces.
-            // For more information please refer to https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262
-            Err(MetadataFetchError {
-                error:
-                    MetadataFetchErrorKind::NextRowError(NextRowError::NextPageError(
-                        NextPageError::RequestFailure(RequestError::LastAttemptError(
-                            RequestAttemptError::DbError(DbError::Invalid, _),
-                        )),
-                    )),
-                ..
-            }) => Ok(HashSet::new()),
-            result => result,
-        }
+        rows.try_fold(
+            ScyllaKeyspacesMetadata::default(),
+            |mut acc, (keyspace_name, initial_tablets)| {
+                if initial_tablets.is_some() {
+                    acc.tablet_based.insert(keyspace_name);
+                }
+                future::ready(Ok(acc))
+            },
+        )
+        .await
     }
+}
+
+/// The per-keyspace ScyllaDB-specific metadata read from `system_schema.scylla_keyspaces`.
+#[derive(Default)]
+struct ScyllaKeyspacesMetadata {
+    /// Keyspaces that are tablet-based, i.e. whose `initial_tablets` column is not NULL.
+    tablet_based: HashSet<String>,
+    /// Strong-consistency modes, from the `consistency` column. Keyspaces missing from the map
+    /// are eventually consistent - which includes every keyspace on a server that does not
+    /// report the column at all.
+    consistency_modes: HashMap<String, ConsistencyMode>,
+}
+
+/// Maps the raw `consistency` column value from `system_schema.scylla_keyspaces` to a
+/// [`ConsistencyMode`]. A missing or unrecognised value means eventual consistency.
+fn consistency_mode_from_str(consistency: Option<&str>) -> ConsistencyMode {
+    match consistency {
+        Some("global") => ConsistencyMode::Global,
+        Some("local") => ConsistencyMode::Local,
+        _ => ConsistencyMode::Eventual,
+    }
+}
+
+/// Returns `true` if the error is the `DbError::Invalid` that a server reports when a `SELECT`
+/// names a table or a column it does not have.
+///
+/// This is how the driver detects that a ScyllaDB-specific system table or column is missing on
+/// the node it is talking to, e.g. on Cassandra or on a ScyllaDB version predating the feature.
+// FIXME: This catches every database error carrying this error code, not only the ones caused by
+// a missing table or column.
+// For more information please refer to https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262
+fn is_missing_table_or_column(error: &MetadataFetchError) -> bool {
+    matches!(
+        error,
+        MetadataFetchError {
+            error: MetadataFetchErrorKind::NextRowError(NextRowError::NextPageError(
+                NextPageError::RequestFailure(RequestError::LastAttemptError(
+                    RequestAttemptError::DbError(DbError::Invalid, _),
+                )),
+            )),
+            ..
+        }
+    )
 }
 
 fn strategy_from_string_map(
@@ -1812,6 +1903,36 @@ mod tests {
     use crate::test_utils::setup_tracing;
 
     use super::*;
+
+    /// The `consistency` column of `system_schema.scylla_keyspaces` drives leader-aware routing,
+    /// so its mapping to [`ConsistencyMode`] is worth pinning down. Anything the driver does not
+    /// recognise - including the column being absent, which arrives here as `None` - must mean
+    /// eventual consistency, never a strongly-consistent mode.
+    #[test]
+    fn test_consistency_mode_parsing() {
+        setup_tracing();
+        assert_eq!(
+            consistency_mode_from_str(Some("global")),
+            ConsistencyMode::Global
+        );
+        assert_eq!(
+            consistency_mode_from_str(Some("local")),
+            ConsistencyMode::Local
+        );
+        for unrecognised in [
+            None,
+            Some(""),
+            Some("GLOBAL"),
+            Some("none"),
+            Some("whatever"),
+        ] {
+            assert_eq!(
+                consistency_mode_from_str(unrecognised),
+                ConsistencyMode::Eventual,
+                "unrecognised consistency {unrecognised:?} must mean eventual consistency"
+            );
+        }
+    }
 
     #[test]
     fn test_cql_type_parsing() {

@@ -4,9 +4,10 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::cluster::ClusterState;
 use crate::frame::response::result::TableSpec;
+use crate::frame::types::Consistency;
 use crate::routing::NodeLocationPreference;
 use crate::{
-    cluster::metadata::Strategy,
+    cluster::metadata::{ConsistencyMode, Strategy},
     cluster::node::Node,
     errors::RequestAttemptError,
     routing::locator::ReplicaSet,
@@ -178,6 +179,21 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         /* Token-aware logic - if routing info is available, we know what are the replicas
          * for the statement. Try to pick one of them. */
         if let (Some(ts), Some(table_spec)) = (&routing_info.token_with_strategy, query.table) {
+            /* Leader-aware logic - for a strongly-consistent keyspace the leader has to
+             * coordinate the request anyway, so it outranks distance and is tried before the
+             * locality buckets below. See `leader_to_prefer`. */
+            if Self::should_route_to_leader(query, cluster)
+                && let Some((leader, shard)) = self.leader_to_prefer(
+                    ts,
+                    &routing_info,
+                    |node, shard| (self.pick_predicate)(node, Some(shard)),
+                    cluster,
+                    table_spec,
+                )
+            {
+                return Some((leader, Some(shard)));
+            }
+
             if let NodeLocationPreference::DatacenterAndRack(dc, rack) = routing_info.preference {
                 // Try to pick some alive local rack random replica.
                 let local_rack_picked = self.pick_replica(
@@ -338,6 +354,22 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         let maybe_replicas = if let (Some(ts), Some(table_spec)) =
             (&routing_info.token_with_strategy, query.table)
         {
+            // The tablet's Raft leader, when leader-aware routing applies to this request. It
+            // outranks distance, so it is yielded before the locality-ordered replicas below --
+            // and filtered out of them, so that the plan does not repeat it. See
+            // `leader_to_prefer`.
+            let maybe_leader = Self::should_route_to_leader(query, cluster)
+                .then(|| {
+                    self.leader_to_prefer(
+                        ts,
+                        &routing_info,
+                        |node, shard| Self::is_alive(node, Some(shard)),
+                        cluster,
+                        table_spec,
+                    )
+                })
+                .flatten();
+
             // Iterator over alive local rack replicas (shuffled or deterministically ordered,
             // depending on the statement being LWT or not).
             let maybe_local_rack_replicas = if let NodeLocationPreference::DatacenterAndRack(
@@ -396,12 +428,21 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 Either::Right(std::iter::empty())
             };
 
-            // Produce an iterator, prioritizing local replicas.
+            // Produce an iterator, prioritizing the leader (if any) and then local replicas.
             // If preferred datacenter is not specified, every replica is treated as a remote one.
             Either::Left(
-                maybe_local_rack_replicas
-                    .chain(maybe_local_replicas)
-                    .chain(maybe_remote_replicas)
+                maybe_leader
+                    .into_iter()
+                    .chain(
+                        maybe_local_rack_replicas
+                            .chain(maybe_local_replicas)
+                            .chain(maybe_remote_replicas)
+                            .filter(move |(node, shard)| {
+                                maybe_leader.is_none_or(|(leader, leader_shard)| {
+                                    (node.host_id, *shard) != (leader.host_id, leader_shard)
+                                })
+                            }),
+                    )
                     .map(|(node, shard)| (node, Some(shard))),
             )
         } else {
@@ -898,6 +939,94 @@ impl DefaultPolicy {
         //  - There is no public API to check that, and I don't want DefaultPolicy to use private APIs.
         //  - Shards returned from policy are only a hint anyway, so it probably makes no sense to throw out the whole host.
         node.is_connected()
+    }
+
+    /// Returns true iff the request should be routed to the tablet's leader replica.
+    ///
+    /// The leader is not something the server exposes in schema or in `system.tablets`; the only
+    /// place it appears is the `TABLETS_ROUTING_V2` response payload, which lists the leader
+    /// first. The driver caches that list in payload order, which is what lets
+    /// [`Self::leader_to_prefer`] recover the leader. Two conditions must hold:
+    /// - the keyspace is strongly consistent;
+    /// - the request's consistency level is not `ONE`/`LOCAL_ONE`. Those may be served by any
+    ///   replica, so they keep the normal (spread) routing for better load distribution;
+    ///   everything else is routed to the leader (a write sent to a follower is just bounced to
+    ///   the leader, and writes at `ONE`/`LOCAL_ONE` are rejected by the server anyway).
+    ///
+    /// Note that this deliberately does not check whether the tablet's mapping came from a
+    /// `TABLETS_ROUTING_V2` payload. Only such a mapping is leader-ordered, but a mapping left
+    /// over from the older `TABLETS_ROUTING_V1` path still yields a *consistent* target that the
+    /// server bounces to the leader, which is no worse than spreading the request across
+    /// replicas. Requiring a version here would mean threading it from the request path into the
+    /// policy, at the cost of an extra lookup and of a snapshot that may not be the one the
+    /// policy sees.
+    fn should_route_to_leader(query: &RoutingInfo, cluster: &ClusterState) -> bool {
+        let Some(table_spec) = query.table else {
+            return false;
+        };
+
+        // Note: For the time being, only global consistency is implemented in Scylla.
+        let strongly_consistent = cluster
+            .get_keyspace(table_spec.ks_name())
+            .is_some_and(|ks| ks.consistency_mode == ConsistencyMode::Global);
+
+        if !strongly_consistent {
+            return false;
+        }
+
+        // Requests at ONE / LOCAL_ONE may be served by any replica, so let them spread across
+        // replicas; everything else is routed to the leader.
+        !matches!(query.consistency, Consistency::One | Consistency::LocalOne)
+    }
+
+    /// Returns the tablet's Raft leader for this request, if it is a host this policy is willing
+    /// to contact. Only called when [`Self::should_route_to_leader`] holds.
+    ///
+    /// For a strongly-consistent keyspace the leader coordinates every write and every
+    /// linearizable read, so a request sent to any other replica is merely forwarded to it. The
+    /// leader therefore outranks *distance*: callers put it ahead of nearer replicas, a remote-DC
+    /// leader ahead of a local-rack one. Keeping the request inside one datacenter buys no
+    /// consistency either, the table being globally consistent.
+    ///
+    /// It does not override this policy's own filter, though. The leader qualifies only if it
+    /// satisfies `predicate` (which always includes liveness) and sits in a datacenter this
+    /// policy would use at all: the preferred one, any of them when no datacenter is preferred,
+    /// or a remote one when datacenter failover is permitted. With a preferred datacenter and
+    /// failover disabled, a leader elsewhere is a host this policy would never contact, so `None`
+    /// is returned, the request keeps normal routing, and the server forwards it to the leader --
+    /// exactly as it would without the extension.
+    ///
+    /// This mirrors the Python driver's `TokenAwarePolicy` contract, so that the two drivers
+    /// agree on how leader awareness interacts with locality preferences.
+    fn leader_to_prefer<'a>(
+        &'a self,
+        ts: &TokenWithStrategy<'a>,
+        routing_info: &ProcessedRoutingInfo<'a>,
+        predicate: impl Fn(NodeRef<'a>, Shard) -> bool,
+        cluster: &'a ClusterState,
+        table_spec: &TableSpec,
+    ) -> Option<(NodeRef<'a>, Shard)> {
+        // The cached tablet holds its replicas in the order the `TABLETS_ROUTING_V2` payload
+        // listed them, which puts the leader first, and `ReplicasOrdered` preserves that order.
+        // Only the first replica is read here, which is also this iterator's cheap case: the
+        // primary replica is computed without allocating.
+        let (leader, shard) = self
+            .nonfiltered_replica_set(ts, NodeLocationCriteria::Any, cluster, table_spec)
+            .into_replicas_ordered()
+            .into_iter()
+            .next()?;
+
+        if !predicate(leader, shard) {
+            return None;
+        }
+
+        match routing_info.preference.datacenter() {
+            // No preferred datacenter, so every datacenter is fair game.
+            None => Some((leader, shard)),
+            Some(preferred_dc) => (leader.datacenter.as_deref() == Some(preferred_dc)
+                || self.is_datacenter_failover_possible(routing_info))
+            .then_some((leader, shard)),
+        }
     }
 
     /// Returns true iff the datacenter failover is permitted for the statement being executed.
@@ -2661,6 +2790,346 @@ mod tests {
                 &expected_groups,
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_default_policy_leader_aware_routing() {
+        setup_tracing();
+        use crate::routing::locator::test::{A, B, C, D, E, F, G};
+
+        let cluster = mock_cluster_state_for_leader_aware_tests().await;
+
+        struct Test<'a> {
+            routing_info: RoutingInfo<'a>,
+            expected_groups: ExpectedGroups,
+        }
+
+        // A token-aware policy with no DC preference: each plan is simply the tablet's
+        // replicas (the leader promoted to the front, or all of them shuffled) followed by the
+        // other nodes.
+        let policy = || DefaultPolicy {
+            preferences: Some(NodeLocationPreference::Any),
+            is_token_aware: true,
+            permit_dc_failover: true,
+            ..Default::default()
+        };
+
+        let tests = [
+            // 1. Strongly consistent request at CL Quorum -> the leader (C) is promoted to the
+            //    front. Only the leader is pinned: the remaining replicas keep their usual
+            //    shuffled order, so retries after the leader still spread.
+            Test {
+                routing_info: RoutingInfo {
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
+                    consistency: Consistency::Quorum,
+                    ..Default::default()
+                },
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([C]) // the leader, first
+                    .group([A, F]) // remaining replicas, shuffled
+                    .group([B, D, E, G]) // other nodes
+                    .build(),
+            },
+            // 2. Strongly consistent request at CL LocalQuorum -> also routed to the leader.
+            Test {
+                routing_info: RoutingInfo {
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
+                    consistency: Consistency::LocalQuorum,
+                    ..Default::default()
+                },
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([C])
+                    .group([A, F])
+                    .group([B, D, E, G])
+                    .build(),
+            },
+            // 3. Strongly consistent request at CL One -> spread across replicas. ONE/LOCAL_ONE
+            //    are weak reads (writes at those levels are rejected by the server), so they
+            //    keep the normal load-spreading routing.
+            Test {
+                routing_info: RoutingInfo {
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
+                    consistency: Consistency::One,
+                    ..Default::default()
+                },
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([C, A, F]) // replicas, shuffled
+                    .group([B, D, E, G])
+                    .build(),
+            },
+            // 4. Strongly consistent request at CL LocalOne -> spread across replicas.
+            Test {
+                routing_info: RoutingInfo {
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
+                    consistency: Consistency::LocalOne,
+                    ..Default::default()
+                },
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([C, A, F])
+                    .group([B, D, E, G])
+                    .build(),
+            },
+            // 5. Request on an eventually-consistent keyspace, even at a strong CL -> spread
+            //    (never leader-routed, because the keyspace is not strongly consistent).
+            Test {
+                routing_info: RoutingInfo {
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
+                    consistency: Consistency::Quorum,
+                    ..Default::default()
+                },
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([B, G, F]) // replicas, shuffled
+                    .group([A, C, D, E])
+                    .build(),
+            },
+            // 6. Strongly consistent request whose tablet has no cached version -> the first
+            //    replica is still promoted. The decision depends only on the keyspace's
+            //    consistency mode, not on how the mapping was learned: a versionless
+            //    (TABLETS_ROUTING_V1) mapping is not leader-ordered, but targeting its first
+            //    replica consistently is no worse than spreading, and the server bounces the
+            //    request to the leader.
+            Test {
+                routing_info: RoutingInfo {
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_SS_RF_2),
+                    consistency: Consistency::Quorum,
+                    ..Default::default()
+                },
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([E]) // first replica of the cached mapping
+                    .group([D, C])
+                    .group([A, B, F, G])
+                    .build(),
+            },
+            // 7. LWT on an eventually-consistent keyspace -> leader-first via LWT routing,
+            //    unaffected by strong-consistency handling (both select a deterministic order).
+            Test {
+                routing_info: RoutingInfo {
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
+                    consistency: Consistency::One,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([B, G, F])
+                    .group([A, C, D, E])
+                    .build(),
+            },
+        ];
+
+        for Test {
+            routing_info,
+            expected_groups,
+        } in tests
+        {
+            test_default_policy_with_given_cluster_and_routing_info(
+                &policy(),
+                &cluster,
+                &routing_info,
+                &expected_groups,
+            );
+        }
+    }
+
+    /// How leader-aware routing interacts with the policy's datacenter/rack preference.
+    ///
+    /// The leader outranks *distance* but never the policy's own filter, so:
+    /// - a leader in the preferred datacenter is promoted, whatever its rack;
+    /// - a leader in another datacenter is promoted too, but only when datacenter failover is
+    ///   permitted, since that is what makes remote nodes usable at all;
+    /// - with failover disabled, a remote leader is a host this policy would never contact, so
+    ///   the request keeps plain token-aware routing and the server forwards it to the leader.
+    ///
+    /// The tablet under test (`TABLE_NTS_RF_3`, token 160) has replicas `[C, A, F]` with C the
+    /// leader. C and A are in `eu`, F is in `us`, so a `us` preference makes the leader remote.
+    #[tokio::test]
+    async fn test_default_policy_leader_aware_routing_with_dc_preference() {
+        setup_tracing();
+        use crate::routing::locator::test::{A, B, C, D, E, F, G};
+
+        let cluster = mock_cluster_state_for_leader_aware_tests().await;
+
+        let strong_read = RoutingInfo {
+            token: Some(Token::new(160)),
+            table: Some(TABLE_NTS_RF_3),
+            consistency: Consistency::Quorum,
+            ..Default::default()
+        };
+
+        struct Test {
+            policy: DefaultPolicy,
+            expected_groups: ExpectedGroups,
+        }
+
+        let tests = [
+            // The leader (C) is in the preferred datacenter, so it is promoted even with
+            // failover disabled. Only `eu` hosts are usable, so F (us) drops out entirely.
+            Test {
+                policy: DefaultPolicy {
+                    preferences: Some(NodeLocationPreference::Datacenter("eu".to_owned())),
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    ..Default::default()
+                },
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([C]) // the leader, local
+                    .group([A]) // the other local replica
+                    .group([B, G]) // other local nodes
+                    .build(),
+            },
+            // The leader is remote but failover is permitted, so it still outranks the local
+            // replica F -- the whole point of leader awareness: F would only forward to C.
+            Test {
+                policy: DefaultPolicy {
+                    preferences: Some(NodeLocationPreference::Datacenter("us".to_owned())),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([C]) // the leader, remote, still first
+                    .group([F]) // local replica
+                    .group([A]) // remaining remote replica
+                    .group([D, E]) // other local nodes
+                    .group([B, G]) // other remote nodes
+                    .build(),
+            },
+            // The leader is remote and failover is disabled, so it is not a host this policy
+            // would contact: plain token-aware routing, and the server does the forwarding.
+            Test {
+                policy: DefaultPolicy {
+                    preferences: Some(NodeLocationPreference::Datacenter("us".to_owned())),
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    ..Default::default()
+                },
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([F]) // the only local replica
+                    .group([D, E]) // other local nodes
+                    .build(),
+            },
+            // Rack preference does not gate the leader: C is in `eu` but in another rack than
+            // the preferred one, and is still promoted.
+            Test {
+                policy: DefaultPolicy {
+                    preferences: Some(NodeLocationPreference::DatacenterAndRack(
+                        "eu".to_owned(),
+                        "r2".to_owned(),
+                    )),
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    ..Default::default()
+                },
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([C]) // the leader: eu/r1, i.e. preferred DC, different rack
+                    .group([A]) // the other replica in eu
+                    .group([G]) // other nodes in the preferred rack, eu/r2
+                    .group([B]) // other nodes in eu
+                    .build(),
+            },
+        ];
+
+        for Test {
+            policy,
+            expected_groups,
+        } in tests
+        {
+            test_default_policy_with_given_cluster_and_routing_info(
+                &policy,
+                &cluster,
+                &strong_read,
+                &expected_groups,
+            );
+        }
+    }
+
+    // Builds a cluster with tablet mappings and per-keyspace consistency set up to exercise
+    // leader-aware routing:
+    // - KEYSPACE_NTS_RF_3 (TABLE_NTS_RF_3): strongly consistent, versioned tablet
+    //   -> requests may be routed to the leader (replicas[0]).
+    // - KEYSPACE_NTS_RF_2 (TABLE_NTS_RF_2): eventually consistent, versioned tablet
+    //   -> never leader-routed (keyspace is not strongly consistent).
+    // - KEYSPACE_SS_RF_2  (TABLE_SS_RF_2):  strongly consistent, tablet WITHOUT a version
+    //   -> the first replica is still promoted: the decision depends on the keyspace's
+    //      consistency mode alone, not on whether the mapping carried a version.
+    //
+    // Each tablet's replica list is injected leader-first, mimicking a mapping the driver would
+    // have cached from a TABLETS_ROUTING_V2 payload -- the only place the server reveals which
+    // replica leads the tablet's Raft group.
+    async fn mock_cluster_state_for_leader_aware_tests() -> ClusterState {
+        use crate::cluster::metadata::ConsistencyMode;
+        use crate::routing::locator::tablets::RawTablet;
+        use crate::routing::locator::test::{
+            A, B, C, D, E, F, G, KEYSPACE_NTS_RF_3, KEYSPACE_SS_RF_2, id_to_invalid_addr,
+        };
+
+        let mut metadata = mock_metadata_for_token_aware_tests();
+        for ks_name in [KEYSPACE_NTS_RF_3, KEYSPACE_SS_RF_2] {
+            if let Some(Ok(ks)) = metadata.keyspaces.get_mut(ks_name) {
+                ks.consistency_mode = ConsistencyMode::Global;
+            }
+        }
+
+        let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut state = ClusterState::new(
+            metadata,
+            &Default::default(),
+            &HashMap::new(),
+            &mut |_, _| (),
+            &None,
+            None,
+            &connectivity_events_sender,
+            TabletsInfo::new(),
+            &HashMap::new(),
+            &Default::default(),
+        )
+        .await;
+
+        for node in state.get_nodes_info() {
+            node.use_enabled_as_connected();
+        }
+
+        // Resolve node ids (A..G) to the host ids assigned in this cluster instance. Match on
+        // the full node address rather than just the port: distinct nodes can share a port, so
+        // keying a map by port alone would collapse them and lose information.
+        let addr_to_host_id: HashMap<_, _> = state
+            .get_nodes_info()
+            .iter()
+            .map(|node| (node.address, node.host_id))
+            .collect();
+        let replica = |id: u16| (addr_to_host_id[&id_to_invalid_addr(id)], 0);
+
+        // Tablets cover the whole test token range [1, 1000] (in particular Token(160)).
+        state.update_tablets(vec![
+            // Strongly consistent, versioned -> leader-first routing. Leader = C.
+            (
+                TABLE_NTS_RF_3.clone(),
+                RawTablet::new_for_test(
+                    1,
+                    1000,
+                    vec![replica(C), replica(A), replica(F)],
+                    Some(42),
+                ),
+            ),
+            // Eventually consistent, versioned -> no leader routing.
+            (
+                TABLE_NTS_RF_2.clone(),
+                RawTablet::new_for_test(1, 1000, vec![replica(B), replica(G), replica(F)], Some(7)),
+            ),
+            // Strongly consistent but no version -> deterministic order all the same.
+            (
+                TABLE_SS_RF_2.clone(),
+                RawTablet::new_for_test(1, 1000, vec![replica(E), replica(D), replica(C)], None),
+            ),
+        ]);
+
+        state
     }
 
     #[tokio::test]

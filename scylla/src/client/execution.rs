@@ -34,10 +34,9 @@ use tracing::trace;
 use tracing::trace_span;
 
 use crate::client::execution_profile::ExecutionProfileInner;
-use crate::cluster::NodeRef;
-use crate::errors::ConnectionPoolError;
-use crate::errors::RequestAttemptError;
-use crate::errors::RequestError;
+use crate::cluster::{ClusterState, NodeRef};
+use crate::errors::{ConnectionPoolError, RequestAttemptError, RequestError};
+use crate::frame::response::result::TableSpec;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::network::Connection;
 use crate::observability::driver_tracing::RequestSpan;
@@ -47,15 +46,50 @@ use crate::policies::load_balancing;
 use crate::policies::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::policies::speculative_execution::{self, SpeculativeExecutionPolicy};
-use crate::response::Coordinator;
-use crate::response::NonErrorQueryResponse;
+use crate::response::{Coordinator, NonErrorQueryResponse};
 use crate::routing::Shard;
+use crate::routing::Token;
+use crate::routing::locator::tablets::TabletVersion;
 use crate::statement::StatementConfig;
 
 /// Result of running a request, before side effects are handled.
 pub(crate) enum RunRequestResult<ResT> {
     IgnoredWriteError,
     Completed(ResT),
+}
+
+/// Chooses the `TABLETS_ROUTING_V2` tablet-version block to attach to an `EXECUTE`.
+///
+/// The block is a probe of one nibble of the tablet version the driver has cached for the
+/// request's `(table, token)`, which the server uses to detect that the driver's routing cache
+/// went stale. It is chosen once per request, not per attempt: one probe per request is enough,
+/// and a paged request keeps the same block across its pages.
+///
+/// This decides the byte's *value* for every case, so that nothing downstream has to invent one:
+/// - a cached tablet version: a nibble of it, at a random index;
+/// - a tablet-cache miss: a random byte, which almost certainly mismatches and so makes the
+///   server send fresh routing information;
+/// - no single partition to route by (a range scan, or a statement whose partition key cannot be
+///   computed): there is no tablet version to probe, and the server ignores the block for such a
+///   request, so the value is irrelevant and the cheapest one is used.
+///
+/// Whether a byte is appended at all is a separate, per-connection decision made by
+/// `Connection::execute_raw_with_consistency` (only V2 connections get one), so this is computed
+/// unconditionally here, without consulting the connection.
+pub(crate) fn choose_tablet_block_hint(
+    cluster_state: &ClusterState,
+    table_spec: Option<&TableSpec>,
+    token: Option<Token>,
+) -> u8 {
+    match table_spec.zip(token) {
+        Some((table_spec, token)) => {
+            let version = cluster_state
+                .replica_locator()
+                .tablet_version_for_token(table_spec, token);
+            TabletVersion::block_for(version)
+        }
+        None => 0,
+    }
 }
 
 /// Specifies the mechanism used for query paging.
