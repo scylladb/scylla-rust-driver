@@ -5,7 +5,9 @@ use tokio::sync::oneshot;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::cluster::metadata::{ClientRoute, ClientRoutes, Metadata, Peer};
+use crate::cluster::metadata::{
+    ClientRoute, ClientRoutes, Keyspace, Metadata, Peer, SingleKeyspaceMetadataError,
+};
 use crate::errors::MetadataError;
 
 /// An explicit request to refresh cluster metadata, sent by
@@ -66,6 +68,9 @@ pub(in super::super) struct PartialMetadataChanges {
     /// whole peer list, so this replaces the topology of the state it is
     /// applied to.
     pub(in super::super) peers: Option<Vec<Peer>>,
+    /// The schema of the keyspaces that SCHEMA_CHANGE events named, fetched in
+    /// response to them.
+    pub(in super::super) schema: Option<SchemaUpdate>,
 }
 
 impl PartialMetadataChanges {
@@ -263,6 +268,40 @@ impl ClientRoutesUpdate {
                 .insert(connection_id, route);
         }
     }
+}
+
+/// A partial, mergeable update of the schema metadata, derived from the
+/// keyspaces named by SCHEMA_CHANGE events and from the per-keyspace schema
+/// fetched in response to them.
+///
+/// Only the named keyspaces are described; every other keyspace of the state
+/// this is applied to is left untouched.
+#[derive(Default)]
+pub(crate) struct SchemaUpdate {
+    /// One entry per named keyspace. A map keyed by keyspace, so that a
+    /// keyspace cannot be said to be both present and absent, and so that
+    /// merging is nothing but "the newer statement wins" - see
+    /// [`merge`](Self::merge).
+    pub(crate) keyspaces: HashMap<String, FetchedKeyspace>,
+}
+
+/// What a partial schema fetch established about one keyspace.
+// The `Present` payload is large (a `Keyspace` is a few hundred bytes) and
+// `Absent` is empty, but boxing it would trade an allocation per fetched
+// keyspace for a saving of a few hundred bytes per absent one - in a map that
+// holds the handful of keyspaces one refresh interval's events named, and lives
+// only until the update is applied.
+#[expect(clippy::large_enum_variant)]
+pub(crate) enum FetchedKeyspace {
+    /// The keyspace exists; this is its freshly read metadata.
+    ///
+    /// The `Result` layer is the one of [`Metadata::keyspaces`]: a keyspace
+    /// whose fetched metadata turned out inconsistent is reported as an error
+    /// rather than silently replaced.
+    Present(Result<Keyspace, SingleKeyspaceMetadataError>),
+    /// The keyspace does not exist: its last event dropped it, or the fetch
+    /// found no row for it.
+    Absent,
 }
 
 #[cfg(test)]

@@ -428,16 +428,18 @@ impl ClusterWorker {
                 );
                 Some((new_cluster_state, refresh_responses))
             }
-            // A partial topology fetch replaces the peer list; the rest of the
-            // state (schema, tablets, connection pools) is reused.
+            // Partial fetches replace only the aspects they re-read; everything
+            // else (schema or topology, tablets, connection pools) is reused.
             Some(MetadataChanges::Partial(PartialMetadataChanges {
-                peers: Some(peers),
+                peers,
+                schema,
                 client_routes_updates: _, // Already applied above.
-            })) => {
+            })) if peers.is_some() || schema.is_some() => {
                 let new_cluster_state = Arc::new(
                     cluster_state
-                        .new_with_updated_topology(
+                        .new_with_partial_changes(
                             peers,
+                            schema,
                             &self.node_config,
                             self.host_filter.as_deref(),
                         )
@@ -505,6 +507,7 @@ impl ClusterWorker {
             MetadataChanges::Partial(PartialMetadataChanges {
                 client_routes_updates,
                 peers: _,
+                schema: _,
             }) => match client_routes_updates.take() {
                 Some(client_routes_update) => {
                     subscriber.merge_client_routes_update(client_routes_update)
