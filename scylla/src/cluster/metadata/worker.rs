@@ -749,7 +749,7 @@ impl MetadataWorker {
     }
 
     /// Handles a single server event synchronously (status hints are published
-    /// right away) and returns the fetch work the event implies.
+    /// right away) and updates the fetch plan accordingly.
     ///
     /// An associated function taking just the updates sender, so that event
     /// handling does not require exclusive access to the whole worker.

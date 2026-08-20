@@ -451,8 +451,8 @@ impl ClusterWorker {
             }
         };
 
-        // Regardless of wheter we have a new state or not, we need to publish UP hints.
-        // If no new state - publish using new one.
+        // Regardless of whether we have a new state, we need to process UP hints.
+        // If there is no new state, process them using the current one.
         let Some((new_cluster_state, refresh_responses)) = new_state_with_requests else {
             process_up_hints(&cluster_state);
             return;

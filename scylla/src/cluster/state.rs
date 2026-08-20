@@ -25,7 +25,7 @@ use super::node::{Node, NodeRef};
 /// Helper struct to group parameters that are only needed to
 /// construct `Node` objects.
 pub(crate) struct NodeConfig {
-    // Config for `NodeConnectioPool` for all new nodes.
+    // Config for `NodeConnectionPool` for all new nodes.
     pub(crate) pool_config: PoolConfig,
     // Keyspace send in "USE <keyspace name>" when opening each connection.
     pub(crate) used_keyspace: Option<VerifiedKeyspaceName>,
