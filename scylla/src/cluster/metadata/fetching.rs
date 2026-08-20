@@ -192,15 +192,7 @@ impl ControlConnection {
 
         let (peers, cluster_name) = peers_and_cluster_name;
 
-        // There must be at least one peer
-        if peers.is_empty() {
-            return Err(MetadataError::Peers(PeersMetadataError::EmptyPeers));
-        }
-
-        // At least one peer has to have some tokens
-        if peers.iter().all(|peer| peer.tokens.is_empty()) {
-            return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists));
-        }
+        Self::validate_peers(&peers)?;
 
         Ok(TopologyUpdateGuard::new(Metadata {
             peers,
@@ -208,6 +200,43 @@ impl ControlConnection {
             cluster_name,
             client_routes,
         }))
+    }
+
+    /// Queries only the cluster topology: the peer list (`system.peers` and
+    /// `system.local`).
+    ///
+    /// The `cluster_name` that comes along the peers is dropped: it is fixed for
+    /// the lifetime of a cluster, so the one read by the last full fetch stands.
+    ///
+    /// The result comes wrapped in a [`TopologyUpdateGuard`] for the same reason
+    /// as in `query_metadata`: the establisher must absorb the new peer list
+    /// before anything else uses it.
+    pub(super) async fn query_topology(
+        &self,
+    ) -> Result<TopologyUpdateGuard<Vec<Peer>>, MetadataError> {
+        let connect_port = self.endpoint().address().port();
+
+        let (peers, _cluster_name) = self.query_peers(connect_port).await?;
+
+        Self::validate_peers(&peers)?;
+
+        Ok(TopologyUpdateGuard::new(peers))
+    }
+
+    /// Rejects a peer list that could not describe a working cluster, so that
+    /// the caller treats the fetch as failed instead of publishing it.
+    fn validate_peers(peers: &[Peer]) -> Result<(), PeersMetadataError> {
+        // There must be at least one peer
+        if peers.is_empty() {
+            return Err(PeersMetadataError::EmptyPeers);
+        }
+
+        // At least one peer has to have some tokens
+        if peers.iter().all(|peer| peer.tokens.is_empty()) {
+            return Err(PeersMetadataError::EmptyTokenLists);
+        }
+
+        Ok(())
     }
 }
 

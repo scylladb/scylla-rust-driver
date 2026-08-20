@@ -12,7 +12,7 @@ use crate::cluster::control_connection::{
     ControlConnection, ControlConnectionEvent, ControlConnectionEvents,
 };
 use crate::cluster::metadata::update::{MetadataUpdate, RefreshRequest};
-use crate::cluster::metadata::{ClientRoutesUpdate, Metadata};
+use crate::cluster::metadata::{ClientRoutesUpdate, Metadata, Peer};
 use crate::errors::{
     BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, MetadataError,
 };
@@ -120,9 +120,12 @@ enum FetchPlan {
     /// server event, or owed because a partial fetch failed.
     Full,
     /// Partial fetch work is owed, at most one entry per partial fetch type.
-    /// Currently client routes is the only such type.
     Partial {
+        /// The (connection id, host id) pairs whose client routes are to be
+        /// re-read, accumulated from CLIENT_ROUTES_CHANGE events.
         client_routes: Option<ClientRoutesFetchRequest>,
+        /// Whether the peer list is to be re-read.
+        topology: bool,
     },
 }
 
@@ -151,9 +154,22 @@ impl FetchPlan {
         }
     }
 
+    /// Records that the peer list is to be re-read.
+    ///
+    /// If a full fetch is already owed, this is dropped - subsumed, by the
+    /// argument in [`note_full_needed`](Self::note_full_needed).
+    fn note_topology(&mut self) {
+        match self {
+            FetchPlan::Partial { topology, .. } => *topology = true,
+            FetchPlan::Full => (),
+        }
+    }
+
+    /// Nothing owed: the state of a plan whose work has all been started.
     const fn empty() -> Self {
         Self::Partial {
             client_routes: None,
+            topology: false,
         }
     }
 }
@@ -196,6 +212,12 @@ impl ClientRoutesFetchRequest {
 type FullFetch<'cc> =
     Pin<Box<dyn Future<Output = Result<TopologyUpdateGuard, MetadataError>> + Send + 'cc>>;
 
+/// A partial topology fetch (the peer list alone) in flight; boxed for the same
+/// reason as [`FullFetch`].
+type TopologyFetch<'cc> = Pin<
+    Box<dyn Future<Output = Result<TopologyUpdateGuard<Vec<Peer>>, MetadataError>> + Send + 'cc>,
+>;
+
 /// A partial client-routes fetch in flight; boxed for the same reason as
 /// [`FullFetch`].
 type ClientRoutesFetch<'cc> =
@@ -207,21 +229,28 @@ type ClientRoutesFetch<'cc> =
 /// The shape makes the scheduling rules structural:
 /// - a full fetch never has anything running beside it (it subsumes and
 ///   preempts all partial work), and
-/// - per partial fetch type, at most one fetch runs at a time. Currently
-///   client routes is the only such type;
+/// - per partial fetch type, at most one fetch runs at a time - one slot per
+///   type, which is also how partial fetches of different types get to run
+///   concurrently.
 ///
 /// [`start_due_fetches`](Self::start_due_fetches) starts the fetches that the
 /// [`FetchPlan`] owes. As a [`Future`], `PendingFetches` resolves to the
-/// [`FetchOutcome`] of the in-flight fetch once it completes.
+/// [`FetchOutcome`] of an in-flight fetch once it completes, dropping that
+/// fetch's future - so a completed fetch is never polled again. With every slot
+/// empty (see [`empty`](Self::empty)) polling pends forever *without registering
+/// a waker*: a value with nothing in flight never wakes the worker.
 ///
 /// Cancel-safe: the futures live in this value, not in the `select!` branch
-/// polling it, so losing the `select!` race leaves the in-flight fetch intact.
+/// polling it, so losing the `select!` race leaves the in-flight fetches intact.
 enum PendingFetches<'cc> {
     /// A full metadata fetch is in flight.
     Full { fetch: FullFetch<'cc> },
-    /// Some partial fetches may be in progress.
+    /// Partial fetches, at most one per partial fetch type. Any slot may be
+    /// empty; with all of them empty (see [`empty`](Self::empty)) nothing is in
+    /// flight at all.
     Partial {
         client_routes_fetch: Option<ClientRoutesFetch<'cc>>,
+        topology_fetch: Option<TopologyFetch<'cc>>,
     },
 }
 
@@ -255,22 +284,41 @@ impl<'cc> PendingFetches<'cc> {
             return;
         }
 
-        // Partial client-routes work starts when isn't already in flight.
+        // Each partial fetch starts only if its own slot is free; work for a
+        // busy slot waits in the plan. Nothing partial starts while a full
+        // fetch is in flight (or is owed but could not be started above): the
+        // full fetch reads all of that data, while partial work owed meanwhile
+        // stays in the plan, because its triggering event may postdate what the
+        // full fetch read.
         if let PendingFetches::Partial {
-            client_routes_fetch: None,
+            client_routes_fetch,
+            topology_fetch,
         } = self
-            && let FetchPlan::Partial { client_routes } = plan
-            && let Some(request) = client_routes.take()
+            && let FetchPlan::Partial {
+                client_routes,
+                topology,
+            } = plan
         {
-            *self = PendingFetches::Partial {
-                client_routes_fetch: Some(Box::pin(request.fetch_on(cc))),
-            };
+            if client_routes_fetch.is_none()
+                && let Some(request) = client_routes.take()
+            {
+                debug!("Requesting a partial client-routes fetch");
+                *client_routes_fetch = Some(Box::pin(request.fetch_on(cc)));
+            }
+
+            if topology_fetch.is_none() && std::mem::take(topology) {
+                debug!("Requesting a partial topology fetch");
+                *topology_fetch = Some(Box::pin(cc.query_topology()));
+            }
         }
     }
 
+    /// Nothing in flight: the state a fetch's completion leaves behind when no
+    /// other one is running.
     const fn empty() -> Self {
         Self::Partial {
             client_routes_fetch: None,
+            topology_fetch: None,
         }
     }
 }
@@ -279,7 +327,23 @@ impl<'cc> PendingFetches<'cc> {
 /// fetch completed, tagged with its fetch type.
 enum FetchOutcome {
     Full(Result<TopologyUpdateGuard, MetadataError>),
+    Topology(Result<TopologyUpdateGuard<Vec<Peer>>, MetadataError>),
     ClientRoutes(Result<Option<ClientRoutesUpdate>, MetadataError>),
+}
+
+/// Polls one partial fetch slot, emptying it if the fetch completed.
+///
+/// Generic over the future type so that both slots of
+/// [`PendingFetches::Partial`] can use it; both are heap-pinned, hence `Unpin`.
+fn poll_slot<F: Future + Unpin>(slot: &mut Option<F>, cx: &mut Context<'_>) -> Option<F::Output> {
+    let fetch = slot.as_mut()?;
+    match Pin::new(fetch).poll(cx) {
+        Poll::Ready(output) => {
+            slot.take();
+            Some(output)
+        }
+        Poll::Pending => None,
+    }
 }
 
 impl Future for PendingFetches<'_> {
@@ -298,13 +362,20 @@ impl Future for PendingFetches<'_> {
             }
             PendingFetches::Partial {
                 client_routes_fetch,
+                topology_fetch,
             } => {
-                if let Some(client_routes) = client_routes_fetch
-                    && let Poll::Ready(result) = client_routes.as_mut().poll(cx)
+                // Only one outcome can be reported per poll, so the slots are
+                // polled until one completes; the rest stay in flight and are
+                // polled again right away, because `work_on_cc` re-polls this
+                // value on the loop iteration that each outcome triggers.
+                if let Some(outcome) =
+                    poll_slot(client_routes_fetch, cx).map(FetchOutcome::ClientRoutes)
                 {
-                    // The completed fetch has been consumed; drop its future.
-                    *client_routes_fetch = None;
-                    return Poll::Ready(FetchOutcome::ClientRoutes(result));
+                    return Poll::Ready(outcome);
+                }
+
+                if let Some(outcome) = poll_slot(topology_fetch, cx).map(FetchOutcome::Topology) {
+                    return Poll::Ready(outcome);
                 }
             }
         };
@@ -532,7 +603,7 @@ impl MetadataWorker {
     /// - At most one fetch per type runs at a time; work for a busy type waits
     ///   in the plan.
     /// - A due full fetch preempts everything: it abandons the running partial
-    ///   fetch and drops the plan's partial work. Both are subsumed - the full
+    ///   fetches and drops the plan's partial work. Both are subsumed - the full
     ///   fetch reads all of that data, and reads it after the events that made
     ///   the partial work due. Conversely, partial work that becomes due *while*
     ///   a full fetch runs stays in the plan: the fetch may have read the
@@ -588,6 +659,20 @@ impl MetadataWorker {
                             // The control connection is considered defunct - drop it. The pending
                             // request, if any, is retried (and answered) while establishing a new one.
                             return ControlFlow::Continue(());
+                        }
+                        FetchOutcome::Topology(Ok(topology_update)) => {
+                            debug!("Fetched new topology");
+                            let peers = topology_update.apply(&mut self.cc_establisher);
+                            if self.send_update(|slot| MetadataUpdate::merge_topology_update(slot, peers)).is_err() {
+                                return ControlFlow::Break(());
+                            }
+                        }
+                        FetchOutcome::Topology(Err(err)) => {
+                            error!(
+                                "Error when fetching topology: {err}. \
+                                Scheduling a metadata refresh, because the control connection is likely defunct."
+                            );
+                            plan.note_full_needed();
                         }
                         FetchOutcome::ClientRoutes(Ok(None)) => (), // Nothing to apply.
                         FetchOutcome::ClientRoutes(Ok(Some(routes))) => {
@@ -664,7 +749,7 @@ impl MetadataWorker {
     }
 
     /// Handles a single server event synchronously (status hints are published
-    /// right away) and returns the fetch work the event implies.
+    /// right away) and updates the fetch plan accordingly.
     ///
     /// An associated function taking just the updates sender, so that event
     /// handling does not require exclusive access to the whole worker.
@@ -680,7 +765,9 @@ impl MetadataWorker {
         #[deny(clippy::wildcard_enum_match_arm)]
         match event {
             Event::SchemaChange(_) => (), // For now only fetched during periodic refresh.
-            Event::TopologyChange(_) => plan.note_full_needed(),
+            // A node was added, removed or moved - only the peer list can have
+            // changed, so a partial topology fetch suffices.
+            Event::TopologyChange(_) => plan.note_topology(),
             Event::ClientRoutesChange(evt) => {
                 // An UPDATE_NODES event pairs `connection_ids[i]` with
                 // `host_ids[i]`.
@@ -700,6 +787,9 @@ impl MetadataWorker {
                 // for:
                 // - PoolRefiller - UP triggers immediate pool refill attempt, and
                 // - Keepaliver - DOWN triggers immediate keepalive query attempt.
+                //
+                // Besides the hint, a status change also schedules a topology
+                // re-read - see below the `match`.
 
                 match status {
                     StatusChangeEvent::Up(addr) => {
@@ -738,6 +828,12 @@ impl MetadataWorker {
                         }
                     }
                 }
+
+                // A node's `rpc_address` can change while the node itself is
+                // neither added nor removed (e.g. it is restarted with a new
+                // address), and no TOPOLOGY_CHANGE announces that - the only
+                // events it produces are this DOWN/UP pair.
+                plan.note_topology();
             }
             _ => unreachable!("clippy testifies that the match is exhaustive"),
         };
@@ -805,13 +901,16 @@ fn deadline_after(start: Instant, interval: Duration) -> Instant {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::future::pending;
     use std::pin::Pin;
     use std::task::{Context, Poll, Waker};
 
     use crate::cluster::metadata::Metadata;
 
-    use super::{FetchOutcome, PendingFetches, TopologyUpdateGuard};
+    use super::{
+        ClientRoutesFetchRequest, FetchOutcome, FetchPlan, PendingFetches, TopologyUpdateGuard,
+    };
 
     fn poll_once(pending_fetches: &mut PendingFetches<'_>) -> Poll<FetchOutcome> {
         Pin::new(pending_fetches).poll(&mut Context::from_waker(Waker::noop()))
@@ -821,18 +920,35 @@ mod tests {
         TopologyUpdateGuard::new(Metadata::new_dummy(&[]))
     }
 
-    /// While idle, `PendingFetches` must pend (and not panic or spin):
-    /// `work_on_cc` polls it in its `select!` unconditionally.
+    fn client_routes_request() -> ClientRoutesFetchRequest {
+        ClientRoutesFetchRequest {
+            pairs: HashSet::new(),
+        }
+    }
+
+    /// Asserts that no fetch is in flight, i.e. every partial slot is empty.
+    fn assert_nothing_in_flight(pending_fetches: &PendingFetches<'_>) {
+        assert!(matches!(
+            pending_fetches,
+            PendingFetches::Partial {
+                client_routes_fetch: None,
+                topology_fetch: None
+            }
+        ));
+    }
+
+    /// With nothing in flight, `PendingFetches` must pend (and not panic or
+    /// spin): `work_on_cc` polls it in its `select!` unconditionally.
     #[test]
-    fn idle_pends() {
+    fn nothing_in_flight_pends() {
         let mut pending_fetches = PendingFetches::empty();
 
         assert!(poll_once(&mut pending_fetches).is_pending());
     }
 
     /// A completed fetch yields its output, tagged with the fetch type, and
-    /// empties the value back to `Idle`, so that the next starter step can
-    /// start another fetch (and the completed future is never polled again).
+    /// leaves nothing in flight behind, so that the next starter step can start
+    /// another fetch (and the completed future is never polled again).
     #[test]
     fn completed_fetch_resolves_and_empties() {
         let mut pending_fetches = PendingFetches::Full {
@@ -842,17 +958,40 @@ mod tests {
             poll_once(&mut pending_fetches),
             Poll::Ready(FetchOutcome::Full(Ok(_)))
         ));
-        assert!(matches!(
-            pending_fetches,
-            PendingFetches::Partial {
-                client_routes_fetch: None
-            }
-        ));
+        assert_nothing_in_flight(&pending_fetches);
         assert!(poll_once(&mut pending_fetches).is_pending());
 
         let mut pending_fetches = PendingFetches::Partial {
             client_routes_fetch: Some(Box::pin(async { Ok(None) })),
+            topology_fetch: None,
         };
+        assert!(matches!(
+            poll_once(&mut pending_fetches),
+            Poll::Ready(FetchOutcome::ClientRoutes(Ok(None)))
+        ));
+        assert_nothing_in_flight(&pending_fetches);
+
+        let mut pending_fetches = PendingFetches::Partial {
+            client_routes_fetch: None,
+            topology_fetch: Some(Box::pin(async { Ok(TopologyUpdateGuard::new(Vec::new())) })),
+        };
+        assert!(matches!(
+            poll_once(&mut pending_fetches),
+            Poll::Ready(FetchOutcome::Topology(Ok(_)))
+        ));
+        assert_nothing_in_flight(&pending_fetches);
+    }
+
+    /// Partial fetches of different types run concurrently: reporting the
+    /// outcome of one must leave the other in flight, to be reported by a
+    /// later poll.
+    #[test]
+    fn completed_partial_fetch_keeps_the_other_in_flight() {
+        let mut pending_fetches = PendingFetches::Partial {
+            client_routes_fetch: Some(Box::pin(async { Ok(None) })),
+            topology_fetch: Some(Box::pin(async { Ok(TopologyUpdateGuard::new(Vec::new())) })),
+        };
+
         assert!(matches!(
             poll_once(&mut pending_fetches),
             Poll::Ready(FetchOutcome::ClientRoutes(Ok(None)))
@@ -860,9 +999,39 @@ mod tests {
         assert!(matches!(
             pending_fetches,
             PendingFetches::Partial {
-                client_routes_fetch: None
+                client_routes_fetch: None,
+                topology_fetch: Some(_)
             }
         ));
+
+        assert!(matches!(
+            poll_once(&mut pending_fetches),
+            Poll::Ready(FetchOutcome::Topology(Ok(_)))
+        ));
+        assert_nothing_in_flight(&pending_fetches);
+    }
+
+    /// A partial fetch that is still in flight must not block reporting the
+    /// outcome of one that completed.
+    #[test]
+    fn pending_partial_fetch_does_not_hide_a_completed_one() {
+        let mut pending_fetches = PendingFetches::Partial {
+            client_routes_fetch: Some(Box::pin(pending())),
+            topology_fetch: Some(Box::pin(async { Ok(TopologyUpdateGuard::new(Vec::new())) })),
+        };
+
+        assert!(matches!(
+            poll_once(&mut pending_fetches),
+            Poll::Ready(FetchOutcome::Topology(Ok(_)))
+        ));
+        assert!(matches!(
+            pending_fetches,
+            PendingFetches::Partial {
+                client_routes_fetch: Some(_),
+                topology_fetch: None
+            }
+        ));
+        assert!(poll_once(&mut pending_fetches).is_pending());
     }
 
     /// Losing a `select!` race (the polling borrow being dropped) must leave
@@ -875,5 +1044,48 @@ mod tests {
 
         assert!(poll_once(&mut pending_fetches).is_pending());
         assert!(matches!(pending_fetches, PendingFetches::Full { .. }));
+    }
+
+    /// Partial work of different types accumulates side by side: neither type
+    /// may drop the work owed for the other.
+    #[test]
+    fn partial_work_of_different_types_coexists() {
+        let mut plan = FetchPlan::empty();
+        plan.note_client_routes(client_routes_request());
+        plan.note_topology();
+        assert!(matches!(
+            plan,
+            FetchPlan::Partial {
+                client_routes: Some(_),
+                topology: true
+            }
+        ));
+
+        let mut plan = FetchPlan::empty();
+        plan.note_topology();
+        plan.note_client_routes(client_routes_request());
+        assert!(matches!(
+            plan,
+            FetchPlan::Partial {
+                client_routes: Some(_),
+                topology: true
+            }
+        ));
+    }
+
+    /// A due full fetch subsumes all partial work, and partial work noted while
+    /// it is owed is subsumed too - it would be dropped by the starter step
+    /// anyway.
+    #[test]
+    fn full_fetch_subsumes_partial_work() {
+        let mut plan = FetchPlan::empty();
+        plan.note_topology();
+        plan.note_client_routes(client_routes_request());
+        plan.note_full_needed();
+        assert!(matches!(plan, FetchPlan::Full));
+
+        plan.note_topology();
+        plan.note_client_routes(client_routes_request());
+        assert!(matches!(plan, FetchPlan::Full));
     }
 }

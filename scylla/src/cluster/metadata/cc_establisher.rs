@@ -446,11 +446,13 @@ impl ControlConnectionEstablisher {
 
 /// Freshly fetched topology that the [`ControlConnectionEstablisher`] has not yet absorbed.
 ///
-/// [`ControlConnection::query_metadata`] returns its result wrapped in this
-/// guard, so that the fetched metadata cannot be used without the establisher
-/// updating its known peers from it first: the only way to extract the
-/// [`Metadata`] is [`apply`](Self::apply).
-#[must_use = "the fetched metadata must be applied to the ControlConnectionEstablisher"]
+/// [`ControlConnection::query_metadata`] and
+/// [`ControlConnection::query_topology`] return their results wrapped in this
+/// guard, so that what was fetched cannot be used without the establisher
+/// updating its known peers from it first: the only way to extract the payload
+/// (full [`Metadata`], or just the peer list of a partial topology fetch) is
+/// [`apply`](Self::apply).
+#[must_use = "the fetched topology must be applied to the ControlConnectionEstablisher"]
 pub(super) struct TopologyUpdateGuard<T = Metadata> {
     inner: T,
 }
@@ -466,6 +468,15 @@ impl TopologyUpdateGuard<Metadata> {
     /// the metadata itself.
     pub(super) fn apply(self, establisher: &mut ControlConnectionEstablisher) -> Metadata {
         establisher.update_known_peers(&self.inner.peers);
+        self.inner
+    }
+}
+
+impl TopologyUpdateGuard<Vec<Peer>> {
+    /// Updates the establisher's known peers from the fetched peer list and
+    /// releases the list itself.
+    pub(super) fn apply(self, establisher: &mut ControlConnectionEstablisher) -> Vec<Peer> {
+        establisher.update_known_peers(&self.inner);
         self.inner
     }
 }

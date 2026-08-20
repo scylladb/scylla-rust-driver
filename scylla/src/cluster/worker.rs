@@ -428,14 +428,31 @@ impl ClusterWorker {
                 );
                 Some((new_cluster_state, refresh_responses))
             }
+            // A partial topology fetch replaces the peer list; the rest of the
+            // state (schema, tablets, connection pools) is reused.
+            Some(MetadataChanges::Partial(PartialMetadataChanges {
+                peers: Some(peers),
+                client_routes_updates: _, // Already applied above.
+            })) => {
+                let new_cluster_state = Arc::new(
+                    cluster_state
+                        .new_with_updated_topology(
+                            peers,
+                            &self.node_config,
+                            self.host_filter.as_deref(),
+                        )
+                        .await,
+                );
+                Some((new_cluster_state, Vec::new()))
+            }
             None | Some(MetadataChanges::Partial(_)) => {
                 // For now there is nothing that requires publishing new ClusterState.
                 None
             }
         };
 
-        // Regardless of wheter we have a new state or not, we need to publish UP hints.
-        // If no new state - publish using new one.
+        // Regardless of whether we have a new state, we need to process UP hints.
+        // If there is no new state, process them using the current one.
         let Some((new_cluster_state, refresh_responses)) = new_state_with_requests else {
             process_up_hints(&cluster_state);
             return;
@@ -487,6 +504,7 @@ impl ClusterWorker {
             }
             MetadataChanges::Partial(PartialMetadataChanges {
                 client_routes_updates,
+                peers: _,
             }) => match client_routes_updates.take() {
                 Some(client_routes_update) => {
                     subscriber.merge_client_routes_update(client_routes_update)

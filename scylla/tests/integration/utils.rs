@@ -697,26 +697,25 @@ impl RetrySession for CapturingRetrySession {
     }
 }
 
-/// Builds the body of a `STATUS_CHANGE` / `DOWN` EVENT frame for `addr`:
-/// `[string] "STATUS_CHANGE"`, `[string] "DOWN"`, `[inet] addr`.
-pub(crate) fn status_change_down_event_body(addr: SocketAddr) -> Bytes {
+/// Builds the body of an EVENT frame for `addr`: `[string] event_type`,
+/// `[string] change`, `[inet] addr` - the shape shared by `STATUS_CHANGE` and
+/// `TOPOLOGY_CHANGE` events.
+fn cluster_change_event_body(event_type: &str, change: &str, addr: SocketAddr) -> Bytes {
     use scylla_cql::frame::types::{write_inet, write_string};
 
     let mut body = BytesMut::new();
-    write_string("STATUS_CHANGE", &mut body).unwrap();
-    write_string("DOWN", &mut body).unwrap();
+    write_string(event_type, &mut body).unwrap();
+    write_string(change, &mut body).unwrap();
     write_inet(addr, &mut body);
     body.freeze()
 }
 
-/// Injects a forged `STATUS_CHANGE DOWN` event for `addr` into every proxy
-/// node's control connections.
+/// Injects a forged event into every proxy node's control connections.
 ///
 /// Only one of the proxied nodes hosts the driver's control connection, hence
 /// the broadcast; at least one injection must have found a registered control
 /// connection.
-pub(crate) fn inject_status_change_down(running_proxy: &RunningProxy, addr: SocketAddr) {
-    let body = status_change_down_event_body(addr);
+fn inject_event_to_ccs(running_proxy: &RunningProxy, body: Bytes) {
     let injected = running_proxy
         .running_nodes
         .iter()
@@ -725,5 +724,29 @@ pub(crate) fn inject_status_change_down(running_proxy: &RunningProxy, addr: Sock
     assert!(
         injected > 0,
         "no proxy node had a registered control connection to inject the event into"
+    );
+}
+
+/// Injects a forged `STATUS_CHANGE DOWN` event for `addr`.
+pub(crate) fn inject_status_change_down(running_proxy: &RunningProxy, addr: SocketAddr) {
+    inject_event_to_ccs(
+        running_proxy,
+        cluster_change_event_body("STATUS_CHANGE", "DOWN", addr),
+    );
+}
+
+/// Injects a forged `STATUS_CHANGE UP` event for `addr`.
+pub(crate) fn inject_status_change_up(running_proxy: &RunningProxy, addr: SocketAddr) {
+    inject_event_to_ccs(
+        running_proxy,
+        cluster_change_event_body("STATUS_CHANGE", "UP", addr),
+    );
+}
+
+/// Injects a forged `TOPOLOGY_CHANGE NEW_NODE` event for `addr`.
+pub(crate) fn inject_topology_change_new_node(running_proxy: &RunningProxy, addr: SocketAddr) {
+    inject_event_to_ccs(
+        running_proxy,
+        cluster_change_event_body("TOPOLOGY_CHANGE", "NEW_NODE", addr),
     );
 }
