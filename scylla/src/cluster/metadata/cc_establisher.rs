@@ -248,6 +248,7 @@ impl ControlConnectionEstablisher {
     ///
     /// Returns `Err(None)` if the iterator was empty (no connection was ever
     /// attempted), or `Err(Some(err))` with the most recent error otherwise.
+    #[expect(clippy::result_large_err)] // The `Option` in Err variant causes the ignore in `clippy.toml` to not work here.
     async fn try_establish_on_nodes<F: FetchOnCandidate>(
         &mut self,
         initial: bool,

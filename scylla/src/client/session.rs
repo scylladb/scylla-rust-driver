@@ -549,7 +549,6 @@ impl Default for SessionConfig {
 impl SessionConfig {
     /// [SessionConfig] may unfortunately represent invalid configurations. We need to rule them out
     /// at runtime by running validation.
-    #[expect(clippy::result_large_err)] // TODO(2.0): Make NewSessionError smaller.
     fn validate(&self) -> Result<(), NewSessionError> {
         // Ensure there is at least one known node
         if self.known_nodes.is_empty() {
@@ -1744,15 +1743,14 @@ impl Session {
         paged: bool,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let page_size;
-        let request_paging;
-        if paged {
-            page_size = Some(prepared.get_validated_page_size());
-            request_paging = RequestPaging::Manual;
+        let (page_size, request_paging) = if paged {
+            (
+                Some(prepared.get_validated_page_size()),
+                RequestPaging::Manual,
+            )
         } else {
-            page_size = None;
-            request_paging = RequestPaging::Unpaged;
-        }
+            (None, RequestPaging::Unpaged)
+        };
 
         self.execute(
             prepared,
@@ -2405,8 +2403,6 @@ impl Session {
 
         // Now we no longer need all the errors. We can return if there is
         // irrecoverable one, and collect the Ok values otherwise.
-        // TODO(2.0): This expect can be avoided in next major release
-        #[expect(clippy::result_large_err)]
         let versions_results: Vec<_> = versions_results
             .into_iter()
             .map(|(_, result)| result)

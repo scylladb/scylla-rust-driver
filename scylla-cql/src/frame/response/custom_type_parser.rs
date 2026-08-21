@@ -181,17 +181,17 @@ impl<'result> CustomTypeParser<'result> {
 
     /// Parse a string of hexadecimal representation of bytes into a byte vector.
     fn from_hex(s: &'result str) -> Result<Vec<u8>, CustomTypeParseError> {
-        if !s.len().is_multiple_of(2) {
-            return Err(CustomTypeParseError::BadHexString(s.to_owned()));
-        }
         for c in s.chars() {
             if !c.is_ascii_hexdigit() {
                 return Err(CustomTypeParseError::BadHexString(s.to_owned()));
             }
         }
-        let bytes: Vec<_> = s
-            .as_bytes()
-            .chunks_exact(2)
+        let (chunks, remainder) = s.as_bytes().as_chunks::<2>();
+        if !remainder.is_empty() {
+            return Err(CustomTypeParseError::BadHexString(s.to_owned()));
+        }
+        let bytes: Vec<_> = chunks
+            .iter()
             .map(|chunk| {
                 // Safety: All characters were checked to be valid ASCII hexdigits,
                 // so two-byte chunks are valid ASCII strings, too.

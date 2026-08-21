@@ -2,3 +2,14 @@ avoid-breaking-exported-api = false
 disallowed-methods = [
     { path = "itertools::Itertools::format", reason = "Footgun: panics on double formatting.", replacement = "crate::utils::safe_format::IteratorSafeFormatExt::safe_format" }
 ]
+# TODO(2.0): Some of our error types are big. We need to address this in 2.0
+large-error-ignored = [
+    "scylla::errors::PagerExecutionError",
+    "scylla::errors::ExecutionError",
+    "scylla::errors::MetadataError",
+    "scylla::errors::MetadataFetchError",
+    "scylla::errors::NewSessionError",
+    "scylla::errors::SchemaAgreementError",
+    "scylla::client::session::AutoSchemaAwaitingError",
+    "scylla::errors::TracingError"
+]
