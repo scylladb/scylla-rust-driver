@@ -79,6 +79,64 @@ test: up
 ccm-test:
 	cargo nextest run --all-features -E 'test(ccm::)' --ignore-default-filter --status-level pass
 
+# Coverage-instrumented counterparts of test/ccm-test, using cargo-llvm-cov
+# (LLVM source-based coverage -- unlike ptrace-based tools it handles async,
+# multi-threaded code correctly). test-coverage starts from a clean slate;
+# ccm-test-coverage deliberately does not clean, so it accumulates onto
+# whatever test-coverage already collected instead of replacing it. Run
+# test-coverage first, then optionally ccm-test-coverage, then coverage-report.
+#
+# Everything here runs on the nightly toolchain (+nightly), independently of
+# whatever toolchain is the ambient default: nightly is required to include
+# doctests in the coverage data (cargo-llvm-cov's doctest support is
+# nightly-only), and mixing coverage data recorded by different toolchains'
+# bundled LLVM versions is not something to rely on, so every instrumented
+# run and every read of that data (report/clean) uses the same toolchain.
+# This does not affect `test`/`ccm-test`, which keep using the default
+# (stable) toolchain as before. Requires nightly + its llvm-tools-preview
+# component locally: `rustup toolchain install nightly --component
+# llvm-tools-preview`.
+#
+# --no-fail-fast matters here specifically: nextest's default is to stop the
+# whole run after the first failing binary. With --no-report, that means a
+# single failure can throw away coverage data for everything that would have
+# run after it, not just fail that one test. --no-fail-fast does not affect
+# the process's own exit code though: a failing test still makes the
+# `cargo llvm-cov nextest` invocation itself exit non-zero, which (without
+# the status-capturing below) would make `make` abort the recipe right there
+# and skip the doctest line entirely.
+#
+# Branch coverage (--branch) was tried and reverted: it made cargo-llvm-cov's
+# lcov export crash (an LLVM segfault, not our code) on the CI runner's
+# x86_64 Linux + LLVM 23.1.0 nightly, even though the exact same command
+# succeeded locally on aarch64 macOS -- an architecture-specific LLVM bug in
+# handling branch-coverage regions across this many binaries/crates, not
+# something to work around here. Revisit once nightly's LLVM version moves
+# past this, or the upstream bug is understood.
+.PHONY: test-coverage
+test-coverage: up
+	cargo +nightly llvm-cov clean --workspace
+	set +e; \
+	cargo +nightly llvm-cov nextest --all-features --no-report --no-fail-fast; nextest_status=$$?; \
+	cargo +nightly llvm-cov --no-report --doc --all-features; doctest_status=$$?; \
+	test $$nextest_status -eq 0 && test $$doctest_status -eq 0
+
+.PHONY: ccm-test-coverage
+ccm-test-coverage:
+	cargo +nightly llvm-cov nextest --all-features --no-report --no-fail-fast -E 'test(ccm::)' --ignore-default-filter --status-level pass
+
+.PHONY: coverage-report
+coverage-report:
+	mkdir -p target/llvm-cov
+	cargo +nightly llvm-cov report
+	cargo +nightly llvm-cov report --html --output-dir target/llvm-cov
+	cargo +nightly llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
+
+.PHONY: clean-coverage
+clean-coverage:
+	cargo +nightly llvm-cov clean --workspace
+	rm -rf target/llvm-cov
+
 .PHONY: run-examples
 run-examples: up
 	./scripts/run-examples.sh

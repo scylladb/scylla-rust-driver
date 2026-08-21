@@ -69,6 +69,28 @@ You can then execute those tests with `make ccm-test`.
 By default they use the version from `scylla_version.env`, prefixed with `release:`.
 To point them at a different version ad hoc, set `SCYLLA_TEST_CLUSTER` to a full ccm version string, e.g. `release:2026.1.0` or `unstable/master:<id>`.
 
+### Measuring code coverage
+
+We use [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) for code coverage: it's LLVM
+source-based coverage, so unlike ptrace-based tools it handles this driver's async,
+multi-threaded tests correctly. It runs on the **nightly** toolchain -- only for this coverage
+tooling, the rest of the repo (and its MSRV) is unaffected -- because nightly is required to
+include doctests in the coverage data. Install everything needed with:
+```bash
+rustup toolchain install nightly --component llvm-tools-preview
+cargo install cargo-llvm-cov cargo-nextest --locked
+```
+
+Run the coverage-instrumented test suites, then generate the report:
+```bash
+make test-coverage       # doctests, unit tests and integration tests, same scope as `make test`
+make ccm-test-coverage   # ccm tests, same scope as `make ccm-test`; accumulates onto the above
+make coverage-report
+```
+`coverage-report` prints a per-file summary and writes an HTML report to `target/llvm-cov/html/index.html`
+(open it in a browser for a line-by-line view) and an lcov file to `target/llvm-cov/lcov.info`.
+`make clean-coverage` resets the collected data.
+
 ### Writing tests that need to connect to Scylla
 
 If you test requires connecting to Scylla, there are a few things you should consider.
