@@ -5,7 +5,9 @@ use tokio::sync::oneshot;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::cluster::metadata::{ClientRoute, ClientRoutes, Metadata, Peer};
+use crate::cluster::metadata::{
+    ClientRoute, ClientRoutes, Keyspace, Metadata, Peer, SingleKeyspaceMetadataError,
+};
 use crate::errors::MetadataError;
 
 /// An explicit request to refresh cluster metadata, sent by
@@ -66,6 +68,9 @@ pub(in super::super) struct PartialMetadataChanges {
     /// whole peer list, so this replaces the topology of the state it is
     /// applied to.
     pub(in super::super) peers: Option<Vec<Peer>>,
+    /// The schema of the keyspaces that SCHEMA_CHANGE events named, fetched in
+    /// response to them.
+    pub(in super::super) schema: Option<SchemaUpdate>,
 }
 
 impl PartialMetadataChanges {
@@ -82,6 +87,15 @@ impl PartialMetadataChanges {
     /// each fetch reads the whole list, so the newest one subsumes the rest.
     fn merge_peers(&mut self, peers: Vec<Peer>) {
         self.peers = Some(peers);
+    }
+
+    /// Records a partial schema snapshot, merging it into the one already
+    /// pending, if any.
+    fn merge_schema_update(&mut self, new_schema: SchemaUpdate) {
+        match &mut self.schema {
+            None => self.schema = Some(new_schema),
+            Some(existing) => existing.merge(new_schema),
+        }
     }
 }
 
@@ -176,6 +190,37 @@ impl MetadataUpdate {
         }
     }
 
+    /// Records the per-keyspace schema obtained by a partial schema fetch
+    /// performed in response to SCHEMA_CHANGE events.
+    pub(crate) fn merge_schema_update(slot: &mut Option<Self>, schema: SchemaUpdate) {
+        let update = Self::slot_mut(slot);
+        match &mut update.metadata_changes {
+            None => {
+                let mut partial = PartialMetadataChanges::default();
+                partial.merge_schema_update(schema);
+                update.metadata_changes = Some(MetadataChanges::Partial(partial));
+            }
+            Some(MetadataChanges::Partial(partial)) => partial.merge_schema_update(schema),
+            Some(MetadataChanges::Full {
+                metadata,
+                refresh_responses: _,
+            }) => {
+                // The partial fetch is necessarily newer, by the argument in
+                // `merge_topology_update`.
+                for (name, keyspace) in schema.keyspaces {
+                    match keyspace {
+                        FetchedKeyspace::Present(keyspace) => {
+                            metadata.keyspaces.insert(name, keyspace);
+                        }
+                        FetchedKeyspace::Absent => {
+                            metadata.keyspaces.remove(&name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Records that `addr` was hinted to be UP.
     pub(crate) fn merge_up_hint(slot: &mut Option<Self>, addr: SocketAddr) {
         Self::slot_mut(slot)
@@ -262,6 +307,49 @@ impl ClientRoutesUpdate {
                 .or_default()
                 .insert(connection_id, route);
         }
+    }
+}
+
+/// A partial, mergeable update of the schema metadata, derived from the
+/// keyspaces named by SCHEMA_CHANGE events and from the per-keyspace schema
+/// fetched in response to them.
+///
+/// Only the named keyspaces are described; every other keyspace of the state
+/// this is applied to is left untouched.
+#[derive(Default)]
+pub(crate) struct SchemaUpdate {
+    /// One entry per named keyspace. A map keyed by keyspace, so that a
+    /// keyspace cannot be said to be both present and absent, and so that
+    /// merging is nothing but "the newer statement wins" - see
+    /// [`merge`](Self::merge).
+    pub(crate) keyspaces: HashMap<String, FetchedKeyspace>,
+}
+
+/// What a partial schema fetch established about one keyspace.
+// The `Present` payload is large (a `Keyspace` is a few hundred bytes) and
+// `Absent` is empty, but boxing it would trade an allocation per fetched
+// keyspace for a saving of a few hundred bytes per absent one - in a map that
+// holds the handful of keyspaces one refresh interval's events named, and lives
+// only until the update is applied.
+#[expect(clippy::large_enum_variant)]
+pub(crate) enum FetchedKeyspace {
+    /// The keyspace exists; this is its freshly read metadata.
+    ///
+    /// The `Result` layer is the one of [`Metadata::keyspaces`]: a keyspace
+    /// whose fetched metadata turned out inconsistent is reported as an error
+    /// rather than silently replaced.
+    Present(Result<Keyspace, SingleKeyspaceMetadataError>),
+    /// The keyspace does not exist: its last event dropped it, or the fetch
+    /// found no row for it.
+    Absent,
+}
+
+impl SchemaUpdate {
+    /// Merges a newer update into this one: the newer statement about a
+    /// keyspace overrides the older one, which is exactly what
+    /// [`HashMap::extend`] does.
+    pub(crate) fn merge(&mut self, newer: SchemaUpdate) {
+        self.keyspaces.extend(newer.keyspaces);
     }
 }
 
