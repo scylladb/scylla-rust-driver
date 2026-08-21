@@ -1743,15 +1743,14 @@ impl Session {
         paged: bool,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let page_size;
-        let request_paging;
-        if paged {
-            page_size = Some(prepared.get_validated_page_size());
-            request_paging = RequestPaging::Manual;
+        let (page_size, request_paging) = if paged {
+            (
+                Some(prepared.get_validated_page_size()),
+                RequestPaging::Manual,
+            )
         } else {
-            page_size = None;
-            request_paging = RequestPaging::Unpaged;
-        }
+            (None, RequestPaging::Unpaged)
+        };
 
         self.execute(
             prepared,
