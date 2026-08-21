@@ -596,6 +596,10 @@ pub enum ConnectionError {
     /// A request required to initialize a connection failed.
     #[error(transparent)]
     ConnectionSetupRequestError(#[from] ConnectionSetupRequestError),
+
+    /// Failed to set a keyspace while initializing a connection.
+    #[error("Failed to set keyspace while initializing a connection: {0}")]
+    UseKeyspaceError(#[from] UseKeyspaceError),
 }
 
 impl From<std::io::Error> for ConnectionError {
