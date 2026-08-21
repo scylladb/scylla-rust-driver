@@ -14,16 +14,30 @@ use scylla_proxy::{
     RunningProxy, ShardAwareness, WorkerError,
 };
 use tokio::sync::mpsc;
+use tracing::info;
 
 use crate::utils::{
-    inject_status_change_down, inject_status_change_up, inject_topology_change_new_node,
-    setup_tracing, test_with_3_node_cluster, wait_until_all_nodes_are_connected,
+    PerformDDL as _, inject_keyspace_drop_event, inject_status_change_down,
+    inject_status_change_up, inject_topology_change_new_node, setup_tracing,
+    test_with_3_node_cluster, unique_keyspace_name, wait_until_all_nodes_are_connected,
 };
 
 /// The requests a partial topology fetch issues: one for `system.peers` and one
 /// for `system.local`. A full fetch would add at least one per schema table
 /// (`system_schema.keyspaces`, `.tables`, `.columns`, ...).
 const TOPOLOGY_FETCH_REQUESTS: usize = 2;
+
+/// The requests a partial schema fetch issues at the full schema detail level:
+/// one per schema table read for the affected keyspaces -
+/// `system_schema.keyspaces`, `.types`, `.columns`, `.tables`, `.views`,
+/// `.scylla_tables` (partitioners) and `.scylla_keyspaces` (tablet
+/// information). A full fetch would add `system.peers` and `system.local`.
+/// Last 2 tables are not present on Cassandra, so they won't be queried.
+const SCHEMA_FETCH_REQUESTS: usize = if cfg!(cassandra_tests) { 5 } else { 7 };
+
+/// Short enough for the periodic tick that resolves the accumulated schema
+/// changes to come quickly, so that the tests need not wait a minute for it.
+const SCHEMA_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 
 /// The proxy's feedback channel for the counted metadata requests.
 type MetadataRequestFeedback = mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>;
@@ -114,6 +128,146 @@ async fn assert_event_triggers_only_a_topology_fetch(
         Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
         Err(err) => panic!("{}", err),
     }
+}
+
+/// A SCHEMA_CHANGE event names the keyspace it concerns, so the driver must
+/// react by re-reading that keyspace's schema alone - not the whole metadata,
+/// as it used to on every periodic refresh.
+/// On keyspace drop, no queries should be issued.
+#[tokio::test]
+async fn schema_change_event_triggers_only_a_schema_fetch() {
+    setup_tracing();
+
+    let res = test_with_3_node_cluster(
+        ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            let keyspace = unique_keyspace_name();
+            let session = new_schema_watching_session(&proxy_uris, &translation_map, &keyspace)
+                .build()
+                .await
+                .unwrap();
+
+            info!("Part 1: Creating keyspace");
+
+            let mut metadata_request_rx = count_metadata_requests(&mut running_proxy);
+
+            let state_before_event = session.get_cluster_state();
+            assert!(state_before_event.get_keyspace(&keyspace).is_none());
+
+            // First schema change, creating the keyspace.
+            create_keyspace(&session, &keyspace).await;
+
+            let _state_after_event_1 =
+                wait_for_state(&session, |state| state.get_keyspace(&keyspace).is_some()).await;
+
+            let requests = drain_count(&mut metadata_request_rx);
+            assert_eq!(
+                requests, SCHEMA_FETCH_REQUESTS,
+                "the control connection issued {requests} metadata requests, so the event \
+                triggered something other than a partial schema fetch"
+            );
+
+            info!("Part 2: Creating table");
+
+            // Another schema change, modifying the keyspace.
+            session
+                .ddl(format!("CREATE TABLE {keyspace}.tbl (a int PRIMARY KEY)"))
+                .await
+                .unwrap();
+
+            // The event alone proves nothing - the driver must have re-read the
+            // keyspace and published the result.
+            let _state_after_event_2 = wait_for_state(&session, |state| {
+                state
+                    .get_keyspace(&keyspace)
+                    .is_some_and(|ks| ks.tables.contains_key("tbl"))
+            })
+            .await;
+
+            let requests = drain_count(&mut metadata_request_rx);
+            assert_eq!(
+                requests, SCHEMA_FETCH_REQUESTS,
+                "the control connection issued {requests} metadata requests, so the event \
+                triggered something other than a partial schema fetch"
+            );
+
+            info!("Part 3: Dropping keyspace");
+
+            // Only one more thing left to test: Dropping a keyspace must
+            // remove it from state without issuing any queries.
+
+            // The checks are intentionally commented out.
+            // When dropping a keyspace that contains some tables, Scylla can send the events in the wrong order:
+            //     2026-08-21T16:12:16.255229Z DEBUG scylla::cluster::metadata::worker: Received server event: SchemaChange(KeyspaceChange { change_type: Dropped, keyspace_name: "test_rust_4cf8c3ab7e0940cc8970ef8c2397c1fe" })
+            //     2026-08-21T16:12:16.255279Z DEBUG scylla::cluster::metadata::worker: Received server event: SchemaChange(TableChange { change_type: Dropped, keyspace_name: "test_rust_4cf8c3ab7e0940cc8970ef8c2397c1fe", object_name: "tbl" })
+            //
+
+            // let requests = drain_count(&mut metadata_request_rx).await;
+            // assert_eq!(
+            //     requests, 0,
+            //     "No queries should be needed to drop a keyspace"
+            // );
+
+            // To avoid this, we can inject the event manually.
+
+            inject_keyspace_drop_event(&running_proxy, &keyspace);
+
+            let _state_after_event_3 =
+                wait_for_state(&session, |state| state.get_keyspace(&keyspace).is_none()).await;
+
+            let requests = drain_count(&mut metadata_request_rx);
+            assert_eq!(
+                requests, 0,
+                "No requests should be needed for drop of a keyspace"
+            );
+
+            session
+                .ddl(format!("DROP KEYSPACE {keyspace}"))
+                .await
+                .unwrap();
+
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+}
+
+/// Builds a session that reacts to schema changes quickly and only for
+/// `keyspace`.
+///
+/// The keyspace restriction is what makes the request counting of the schema
+/// tests meaningful: the cluster is shared with the other tests, whose DDL
+/// produces SCHEMA_CHANGE events of its own, and a restricted session fetches
+/// nothing for the keyspaces it was told to ignore.
+fn new_schema_watching_session(
+    proxy_uris: &[String],
+    translation_map: &std::collections::HashMap<SocketAddr, SocketAddr>,
+    keyspace: &str,
+) -> SessionBuilder {
+    SessionBuilder::new()
+        .known_node(proxy_uris[0].as_str())
+        .address_translator(Arc::new(translation_map.clone()))
+        .cluster_metadata_refresh_interval(SCHEMA_REFRESH_INTERVAL)
+        // Off, so that the DDL of the tests is answered by the event handling
+        // under test rather than by an explicit full refresh.
+        .refresh_metadata_on_auto_schema_agreement(false)
+        .keyspaces_to_fetch([keyspace])
+}
+
+async fn create_keyspace(session: &Session, keyspace: &str) {
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE {keyspace} WITH REPLICATION = \
+            {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}"
+        ))
+        .await
+        .unwrap();
 }
 
 /// Starts counting the metadata requests of the control connection.
