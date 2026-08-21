@@ -6,10 +6,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
+use scylla::cluster::ClusterState;
 use scylla_proxy::{
-    Condition, ProxyError, Reaction, RequestOpcode, RequestReaction, RequestRule, RunningProxy,
-    ShardAwareness, WorkerError,
+    Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
+    RunningProxy, ShardAwareness, WorkerError,
 };
 use tokio::sync::mpsc;
 
@@ -22,6 +24,9 @@ use crate::utils::{
 /// for `system.local`. A full fetch would add at least one per schema table
 /// (`system_schema.keyspaces`, `.tables`, `.columns`, ...).
 const TOPOLOGY_FETCH_REQUESTS: usize = 2;
+
+/// The proxy's feedback channel for the counted metadata requests.
+type MetadataRequestFeedback = mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>;
 
 /// A TOPOLOGY_CHANGE event can only have changed the peer list, so the driver
 /// must react with a partial topology fetch: re-read `system.peers` and
@@ -77,21 +82,7 @@ async fn assert_event_triggers_only_a_topology_fetch(
 
             let state_before_event = session.get_cluster_state();
 
-            // Count the metadata requests of the control connection (only it
-            // registers for events, hence the registration condition). The
-            // driver prepares its metadata statements, so what identifies a
-            // fetch is the number of EXECUTEs, not any query text. Installed
-            // only now, so that the session's initial (full) fetch is not
-            // counted.
-            let (metadata_request_tx, mut metadata_request_rx) = mpsc::unbounded_channel();
-            for node in running_proxy.running_nodes.iter_mut() {
-                node.prepend_request_rules(vec![RequestRule(
-                    Condition::ConnectionRegisteredAnyEvent
-                        .and(Condition::RequestOpcode(RequestOpcode::Execute)),
-                    RequestReaction::noop()
-                        .with_feedback_when_performed(metadata_request_tx.clone()),
-                )]);
-            }
+            let mut metadata_request_rx = count_metadata_requests(&mut running_proxy);
 
             // The address named by the event does not matter for the fetch: the
             // driver reacts by re-reading the whole peer list anyway. An address
@@ -99,25 +90,12 @@ async fn assert_event_triggers_only_a_topology_fetch(
             // anything else (a keepalive or a pool refill).
             inject_event(&running_proxy, SocketAddr::from(([127, 0, 0, 1], 9042)));
 
-            metadata_request_rx
-                .recv()
-                .await
-                .expect("proxy feedback channel closed unexpectedly");
-
             // The fetched topology is published as a new `ClusterState`, which
             // must have kept the schema metadata of the previous one.
-            let state_after_event = loop {
-                let state = session.get_cluster_state();
-                if !Arc::ptr_eq(&state, &state_before_event) {
-                    break state;
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            };
+            let state_after_event =
+                wait_for_state(&session, |state| !Arc::ptr_eq(state, &state_before_event)).await;
 
-            let mut requests = 1;
-            while metadata_request_rx.try_recv().is_ok() {
-                requests += 1;
-            }
+            let requests = drain_count(&mut metadata_request_rx);
             assert_eq!(
                 requests, TOPOLOGY_FETCH_REQUESTS,
                 "the control connection issued {requests} metadata requests, so the event \
@@ -136,4 +114,45 @@ async fn assert_event_triggers_only_a_topology_fetch(
         Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
         Err(err) => panic!("{}", err),
     }
+}
+
+/// Starts counting the metadata requests of the control connection.
+///
+/// Only the control connection registers for events, hence the registration
+/// condition. The driver prepares its metadata statements, so what identifies a
+/// fetch is the number of EXECUTEs, not any query text. Installed on demand, so
+/// that the requests preceding the behaviour under test are not counted.
+fn count_metadata_requests(running_proxy: &mut RunningProxy) -> MetadataRequestFeedback {
+    let (metadata_request_tx, metadata_request_rx) = mpsc::unbounded_channel();
+    for node in running_proxy.running_nodes.iter_mut() {
+        node.prepend_request_rules(vec![RequestRule(
+            Condition::ConnectionRegisteredAnyEvent
+                .and(Condition::RequestOpcode(RequestOpcode::Execute)),
+            RequestReaction::noop().with_feedback_when_performed(metadata_request_tx.clone()),
+        )]);
+    }
+    metadata_request_rx
+}
+
+/// Waits until the published `ClusterState` satisfies `is_expected`.
+async fn wait_for_state(
+    session: &Session,
+    is_expected: impl Fn(&Arc<ClusterState>) -> bool,
+) -> Arc<ClusterState> {
+    loop {
+        let state = session.get_cluster_state();
+        if is_expected(&state) {
+            return state;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Counts everything the feedback channel holds.
+fn drain_count(metadata_request_rx: &mut MetadataRequestFeedback) -> usize {
+    let mut requests = 0;
+    while metadata_request_rx.try_recv().is_ok() {
+        requests += 1;
+    }
+    requests
 }
