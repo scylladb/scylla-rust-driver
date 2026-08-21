@@ -549,7 +549,6 @@ impl Default for SessionConfig {
 impl SessionConfig {
     /// [SessionConfig] may unfortunately represent invalid configurations. We need to rule them out
     /// at runtime by running validation.
-    #[expect(clippy::result_large_err)] // TODO(2.0): Make NewSessionError smaller.
     fn validate(&self) -> Result<(), NewSessionError> {
         // Ensure there is at least one known node
         if self.known_nodes.is_empty() {
@@ -2405,8 +2404,6 @@ impl Session {
 
         // Now we no longer need all the errors. We can return if there is
         // irrecoverable one, and collect the Ok values otherwise.
-        // TODO(2.0): This expect can be avoided in next major release
-        #[expect(clippy::result_large_err)]
         let versions_results: Vec<_> = versions_results
             .into_iter()
             .map(|(_, result)| result)
