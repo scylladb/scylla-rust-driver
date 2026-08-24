@@ -9,9 +9,10 @@ use std::time::Duration;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
+use scylla::cluster::metadata::PeriodicFetchMode;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
-    RunningProxy, ShardAwareness, WorkerError,
+    ResponseOpcode, ResponseReaction, ResponseRule, RunningProxy, ShardAwareness, WorkerError,
 };
 use tokio::sync::mpsc;
 use tracing::info;
@@ -34,6 +35,12 @@ const TOPOLOGY_FETCH_REQUESTS: usize = 2;
 /// information). A full fetch would add `system.peers` and `system.local`.
 /// Last 2 tables are not present on Cassandra, so they won't be queried.
 const SCHEMA_FETCH_REQUESTS: usize = if cfg!(cassandra_tests) { 5 } else { 7 };
+
+/// How long [`full_metadata_mode_picks_up_schema_changes_without_events`] waits
+/// for the periodic full fetch to publish the new keyspace: many
+/// [`SCHEMA_REFRESH_INTERVAL`]s, so that only a fetch that never happens times
+/// out.
+const FETCH_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Short enough for the periodic tick that resolves the accumulated schema
 /// changes to come quickly, so that the tests need not wait a minute for it.
@@ -238,6 +245,73 @@ async fn schema_change_event_triggers_only_a_schema_fetch() {
     }
 }
 
+/// What [`PeriodicFetchMode::FullMetadata`] exists for: a cluster whose
+/// `SCHEMA_CHANGE` events cannot be relied upon. With every EVENT frame dropped
+/// by the proxy, the driver has nothing to react to, and only the periodic full
+/// fetch can bring the new keyspace into the metadata.
+#[tokio::test]
+async fn full_metadata_mode_picks_up_schema_changes_without_events() {
+    setup_tracing();
+
+    let res = test_with_3_node_cluster(
+        ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            let keyspace = unique_keyspace_name();
+            let session = new_schema_watching_session(&proxy_uris, &translation_map, &keyspace)
+                .periodic_metadata_fetch_mode(PeriodicFetchMode::FullMetadata)
+                .build()
+                .await
+                .unwrap();
+            wait_until_all_nodes_are_connected(3, &session).await;
+
+            // Installed after the session is up, so that the REGISTER handshake
+            // is untouched and only the announcements are lost.
+            drop_all_events(&mut running_proxy);
+
+            assert!(
+                session
+                    .get_cluster_state()
+                    .get_keyspace(&keyspace)
+                    .is_none()
+            );
+
+            create_keyspace(&session, &keyspace).await;
+            session
+                .ddl(format!("CREATE TABLE {keyspace}.tbl (a int PRIMARY KEY)"))
+                .await
+                .unwrap();
+
+            let _state = tokio::time::timeout(
+                FETCH_WAIT_TIMEOUT,
+                wait_for_state(&session, |state| {
+                    state
+                        .get_keyspace(&keyspace)
+                        .is_some_and(|ks| ks.tables.contains_key("tbl"))
+                }),
+            )
+            .await
+            .expect(
+                "the periodic full fetch did not pick up the new keyspace, so the mode depends \
+                on the events it is meant to work without",
+            );
+
+            session
+                .ddl(format!("DROP KEYSPACE {keyspace}"))
+                .await
+                .unwrap();
+
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+}
+
 /// Builds a session that reacts to schema changes quickly and only for
 /// `keyspace`.
 ///
@@ -309,4 +383,15 @@ fn drain_count(metadata_request_rx: &mut MetadataRequestFeedback) -> usize {
         requests += 1;
     }
     requests
+}
+
+/// Makes the cluster look mute to the driver: every EVENT frame the server
+/// sends is dropped by the proxy.
+fn drop_all_events(running_proxy: &mut RunningProxy) {
+    for node in running_proxy.running_nodes.iter_mut() {
+        node.prepend_response_rules(vec![ResponseRule(
+            Condition::ResponseOpcode(ResponseOpcode::Event),
+            ResponseReaction::drop_frame(),
+        )]);
+    }
 }
