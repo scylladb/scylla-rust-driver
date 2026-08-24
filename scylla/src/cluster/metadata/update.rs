@@ -97,7 +97,7 @@ impl MetadataUpdate {
     /// fetched before this metadata that subsumes them.
     pub(crate) fn merge_metadata(
         slot: &mut Option<Self>,
-        metadata: Metadata,
+        mut metadata: Metadata,
         refresh_response: Option<tokio::sync::oneshot::Sender<Result<(), MetadataError>>>,
     ) {
         let update = Self::slot_mut(slot);
@@ -114,6 +114,20 @@ impl MetadataUpdate {
                 metadata: slot_metadata,
                 refresh_responses,
             }) => {
+                // Merging per-keyspace results: if newer fetch has a per-keyspace error,
+                // but older has a working ks metadata, we need to reuse the old one.
+                for (name, ks) in metadata.keyspaces.iter_mut() {
+                    if let Err(e) = ks
+                        && let Some(Ok(old_ks)) = slot_metadata.keyspaces.get(name)
+                    {
+                        warn!(
+                            "Encountered an error while processing\
+                            metadata of keyspace \"{name}\": {e}.\
+                            Re-using older version of this keyspace metadata"
+                        );
+                        *ks = Ok(old_ks.clone())
+                    }
+                }
                 *slot_metadata = metadata;
                 if let Some(response_channel) = refresh_response {
                     refresh_responses.push(response_channel);
