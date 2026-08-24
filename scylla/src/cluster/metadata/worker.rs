@@ -12,7 +12,9 @@ use crate::cluster::control_connection::{
     ControlConnection, ControlConnectionEvent, ControlConnectionEvents,
 };
 use crate::cluster::metadata::fetching::LastKeyspaceChange;
-use crate::cluster::metadata::update::{MetadataUpdate, RefreshRequest, SchemaUpdate};
+use crate::cluster::metadata::update::{
+    FetchedKeyspace, MetadataUpdate, RefreshRequest, SchemaUpdate,
+};
 use crate::cluster::metadata::{ClientRoutesUpdate, Metadata, Peer, PeriodicFetchMode};
 use crate::errors::{
     BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, MetadataError,
@@ -194,6 +196,20 @@ impl FetchPlan {
         }
     }
 
+    /// Records that fetching `keyspace` failed.
+    ///
+    /// It will only insert the keyspace into the fetch plan
+    /// if it's not already there. If it's there, then we received an
+    /// event after we started the fetch, and it should take precedence.
+    fn note_keyspace_err(&mut self, keyspace: String) {
+        match self {
+            FetchPlan::Partial { schema, .. } => schema
+                .get_or_insert_with(SchemaFetchRequest::default)
+                .note_error(keyspace),
+            FetchPlan::Full => (),
+        }
+    }
+
     /// Nothing owed: the state of a plan whose work has all been started.
     const fn empty() -> Self {
         Self::Partial {
@@ -250,6 +266,13 @@ impl SchemaFetchRequest {
     /// older one did to it.
     fn note(&mut self, keyspace: String, change: LastKeyspaceChange) {
         self.keyspaces.insert(keyspace, change);
+    }
+
+    /// Records that we failed to process the keyspace.
+    fn note_error(&mut self, keyspace: String) {
+        self.keyspaces
+            .entry(keyspace)
+            .or_insert(LastKeyspaceChange::Altered);
     }
 
     /// Performs the partial fetch for the accumulated keyspaces.
@@ -530,7 +553,10 @@ impl MetadataWorker {
         );
         let (kept, metadata) = fetch.await?;
         Ok((
-            kept.map(|(cc, events, plan)| EstablishedCc { cc, events, plan }),
+            kept.map(|(cc, events, mut plan)| {
+                Self::handle_metadata_keyspace_errors(&mut plan, &metadata);
+                EstablishedCc { cc, events, plan }
+            }),
             metadata,
         ))
     }
@@ -758,6 +784,7 @@ impl MetadataWorker {
                         FetchOutcome::Full(Ok(topology_update)) => {
                             debug!("Fetched new metadata");
                             let metadata = topology_update.apply(&mut self.cc_establisher);
+                            Self::handle_metadata_keyspace_errors(&mut plan, &metadata);
                             self.publish_metadata(metadata)?;
                         }
                         FetchOutcome::Full(Err(err)) => {
@@ -800,6 +827,7 @@ impl MetadataWorker {
                         FetchOutcome::Schema(Ok(None)) => (), // Nothing to apply.
                         FetchOutcome::Schema(Ok(Some(schema))) => {
                             debug!("Fetched the schema of the affected keyspaces");
+                            Self::handle_partial_fetch_keyspace_errors(&mut plan, &schema);
                             if self.send_update(|slot| MetadataUpdate::merge_schema_update(slot, schema)).is_err() {
                                 return ControlFlow::Break(());
                             }
@@ -986,6 +1014,28 @@ impl MetadataWorker {
             _ => unreachable!("clippy testifies that the match is exhaustive"),
         };
         ControlFlow::Continue(())
+    }
+
+    fn handle_metadata_keyspace_errors(plan: &mut FetchPlan, metadata: &Metadata) {
+        for (name, ks) in metadata.keyspaces.iter() {
+            if let Err(_e) = ks {
+                // We failed to fetch some keyspace.
+                // Need to note as needed to fetch.
+                // Without it we may never retry.
+                plan.note_keyspace_err(name.clone());
+            }
+        }
+    }
+
+    fn handle_partial_fetch_keyspace_errors(plan: &mut FetchPlan, schema: &SchemaUpdate) {
+        for (name, ks) in schema.keyspaces.iter() {
+            if let FetchedKeyspace::Present(Err(_e)) = ks {
+                // We failed to fetch some keyspace.
+                // Need to note as needed to fetch.
+                // Without it we may never retry.
+                plan.note_keyspace_err(name.clone());
+            }
+        }
     }
 
     /// Publishes freshly fetched metadata to the cluster worker.
