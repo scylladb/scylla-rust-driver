@@ -88,8 +88,18 @@ impl PartialMetadataChanges {
     fn merge_peers(&mut self, peers: Vec<Peer>) {
         self.peers = Some(peers);
     }
+
+    /// Records a partial schema snapshot, merging it into the one already
+    /// pending, if any.
+    fn merge_schema_update(&mut self, new_schema: SchemaUpdate) {
+        match &mut self.schema {
+            None => self.schema = Some(new_schema),
+            Some(existing) => existing.merge(new_schema),
+        }
+    }
 }
 
+#[expect(dead_code)]
 impl MetadataUpdate {
     fn slot_mut(slot: &mut Option<Self>) -> &mut Self {
         slot.get_or_insert_with(Self::default)
@@ -109,7 +119,31 @@ impl MetadataUpdate {
         // Newest wins: an older, not-yet-applied fetch is worthless now.
         // Caveat: We need to NOT drop the old refresh channel.
         match &mut update.metadata_changes {
-            None | Some(MetadataChanges::Partial(_)) => {
+            None => {
+                update.metadata_changes = Some(MetadataChanges::Full {
+                    metadata,
+                    refresh_responses: refresh_response.into_iter().collect(),
+                });
+            }
+            Some(MetadataChanges::Partial(partial_changes)) => {
+                // Merging per-keyspace results: if newer fetch has a per-keyspace error,
+                // but older has a working ks metadata, we need to reuse the old one.
+                if let Some(old_schema_update) = &partial_changes.schema {
+                    for (name, ks) in metadata.keyspaces.iter_mut() {
+                        if let Err(e) = ks
+                            && let Some(FetchedKeyspace::Present(Ok(old_ks))) =
+                                old_schema_update.keyspaces.get(name)
+                        {
+                            warn!(
+                                "Encountered an error while processing\
+                                metadata of keyspace \"{name}\": {e}.\
+                                Re-using older version of this keyspace metadata"
+                            );
+                            *ks = Ok(old_ks.clone())
+                        }
+                    }
+                }
+
                 update.metadata_changes = Some(MetadataChanges::Full {
                     metadata,
                     refresh_responses: refresh_response.into_iter().collect(),
@@ -191,6 +225,41 @@ impl MetadataUpdate {
                 // complete after a pending full fetch if it was started after
                 // that fetch completed.
                 metadata.peers = peers;
+            }
+        }
+    }
+
+    /// Records the per-keyspace schema obtained by a partial schema fetch
+    /// performed in response to SCHEMA_CHANGE events.
+    pub(crate) fn merge_schema_update(slot: &mut Option<Self>, schema: SchemaUpdate) {
+        let update = Self::slot_mut(slot);
+        match &mut update.metadata_changes {
+            None => {
+                let mut partial = PartialMetadataChanges::default();
+                partial.merge_schema_update(schema);
+                update.metadata_changes = Some(MetadataChanges::Partial(partial));
+            }
+            Some(MetadataChanges::Partial(partial)) => partial.merge_schema_update(schema),
+            Some(MetadataChanges::Full {
+                metadata,
+                refresh_responses: _,
+            }) => {
+                // Older full fetch was not consumed yet. We need to update it
+                // with the newly fetched keyspaces.
+                for (name, keyspace) in schema.keyspaces {
+                    match keyspace {
+                        // If new metadata has Err for some keyspace, and the old one has Ok, we should
+                        // not overwrite.
+                        FetchedKeyspace::Present(Err(_))
+                            if matches!(metadata.keyspaces.get(&name), Some(Ok(_))) => {}
+                        FetchedKeyspace::Present(keyspace) => {
+                            metadata.keyspaces.insert(name, keyspace);
+                        }
+                        FetchedKeyspace::Absent => {
+                            metadata.keyspaces.remove(&name);
+                        }
+                    }
+                }
             }
         }
     }
@@ -318,6 +387,30 @@ pub(crate) enum FetchedKeyspace {
     /// The keyspace does not exist: its last event dropped it, or the fetch
     /// found no row for it.
     Absent,
+}
+
+impl SchemaUpdate {
+    /// Merges a newer update into this one: the newer statement about a
+    /// keyspace overrides the older one. We need to handle per-keyspace
+    /// errors: if newer keyspace has an error, but older one doesn't, then
+    /// we need to drop the newer one. This is the same logic we have in
+    /// ClusterState construction.
+    pub(crate) fn merge(&mut self, newer: SchemaUpdate) {
+        for (name, newer_keyspace) in newer.keyspaces {
+            match newer_keyspace {
+                // If newer keyspace is an error, and we already have the non-Err keyspace
+                // with this name, we would only lose information by updating.
+                FetchedKeyspace::Present(Err(_))
+                    if matches!(
+                        self.keyspaces.get(&name),
+                        Some(FetchedKeyspace::Present(Ok(_)))
+                    ) => {}
+                newer_keyspace => {
+                    self.keyspaces.insert(name, newer_keyspace);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
