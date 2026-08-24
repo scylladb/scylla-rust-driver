@@ -134,8 +134,8 @@ impl MetadataUpdate {
                                 old_schema_update.keyspaces.get(name)
                         {
                             warn!(
-                                "Encountered an error while processing\
-                                metadata of keyspace \"{name}\": {e}.\
+                                "Encountered an error while processing \
+                                metadata of keyspace \"{name}\": {e}. \
                                 Re-using older version of this keyspace metadata"
                             );
                             *ks = Ok(old_ks.clone())
@@ -159,8 +159,8 @@ impl MetadataUpdate {
                         && let Some(Ok(old_ks)) = slot_metadata.keyspaces.get(name)
                     {
                         warn!(
-                            "Encountered an error while processing\
-                            metadata of keyspace \"{name}\": {e}.\
+                            "Encountered an error while processing \
+                            metadata of keyspace \"{name}\": {e}. \
                             Re-using older version of this keyspace metadata"
                         );
                         *ks = Ok(old_ks.clone())

@@ -413,16 +413,16 @@ impl ClusterState {
             Err(e) => {
                 if let Some(old_ks) = old_keyspaces.get(ks_name) {
                     warn!(
-                        "Encountered an error while processing\
-                        metadata of keyspace \"{ks_name}\": {e}.\
+                        "Encountered an error while processing \
+                        metadata of keyspace \"{ks_name}\": {e}. \
                         Re-using older version of this keyspace metadata"
                     );
                     Some(old_ks.clone())
                 } else {
                     warn!(
-                        "Encountered an error while processing metadata\
-                        of keyspace \"{ks_name}\": {e}.\
-                        No previous version of this keyspace metadata found, so it will not be\
+                        "Encountered an error while processing metadata \
+                        of keyspace \"{ks_name}\": {e}. \
+                        No previous version of this keyspace metadata found, so it will not be \
                         present in ClusterState until next refresh."
                     );
                     None
