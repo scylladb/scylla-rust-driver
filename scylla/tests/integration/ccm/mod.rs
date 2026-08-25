@@ -7,6 +7,10 @@ mod host_listener;
 
 #[cfg(all(feature = "openssl-010", feature = "rustls-023"))]
 mod tls;
+#[cfg(all(feature = "openssl-010", feature = "rustls-023"))]
+mod tls_inspecting_proxy;
+#[cfg(all(feature = "openssl-010", feature = "rustls-023"))]
+mod tls_tickets;
 
 mod result_metadata_extension;
 mod using_timeout;

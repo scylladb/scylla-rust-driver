@@ -82,7 +82,7 @@ fn prepare_authority_cert_params() -> CertificateParams {
     params
 }
 
-async fn run_ccm_tls_test(
+pub(super) async fn run_ccm_tls_test(
     prepare_cert: impl Fn(CertificateParams, &Node) -> CertificateParams,
     cluster_config: impl AsyncFnOnce(Cluster) -> Cluster,
     test: impl AsyncFnOnce(&CertifiedIssuer<'static, KeyPair>, &mut Cluster) -> (),
@@ -131,7 +131,7 @@ async fn run_ccm_tls_test(
     .await
 }
 
-fn build_openssl_ca_store(ca: &CertifiedIssuer<'_, KeyPair>) -> X509Store {
+pub(super) fn build_openssl_ca_store(ca: &CertifiedIssuer<'_, KeyPair>) -> X509Store {
     let mut store_builder = X509StoreBuilder::new().unwrap();
     let ca = X509::from_der(ca.der()).unwrap();
     store_builder.add_cert(ca).unwrap();

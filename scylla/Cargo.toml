@@ -172,3 +172,6 @@ tempfile = "3.19"
 rcgen = "0.14"
 uuid = { version = "1.0", features = ["v1"] }
 env_logger = "0.11"
+# Used by the TLS-inspecting proxy of the session ticket ccm test to classify
+# the handshakes it forwards.
+tls-parser = "0.12.2"
