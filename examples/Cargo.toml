@@ -135,6 +135,10 @@ name = "tls_rustls"
 path = "tls_rustls.rs"
 
 [[example]]
+name = "token_ring"
+path = "token_ring.rs"
+
+[[example]]
 name = "tower"
 path = "tower.rs"
 
