@@ -5,6 +5,7 @@ use super::session::{Session, SessionConfig};
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 use crate::client::session::TlsContext;
+use crate::cluster::metadata::PeriodicFetchMode;
 use crate::errors::NewSessionError;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
@@ -1442,8 +1443,13 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
-    /// Set the interval at which the driver refreshes the cluster metadata which contains information
-    /// about the cluster topology as well as the cluster schema.
+    /// Set the interval at which the driver refreshes the cluster metadata.
+    ///
+    /// The refresh re-reads the schema of the keyspaces that `SCHEMA_CHANGE`
+    /// events named since the previous one; every other aspect of the metadata
+    /// is re-read in reaction to the server event announcing its change. See
+    /// [`periodic_metadata_fetch_mode`](Self::periodic_metadata_fetch_mode)
+    /// for making the refresh re-read the whole metadata instead.
     ///
     /// The default is 60 seconds.
     ///
@@ -1464,6 +1470,36 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn cluster_metadata_refresh_interval(mut self, interval: Duration) -> Self {
         self.config.cluster_metadata_refresh_interval = interval;
+        self
+    }
+
+    /// Set what the periodic metadata refresh re-reads.
+    ///
+    /// The default is [`PeriodicFetchMode::AffectedKeyspaces`]: only the
+    /// keyspaces that `SCHEMA_CHANGE` events named since the previous refresh.
+    /// [`PeriodicFetchMode::FullMetadata`] restores the behaviour of driver
+    /// versions that did not handle those events, for clusters whose events
+    /// cannot be relied upon.
+    ///
+    /// How often the refresh happens is a separate setting - see
+    /// [`cluster_metadata_refresh_interval`](Self::cluster_metadata_refresh_interval).
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::cluster::metadata::PeriodicFetchMode;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let session: Session = SessionBuilder::new()
+    ///         .known_node("127.0.0.1:9042")
+    ///         .periodic_metadata_fetch_mode(PeriodicFetchMode::FullMetadata)
+    ///         .build()
+    ///         .await?;
+    /// #   Ok(())
+    /// # }
+    /// ```
+    pub fn periodic_metadata_fetch_mode(mut self, mode: PeriodicFetchMode) -> Self {
+        self.config.periodic_metadata_fetch_mode = mode;
         self
     }
 
@@ -1515,6 +1551,7 @@ mod tests {
     use super::super::Compression;
     use super::SessionBuilder;
     use crate::client::execution_profile::{ExecutionProfile, defaults};
+    use crate::cluster::metadata::PeriodicFetchMode;
     use crate::cluster::node::KnownNode;
     use crate::errors::NewSessionError;
     use crate::test_utils::setup_tracing;
@@ -1770,6 +1807,24 @@ mod tests {
         assert_eq!(
             builder.config.cluster_metadata_refresh_interval,
             std::time::Duration::from_secs(60)
+        );
+    }
+
+    /// Fetching only the affected keyspaces is the default; re-reading the
+    /// whole metadata periodically is opt-in.
+    #[test]
+    fn periodic_metadata_fetch_mode() {
+        setup_tracing();
+        let builder = SessionBuilder::new();
+        assert_eq!(
+            builder.config.periodic_metadata_fetch_mode,
+            PeriodicFetchMode::AffectedKeyspaces
+        );
+
+        let builder = builder.periodic_metadata_fetch_mode(PeriodicFetchMode::FullMetadata);
+        assert_eq!(
+            builder.config.periodic_metadata_fetch_mode,
+            PeriodicFetchMode::FullMetadata
         );
     }
 

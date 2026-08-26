@@ -710,6 +710,17 @@ fn cluster_change_event_body(event_type: &str, change: &str, addr: SocketAddr) -
     body.freeze()
 }
 
+fn keyspace_drop_event_body(keyspace: &str) -> Bytes {
+    use scylla_cql::frame::types::write_string;
+
+    let mut body = BytesMut::new();
+    write_string("SCHEMA_CHANGE", &mut body).unwrap();
+    write_string("DROPPED", &mut body).unwrap();
+    write_string("KEYSPACE", &mut body).unwrap();
+    write_string(keyspace, &mut body).unwrap();
+    body.freeze()
+}
+
 /// Injects a forged event into every proxy node's control connections.
 ///
 /// Only one of the proxied nodes hosts the driver's control connection, hence
@@ -749,4 +760,9 @@ pub(crate) fn inject_topology_change_new_node(running_proxy: &RunningProxy, addr
         running_proxy,
         cluster_change_event_body("TOPOLOGY_CHANGE", "NEW_NODE", addr),
     );
+}
+
+/// Injects a forged `SCHEMA_CHANGE DROPPED KEYSPACE` event for `ks`.
+pub(crate) fn inject_keyspace_drop_event(running_proxy: &RunningProxy, ks: &str) {
+    inject_event_to_ccs(running_proxy, keyspace_drop_event_body(ks));
 }

@@ -48,6 +48,32 @@ pub(crate) enum SchemaMetadataFetchLevel {
     Full,
 }
 
+/// What the periodic cluster metadata refresh re-reads.
+///
+/// Set with
+/// [`SessionBuilder::periodic_metadata_fetch_mode`](crate::client::session_builder::SessionBuilder::periodic_metadata_fetch_mode);
+/// how often the refresh happens is a separate setting,
+/// [`SessionBuilder::cluster_metadata_refresh_interval`](crate::client::session_builder::SessionBuilder::cluster_metadata_refresh_interval).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PeriodicFetchMode {
+    /// The schema of the keyspaces that `SCHEMA_CHANGE` events named since the
+    /// previous refresh, and nothing else. The default.
+    ///
+    /// Every other aspect of the metadata is re-read in reaction to the server
+    /// event announcing its change, so the refresh only has to cover the
+    /// schema, and only the part of it that changed.
+    AffectedKeyspaces,
+    /// All metadata selected by the session's schema-fetch configuration,
+    /// ignoring which keyspaces the `SCHEMA_CHANGE` events named.
+    ///
+    /// This is the behaviour of driver versions that did not handle
+    /// `SCHEMA_CHANGE` events, kept as an escape hatch for clusters whose
+    /// events cannot be relied upon. It costs a query per schema table per
+    /// refresh interval, hence it is not the default.
+    FullMetadata,
+}
+
 /// Indicates that reading metadata failed, but in a way
 /// that we can handle, by throwing out data for a keyspace.
 /// It is possible that some of the errors could be handled in even

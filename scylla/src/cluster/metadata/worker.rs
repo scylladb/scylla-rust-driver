@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -11,13 +11,18 @@ use uuid::Uuid;
 use crate::cluster::control_connection::{
     ControlConnection, ControlConnectionEvent, ControlConnectionEvents,
 };
-use crate::cluster::metadata::update::{MetadataUpdate, RefreshRequest};
-use crate::cluster::metadata::{ClientRoutesUpdate, Metadata, Peer};
+use crate::cluster::metadata::fetching::LastKeyspaceChange;
+use crate::cluster::metadata::update::{
+    FetchedKeyspace, MetadataUpdate, RefreshRequest, SchemaUpdate,
+};
+use crate::cluster::metadata::{ClientRoutesUpdate, Metadata, Peer, PeriodicFetchMode};
 use crate::errors::{
     BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, MetadataError,
 };
 use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::frame::response::event::EventV2 as Event;
+use crate::frame::response::event::SchemaChangeEvent;
+use crate::frame::response::event::SchemaChangeType;
 use crate::frame::response::event::StatusChangeEvent;
 
 use super::cc_establisher::{ControlConnectionEstablisher, FetchOnCandidate, TopologyUpdateGuard};
@@ -43,9 +48,14 @@ pub(in super::super) struct MetadataWorker {
     /// keeps the known peers to establish them to.
     cc_establisher: ControlConnectionEstablisher,
 
-    // This value determines how frequently the metadata
-    // worker will refresh the cluster metadata
+    /// How often the periodic refresh tick fires, and what it re-reads.
+    ///
+    /// By default the tick paces the partial schema fetches, everything else
+    /// being re-read in reaction to server events or on request; with
+    /// [`PeriodicFetchMode::FullMetadata`] it re-reads the whole metadata
+    /// instead.
     cluster_metadata_refresh_interval: Duration,
+    periodic_fetch_mode: PeriodicFetchMode,
 
     // To listen for refresh requests
     refresh_channel: tokio::sync::mpsc::Receiver<RefreshRequest>,
@@ -126,6 +136,13 @@ enum FetchPlan {
         client_routes: Option<ClientRoutesFetchRequest>,
         /// Whether the peer list is to be re-read.
         topology: bool,
+        /// The keyspaces whose schema is to be re-read, or dropped from the
+        /// metadata, accumulated from SCHEMA_CHANGE events.
+        ///
+        /// Unlike the other entries, this one is not started as soon as its
+        /// slot is free: it waits for the periodic refresh tick - see
+        /// [`PendingFetches::start_due_fetches`].
+        schema: Option<SchemaFetchRequest>,
     },
 }
 
@@ -165,11 +182,40 @@ impl FetchPlan {
         }
     }
 
+    /// Records that `keyspace`'s schema is to be re-read (or dropped), merging
+    /// it into the work already owed.
+    ///
+    /// If a full fetch is already owed, the work is dropped - subsumed, by the
+    /// argument in [`note_full_needed`](Self::note_full_needed).
+    fn note_schema(&mut self, keyspace: String, change: LastKeyspaceChange) {
+        match self {
+            FetchPlan::Partial { schema, .. } => schema
+                .get_or_insert_with(SchemaFetchRequest::default)
+                .note(keyspace, change),
+            FetchPlan::Full => (),
+        }
+    }
+
+    /// Records that fetching `keyspace` failed.
+    ///
+    /// It will only insert the keyspace into the fetch plan
+    /// if it's not already there. If it's there, then we received an
+    /// event after we started the fetch, and it should take precedence.
+    fn note_keyspace_err(&mut self, keyspace: String) {
+        match self {
+            FetchPlan::Partial { schema, .. } => schema
+                .get_or_insert_with(SchemaFetchRequest::default)
+                .note_error(keyspace),
+            FetchPlan::Full => (),
+        }
+    }
+
     /// Nothing owed: the state of a plan whose work has all been started.
     const fn empty() -> Self {
         Self::Partial {
             client_routes: None,
             topology: false,
+            schema: None,
         }
     }
 }
@@ -202,6 +248,42 @@ impl ClientRoutesFetchRequest {
     }
 }
 
+/// The keyspaces named by SCHEMA_CHANGE events, to be resolved by one partial
+/// schema fetch.
+///
+/// A map keyed by keyspace: merging the work of several events keeps, per
+/// keyspace, only the last change. The fetch re-reads the keyspace's whole
+/// metadata regardless of what changed in it, so what a superseded event named
+/// is of no interest - and a keyspace whose last event dropped it needs no read
+/// at all.
+#[derive(Default)]
+struct SchemaFetchRequest {
+    keyspaces: HashMap<String, LastKeyspaceChange>,
+}
+
+impl SchemaFetchRequest {
+    /// Records what the newest event did to `keyspace`, overriding what an
+    /// older one did to it.
+    fn note(&mut self, keyspace: String, change: LastKeyspaceChange) {
+        self.keyspaces.insert(keyspace, change);
+    }
+
+    /// Records that we failed to process the keyspace.
+    fn note_error(&mut self, keyspace: String) {
+        self.keyspaces
+            .entry(keyspace)
+            .or_insert(LastKeyspaceChange::Altered);
+    }
+
+    /// Performs the partial fetch for the accumulated keyspaces.
+    ///
+    /// Takes `self` by value for the same reason as
+    /// [`ClientRoutesFetchRequest::fetch_on`].
+    async fn fetch_on(self, cc: &ControlConnection) -> Result<Option<SchemaUpdate>, MetadataError> {
+        cc.fetch_schema_update(self.keyspaces).await
+    }
+}
+
 /// A full-metadata fetch in flight.
 ///
 /// Boxed to give the anonymous `async fn` future a nameable type, which is
@@ -222,6 +304,11 @@ type TopologyFetch<'cc> = Pin<
 /// [`FullFetch`].
 type ClientRoutesFetch<'cc> =
     Pin<Box<dyn Future<Output = Result<Option<ClientRoutesUpdate>, MetadataError>> + Send + 'cc>>;
+
+/// A partial schema fetch (the affected keyspaces alone) in flight; boxed for
+/// the same reason as [`FullFetch`].
+type SchemaFetch<'cc> =
+    Pin<Box<dyn Future<Output = Result<Option<SchemaUpdate>, MetadataError>> + Send + 'cc>>;
 
 /// The fetches of [`MetadataWorker::work_on_cc`] currently in flight, owning
 /// their futures - which borrow the control connection, hence the lifetime.
@@ -251,6 +338,7 @@ enum PendingFetches<'cc> {
     Partial {
         client_routes_fetch: Option<ClientRoutesFetch<'cc>>,
         topology_fetch: Option<TopologyFetch<'cc>>,
+        schema_fetch: Option<SchemaFetch<'cc>>,
     },
 }
 
@@ -263,18 +351,26 @@ impl<'cc> PendingFetches<'cc> {
         plan: &mut FetchPlan,
         next_refresh_deadline: &mut Instant,
         refresh_interval: Duration,
+        periodic_fetch_mode: &PeriodicFetchMode,
         cc: &'cc ControlConnection,
     ) {
-        // A full fetch is due when a server event or a refresh request
-        // demanded one, or when the periodic deadline has passed.
+        let periodic_tick_due = Instant::now() >= *next_refresh_deadline;
+
+        // A full fetch is due when a refresh request demanded one or a partial
+        // fetch failed. The periodic tick implies one only for a session that
+        // opted out of partial schema fetching; otherwise everything the tick
+        // used to re-read is by now re-read in reaction to server events.
+        let periodic_full_fetch_due =
+            periodic_tick_due && matches!(periodic_fetch_mode, PeriodicFetchMode::FullMetadata);
         if !matches!(self, PendingFetches::Full { .. })
-            && (matches!(plan, FetchPlan::Full) || Instant::now() >= *next_refresh_deadline)
+            && (matches!(plan, FetchPlan::Full) || periodic_full_fetch_due)
         {
             // Starting the full fetch drops both the partial work owed by the
             // plan and any running partial fetch: the full fetch reads all of
             // that data, and reads it after the events that made the partial
             // work due, so both are subsumed.
             *plan = FetchPlan::empty();
+            // It reads every keyspace, too, so the schema tick restarts.
             *next_refresh_deadline = deadline_after(Instant::now(), refresh_interval);
 
             debug!("Requesting metadata refresh");
@@ -282,6 +378,17 @@ impl<'cc> PendingFetches<'cc> {
                 fetch: Box::pin(cc.query_metadata()),
             };
             return;
+        }
+
+        // The tick advances whether or not schema work is owed.
+        // We could only restart it on schema fetch. The advantage is that
+        // we would react quicker (immediately) to a lone change. The disadvantage
+        // is that if there is a lot of connected clients, they would all send the request to
+        // the server at the same moment. The main reason to have partial fetches is to
+        // make load on the server lighter in such scenario, so the disadvantage is more
+        // important.
+        if periodic_tick_due {
+            *next_refresh_deadline = deadline_after(Instant::now(), refresh_interval);
         }
 
         // Each partial fetch starts only if its own slot is free; work for a
@@ -293,10 +400,12 @@ impl<'cc> PendingFetches<'cc> {
         if let PendingFetches::Partial {
             client_routes_fetch,
             topology_fetch,
+            schema_fetch,
         } = self
             && let FetchPlan::Partial {
                 client_routes,
                 topology,
+                schema,
             } = plan
         {
             if client_routes_fetch.is_none()
@@ -310,6 +419,18 @@ impl<'cc> PendingFetches<'cc> {
                 debug!("Requesting a partial topology fetch");
                 *topology_fetch = Some(Box::pin(cc.query_topology()));
             }
+
+            // Deliberately gated on the tick: unlike the other partial work,
+            // schema work is batched rather than started right away. A single
+            // DDL statement produces a SCHEMA_CHANGE per affected object, and
+            // fetching a keyspace once per event would be pure waste.
+            if schema_fetch.is_none()
+                && periodic_tick_due
+                && let Some(request) = schema.take()
+            {
+                debug!("Requesting a partial schema fetch");
+                *schema_fetch = Some(Box::pin(request.fetch_on(cc)));
+            }
         }
     }
 
@@ -319,6 +440,7 @@ impl<'cc> PendingFetches<'cc> {
         Self::Partial {
             client_routes_fetch: None,
             topology_fetch: None,
+            schema_fetch: None,
         }
     }
 }
@@ -329,6 +451,7 @@ enum FetchOutcome {
     Full(Result<TopologyUpdateGuard, MetadataError>),
     Topology(Result<TopologyUpdateGuard<Vec<Peer>>, MetadataError>),
     ClientRoutes(Result<Option<ClientRoutesUpdate>, MetadataError>),
+    Schema(Result<Option<SchemaUpdate>, MetadataError>),
 }
 
 /// Polls one partial fetch slot, emptying it if the fetch completed.
@@ -363,6 +486,7 @@ impl Future for PendingFetches<'_> {
             PendingFetches::Partial {
                 client_routes_fetch,
                 topology_fetch,
+                schema_fetch,
             } => {
                 // Only one outcome can be reported per poll, so the slots are
                 // polled until one completes; the rest stay in flight and are
@@ -377,6 +501,10 @@ impl Future for PendingFetches<'_> {
                 if let Some(outcome) = poll_slot(topology_fetch, cx).map(FetchOutcome::Topology) {
                     return Poll::Ready(outcome);
                 }
+
+                if let Some(outcome) = poll_slot(schema_fetch, cx).map(FetchOutcome::Schema) {
+                    return Poll::Ready(outcome);
+                }
             }
         };
 
@@ -388,12 +516,14 @@ impl MetadataWorker {
     pub(in super::super) fn new(
         cc_establisher: ControlConnectionEstablisher,
         cluster_metadata_refresh_interval: Duration,
+        periodic_fetch_mode: PeriodicFetchMode,
         refresh_channel: tokio::sync::mpsc::Receiver<RefreshRequest>,
         updates: merge_channel::Sender<MetadataUpdate>,
     ) -> Self {
         Self {
             cc_establisher,
             cluster_metadata_refresh_interval,
+            periodic_fetch_mode,
             refresh_channel,
             updates,
             pending_request: None,
@@ -423,7 +553,10 @@ impl MetadataWorker {
         );
         let (kept, metadata) = fetch.await?;
         Ok((
-            kept.map(|(cc, events, plan)| EstablishedCc { cc, events, plan }),
+            kept.map(|(cc, events, mut plan)| {
+                Self::handle_metadata_keyspace_errors(&mut plan, &metadata);
+                EstablishedCc { cc, events, plan }
+            }),
             metadata,
         ))
     }
@@ -602,6 +735,8 @@ impl MetadataWorker {
     ///
     /// - At most one fetch per type runs at a time; work for a busy type waits
     ///   in the plan.
+    /// - Schema work waits for the periodic refresh tick instead of starting at
+    ///   once, which batches the SCHEMA_CHANGE events of a burst into one fetch.
     /// - A due full fetch preempts everything: it abandons the running partial
     ///   fetches and drops the plan's partial work. Both are subsumed - the full
     ///   fetch reads all of that data, and reads it after the events that made
@@ -635,6 +770,7 @@ impl MetadataWorker {
                 &mut plan,
                 &mut next_refresh_deadline,
                 self.cluster_metadata_refresh_interval,
+                &self.periodic_fetch_mode,
                 &cc,
             );
 
@@ -648,6 +784,7 @@ impl MetadataWorker {
                         FetchOutcome::Full(Ok(topology_update)) => {
                             debug!("Fetched new metadata");
                             let metadata = topology_update.apply(&mut self.cc_establisher);
+                            Self::handle_metadata_keyspace_errors(&mut plan, &metadata);
                             self.publish_metadata(metadata)?;
                         }
                         FetchOutcome::Full(Err(err)) => {
@@ -683,6 +820,21 @@ impl MetadataWorker {
                         FetchOutcome::ClientRoutes(Err(err)) => {
                             error!(
                                 "Error when fetching client route updates: {err}. \
+                                Scheduling a metadata refresh, because the control connection is likely defunct."
+                            );
+                            plan.note_full_needed();
+                        }
+                        FetchOutcome::Schema(Ok(None)) => (), // Nothing to apply.
+                        FetchOutcome::Schema(Ok(Some(schema))) => {
+                            debug!("Fetched the schema of the affected keyspaces");
+                            Self::handle_partial_fetch_keyspace_errors(&mut plan, &schema);
+                            if self.send_update(|slot| MetadataUpdate::merge_schema_update(slot, schema)).is_err() {
+                                return ControlFlow::Break(());
+                            }
+                        }
+                        FetchOutcome::Schema(Err(err)) => {
+                            error!(
+                                "Error when fetching schema: {err}. \
                                 Scheduling a metadata refresh, because the control connection is likely defunct."
                             );
                             plan.note_full_needed();
@@ -764,7 +916,31 @@ impl MetadataWorker {
         debug!("Received server event: {:?}", event);
         #[deny(clippy::wildcard_enum_match_arm)]
         match event {
-            Event::SchemaChange(_) => (), // For now only fetched during periodic refresh.
+            // A SCHEMA_CHANGE names the keyspace it concerns, so only that
+            // keyspace's schema needs re-reading - and if the keyspace itself
+            // was dropped, not even that: it simply leaves the metadata.
+            //
+            // The work is recorded rather than started right away; see the
+            // schema rule in the docs of [`work_on_cc`](Self::work_on_cc).
+            Event::SchemaChange(change) => {
+                let (keyspace_name, last_change) = match change {
+                    // Only dropping the keyspace itself makes it disappear.
+                    // Dropping an object inside it leaves the keyspace in
+                    // place, so its metadata must be re-read.
+                    SchemaChangeEvent::KeyspaceChange {
+                        change_type: SchemaChangeType::Dropped,
+                        keyspace_name,
+                    } => (keyspace_name, LastKeyspaceChange::Dropped),
+                    SchemaChangeEvent::KeyspaceChange { keyspace_name, .. }
+                    | SchemaChangeEvent::TableChange { keyspace_name, .. }
+                    | SchemaChangeEvent::TypeChange { keyspace_name, .. }
+                    | SchemaChangeEvent::FunctionChange { keyspace_name, .. }
+                    | SchemaChangeEvent::AggregateChange { keyspace_name, .. } => {
+                        (keyspace_name, LastKeyspaceChange::Altered)
+                    }
+                };
+                plan.note_schema(keyspace_name, last_change);
+            }
             // A node was added, removed or moved - only the peer list can have
             // changed, so a partial topology fetch suffices.
             Event::TopologyChange(_) => plan.note_topology(),
@@ -840,6 +1016,28 @@ impl MetadataWorker {
         ControlFlow::Continue(())
     }
 
+    fn handle_metadata_keyspace_errors(plan: &mut FetchPlan, metadata: &Metadata) {
+        for (name, ks) in metadata.keyspaces.iter() {
+            if let Err(_e) = ks {
+                // We failed to fetch some keyspace.
+                // Need to note as needed to fetch.
+                // Without it we may never retry.
+                plan.note_keyspace_err(name.clone());
+            }
+        }
+    }
+
+    fn handle_partial_fetch_keyspace_errors(plan: &mut FetchPlan, schema: &SchemaUpdate) {
+        for (name, ks) in schema.keyspaces.iter() {
+            if let FetchedKeyspace::Present(Err(_e)) = ks {
+                // We failed to fetch some keyspace.
+                // Need to note as needed to fetch.
+                // Without it we may never retry.
+                plan.note_keyspace_err(name.clone());
+            }
+        }
+    }
+
     /// Publishes freshly fetched metadata to the cluster worker.
     ///
     /// The pending refresh request, if any, is attached: it is answered by the
@@ -909,7 +1107,8 @@ mod tests {
     use crate::cluster::metadata::Metadata;
 
     use super::{
-        ClientRoutesFetchRequest, FetchOutcome, FetchPlan, PendingFetches, TopologyUpdateGuard,
+        ClientRoutesFetchRequest, FetchOutcome, FetchPlan, LastKeyspaceChange, PendingFetches,
+        SchemaFetchRequest, TopologyUpdateGuard,
     };
 
     fn poll_once(pending_fetches: &mut PendingFetches<'_>) -> Poll<FetchOutcome> {
@@ -932,7 +1131,8 @@ mod tests {
             pending_fetches,
             PendingFetches::Partial {
                 client_routes_fetch: None,
-                topology_fetch: None
+                topology_fetch: None,
+                schema_fetch: None,
             }
         ));
     }
@@ -964,6 +1164,7 @@ mod tests {
         let mut pending_fetches = PendingFetches::Partial {
             client_routes_fetch: Some(Box::pin(async { Ok(None) })),
             topology_fetch: None,
+            schema_fetch: None,
         };
         assert!(matches!(
             poll_once(&mut pending_fetches),
@@ -974,22 +1175,35 @@ mod tests {
         let mut pending_fetches = PendingFetches::Partial {
             client_routes_fetch: None,
             topology_fetch: Some(Box::pin(async { Ok(TopologyUpdateGuard::new(Vec::new())) })),
+            schema_fetch: None,
         };
         assert!(matches!(
             poll_once(&mut pending_fetches),
             Poll::Ready(FetchOutcome::Topology(Ok(_)))
         ));
         assert_nothing_in_flight(&pending_fetches);
+
+        let mut pending_fetches = PendingFetches::Partial {
+            client_routes_fetch: None,
+            topology_fetch: None,
+            schema_fetch: Some(Box::pin(async { Ok(None) })),
+        };
+        assert!(matches!(
+            poll_once(&mut pending_fetches),
+            Poll::Ready(FetchOutcome::Schema(Ok(None)))
+        ));
+        assert_nothing_in_flight(&pending_fetches);
     }
 
     /// Partial fetches of different types run concurrently: reporting the
-    /// outcome of one must leave the other in flight, to be reported by a
-    /// later poll.
+    /// outcome of one must leave the others in flight, to be reported by later
+    /// polls.
     #[test]
-    fn completed_partial_fetch_keeps_the_other_in_flight() {
+    fn completed_partial_fetch_keeps_the_others_in_flight() {
         let mut pending_fetches = PendingFetches::Partial {
             client_routes_fetch: Some(Box::pin(async { Ok(None) })),
             topology_fetch: Some(Box::pin(async { Ok(TopologyUpdateGuard::new(Vec::new())) })),
+            schema_fetch: Some(Box::pin(async { Ok(None) })),
         };
 
         assert!(matches!(
@@ -1000,13 +1214,18 @@ mod tests {
             pending_fetches,
             PendingFetches::Partial {
                 client_routes_fetch: None,
-                topology_fetch: Some(_)
+                topology_fetch: Some(_),
+                schema_fetch: Some(_),
             }
         ));
 
         assert!(matches!(
             poll_once(&mut pending_fetches),
             Poll::Ready(FetchOutcome::Topology(Ok(_)))
+        ));
+        assert!(matches!(
+            poll_once(&mut pending_fetches),
+            Poll::Ready(FetchOutcome::Schema(Ok(None)))
         ));
         assert_nothing_in_flight(&pending_fetches);
     }
@@ -1018,6 +1237,7 @@ mod tests {
         let mut pending_fetches = PendingFetches::Partial {
             client_routes_fetch: Some(Box::pin(pending())),
             topology_fetch: Some(Box::pin(async { Ok(TopologyUpdateGuard::new(Vec::new())) })),
+            schema_fetch: None,
         };
 
         assert!(matches!(
@@ -1028,7 +1248,8 @@ mod tests {
             pending_fetches,
             PendingFetches::Partial {
                 client_routes_fetch: Some(_),
-                topology_fetch: None
+                topology_fetch: None,
+                schema_fetch: None,
             }
         ));
         assert!(poll_once(&mut pending_fetches).is_pending());
@@ -1046,30 +1267,64 @@ mod tests {
         assert!(matches!(pending_fetches, PendingFetches::Full { .. }));
     }
 
-    /// Partial work of different types accumulates side by side: neither type
-    /// may drop the work owed for the other.
+    /// Partial work of different types accumulates side by side: no type may
+    /// drop the work owed for another.
     #[test]
     fn partial_work_of_different_types_coexists() {
         let mut plan = FetchPlan::empty();
         plan.note_client_routes(client_routes_request());
         plan.note_topology();
+        plan.note_schema("ks".to_owned(), LastKeyspaceChange::Altered);
         assert!(matches!(
             plan,
             FetchPlan::Partial {
                 client_routes: Some(_),
-                topology: true
+                topology: true,
+                schema: Some(_),
             }
         ));
 
         let mut plan = FetchPlan::empty();
+        plan.note_schema("ks".to_owned(), LastKeyspaceChange::Altered);
         plan.note_topology();
         plan.note_client_routes(client_routes_request());
         assert!(matches!(
             plan,
             FetchPlan::Partial {
                 client_routes: Some(_),
-                topology: true
+                topology: true,
+                schema: Some(_),
             }
+        ));
+    }
+
+    /// Only the last event per keyspace matters: the fetch re-reads the whole
+    /// keyspace anyway, and a keyspace whose last event dropped it must not be
+    /// fetched - nor may an earlier drop keep a re-created keyspace from being
+    /// fetched.
+    #[test]
+    fn schema_work_keeps_only_the_last_change_per_keyspace() {
+        let mut plan = FetchPlan::empty();
+        plan.note_schema("dropped".to_owned(), LastKeyspaceChange::Altered);
+        plan.note_schema("dropped".to_owned(), LastKeyspaceChange::Dropped);
+        plan.note_schema("recreated".to_owned(), LastKeyspaceChange::Dropped);
+        plan.note_schema("recreated".to_owned(), LastKeyspaceChange::Altered);
+
+        let FetchPlan::Partial {
+            schema: Some(SchemaFetchRequest { keyspaces }),
+            ..
+        } = plan
+        else {
+            panic!("the noted schema work went missing");
+        };
+        assert_eq!(keyspaces.len(), 2);
+        assert!(matches!(
+            keyspaces.get("dropped"),
+            Some(LastKeyspaceChange::Dropped)
+        ));
+        assert!(matches!(
+            keyspaces.get("recreated"),
+            Some(LastKeyspaceChange::Altered)
         ));
     }
 
@@ -1081,11 +1336,13 @@ mod tests {
         let mut plan = FetchPlan::empty();
         plan.note_topology();
         plan.note_client_routes(client_routes_request());
+        plan.note_schema("ks".to_owned(), LastKeyspaceChange::Altered);
         plan.note_full_needed();
         assert!(matches!(plan, FetchPlan::Full));
 
         plan.note_topology();
         plan.note_client_routes(client_routes_request());
+        plan.note_schema("ks".to_owned(), LastKeyspaceChange::Altered);
         assert!(matches!(plan, FetchPlan::Full));
     }
 }

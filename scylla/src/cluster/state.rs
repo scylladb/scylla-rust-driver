@@ -1,3 +1,4 @@
+use crate::cluster::metadata::update::{FetchedKeyspace, SchemaUpdate};
 use crate::cluster::metadata::{Peer, SingleKeyspaceMetadataError};
 use crate::errors::{ClusterStateTokenError, ConnectionPoolError};
 use crate::network::{Connection, ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
@@ -235,29 +236,48 @@ impl ClusterState {
         }
     }
 
-    /// Creates new ClusterState from a freshly fetched topology (the peer list),
-    /// reusing the schema metadata and cluster name of `self` - the counterpart
-    /// of [`new_updated`](Self::new_updated) for a partial topology fetch, which
-    /// reads nothing but the peers.
-    pub(crate) async fn new_with_updated_topology(
+    /// Creates a new `ClusterState` from partially fetched metadata, reusing
+    /// everything of `self` that the partial fetches did not read - the
+    /// counterpart of [`new_updated`](Self::new_updated) for partial fetches.
+    ///
+    /// `peers` is the peer list read by a partial topology fetch and `schema`
+    /// the per-keyspace schema read by a partial schema fetch; `None` means the
+    /// aspect was not re-read, so the one of `self` stands. The cluster name is
+    /// never re-read by a partial fetch - it is fixed for the lifetime of a
+    /// cluster.
+    pub(crate) async fn new_with_partial_changes(
         &self,
-        peers: Vec<Peer>,
+        peers: Option<Vec<Peer>>,
+        schema: Option<SchemaUpdate>,
         node_config: &NodeConfig,
         host_filter: Option<&dyn HostFilter>,
     ) -> Self {
-        let (new_known_nodes, ring) =
-            Self::calculate_new_topology(peers, &self.known_nodes, node_config, host_filter);
+        let (new_known_nodes, ring) = match peers {
+            Some(peers) => {
+                Self::calculate_new_topology(peers, &self.known_nodes, node_config, host_filter)
+            }
+            // The ring in place is exactly the (token, node) list that the
+            // unchanged topology implies, so it is reused as is.
+            None => (
+                self.known_nodes.clone(),
+                self.locator.ring().iter().cloned().collect(),
+            ),
+        };
+
+        let keyspaces = match schema {
+            Some(schema) => self.updated_keyspaces(schema),
+            None => self.keyspaces.clone(),
+        };
 
         let mut tablets = self.locator.tablets.clone();
         Self::perform_tablets_maintenance(
             &mut tablets,
             &self.known_nodes,
             &new_known_nodes,
-            &self.keyspaces,
+            &keyspaces,
         );
 
-        let (locator, keyspaces) =
-            Self::calculate_new_locator(self.keyspaces.clone(), ring, tablets).await;
+        let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
 
         ClusterState {
             all_nodes: new_known_nodes.values().cloned().collect(),
@@ -266,6 +286,32 @@ impl ClusterState {
             locator,
             cluster_name: self.cluster_name.clone(),
         }
+    }
+
+    /// Applies a partial schema update onto the schema metadata of `self`:
+    /// replaces the metadata of the re-read keyspaces and removes those that
+    /// ceased to exist, keeping every keyspace the update does not mention.
+    fn updated_keyspaces(&self, schema: SchemaUpdate) -> HashMap<String, Keyspace> {
+        let mut new_keyspaces = self.keyspaces.clone();
+
+        for (name, keyspace) in schema.keyspaces {
+            // A keyspace whose fresh metadata turned out inconsistent keeps its
+            // previous version, as after a full fetch - hence the resolution
+            // step, shared with `new_updated`.
+            let resolved = match keyspace {
+                FetchedKeyspace::Present(keyspace) => {
+                    Self::resolve_metadata_keyspace(&name, keyspace, &self.keyspaces)
+                }
+                FetchedKeyspace::Absent => None,
+            };
+
+            match resolved {
+                Some(keyspace) => new_keyspaces.insert(name, keyspace),
+                None => new_keyspaces.remove(&name),
+            };
+        }
+
+        new_keyspaces
     }
 
     /// Creates a new topology (`Node` objects and token ring) from metadata peers,
@@ -348,28 +394,41 @@ impl ClusterState {
     ) -> HashMap<String, Keyspace> {
         meta_keyspaces
             .into_iter()
-            .filter_map(|(ks_name, ks)| match ks {
-                Ok(ks) => Some((ks_name, ks)),
-                Err(e) => {
-                    if let Some(old_ks) = old_keyspaces.get(&ks_name) {
-                        warn!(
-                            "Encountered an error while processing\
-                            metadata of keyspace \"{ks_name}\": {e}.\
-                            Re-using older version of this keyspace metadata"
-                        );
-                        Some((ks_name, old_ks.clone()))
-                    } else {
-                        warn!(
-                            "Encountered an error while processing metadata\
-                            of keyspace \"{ks_name}\": {e}.\
-                            No previous version of this keyspace metadata found, so it will not be\
-                            present in ClusterState until next refresh."
-                        );
-                        None
-                    }
-                }
+            .filter_map(|(ks_name, ks)| {
+                Self::resolve_metadata_keyspace(&ks_name, ks, old_keyspaces).map(|ks| (ks_name, ks))
             })
             .collect()
+    }
+
+    /// [`resolve_metadata_keyspaces`](Self::resolve_metadata_keyspaces) for a
+    /// single keyspace. `None` means there is no metadata to be had for it,
+    /// neither fresh nor previous, so it belongs in no `ClusterState`.
+    fn resolve_metadata_keyspace(
+        ks_name: &str,
+        ks: Result<Keyspace, SingleKeyspaceMetadataError>,
+        old_keyspaces: &HashMap<String, Keyspace>,
+    ) -> Option<Keyspace> {
+        match ks {
+            Ok(ks) => Some(ks),
+            Err(e) => {
+                if let Some(old_ks) = old_keyspaces.get(ks_name) {
+                    warn!(
+                        "Encountered an error while processing \
+                        metadata of keyspace \"{ks_name}\": {e}. \
+                        Re-using older version of this keyspace metadata"
+                    );
+                    Some(old_ks.clone())
+                } else {
+                    warn!(
+                        "Encountered an error while processing metadata \
+                        of keyspace \"{ks_name}\": {e}. \
+                        No previous version of this keyspace metadata found, so it will not be \
+                        present in ClusterState until next refresh."
+                    );
+                    None
+                }
+            }
+        }
     }
 
     fn perform_tablets_maintenance(

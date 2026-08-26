@@ -53,8 +53,14 @@ If you need to share `Session` with different threads / Tokio tasks etc. use `Ar
 
 ## Metadata
 
-The driver refreshes the cluster metadata periodically, which contains information about cluster topology as well as the cluster schema. By default, the driver refreshes the cluster metadata every 60 seconds.
-However, you can set the `cluster_metadata_refresh_interval` to a non-negative value to periodically refresh the cluster metadata. This is useful when you do not have unexpected amount of traffic or when you have an extra traffic causing topology to change frequently.
+The driver keeps an up-to-date view of the cluster topology (and client routes, if used) and of the cluster schema.
+Topology and client routes are refreshed in reaction to the server events announcing a change.
+Schema changes are different: the keyspaces that `SCHEMA_CHANGE` events name are accumulated and re-read by a periodic refresh, which batches the burst of events that a single DDL statement produces.
+
+That refresh runs every 60 seconds by default; `cluster_metadata_refresh_interval` sets the interval. A shorter one picks schema changes up sooner, at the cost of more frequent metadata queries.
+
+Only the affected keyspaces are re-read, not the whole schema.
+If your cluster's events cannot be relied upon, `periodic_metadata_fetch_mode(PeriodicFetchMode::FullMetadata)` makes each refresh re-read the whole metadata instead.
 
 
 ```{eval-rst}
