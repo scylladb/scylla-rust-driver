@@ -79,6 +79,71 @@ test: up
 ccm-test:
 	cargo nextest run --all-features -E 'test(ccm::)' --ignore-default-filter --status-level pass
 
+# Coverage-instrumented counterparts of test/ccm-test, using cargo-llvm-cov
+# (LLVM source-based coverage; unlike ptrace-based tools it handles async,
+# multi-threaded code correctly). test-coverage starts from a clean slate;
+# ccm-test-coverage deliberately does not clean, so it accumulates onto
+# whatever test-coverage already collected instead of replacing it. Run
+# test-coverage first, then optionally ccm-test-coverage, then coverage-report.
+#
+# Everything here runs on a nightly toolchain (NIGHTLY_TOOLCHAIN, "nightly" by
+# default): nightly is required for cargo-llvm-cov to instrument doctests.
+# Coverage data recorded under different toolchains' LLVM versions cannot be
+# merged, so every instrumented run and every report read uses the same
+# toolchain. This does not affect `test`/`ccm-test`, which keep using the
+# default (stable) toolchain. Local use needs nightly plus its
+# llvm-tools-preview component: `rustup toolchain install nightly --component
+# llvm-tools-preview`.
+#
+# CI pins NIGHTLY_TOOLCHAIN to a specific dated release (see coverage.yml)
+# rather than floating "nightly", so an upstream toolchain change cannot
+# silently break this job; bump the pinned date deliberately when needed.
+#
+# --no-fail-fast is required: nextest's default is to stop the whole run
+# after the first failing binary, which combined with --no-report (needed so
+# multiple invocations accumulate into one report) would discard coverage
+# data for every test that would otherwise have run afterward. This does not
+# change the process's own exit code, though, so the nextest and doctest exit
+# statuses are captured explicitly: both commands always run, and the target
+# still fails if either did.
+#
+# Branch coverage (--branch) is intentionally not enabled: cargo-llvm-cov's
+# report generation segfaults inside LLVM's own coverage-mapping code
+# (llvm::coverage::CoverageMapping::getInstantiationGroups) once --branch is
+# added to the instrumented test/doctest runs, on x86_64 Linux CI. This is
+# not tied to one LLVM release -- confirmed reproducible under both LLVM
+# 23.1.0 and LLVM 22.1 (two different nightly pins), so switching the pinned
+# nightly does not avoid it. It does not reproduce on aarch64 macOS with
+# either LLVM version, and has also been reproduced on a reviewer's own
+# Linux machine, pointing at a genuine upstream LLVM/cargo-llvm-cov bug
+# rather than anything in this repo or CI-runner-specific. Revisit once the
+# upstream issue is understood or fixed.
+NIGHTLY_TOOLCHAIN ?= nightly
+
+.PHONY: test-coverage
+test-coverage: up
+	cargo +$(NIGHTLY_TOOLCHAIN) llvm-cov clean --workspace
+	set +e; \
+	cargo +$(NIGHTLY_TOOLCHAIN) llvm-cov nextest --all-features --no-report --no-fail-fast; nextest_status=$$?; \
+	cargo +$(NIGHTLY_TOOLCHAIN) llvm-cov --no-report --doc --all-features; doctest_status=$$?; \
+	test $$nextest_status -eq 0 && test $$doctest_status -eq 0
+
+.PHONY: ccm-test-coverage
+ccm-test-coverage:
+	cargo +$(NIGHTLY_TOOLCHAIN) llvm-cov nextest --all-features --no-report --no-fail-fast -E 'test(ccm::)' --ignore-default-filter --status-level pass
+
+.PHONY: coverage-report
+coverage-report:
+	mkdir -p target/llvm-cov
+	cargo +$(NIGHTLY_TOOLCHAIN) llvm-cov report
+	cargo +$(NIGHTLY_TOOLCHAIN) llvm-cov report --html --output-dir target/llvm-cov
+	cargo +$(NIGHTLY_TOOLCHAIN) llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
+
+.PHONY: clean-coverage
+clean-coverage:
+	cargo +$(NIGHTLY_TOOLCHAIN) llvm-cov clean --workspace
+	rm -rf target/llvm-cov
+
 .PHONY: run-examples
 run-examples: up
 	./scripts/run-examples.sh
