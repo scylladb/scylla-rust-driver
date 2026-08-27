@@ -101,6 +101,28 @@ pub(crate) async fn scylla_supports_tablets(session: &Session) -> bool {
     supports_feature(session, "TABLETS").await
 }
 
+/// Returns the `CREATE KEYSPACE` option that disables tablets, if the cluster supports
+/// tablets but does not support the given cluster feature - and an empty string otherwise.
+///
+/// ScyllaDB gained support for various functionalities on tablet keyspaces gradually,
+/// each guarded by its own `*_WITH_TABLETS` cluster feature (`CDC_WITH_TABLETS`,
+/// `LWT_WITH_TABLETS`, `VIEWS_WITH_TABLETS`, `COUNTERS_WITH_TABLETS`). A test relying on
+/// such a functionality should run on the default, tablet-enabled setup wherever the
+/// server supports it, and fall back to vnodes on older servers that do not.
+///
+/// # Warning
+/// This function **requires full schema metadata** to function correctly.
+pub(crate) async fn disable_tablets_unless_supported(
+    session: &Session,
+    feature: &str,
+) -> &'static str {
+    if scylla_supports_tablets(session).await && !supports_feature(session, feature).await {
+        " AND TABLETS = {'enabled': false}"
+    } else {
+        ""
+    }
+}
+
 pub(crate) fn setup_tracing() {
     let testing_layer = tracing_subscriber::fmt::layer()
         .with_test_writer()

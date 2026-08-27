@@ -24,8 +24,8 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, fetch_negotiated_features,
-    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
+    PerformDDL as _, create_new_session_builder, disable_tablets_unless_supported,
+    fetch_negotiated_features, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
 };
 
 #[tokio::test]
@@ -224,13 +224,11 @@ async fn test_prepared_partitioner() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    // This test uses CDC which is not yet compatible with Scylla's tablets.
-    let mut create_ks = format!(
-        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    // This test uses CDC, which older ScyllaDB versions do not support on tablet keyspaces.
+    let create_ks = format!(
+        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}{}",
+        disable_tablets_unless_supported(&session, "CDC_WITH_TABLETS").await
     );
-    if scylla_supports_tablets(&session).await {
-        create_ks += " AND TABLETS = {'enabled': false}"
-    }
 
     session.ddl(create_ks).await.unwrap();
     session.use_keyspace(&ks, false).await.unwrap();
