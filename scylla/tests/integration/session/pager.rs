@@ -176,11 +176,10 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
         .build()
         .into_handle();
 
-    let session = create_new_session_builder()
-        .default_execution_profile_handle(handle)
-        .build()
-        .await
-        .unwrap();
+    // The handle is attached to the two statements under test rather than to the
+    // session's default profile, so that the DDL below keeps the default retry policy
+    // and a failing DDL is reported instead of being silently ignored.
+    let session = create_new_session_builder().build().await.unwrap();
 
     // Create a keyspace with replication factor that is larger than the cluster size
     let cluster_size = session.get_cluster_state().get_nodes_info().len();
@@ -204,8 +203,10 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
     assert!(!retried_flag.load(Ordering::Relaxed));
     // Try to write something to the new table - it should fail and the policy
     // will tell us to ignore the error
+    let mut failing_write = Statement::new("INSERT INTO t (pk v) VALUES (1, 2)");
+    failing_write.set_execution_profile_handle(Some(handle.clone()));
     let mut stream = session
-        .query_iter("INSERT INTO t (pk v) VALUES (1, 2)", ())
+        .query_iter(failing_write, ())
         .await
         .unwrap()
         .rows_stream::<Row>()
@@ -216,10 +217,11 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
 
     retried_flag.store(false, Ordering::Relaxed);
     // Try the same with execute_iter()
-    let p = session
+    let mut p = session
         .prepare("INSERT INTO t (pk, v) VALUES (?, ?)")
         .await
         .unwrap();
+    p.set_execution_profile_handle(Some(handle));
     let mut iter = session
         .execute_iter(p, (1, 2))
         .await
