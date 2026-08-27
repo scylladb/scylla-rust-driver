@@ -439,13 +439,12 @@ async fn test_views_in_schema_info() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    let mut create_ks = format!(
-        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    // This test uses materialized views, which older ScyllaDB versions do not support
+    // on tablet keyspaces.
+    let create_ks = format!(
+        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}{}",
+        disable_tablets_unless_supported(&session, "VIEWS_WITH_TABLETS").await
     );
-    // Materialized views + tablets are not supported in Scylla 2025.1.
-    if scylla_supports_tablets(&session).await {
-        create_ks += " and TABLETS = { 'enabled': false}";
-    }
     session.ddl(create_ks).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
 
