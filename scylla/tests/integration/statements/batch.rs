@@ -1,6 +1,6 @@
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, disable_tablets_unless_supported,
-    scylla_supports_tablets, setup_tracing, unique_keyspace_name,
+    PerformDDL as _, create_new_session_builder, disable_tablets_unless_supported, setup_tracing,
+    unique_keyspace_name,
 };
 use assert_matches::assert_matches;
 use scylla::client::session::Session;
@@ -568,15 +568,12 @@ async fn test_counter_batch() {
     let session = Arc::new(create_new_session_builder().build().await.unwrap());
     let ks = unique_keyspace_name();
 
-    // Need to disable tablets in this test because they don't support counters yet.
-    // (https://github.com/scylladb/scylladb/commit/c70f321c6f581357afdf3fd8b4fe8e5c5bb9736e).
-    let mut create_ks = format!(
-        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    // This test uses counters, which older ScyllaDB versions do not support
+    // on tablet keyspaces.
+    let create_ks = format!(
+        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}{}",
+        disable_tablets_unless_supported(&session, "COUNTERS_WITH_TABLETS").await
     );
-    if scylla_supports_tablets(&session).await {
-        create_ks += " AND TABLETS = {'enabled': false}"
-    }
-
     session.ddl(create_ks).await.unwrap();
     session
         .ddl(format!(

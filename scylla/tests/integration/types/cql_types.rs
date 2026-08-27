@@ -9,17 +9,18 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
 use crate::utils::{
-    DeserializeOwnedValue, PerformDDL, create_new_session_builder, scylla_supports_tablets,
-    setup_tracing, unique_keyspace_name,
+    DeserializeOwnedValue, PerformDDL, create_new_session_builder,
+    disable_tablets_unless_supported, setup_tracing, unique_keyspace_name,
 };
 
 // Used to prepare a table for test
-// Creates a new keyspace, without tablets if requested and the ScyllaDB instance supports them.
+// Creates a new keyspace, with tablets disabled if `required_tablet_feature` is `Some`
+// and the cluster does not support it.
 // Drops and creates table {table_name} (id int PRIMARY KEY, val {type_name})
 async fn init_test_maybe_without_tablets(
     table_name: &str,
     type_name: &str,
-    supports_tablets: bool,
+    required_tablet_feature: Option<&str>,
 ) -> Session {
     let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
@@ -28,9 +29,8 @@ async fn init_test_maybe_without_tablets(
         "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = \
     {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
     );
-
-    if !supports_tablets && scylla_supports_tablets(&session).await {
-        create_ks += " AND TABLETS = {'enabled': false}"
+    if let Some(feature) = required_tablet_feature {
+        create_ks += disable_tablets_unless_supported(&session, feature).await;
     }
 
     session.ddl(create_ks).await.unwrap();
@@ -55,7 +55,7 @@ async fn init_test_maybe_without_tablets(
 // Creates a new keyspace
 // Drops and creates table {table_name} (id int PRIMARY KEY, val {type_name})
 async fn init_test(table_name: &str, type_name: &str) -> Session {
-    init_test_maybe_without_tablets(table_name, type_name, true).await
+    init_test_maybe_without_tablets(table_name, type_name, None).await
 }
 
 // This function tests serialization and deserialization mechanisms by sending insert and select
@@ -269,9 +269,12 @@ async fn test_counter() {
     let big_increment = i64::MAX.to_string();
     let tests = ["1", "997", big_increment.as_str()];
 
-    // Can't use run_tests, because counters are special and can't be inserted
+    // Can't use run_tests, because counters are special and can't be inserted.
+    // This test uses counters, which older ScyllaDB versions do not support
+    // on tablet keyspaces.
     let type_name = "counter";
-    let session: Session = init_test_maybe_without_tablets(type_name, type_name, false).await;
+    let session: Session =
+        init_test_maybe_without_tablets(type_name, type_name, Some("COUNTERS_WITH_TABLETS")).await;
 
     for (i, test) in tests.iter().enumerate() {
         let update_bound_value = format!("UPDATE {type_name} SET val = val + ? WHERE id = ?");
