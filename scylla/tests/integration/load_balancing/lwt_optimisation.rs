@@ -1,5 +1,5 @@
 use crate::utils::{
-    PerformDDL, scylla_supports_tablets, setup_tracing, test_with_3_node_cluster,
+    PerformDDL, disable_tablets_unless_supported, setup_tracing, test_with_3_node_cluster,
     unique_keyspace_name,
 };
 use scylla::client::execution_profile::ExecutionProfile;
@@ -70,10 +70,11 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
 
         // Create schema
         let ks = unique_keyspace_name();
-        let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}");
-        if scylla_supports_tablets(&session).await {
-            create_ks += " and TABLETS = { 'enabled': false}";
-        }
+        // This test uses LWT, which older ScyllaDB versions do not support on tablet keyspaces.
+        let create_ks = format!(
+            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}{}",
+            disable_tablets_unless_supported(&session, "LWT_WITH_TABLETS").await
+        );
         session.ddl(create_ks).await.unwrap();
         session.use_keyspace(&ks, false).await.unwrap();
 

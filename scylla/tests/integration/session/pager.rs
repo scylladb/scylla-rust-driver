@@ -33,7 +33,7 @@ use tracing::info;
 
 use crate::utils::{
     CapturingRetryPolicy, PerformDDL as _, create_new_session_builder, fetch_negotiated_features,
-    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
+    setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
 };
 
 /// Basic pager functionality test
@@ -143,7 +143,12 @@ async fn test_pager_multi_page(ks: &str, session: &Session) {
     );
 }
 
-// Reproduces the problem with execute_iter mentioned in #608.
+/// Reproduces the problem with execute_iter mentioned in #608.
+///
+/// Verifies that the pager honours [`RetryDecision::IgnoreWriteError`]: when a request
+/// fails and the retry policy tells the driver to ignore the error, `query_iter()` and
+/// `execute_iter()` must yield an empty, successful result instead of propagating
+/// the error.
 #[tokio::test]
 async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
     setup_tracing();
@@ -176,25 +181,19 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
         .build()
         .into_handle();
 
-    let session = create_new_session_builder()
-        .default_execution_profile_handle(handle)
-        .build()
+    // The handle is attached to the two statements under test rather than to the
+    // session's default profile, so that the DDL below keeps the default retry policy
+    // and a failing DDL is reported instead of being silently ignored.
+    let session = create_new_session_builder().build().await.unwrap();
+
+    let ks = unique_keyspace_name();
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE {ks} WITH \
+             REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}"
+        ))
         .await
         .unwrap();
-
-    // Create a keyspace with replication factor that is larger than the cluster size
-    let cluster_size = session.get_cluster_state().get_nodes_info().len();
-    let ks = unique_keyspace_name();
-    let mut create_ks = format!(
-        "CREATE KEYSPACE {} WITH
-            REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {}}}",
-        ks,
-        cluster_size + 1
-    );
-    if scylla_supports_tablets(&session).await {
-        create_ks += " and TABLETS = { 'enabled': false}";
-    }
-    session.ddl(create_ks).await.unwrap();
     session.use_keyspace(&ks, true).await.unwrap();
     session
         .ddl("CREATE TABLE t (pk int PRIMARY KEY, v int)")
@@ -202,10 +201,12 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
         .unwrap();
 
     assert!(!retried_flag.load(Ordering::Relaxed));
-    // Try to write something to the new table - it should fail and the policy
-    // will tell us to ignore the error
+    // An unparseable statement fails on the server, and the policy tells us
+    // to ignore the error.
+    let mut unparseable = Statement::new("BLAH BLAH BLAH");
+    unparseable.set_execution_profile_handle(Some(handle.clone()));
     let mut stream = session
-        .query_iter("INSERT INTO t (pk v) VALUES (1, 2)", ())
+        .query_iter(unparseable, ())
         .await
         .unwrap()
         .rows_stream::<Row>()
@@ -215,11 +216,15 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
     while stream.try_next().await.unwrap().is_some() {}
 
     retried_flag.store(false, Ordering::Relaxed);
-    // Try the same with execute_iter()
-    let p = session
+    // Try the same with execute_iter(). An unparseable statement cannot be prepared,
+    // so prepare a valid one and then remove the table it targets - this way it is
+    // the execution, not the preparation, that fails.
+    let mut p = session
         .prepare("INSERT INTO t (pk, v) VALUES (?, ?)")
         .await
         .unwrap();
+    p.set_execution_profile_handle(Some(handle));
+    session.ddl("DROP TABLE t").await.unwrap();
     let mut iter = session
         .execute_iter(p, (1, 2))
         .await

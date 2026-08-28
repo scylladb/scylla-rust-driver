@@ -9,8 +9,8 @@ use scylla::{
 };
 
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, setup_tracing,
-    unique_keyspace_name,
+    PerformDDL as _, create_new_session_builder, disable_tablets_unless_supported,
+    scylla_supports_tablets, setup_tracing, unique_keyspace_name,
 };
 
 fn udt_type_a_def(ks: &str) -> Arc<UserDefinedType<'_>> {
@@ -397,13 +397,11 @@ async fn test_table_partitioner_in_metadata() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    // This test uses CDC which is not yet compatible with Scylla's tablets.
-    let mut create_ks = format!(
-        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    // This test uses CDC, which older ScyllaDB versions do not support on tablet keyspaces.
+    let create_ks = format!(
+        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}{}",
+        disable_tablets_unless_supported(&session, "CDC_WITH_TABLETS").await
     );
-    if scylla_supports_tablets(&session).await {
-        create_ks += " AND TABLETS = {'enabled': false}";
-    }
 
     session.ddl(create_ks).await.unwrap();
 
@@ -441,13 +439,12 @@ async fn test_views_in_schema_info() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    let mut create_ks = format!(
-        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    // This test uses materialized views, which older ScyllaDB versions do not support
+    // on tablet keyspaces.
+    let create_ks = format!(
+        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}{}",
+        disable_tablets_unless_supported(&session, "VIEWS_WITH_TABLETS").await
     );
-    // Materialized views + tablets are not supported in Scylla 2025.1.
-    if scylla_supports_tablets(&session).await {
-        create_ks += " and TABLETS = { 'enabled': false}";
-    }
     session.ddl(create_ks).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
 

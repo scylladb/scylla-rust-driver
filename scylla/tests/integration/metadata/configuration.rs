@@ -2,8 +2,8 @@
 //! iff ScyllaDB is the target node (else ignores the custom timeout).
 
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, setup_tracing,
-    test_with_3_node_cluster, unique_keyspace_name,
+    PerformDDL as _, create_new_session_builder, disable_tablets_unless_supported,
+    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
 };
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -39,13 +39,10 @@ fn map_fedback_message<'a, T, F: Fn(RequestFrame) -> T + 'a>(
     })
 }
 
-async fn setup_minimal_schema_metadata_session() -> (Session, String) {
-    // Two sessions are required here:
-    // 1. The first session fetches full schema metadata, which is required by `scylla_supports_tablets`
-    //    to accurately verify if the cluster supports tablets.
-    // 2. The second session disables schema metadata fetching (`fetch_full_schema_metadata(false)`)
-    let session = create_new_session_builder().build().await.unwrap();
-    let supports_tablets = scylla_supports_tablets(&session).await;
+/// Creates a session with full schema metadata fetching disabled, along with a fresh
+/// keyspace that is already `USE`d. `extra_ks_opts` is appended verbatim to the
+/// `CREATE KEYSPACE` statement.
+async fn setup_minimal_schema_metadata_session(extra_ks_opts: &str) -> (Session, String) {
     let session = create_new_session_builder()
         .fetch_full_schema_metadata(false)
         .build()
@@ -53,14 +50,12 @@ async fn setup_minimal_schema_metadata_session() -> (Session, String) {
         .unwrap();
     let ks = unique_keyspace_name();
 
-    let mut create_ks = format!(
-        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
-    );
-    if supports_tablets {
-        create_ks += " AND TABLETS = {'enabled': false}";
-    }
-
-    session.ddl(create_ks).await.unwrap();
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}{extra_ks_opts}"
+        ))
+        .await
+        .unwrap();
     session.use_keyspace(&ks, false).await.unwrap();
 
     (session, ks)
@@ -395,7 +390,20 @@ async fn test_fetching_minimal_schema_metadata() {
 #[tokio::test]
 async fn test_token_awareness_with_minimal_schema_metadata() {
     setup_tracing();
-    let (session, ks) = setup_minimal_schema_metadata_session().await;
+
+    // Tablets make token routing work differently, and this test verifies the classic
+    // token ring behaviour, so tablets have to be disabled. Checking whether the cluster
+    // supports tablets requires full schema metadata, which the session under test
+    // deliberately does not fetch - hence a separate, throwaway session just for the check.
+    let disable_tablets = {
+        let session = create_new_session_builder().build().await.unwrap();
+        if scylla_supports_tablets(&session).await {
+            " AND TABLETS = {'enabled': false}"
+        } else {
+            ""
+        }
+    };
+    let (session, ks) = setup_minimal_schema_metadata_session(disable_tablets).await;
 
     session
         .ddl("CREATE TABLE token_table (pk int PRIMARY KEY, value text)")
@@ -430,7 +438,15 @@ async fn test_token_awareness_with_minimal_schema_metadata() {
 #[cfg_attr(cassandra_tests, ignore)]
 async fn test_cdc_partitioner_with_minimal_schema_metadata() {
     setup_tracing();
-    let (session, ks) = setup_minimal_schema_metadata_session().await;
+    // This test uses CDC, which older ScyllaDB versions do not support on tablet keyspaces.
+    // Checking cluster feature support requires full schema metadata, which the session
+    // under test deliberately does not fetch - hence a separate, throwaway session just
+    // for the check.
+    let disable_tablets = {
+        let session = create_new_session_builder().build().await.unwrap();
+        disable_tablets_unless_supported(&session, "CDC_WITH_TABLETS").await
+    };
+    let (session, ks) = setup_minimal_schema_metadata_session(disable_tablets).await;
     session
         .ddl("CREATE TABLE cdc_table (pk int PRIMARY KEY) WITH cdc = {'enabled': true}")
         .await
