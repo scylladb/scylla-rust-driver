@@ -2,7 +2,7 @@
 //!
 //! The full picture looks like this:
 //!
-//! ┌─←─ TlsContext (openssl::SslContext / rustls::ClientConfig)
+//! ┌─←─ TlsContext (OpenSsl010Config / openssl::SslContext / rustls::ClientConfig)
 //! │
 //! │ gets wrapped in
 //! │
@@ -129,6 +129,8 @@ impl TlsConfig {
         match self.context {
             #[cfg(feature = "openssl-010")]
             TlsContext::OpenSsl010(ref context) => Ok(Tls::OpenSsl010(openssl::new_ssl(context)?)),
+            #[cfg(feature = "openssl-010")]
+            TlsContext::OpenSsl010Config(ref context) => Ok(Tls::OpenSsl010(context.new_ssl()?)),
             #[cfg(feature = "rustls-023")]
             TlsContext::Rustls023(ref config) => {
                 let connector = tokio_rustls::TlsConnector::from(config.clone());

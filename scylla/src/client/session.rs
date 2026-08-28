@@ -158,10 +158,16 @@ pub enum TlsContext {
     /// TLS context backed by OpenSSL 0.10.
     #[cfg(feature = "openssl-010")]
     OpenSsl010(openssl::ssl::SslContext),
+    /// TLS context backed by OpenSSL 0.10, created from a builder.
+    #[cfg(feature = "openssl-010")]
+    OpenSsl010Config(OpenSsl010Config),
     /// TLS context backed by Rustls 0.23.
     #[cfg(feature = "rustls-023")]
     Rustls023(Arc<rustls::ClientConfig>),
 }
+
+#[cfg(feature = "openssl-010")]
+pub use crate::network::tls::openssl::OpenSsl010Config;
 
 #[cfg(feature = "openssl-010")]
 impl From<openssl::ssl::SslContext> for TlsContext {
