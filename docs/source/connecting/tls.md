@@ -104,4 +104,31 @@ let session: Session = SessionBuilder::new()
 # }
 ```
 
+### TLS session tickets
+
+A context built through `OpenSsl010Config` resumes TLS sessions by default: the driver banks the
+session tickets the cluster issues (per node, respecting the TLS 1.3 single-use rule) and offers
+them on later connections. A TLS 1.2 ticket is reusable, so every connection after the first
+resumes; a TLS 1.3 ticket is spent on one connection, so only as many resume as the server issued
+tickets. The rustls backend does this natively, with no configuration.
+
+To turn it off:
+
+```rust
+# extern crate scylla;
+# extern crate openssl;
+use scylla::client::session::OpenSsl010Config;
+use openssl::ssl::{SslConnector, SslMethod};
+
+# use std::error::Error;
+# fn check_only_compiles() -> Result<(), Box<dyn Error>> {
+let builder = SslConnector::builder(SslMethod::tls())?;
+let context = OpenSsl010Config::new(builder).set_use_tls_tickets(false);
+# Ok(())
+# }
+```
+
+The deprecated `TlsContext::OpenSsl010` never resumes: the driver cannot install a session
+callback on a context it did not build.
+
 See the full [openssl example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/tls_openssl.rs) and [rustls example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/tls_rustls.rs) for more details.

@@ -135,6 +135,8 @@ impl TlsConfig {
         match self.context {
             #[cfg(feature = "openssl-010")]
             // `TlsContext::OpenSsl010` is the deprecated variant we still have to support.
+            // The driver cannot install a session callback on a context it did not build,
+            // so connections made through it never resume a TLS session.
             #[expect(deprecated)]
             TlsContext::OpenSsl010(ref context) => {
                 Ok(Tls::OpenSsl010(openssl::new_ssl(context, node_address)?))
