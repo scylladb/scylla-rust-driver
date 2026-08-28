@@ -51,35 +51,48 @@ Then install the package with `openssl`:
     ```
 
 ### Using TLS
-To use TLS you will have to a `TlsContext`. For convenience, both an
-openssl
-[`SslContext`](https://docs.rs/openssl/0.10.33/openssl/ssl/struct.SslContext.html)
-and a rustls
+To use TLS you will have to create a `TlsContext`. For the openssl backend, build an
+[`SslConnector`](https://docs.rs/openssl/0.10/openssl/ssl/struct.SslConnector.html)
+builder and wrap it in an `OpenSsl010Config`; for rustls, an `Arc` of a
 [`ClientConfig`](https://docs.rs/rustls/latest/rustls/client/struct.ClientConfig.html)
-can be automatically converted to a `TlsContext` when passing to
-`SessionBuilder`.
+is automatically converted to a `TlsContext` when passing it to `SessionBuilder`.
 
-**_NOTE:_** Recommended API in `openssl` crate is `SslConnector`, because it has safer defaults. Please use it, and then call `into_context()` to
-get `SslContext` instance you can pass to the driver.
+**_NOTE:_** `SslConnector` is the recommended openssl API, because it has safe defaults
+(most notably, it verifies the peer's certificate). If you really need full control, you
+can build the context from a raw `SslContextBuilder` with
+`OpenSsl010Config::from_dangerous_builder`, which has no such defaults.
+
+**_NOTE:_** `SslConnector` also trusts the system's CA store, because it calls
+`set_default_verify_paths`. If your cluster has its own CA, that may be wider than you want: a
+certificate chaining to any public root would be accepted as long as it carries the node's IP
+address in its subject alternative name. Replace that trust with `set_cert_store`, as below.
+Beware that `set_ca_file` *adds* to the trusted set rather than replacing it, so it does not
+narrow anything down on its own.
 
 For example, if database certificate is in the file `ca.crt`:
 ```rust
 # extern crate scylla;
 # extern crate openssl;
-use scylla::client::session::Session;
+use scylla::client::session::{OpenSsl010Config, Session};
 use scylla::client::session_builder::SessionBuilder;
-use openssl::ssl::{SslContextBuilder, SslMethod, SslVerifyMode};
-use std::path::PathBuf;
+use openssl::ssl::{SslConnector, SslMethod};
+use openssl::x509::X509;
+use openssl::x509::store::X509StoreBuilder;
 
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
-context_builder.set_ca_file("ca.crt")?;
-context_builder.set_verify(SslVerifyMode::PEER);
+let mut builder = SslConnector::builder(SslMethod::tls())?;
+
+// Trust the cluster's CA, and nothing else.
+let mut ca_store = X509StoreBuilder::new()?;
+for cert in X509::stack_from_pem(&std::fs::read("ca.crt")?)? {
+    ca_store.add_cert(cert)?;
+}
+builder.set_cert_store(ca_store.build());
 
 let session: Session = SessionBuilder::new()
     .known_node("127.0.0.1:9142") // The the port is now 9142
-    .tls_context(Some(context_builder.build()))
+    .tls_context(Some(OpenSsl010Config::new(builder)))
     .build()
     .await?;
 

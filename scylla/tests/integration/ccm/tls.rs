@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use openssl::pkey::PKey;
-use openssl::ssl::{SslContext, SslMethod, SslVerifyMode};
+use openssl::ssl::{SslConnector, SslContext, SslContextBuilder, SslMethod, SslVerifyMode};
 use openssl::x509::X509;
 use openssl::x509::store::{X509Store, X509StoreBuilder};
 use rcgen::{
@@ -12,7 +12,7 @@ use rcgen::{
 };
 use rustls::ClientConfig;
 use rustls::pki_types::PrivatePkcs8KeyDer;
-use scylla::client::session::TlsContext;
+use scylla::client::session::{OpenSsl010Config, TlsContext};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
@@ -139,6 +139,55 @@ pub(super) fn build_openssl_ca_store(ca: &CertifiedIssuer<'_, KeyPair>) -> X509S
     store_builder.build()
 }
 
+/// The [`TlsContext::OpenSsl010`] flavour: a raw [`SslContextBuilder`], built into an
+/// [`SslContext`] that the driver can only use as-is.
+///
+/// A bare [`SslContextBuilder`] verifies nothing at all by default, so peer verification
+/// has to be switched on here - which is exactly why the driver recommends the other
+/// flavour.
+pub(super) fn openssl_010_context(configure: impl FnOnce(&mut SslContextBuilder)) -> TlsContext {
+    let mut builder = SslContext::builder(SslMethod::tls()).unwrap();
+    builder.set_verify(SslVerifyMode::PEER);
+    configure(&mut builder);
+    TlsContext::OpenSsl010(builder.build())
+}
+
+/// The [`TlsContext::OpenSsl010Config`] flavour: an `SslConnectorBuilder`, which the
+/// driver finishes into a context itself.
+///
+/// Deliberately goes through [`SslConnector`], the recommended API: it already verifies
+/// the peer and is stricter than a bare context builder besides (restricted cipher list,
+/// `SslOptions::ALL`, no compression, no SSLv2/SSLv3), so this is what proves the driver
+/// works under those defaults rather than only under permissive ones.
+///
+/// Yields the [`OpenSsl010Config`] rather than a [`TlsContext`], because that is the type
+/// carrying the driver's own knobs; callers that just want a context can `.into()` it.
+pub(super) fn openssl_010_builder_context(
+    configure: impl FnOnce(&mut SslContextBuilder),
+) -> OpenSsl010Config {
+    let mut builder = SslConnector::builder(SslMethod::tls()).unwrap();
+    // `SslConnectorBuilder` derefs to `SslContextBuilder`, so the same configuration
+    // applies to both flavours.
+    configure(&mut builder);
+    OpenSsl010Config::new(builder)
+}
+
+/// Both openssl-backed [`TlsContext`] flavours, from one shared configuration.
+///
+/// From the driver's point of view these are two different backends, so every openssl
+/// sub-test has to cover both.
+pub(super) fn openssl_contexts(
+    configure: impl Fn(&mut SslContextBuilder),
+) -> [(&'static str, TlsContext); 2] {
+    [
+        ("OpenSsl010", openssl_010_context(&configure)),
+        (
+            "OpenSsl010Config",
+            openssl_010_builder_context(&configure).into(),
+        ),
+    ]
+}
+
 // Basic TLS test, with server not requiring client authentication.
 // It checks that driver can connect to all nodes of TLS-enabled cluster,
 // and execute requests on them.
@@ -154,15 +203,17 @@ async fn test_connect_tls_no_client_auth() {
     }
 
     async fn test(ca: &CertifiedIssuer<'static, KeyPair>, cluster: &mut Cluster) {
-        {
-            tracing::info!("OpenSsl010 sub-test");
-            let mut builder = SslContext::builder(SslMethod::tls()).unwrap();
-            builder.set_verify(SslVerifyMode::PEER);
+        // Trust our CA and nothing else. Replaces the default verify paths that
+        // `SslConnector` sets up, so the two flavours end up trusting the same thing.
+        let configure = |builder: &mut SslContextBuilder| {
             builder.set_cert_store(build_openssl_ca_store(ca));
+        };
+        for (name, tls_context) in openssl_contexts(configure) {
+            tracing::info!("{name} sub-test");
             let session = cluster
                 .make_session_builder()
                 .await
-                .tls_context(Some(TlsContext::OpenSsl010(builder.build())))
+                .tls_context(Some(tls_context))
                 .build()
                 .await
                 .unwrap();
@@ -205,15 +256,15 @@ async fn test_tls_verifies_hostname() {
     }
 
     async fn test(ca: &CertifiedIssuer<'static, KeyPair>, cluster: &mut Cluster) {
-        {
-            tracing::info!("OpenSsl010 sub-test");
-            let mut builder = SslContext::builder(SslMethod::tls()).unwrap();
-            builder.set_verify(SslVerifyMode::PEER);
+        let configure = |builder: &mut SslContextBuilder| {
             builder.set_cert_store(build_openssl_ca_store(ca));
+        };
+        for (name, tls_context) in openssl_contexts(configure) {
+            tracing::info!("{name} sub-test");
             let _err = cluster
                 .make_session_builder()
                 .await
-                .tls_context(Some(TlsContext::OpenSsl010(builder.build())))
+                .tls_context(Some(tls_context))
                 .build()
                 .await
                 .unwrap_err();
@@ -286,10 +337,7 @@ async fn test_connect_tls_with_client_auth() {
             .signed_by(&client_key, ca)
             .unwrap();
 
-        {
-            tracing::info!("OpenSsl010 sub-test");
-            let mut builder = SslContext::builder(SslMethod::tls()).unwrap();
-            builder.set_verify(SslVerifyMode::PEER);
+        let configure = |builder: &mut SslContextBuilder| {
             builder.set_cert_store(build_openssl_ca_store(ca));
             builder
                 .set_certificate(&X509::from_der(client_cert.der()).unwrap())
@@ -299,10 +347,13 @@ async fn test_connect_tls_with_client_auth() {
                     &PKey::private_key_from_pkcs8(client_key.serialized_der()).unwrap(),
                 )
                 .unwrap();
+        };
+        for (name, tls_context) in openssl_contexts(configure) {
+            tracing::info!("{name} sub-test");
             let session = cluster
                 .make_session_builder()
                 .await
-                .tls_context(Some(TlsContext::OpenSsl010(builder.build())))
+                .tls_context(Some(tls_context))
                 .build()
                 .await
                 .unwrap();
