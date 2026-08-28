@@ -52,6 +52,9 @@ mod statements {
     mod prepared {
         #![doc = include_str!("../../docs/source/statements/prepared.md")]
     }
+    mod bound {
+        #![doc = include_str!("../../docs/source/statements/bound.md")]
+    }
     mod batch {
         #![doc = include_str!("../../docs/source/statements/batch.md")]
     }

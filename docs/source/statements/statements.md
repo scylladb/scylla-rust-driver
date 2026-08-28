@@ -103,6 +103,14 @@ Takeway from the above: Do NOT use unprepared statements in a batch, unless such
 
 For more detailed comparison and more best practices, see [doc page about paging](paged.md).
 
+### [Bound](bound.md) statements
+
+A prepared statement can have its values bound to it up front, yielding a `BoundStatement`
+that carries the serialized values with it and is executed without passing any values.
+This is useful when the values cannot be kept in their Rust form until execution -
+e.g. when statements ready for execution are stored in one collection, or handed over
+to another layer that knows nothing about the values' types. See [bound statement](bound.md).
+
 ### Queries are fully asynchronous - you can run as many of them in parallel as you wish
 
 ## `USE KEYSPACE`
@@ -118,6 +126,7 @@ There is a special functionality to enable [USE keyspace](usekeyspace.md).
    values
    result
    prepared
+   bound
    batch
    paged
    usekeyspace
