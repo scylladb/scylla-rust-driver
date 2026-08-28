@@ -144,11 +144,13 @@ pub(super) fn build_openssl_ca_store(ca: &CertifiedIssuer<'_, KeyPair>) -> X509S
 ///
 /// A bare [`SslContextBuilder`] verifies nothing at all by default, so peer verification
 /// has to be switched on here - which is exactly why the driver recommends the other
-/// flavour.
+/// flavour, and why this one is deprecated. Deprecated is not unsupported, though, so
+/// the tests keep covering it.
 pub(super) fn openssl_010_context(configure: impl FnOnce(&mut SslContextBuilder)) -> TlsContext {
     let mut builder = SslContext::builder(SslMethod::tls()).unwrap();
     builder.set_verify(SslVerifyMode::PEER);
     configure(&mut builder);
+    #[expect(deprecated)]
     TlsContext::OpenSsl010(builder.build())
 }
 

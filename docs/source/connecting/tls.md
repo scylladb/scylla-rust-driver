@@ -69,6 +69,10 @@ address in its subject alternative name. Replace that trust with `set_cert_store
 Beware that `set_ca_file` *adds* to the trusted set rather than replacing it, so it does not
 narrow anything down on its own.
 
+**_NOTE:_** Passing an already-built `SslContext` (`TlsContext::OpenSsl010`) still works, but is
+deprecated since 1.9.0: the driver cannot configure a context it did not build, so such a context
+cannot support TLS session tickets.
+
 For example, if database certificate is in the file `ca.crt`:
 ```rust
 # extern crate scylla;

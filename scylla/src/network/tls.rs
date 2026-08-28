@@ -128,6 +128,8 @@ impl TlsConfig {
     pub(crate) fn new_tls(&self) -> Result<Tls, TlsError> {
         match self.context {
             #[cfg(feature = "openssl-010")]
+            // `TlsContext::OpenSsl010` is the deprecated variant we still have to support.
+            #[expect(deprecated)]
             TlsContext::OpenSsl010(ref context) => Ok(Tls::OpenSsl010(openssl::new_ssl(context)?)),
             #[cfg(feature = "openssl-010")]
             TlsContext::OpenSsl010Config(ref context) => Ok(Tls::OpenSsl010(context.new_ssl()?)),
