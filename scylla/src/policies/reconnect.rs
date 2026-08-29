@@ -36,6 +36,34 @@ pub trait ReconnectPolicySession: Send + std::fmt::Debug {
 pub trait ReconnectPolicy: Send + Sync + std::fmt::Debug {
     /// Returns a new instance of the policy for the single host.
     fn new_session(&self) -> Box<dyn ReconnectPolicySession>;
+
+    /// Lets the driver recognise its own built-in policies by downcasting, so that
+    /// the driver configuration report can describe them precisely. Implementations
+    /// outside this crate keep the `None` default and are reported generically.
+    ///
+    /// Not part of the stable API; may change at any time.
+    #[doc(hidden)]
+    #[cfg_attr(
+        not(all(scylla_unstable, feature = "unstable-reconnect-policy")),
+        expect(dead_code)
+    )]
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
+    /// Name used to describe this policy generically in the driver configuration
+    /// report. The default is the implementor's own type name, so no implementation
+    /// is required.
+    ///
+    /// Not part of the stable API; may change at any time.
+    #[doc(hidden)]
+    #[cfg_attr(
+        not(all(scylla_unstable, feature = "unstable-reconnect-policy")),
+        expect(dead_code)
+    )]
+    fn reported_name(&self) -> &'static str {
+        crate::policies::simple_type_name::<Self>()
+    }
 }
 
 #[derive(Debug)]
@@ -149,6 +177,10 @@ impl ReconnectPolicy for ExponentialReconnectPolicy {
             jitter_range: self.jitter_range.clone(),
         })
     }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
 }
 
 /// Constant reconnect policy.
@@ -199,6 +231,10 @@ impl ConstantReconnectPolicy {
 impl ReconnectPolicy for ConstantReconnectPolicy {
     fn new_session(&self) -> Box<dyn ReconnectPolicySession> {
         Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
     }
 }
 

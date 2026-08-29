@@ -574,6 +574,10 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         "DefaultPolicy".to_string()
     }
 
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
     fn on_request_success(
         &self,
         _routing_info: &RoutingInfo,

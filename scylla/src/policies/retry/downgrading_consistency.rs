@@ -30,6 +30,10 @@ impl RetryPolicy for DowngradingConsistencyRetryPolicy {
     fn new_session(&self) -> Box<dyn RetrySession> {
         Box::new(DowngradingConsistencyRetrySession::new())
     }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
 }
 
 /// Implementation of [RetrySession] for [DowngradingConsistencyRetryPolicy].

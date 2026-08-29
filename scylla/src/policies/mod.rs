@@ -29,3 +29,54 @@ pub(crate) mod reconnect;
 pub mod retry;
 pub mod speculative_execution;
 pub mod timestamp_generator;
+
+/// Returns the name of `T` with the leading module path of the outermost type stripped.
+///
+/// Supplies the `name` that the driver configuration report sends for policies
+/// the driver does not recognise, so it must be allocation-free and never empty.
+pub(crate) fn simple_type_name<T: ?Sized>() -> &'static str {
+    let full = std::any::type_name::<T>();
+    // Only the outermost type's path may be stripped: in `a::b::Foo<some::Bar>`
+    // the `::` inside the generic arguments must be left alone.
+    let head = match full.find('<') {
+        Some(idx) => &full[..idx],
+        None => full,
+    };
+    match head.rfind("::") {
+        // The `name` field is declared non-empty by the schema, so fall back to
+        // the unstripped name rather than returning "".
+        Some(idx) if idx + 2 < full.len() => &full[idx + 2..],
+        _ => full,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::simple_type_name;
+    use crate::policies::load_balancing::DefaultPolicy;
+    use crate::policies::retry::{DefaultRetryPolicy, RetryPolicy};
+
+    #[test]
+    fn test_simple_type_name() {
+        // Names without a module path are returned as they are.
+        assert_eq!(simple_type_name::<u32>(), "u32");
+        assert_eq!(simple_type_name::<&str>(), "&str");
+
+        // The leading path of the outermost type is stripped...
+        assert_eq!(simple_type_name::<String>(), "String");
+        assert_eq!(
+            simple_type_name::<DefaultRetryPolicy>(),
+            "DefaultRetryPolicy"
+        );
+        assert_eq!(simple_type_name::<DefaultPolicy>(), "DefaultPolicy");
+
+        // ...including for the trait objects the policy traits pass in as `Self`.
+        assert_eq!(simple_type_name::<dyn RetryPolicy>(), "RetryPolicy");
+
+        // ...but the paths inside the generic arguments are left alone.
+        assert_eq!(
+            simple_type_name::<Vec<String>>(),
+            "Vec<alloc::string::String>"
+        );
+    }
+}

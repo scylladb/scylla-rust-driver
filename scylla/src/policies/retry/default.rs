@@ -27,6 +27,10 @@ impl RetryPolicy for DefaultRetryPolicy {
     fn new_session(&self) -> Box<dyn RetrySession> {
         Box::new(DefaultRetrySession::new())
     }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
 }
 
 /// Implementation of [RetrySession] for [DefaultRetryPolicy].

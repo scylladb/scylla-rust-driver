@@ -41,6 +41,26 @@ pub trait SpeculativeExecutionPolicy: std::fmt::Debug + Send + Sync {
 
     /// The delay between each speculative execution
     fn retry_interval(&self, context: &Context) -> Duration;
+
+    /// Lets the driver recognise its own built-in policies by downcasting, so that
+    /// the driver configuration report can describe them precisely. Implementations
+    /// outside this crate keep the `None` default and are reported generically.
+    ///
+    /// Not part of the stable API; may change at any time.
+    #[doc(hidden)]
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
+    /// Name used to describe this policy generically in the driver configuration
+    /// report. The default is the implementor's own type name, so no implementation
+    /// is required.
+    ///
+    /// Not part of the stable API; may change at any time.
+    #[doc(hidden)]
+    fn reported_name(&self) -> &'static str {
+        crate::policies::simple_type_name::<Self>()
+    }
 }
 
 /// A [`SpeculativeExecutionPolicy`] that schedules a given number of speculative
@@ -77,6 +97,10 @@ impl SpeculativeExecutionPolicy for SimpleSpeculativeExecutionPolicy {
     fn retry_interval(&self, _: &Context) -> Duration {
         self.retry_interval
     }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
 }
 
 #[cfg(feature = "metrics")]
@@ -98,6 +122,10 @@ impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
             }
         };
         Duration::from_millis(ms)
+    }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
     }
 }
 
