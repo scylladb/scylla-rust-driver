@@ -101,7 +101,7 @@ pub(crate) struct Connection {
     features: ConnectionFeatures,
     router_handle: Arc<RouterHandle>,
     #[cfg(test)]
-    socket: socket2::Socket,
+    socket: Option<socket2::Socket>,
 }
 
 struct RouterHandle {
@@ -512,7 +512,7 @@ impl Connection {
         #[cfg(test)]
         let socket = {
             use std::os::unix::io::AsFd;
-            socket2::Socket::from(stream.as_fd().try_clone_to_owned()?)
+            Some(socket2::Socket::from(stream.as_fd().try_clone_to_owned()?))
         };
 
         let _worker_handle = Self::run_router(
@@ -1984,8 +1984,8 @@ impl Connection {
     }
 
     #[cfg(test)]
-    pub(crate) fn get_sock_ref(&self) -> socket2::SockRef<'_> {
-        socket2::SockRef::from(&self.socket)
+    pub(crate) fn get_sock_ref(&self) -> Option<socket2::SockRef<'_>> {
+        self.socket.as_ref().map(socket2::SockRef::from)
     }
 }
 
@@ -3366,7 +3366,7 @@ mod tests {
             .get_random_connection()
             .unwrap();
 
-        let sock_ref = connection.get_sock_ref();
+        let sock_ref = connection.get_sock_ref().unwrap();
 
         // Linux kernel doubles SO_RCVBUF and SO_SNDBUF values,
         // so we check that the actual buffer sizes are at least as large as the requested ones.
