@@ -1,6 +1,7 @@
 use crate::client::client_routes::{
     ClientRoutesAddressTranslator, ClientRoutesConfig, ClientRoutesSubscriber,
 };
+use crate::client::driver_config::DriverConfigReporter;
 use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::cluster::control_connection::MetadataRequestTimeouts;
 use crate::cluster::metadata::update::{
@@ -64,6 +65,7 @@ impl Cluster {
     pub(crate) async fn new(
         known_nodes: Vec<KnownNode>,
         mut pool_config: PoolConfig,
+        driver_config_reporter: Option<Arc<DriverConfigReporter>>,
         keyspaces_to_fetch: Vec<String>,
         schema_metadata_fetch_mode: SchemaMetadataFetchMode,
         metadata_request_timeouts: MetadataRequestTimeouts,
@@ -105,6 +107,7 @@ impl Cluster {
             known_nodes,
             hostname_resolution_timeout,
             pool_config.connection_config.clone(),
+            driver_config_reporter,
             metadata_request_timeouts,
             keyspaces_to_fetch,
             schema_metadata_fetch_mode,

@@ -8,6 +8,7 @@ use super::pager::QueryPager;
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
 use crate::client::client_routes::ClientRoutesConfig;
+use crate::client::driver_config::DriverConfigReporter;
 use crate::client::execution::{
     NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RunRequestResult,
     choose_tablet_block_hint,
@@ -1397,6 +1398,8 @@ impl Session {
 
         let tcp_socket_options = config.tcp_socket_options();
 
+        let driver_config_reporter = Some(Arc::new(DriverConfigReporter::new()));
+
         let node_location_preference = config.node_location_preference;
         let known_nodes = config.known_nodes;
 
@@ -1441,6 +1444,10 @@ impl Session {
             tablet_sender: Some(tablet_sender),
             identity: config.identity,
             session_id,
+            // Pool connections do not report the configuration: only the control
+            // connection's config gets the reporter, in
+            // `ControlConnectionEstablisher::new`.
+            driver_config_reporter: None,
         };
 
         let pool_config = PoolConfig {
@@ -1486,6 +1493,7 @@ impl Session {
         let cluster = Cluster::new(
             known_nodes,
             pool_config,
+            driver_config_reporter,
             config.keyspaces_to_fetch,
             schema_metadata_fetch_mode,
             MetadataRequestTimeouts {

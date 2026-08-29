@@ -2,6 +2,7 @@ use super::tls::{TlsConfig, TlsProvider};
 use crate::authentication::AuthenticatorProvider;
 use crate::client::Compression;
 use crate::client::SelfIdentity;
+use crate::client::driver_config::DriverConfigReporter;
 use crate::client::pager::{NextRowError, QueryPager};
 use crate::cluster::NodeAddr;
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
@@ -348,6 +349,18 @@ pub(crate) struct ConnectionConfig {
     /// Reported to the cluster in `STARTUP`, so that the `system.clients` rows
     /// of all connections belonging to one session can be correlated.
     pub(crate) session_id: Uuid,
+
+    /// Builds the configuration report sent in `STARTUP`. `None` disables
+    /// reporting.
+    ///
+    /// Should be `Some` only in control connections: the report's value is the
+    /// same for every connection of a session, so sending it on all of them
+    /// would only bloat their `STARTUP` frames. It is put on the control
+    /// connection's config in [`ControlConnectionEstablisher::new`].
+    ///
+    /// [`ControlConnectionEstablisher::new`]:
+    ///     crate::cluster::metadata::cc_establisher::ControlConnectionEstablisher::new
+    pub(crate) driver_config_reporter: Option<Arc<DriverConfigReporter>>,
 }
 
 impl ConnectionConfig {
@@ -379,6 +392,7 @@ impl ConnectionConfig {
             tablet_sender: self.tablet_sender.clone(),
             identity: self.identity.clone(),
             session_id: self.session_id,
+            driver_config_reporter: self.driver_config_reporter.clone(),
             #[cfg(test)]
             transport_factory: None,
         }
@@ -410,6 +424,8 @@ pub(crate) struct HostConnectionConfig {
 
     pub(crate) identity: SelfIdentity<'static>,
     pub(crate) session_id: Uuid,
+    // should be Some only in control connections
+    pub(crate) driver_config_reporter: Option<Arc<DriverConfigReporter>>,
 
     #[cfg(test)]
     pub(crate) transport_factory: Option<Arc<scylla_proxy::TransportFactory>>,
@@ -442,6 +458,9 @@ impl Default for HostConnectionConfig {
 
             // Test connections do not correlate anything in `system.clients`.
             session_id: Uuid::nil(),
+
+            // Test connections do not report their configuration.
+            driver_config_reporter: None,
 
             #[cfg(test)]
             transport_factory: None,
@@ -476,6 +495,9 @@ impl Default for ConnectionConfig {
 
             // Test connections do not correlate anything in `system.clients`.
             session_id: Uuid::nil(),
+
+            // Test connections do not report their configuration.
+            driver_config_reporter: None,
         }
     }
 }
@@ -2247,6 +2269,16 @@ pub(crate) async fn open_connection(
         Cow::Borrowed(options::SESSION_ID),
         Cow::Borrowed(&*session_id),
     );
+
+    // The configuration report, sent only by the control connection: its value is
+    // the same for every connection of a session, so sending it on all of them
+    // would only bloat their STARTUP frames. Only the control connection's config
+    // carries a reporter - see `ConnectionConfig::driver_config_reporter`.
+    if let Some(reporter) = config.driver_config_reporter.as_deref()
+        && let Some(report) = reporter.report(connection.is_to_scylladb())
+    {
+        options.insert(Cow::Borrowed(options::DRIVER_CONFIG), Cow::Owned(report));
+    }
 
     // Optional compression.
     if let Some(compression) = &config.compression {
