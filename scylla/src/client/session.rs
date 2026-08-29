@@ -105,6 +105,7 @@ pub struct Session {
     tracing_info_fetch_consistency: Consistency,
     node_location_preference: Arc<NodeLocationPreference>,
     internal_statements: InternalStatements,
+    session_id: Uuid,
 }
 
 /// This implementation deliberately omits some details from Cluster in order
@@ -147,6 +148,7 @@ impl std::fmt::Debug for Session {
             &self.tracing_info_fetch_consistency,
         )
         .field("node_location_preference", &self.node_location_preference)
+        .field("session_id", &self.session_id)
         .finish()
     }
 }
@@ -1364,6 +1366,8 @@ impl Session {
     pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
         config.validate()?;
 
+        let session_id = Uuid::new_v4();
+
         let node_location_preference = config.node_location_preference;
         let known_nodes = config.known_nodes;
 
@@ -1414,6 +1418,7 @@ impl Session {
             keepalive_timeout: config.keepalive_timeout,
             tablet_sender: Some(tablet_sender),
             identity: config.identity,
+            session_id,
         };
 
         let pool_config = PoolConfig {
@@ -1496,6 +1501,7 @@ impl Session {
             tracing_info_fetch_consistency: config.tracing_info_fetch_consistency,
             node_location_preference: Arc::new(node_location_preference),
             internal_statements: InternalStatements::default(),
+            session_id,
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -2317,6 +2323,20 @@ impl Session {
     #[inline]
     pub fn get_keyspace(&self) -> Option<Arc<String>> {
         self.keyspace_name.load_full()
+    }
+
+    /// Returns the identifier of this session.
+    ///
+    /// Every connection the session opens reports this value to the cluster
+    /// under the `SESSION_ID` `STARTUP` option, where it lands in
+    /// `system.clients.client_options`. Logging it, or attaching it as a metric
+    /// label, is what allows client-side observations to be matched with those
+    /// rows, instead of correlating by address and port.
+    ///
+    /// The identifier is assigned at session creation and never changes.
+    #[inline]
+    pub fn session_id(&self) -> Uuid {
+        self.session_id
     }
 
     // Tries getting the tracing info

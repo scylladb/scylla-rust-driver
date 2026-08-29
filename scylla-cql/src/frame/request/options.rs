@@ -30,6 +30,7 @@ pub const DRIVER_VERSION: &str = "DRIVER_VERSION";
 pub const APPLICATION_NAME: &str = "APPLICATION_NAME";
 pub const APPLICATION_VERSION: &str = "APPLICATION_VERSION";
 pub const CLIENT_ID: &str = "CLIENT_ID";
+pub const SESSION_ID: &str = "SESSION_ID";
 
 /* Value names for options in SUPPORTED/STARTUP */
 pub const DEFAULT_CQL_PROTOCOL_VERSION: &str = "4.0.0";
