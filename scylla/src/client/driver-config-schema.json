@@ -1,0 +1,1026 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scylladb.com/schemas/driver-client-options/v1.json",
+  "title": "ScyllaDB driver DRIVER_CONFIG configuration",
+  "description": "Schema for the JSON value sent under the STARTUP option key DRIVER_CONFIG, describing the effective client configuration. The top-level object must include `version` and the required configuration groups listed by this schema. Unknown top-level keys are rejected. Built-in groups reject unknown keys and require the keys listed in each group; custom policy objects may include additional implementation-specific public attributes where explicitly allowed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "connection",
+    "control-plane",
+    "query"
+  ],
+  "properties": {
+    "version": {
+      "description": "Major schema version. Adding keys is backward-compatible and does not bump this; only changing/removing the meaning of an existing key does.",
+      "type": "integer",
+      "const": 1
+    },
+    "connection": {
+      "$ref": "#/$defs/connection"
+    },
+    "control-plane": {
+      "$ref": "#/$defs/control-plane"
+    },
+    "query": {
+      "$ref": "#/$defs/query"
+    }
+  },
+  "$defs": {
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "retryPolicyBackoff": {
+      "description": "Delay inserted between retry attempts of a retry policy. Discriminated union: when present, `type` selects the backoff algorithm and each algorithm carries only its own parameters. Absent when there is no delay between attempts.",
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Exponential backoff: the delay starts at base-ms and doubles after each attempt (capped at max-ms), with a small random jitter to de-synchronize concurrent retries. When max-ms is present, it MUST be greater than or equal to base-ms; this cross-property invariant must be checked by the producer or consumer because JSON Schema Draft 2020-12 cannot compare sibling numeric values.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "base-ms"
+          ],
+          "properties": {
+            "type": {
+              "const": "exponential",
+              "description": "Exponential backoff algorithm."
+            },
+            "base-ms": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Initial delay between retries in milliseconds; the starting delay that doubles each attempt."
+            },
+            "max-ms": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Maximum delay between retries in milliseconds; the exponentially growing delay is capped here. MUST be greater than or equal to base-ms. Absent when no maximum delay is configured."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Constant backoff: wait a fixed, strictly positive delay between every retry attempt.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "delay-ms"
+          ],
+          "properties": {
+            "type": {
+              "const": "constant",
+              "description": "Constant (fixed-delay) backoff algorithm."
+            },
+            "delay-ms": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Fixed delay between retries in milliseconds. Must be greater than 0; omit backoff when no delay is configured."
+            }
+          }
+        }
+      ]
+    },
+    "requests": {
+      "type": "object",
+      "description": "Per-connection CQL request and protocol stream capacity. `orphaned.max` is expected to be lower than `in-flight.max`.",
+      "additionalProperties": false,
+      "required": [
+        "in-flight"
+      ],
+      "properties": {
+        "in-flight": {
+          "type": "object",
+          "description": "Requests currently awaiting a response on the connection.",
+          "additionalProperties": false,
+          "required": [
+            "max"
+          ],
+          "properties": {
+            "max": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Maximum number of concurrent in-flight requests allowed on one connection."
+            }
+          }
+        },
+        "orphaned": {
+          "type": "object",
+          "description": "Requests that the client stopped waiting for but whose stream identifiers cannot yet be safely reused.",
+          "additionalProperties": false,
+          "required": [
+            "max"
+          ],
+          "properties": {
+            "max": {
+              "$ref": "#/$defs/nonNegativeInteger",
+              "description": "Maximum number of orphaned requests allowed on one connection before the driver closes and replaces it. Absent only when this bound is unknown, for example when the client never replaces a connection over accumulated orphans and so has no limit to report."
+            }
+          }
+        }
+      }
+    },
+    "connection-pool": {
+      "description": "Connection pooling configuration.",
+      "type": "object",
+      "required": [
+        "shard-aware"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "shard-aware": {
+          "type": "object",
+          "required": [
+            "enabled"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Whether the client is configured to use ScyllaDB's dedicated shard-aware port (default 19042, TLS 19043) to reach a chosen shard in a single connect, versus the fallback of opening connections on the normal port and reading the server-assigned shard. Reports configuration intent; at runtime the port must also be advertised by the server and reachable, otherwise the client falls back transparently."
+            }
+          }
+        }
+      }
+    },
+    "connection": {
+      "description": "Connection-level settings: socket read/write/connect timeouts plus the CQL-level idle heartbeat. Durations are in milliseconds. Optional duration fields are absent when unset or not applicable.",
+      "type": "object",
+      "required": [
+        "connect",
+        "requests",
+        "pool",
+        "socket",
+        "reconnection"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "requests": {
+          "$ref": "#/$defs/requests"
+        },
+        "node-preference": {
+          "$ref": "#/$defs/node-location-preference",
+          "description": "Defines part of the cluster driver holds connections to."
+        },
+        "connect": {
+          "type": "object",
+          "description": "Settings for establishing a TCP/CQL connection to a node.",
+          "additionalProperties": false,
+          "properties": {
+            "timeout-ms": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Timeout for establishing a TCP/CQL connection to a node."
+            }
+          }
+        },
+        "read": {
+          "type": "object",
+          "description": "Settings for reading from a connection.",
+          "additionalProperties": false,
+          "properties": {
+            "timeout-ms": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Read operation timeout."
+            }
+          }
+        },
+        "write": {
+          "type": "object",
+          "description": "Settings for writing to a connection. Direction-specific options such as write coalescing are expected to be added here in a future schema version.",
+          "additionalProperties": false,
+          "properties": {
+            "coalescing": {
+              "type": "object",
+              "description": "Settings for write coalescing. It is a placeholder for v2",
+              "additionalProperties": false,
+              "properties": {}
+            },
+            "timeout-ms": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Write operation timeout."
+            }
+          }
+        },
+        "heartbeat": {
+          "type": "object",
+          "description": "Reserved for CQL-level idle heartbeat settings. Optional and intentionally empty in this schema version. It is a placeholder for v2",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "pool": {
+          "$ref": "#/$defs/connection-pool",
+          "description": "A connection pooling configuration."
+        },
+        "socket": {
+          "$ref": "#/$defs/socket"
+        },
+        "reconnection": {
+          "description": "Connection reconnection configuration.",
+          "type": "object",
+          "required": [
+            "policy"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "policy": {
+              "$ref": "#/$defs/reconnection-policy"
+            }
+          }
+        },
+        "tls": {
+          "$ref": "#/$defs/tls"
+        }
+      }
+    },
+    "control-plane": {
+      "description": "Control-plane timeout settings for internal/system queries run over the control connection and for schema agreement. Each value is in milliseconds. Optional values are absent when unset or not applicable.",
+      "type": "object",
+      "required": [
+        "queries",
+        "schema"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "queries": {
+          "type": "object",
+          "description": "Control-plane query settings.",
+          "additionalProperties": false,
+          "required": [
+            "system"
+          ],
+          "properties": {
+            "system": {
+              "type": "object",
+              "description": "Settings for internal/system queries run over the control connection.",
+              "additionalProperties": false,
+              "required": [
+                "timeout"
+              ],
+              "properties": {
+                "timeout": {
+                  "type": "object",
+                  "description": "Timeouts applied to internal/system queries. Each value is in milliseconds. Optional values are absent when unset or not applicable.",
+                  "additionalProperties": false,
+                  "properties": {
+                    "client-side-ms": {
+                      "$ref": "#/$defs/positiveInteger",
+                      "description": "A client-side timeout for internal queries."
+                    },
+                    "server-side-ms": {
+                      "$ref": "#/$defs/positiveInteger",
+                      "description": "A server-side timeout for internal queries."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "schema": {
+          "type": "object",
+          "description": "Control-plane schema settings.",
+          "additionalProperties": false,
+          "required": [
+            "agreement"
+          ],
+          "properties": {
+            "agreement": {
+              "type": "object",
+              "description": "Settings for schema agreement across nodes.",
+              "additionalProperties": false,
+              "required": [
+                "timeout-ms"
+              ],
+              "properties": {
+                "timeout-ms": {
+                  "$ref": "#/$defs/nonNegativeInteger",
+                  "description": "Maximum time to wait for schema agreement across nodes. Always a concrete value; 0 means do not wait for agreement."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "socket": {
+      "description": "Low-level TCP socket options applied to client connections. Boolean options (tcp-no-delay, keep-alive, reuse-address) report the effective on/off state: when no explicit value is configured, the OS/platform default is reported. Buffer sizes are in bytes and linger is in seconds; these fields are absent when unset (kernel auto-tuned buffer / linger disabled).",
+      "type": "object",
+      "required": [
+        "tcp-no-delay",
+        "keep-alive",
+        "reuse-address"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tcp-no-delay": {
+          "type": "boolean",
+          "description": "TCP_NODELAY: disable Nagle's algorithm. Reports the effective value; when no explicit value is configured, the OS/platform default is reported."
+        },
+        "keep-alive": {
+          "type": "boolean",
+          "description": "SO_KEEPALIVE: OS-level TCP keep-alive probes on idle connections. Reports the effective on/off state; when no explicit value is configured, the OS/platform default is reported."
+        },
+        "reuse-address": {
+          "type": "boolean",
+          "description": "SO_REUSEADDR: allow reuse of a local address. Reports the effective on/off state; when no explicit value is configured, the OS/platform default is reported."
+        },
+        "linger": {
+          "type": "object",
+          "required": [
+            "interval-s"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "interval-s": {
+              "$ref": "#/$defs/nonNegativeInteger",
+              "description": "SO_LINGER lingering-close interval in seconds."
+            }
+          }
+        },
+        "receive-buffer": {
+          "type": "object",
+          "required": [
+            "size-bytes"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "size-bytes": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "SO_RCVBUF socket receive buffer size hint in bytes."
+            }
+          }
+        },
+        "send-buffer": {
+          "type": "object",
+          "required": [
+            "size-bytes"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "size-bytes": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "SO_SNDBUF socket send buffer size hint in bytes."
+            }
+          }
+        }
+      }
+    },
+    "reconnection-policy": {
+      "description": "Defines how connection attempts to a node are retried after a connection failure.",
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Exponential backoff reconnection policy. max-ms MUST be greater than or equal to base-ms; this cross-property invariant must be checked by the producer or consumer because JSON Schema Draft 2020-12 cannot compare sibling numeric values.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "base-ms",
+            "max-ms"
+          ],
+          "properties": {
+            "type": {
+              "const": "exponential",
+              "description": "Reconnection policy type."
+            },
+            "base-ms": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Initial delay before the first reconnection attempt in milliseconds. Always a concrete value when this policy is reported."
+            },
+            "max-ms": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Maximum delay between reconnection attempts in milliseconds. MUST be greater than or equal to base-ms. Always a concrete value when this policy is reported."
+            },
+            "max-attempts": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Maximum number of reconnection attempts before giving up. Absent when attempts are unlimited."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Constant-delay reconnection policy. A delay of 0 means reconnect immediately.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "delay-ms"
+          ],
+          "properties": {
+            "type": {
+              "const": "constant",
+              "description": "Reconnection policy type."
+            },
+            "delay-ms": {
+              "$ref": "#/$defs/nonNegativeInteger",
+              "description": "Fixed delay between reconnection attempts in milliseconds; 0 means reconnect immediately. Always a concrete value when this policy is reported."
+            },
+            "max-attempts": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Maximum number of reconnection attempts before giving up. Absent when attempts are unlimited."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "A user-supplied reconnection policy that is not one of the built-ins. Identified by `name` only. Implementations that can introspect a policy instance MAY also serialize its public attributes as additional properties on this object.",
+          "additionalProperties": true,
+          "required": [
+            "type",
+            "name"
+          ],
+          "properties": {
+            "type": {
+              "const": "custom",
+              "description": "Reconnection policy type: a user-supplied policy."
+            },
+            "name": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Name of the custom policy (e.g. the public type name of the user-provided policy)."
+            }
+          }
+        },
+        {
+          "type": "null",
+          "description": "No reconnection attempts will be made."
+        }
+      ]
+    },
+    "retry-policy": {
+      "description": "Controls whether and how a failed query is retried. Discriminated on `type`; each policy only permits its own parameters.",
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Standard error-aware retry policy.",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "standard-error-aware",
+              "description": "Retry policy type."
+            },
+            "max-retries": {
+              "$ref": "#/$defs/nonNegativeInteger",
+              "description": "Maximum number of retries before giving up; 0 means no retries. Absent when no explicit retry limit is configured."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Simple retry policy with a fixed number of retries.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "max-retries"
+          ],
+          "properties": {
+            "type": {
+              "const": "simple",
+              "description": "Retry policy type."
+            },
+            "max-retries": {
+              "$ref": "#/$defs/nonNegativeInteger",
+              "description": "Maximum number of retries before giving up. Always a concrete value when this policy is reported; 0 means no retries."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Fall-through retry policy: never retries anything and always rethrows the original error to the caller. Every error type — read timeout, write timeout, unavailable, and unexpected request errors (connection errors, Overloaded, ServerError, Bootstrapping) — is propagated unchanged. This is a true no-op and is stricter than the 'never' policy, which still retries the next host on connection/server errors.",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "fallthrough",
+              "description": "Retry policy type."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Never-retry policy: does not retry read timeouts, write timeouts, or unavailable errors, but may try the next host for connection and server errors.",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "never",
+              "description": "Retry policy type."
+            },
+            "max-retries": {
+              "$ref": "#/$defs/nonNegativeInteger",
+              "description": "Maximum number of retries before giving up; 0 means no retries. Absent when no explicit retry limit is configured."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Downgrading-consistency retry policy: retries at a lower consistency level on failure.",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "downgrading-consistency",
+              "description": "Retry policy type."
+            },
+            "max-retries": {
+              "$ref": "#/$defs/nonNegativeInteger",
+              "description": "Maximum number of retries before giving up; 0 means no retries. Absent when no explicit retry limit is configured."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "A user-supplied retry policy that is not one of the built-ins. Identified by `name` only. Implementations that can introspect a policy instance MAY also serialize its public attributes as additional properties on this object.",
+          "additionalProperties": true,
+          "required": [
+            "type",
+            "name"
+          ],
+          "properties": {
+            "type": {
+              "const": "custom",
+              "description": "Retry policy type: a user-supplied policy."
+            },
+            "name": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Name of the custom policy (e.g. the public type name of the user-provided policy)."
+            },
+            "description": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Textual description of what this policy does."
+            },
+            "max-retries": {
+              "$ref": "#/$defs/nonNegativeInteger",
+              "description": "Maximum number of retries before giving up; 0 means no retries. Absent when no explicit retry limit is configured."
+            }
+          }
+        }
+      ]
+    },
+    "speculative-execution-policy": {
+      "description": "Controls pre-emptive duplicate requests to other replicas. Discriminated on `type`; each policy only permits its own parameters.",
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Constant-delay speculative execution: launch extra executions after a fixed delay. A delay of 0 means launch them immediately.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "max-executions",
+            "delay-ms"
+          ],
+          "properties": {
+            "type": {
+              "const": "constant",
+              "description": "Speculative execution policy type."
+            },
+            "max-executions": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Maximum number of speculative executions per request."
+            },
+            "delay-ms": {
+              "$ref": "#/$defs/nonNegativeInteger",
+              "description": "Delay before launching each additional execution in milliseconds; 0 means launch immediately."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Percentile-based speculative execution: launch extra executions once latency exceeds a percentile threshold.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "max-executions",
+            "percentile"
+          ],
+          "properties": {
+            "type": {
+              "const": "percentile",
+              "description": "Speculative execution policy type."
+            },
+            "max-executions": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Maximum number of speculative executions per request."
+            },
+            "percentile": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 100,
+              "description": "Latency percentile (0–100, exclusive; e.g. 99.0) that triggers an additional execution."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "A user-supplied speculative execution policy that is not one of the built-ins. Identified by `name` only. Implementations that can introspect a policy instance MAY also serialize its public attributes as additional properties on this object.",
+          "additionalProperties": true,
+          "required": [
+            "type",
+            "name"
+          ],
+          "properties": {
+            "type": {
+              "const": "custom",
+              "description": "Speculative execution policy type: a user-supplied policy."
+            },
+            "name": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Name of the custom policy (e.g. the public type name of the user-provided policy)."
+            },
+            "description": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Textual description of what this policy does."
+            }
+          }
+        }
+      ]
+    },
+    "adaptive-ordering": {
+      "type": "object",
+      "description": "Dynamic reordering of otherwise eligible candidate nodes using runtime responsiveness, load, or health observations. Absent when adaptive ordering is disabled. This capability does not imply a particular algorithm.",
+      "additionalProperties": false,
+      "required": [
+        "signals"
+      ],
+      "properties": {
+        "signals": {
+          "type": "array",
+          "description": "Runtime observations used to influence ordering.",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "latency",
+              "response-rate",
+              "in-flight-requests",
+              "recovery-state"
+            ]
+          }
+        }
+      }
+    },
+    "load-balancing-policy": {
+      "description": "Load balancing / host selection policy, discriminated by `type`. A built-in token-aware policy is reported with `type` set to `token-aware` and the normalized capability flags below. A user-supplied policy is reported with `type` set to `custom`, a `name`, and, optionally, serialized public attributes.",
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "A built-in load balancing policy, reported with normalized location/awareness flags.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "load-distribution",
+            "fallback-to-non-preferred-nodes"
+          ],
+          "properties": {
+            "type": {
+              "const": "token-aware",
+              "description": "Load balancing policy type: the built-in token-aware policy."
+            },
+            "load-distribution": {
+              "type": "string",
+              "enum": [
+                "shuffle",
+                "round-robin",
+                "replica-set"
+              ],
+              "description": "Strategy used to distribute requests across otherwise equally preferred nodes. `shuffle` randomizes node selection across query plans; `round-robin` rotates the first selected node across successive query plans; `replica-set` preserves the replica set's existing order without reordering it."
+            },
+            "fallback-to-non-preferred-nodes": {
+              "type": "boolean",
+              "description": "Whether requests may fail over to nodes outside of the preference configured by `query.load-balancing.node-preference`."
+            },
+            "adaptive-ordering": {
+              "$ref": "#/$defs/adaptive-ordering"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "A user-supplied load balancing policy that is not one of the built-ins. Identified by `name` only. Implementations that can introspect a policy instance MAY also serialize its public attributes as additional properties on this object.",
+          "additionalProperties": true,
+          "required": [
+            "type",
+            "name"
+          ],
+          "properties": {
+            "type": {
+              "const": "custom",
+              "description": "Load balancing policy type: a user-supplied policy."
+            },
+            "name": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Name of the custom policy (e.g. the public type name of the user-provided policy)."
+            },
+            "description": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Textual description of what this policy does."
+            }
+          }
+        }
+      ]
+    },
+    "node-location-preference": {
+      "description": "Session-level datacenter/rack preference, set independently of the load balancing policy. Some implementations let users set a preferred DC/rack directly on the session configuration; the load balancing policy and other components read this preference unless a policy overrides it. May be sourced from different places; if DC/rack preferences are specified in the load balancing policy, they should be reported here.",
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Explicitly configured datacenter preference.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "local-dc"
+          ],
+          "properties": {
+            "type": {
+              "const": "dc",
+              "description": "Session-level location preference: explicit datacenter."
+            },
+            "local-dc": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Explicitly configured preferred datacenter."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Explicitly configured datacenter and rack preference.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "local-dc",
+            "local-rack"
+          ],
+          "properties": {
+            "type": {
+              "const": "rack",
+              "description": "Session-level location preference: explicit datacenter and rack."
+            },
+            "local-dc": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Explicitly configured preferred datacenter."
+            },
+            "local-rack": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Explicitly configured preferred rack."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Datacenter preference inferred from the first node the client connects to.",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "dc-auto",
+              "description": "Session-level location preference: inferred datacenter."
+            },
+            "local-dc": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Inferred preferred datacenter. Absent when not yet known at report time."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Datacenter and/or rack preference inferred from the connected node. Configured and inferred values are reported separately.",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "rack-auto",
+              "description": "At least one part of the location preference is inferred."
+            },
+            "local-dc": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Explicitly configured preferred datacenter."
+            },
+            "local-rack": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Explicitly configured preferred rack."
+            },
+            "inferred-local-dc": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Inferred preferred datacenter. Absent when not yet known."
+            },
+            "inferred-local-rack": {
+              "$ref": "#/$defs/nonEmptyString",
+              "description": "Inferred preferred rack. Absent when not yet known."
+            }
+          },
+          "allOf": [
+            {
+              "not": {
+                "required": [
+                  "local-dc",
+                  "inferred-local-dc"
+                ]
+              }
+            },
+            {
+              "not": {
+                "required": [
+                  "local-rack",
+                  "inferred-local-rack"
+                ]
+              }
+            },
+            {
+              "not": {
+                "required": [
+                  "local-dc",
+                  "local-rack"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "query": {
+      "description": "Query execution configuration.",
+      "type": "object",
+      "required": [
+        "defaults",
+        "retry",
+        "load-balancing"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "defaults": {
+          "$ref": "#/$defs/query-defaults"
+        },
+        "retry": {
+          "description": "Query retry configuration. Backoff is optional and is omitted when no retry delay is configured.",
+          "type": "object",
+          "required": [
+            "policy"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "policy": {
+                    "properties": {
+                      "type": {
+                        "const": "fallthrough"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  }
+                },
+                "required": [
+                  "policy"
+                ]
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "backoff"
+                  ]
+                }
+              }
+            }
+          ],
+          "properties": {
+            "policy": {
+              "$ref": "#/$defs/retry-policy"
+            },
+            "backoff": {
+              "$ref": "#/$defs/retryPolicyBackoff",
+              "description": "Delay inserted between retries. Omitted when no retry backoff is configured. Every configured delay must be greater than 0."
+            }
+          }
+        },
+        "load-balancing": {
+          "description": "Load-balancing configuration applied to queries.",
+          "type": "object",
+          "required": [
+            "policy"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "policy": {
+              "$ref": "#/$defs/load-balancing-policy"
+            },
+            "node-preference": {
+              "$ref": "#/$defs/node-location-preference",
+              "description": "Defines part of the cluster queries will be scheduled on"
+            }
+          }
+        },
+        "speculative-execution": {
+          "description": "Speculative-execution configuration applied to queries. Absent when speculative execution is disabled.",
+          "type": "object",
+          "required": [
+            "policy"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "policy": {
+              "$ref": "#/$defs/speculative-execution-policy"
+            }
+          }
+        }
+      }
+    },
+    "query-defaults": {
+      "description": "Default per-request settings applied to statements that do not override them.",
+      "type": "object",
+      "required": [
+        "consistency",
+        "idempotence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "type": "object",
+          "required": [
+            "size"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "size": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Default page (fetch) size for result sets. Absent when page is not limited."
+            }
+          }
+        },
+        "consistency": {
+          "description": "Default consistency level applied to requests that do not override it. Always present when this group is reported.",
+          "type": "string",
+          "enum": [
+            "ANY",
+            "ONE",
+            "TWO",
+            "THREE",
+            "QUORUM",
+            "ALL",
+            "LOCAL_QUORUM",
+            "EACH_QUORUM",
+            "LOCAL_ONE",
+            "SERIAL",
+            "LOCAL_SERIAL"
+          ]
+        },
+        "serial-consistency": {
+          "description": "Default serial consistency for LWT/conditional statements. Absent when unset; the server default applies.",
+          "type": "string",
+          "enum": [
+            "SERIAL",
+            "LOCAL_SERIAL"
+          ]
+        },
+        "idempotence": {
+          "description": "Default idempotence flag applied to statements that do not set their own.",
+          "type": "boolean"
+        },
+        "client-timestamps": {
+          "description": "True when the client assigns the write timestamp client-side (protocol-level/USING TIMESTAMP) instead of letting the coordinator assign it. Absent only when this behavior is unknown, for example when a custom timestamp generator may or may not enforce a timestamp.",
+          "type": "boolean"
+        },
+        "request": {
+          "type": "object",
+          "description": "Default request-level settings.",
+          "additionalProperties": false,
+          "properties": {
+            "timeout-ms": {
+              "$ref": "#/$defs/positiveInteger",
+              "description": "Client-side timeout for a single request/query in milliseconds. Absent when the timeout is disabled or unset."
+            }
+          }
+        }
+      }
+    },
+    "tls": {
+      "description": "TLS/SSL transport settings. Absent when TLS is disabled. Reports only booleans; never credentials, keys, or host lists.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hostname-verification": {
+          "type": "boolean",
+          "description": "Whether the server hostname is verified against its certificate. Absent only when this behavior is unknown, for example when a custom certificate validator may or may not enforce hostname verification."
+        }
+      }
+    }
+  }
+}

@@ -590,7 +590,6 @@ pub(crate) async fn execute_unprepared_statement_everywhere(
 /// at least one connection per node, making it suitable for scenarios where
 /// the pool may not be fully filled yet (e.g. right after a client routes
 /// update).
-#[allow(dead_code)]
 pub(crate) async fn execute_unprepared_statement_on_every_node(
     session: &Session,
     cluster: &ClusterState,

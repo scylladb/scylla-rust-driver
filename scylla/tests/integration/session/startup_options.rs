@@ -1,7 +1,12 @@
-use crate::utils::{setup_tracing, test_with_3_node_cluster};
+use crate::utils::{
+    create_new_session_builder, execute_unprepared_statement_on_every_node, setup_tracing,
+    test_with_3_node_cluster,
+};
+use scylla::client::PoolSize;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::policies::address_translator::AddressTranslator;
+use scylla::statement::Statement;
 use scylla_cql::frame::request::options;
 use scylla_cql::frame::types;
 use scylla_proxy::{
@@ -9,6 +14,7 @@ use scylla_proxy::{
     ShardAwareness, WorkerError,
 };
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -187,9 +193,9 @@ async fn driver_config_is_sent_only_on_the_control_connection_and_can_be_disable
             );
 
             let report = reports[0];
-            // The spec requires drivers to omit an oversized report, so a report
-            // that arrived at all must be within the limit.
-            assert!(report.len() < 32 * 1024, "report is too large: {report}");
+            // The spec requires drivers to omit a report *above* the limit, so a
+            // report that arrived at all is at most that large.
+            assert!(report.len() <= 32 * 1024, "report is too large: {report}");
             let parsed: serde_json::Value = serde_json::from_str(report).unwrap();
             assert_eq!(parsed["version"], 1);
 
@@ -230,4 +236,121 @@ async fn driver_config_is_sent_only_on_the_control_connection_and_can_be_disable
         Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
         Err(err) => panic!("{}", err),
     }
+}
+
+/// The cross-driver schema the report must conform to; the same vendored copy
+/// the unit tests validate against, so that what a real server stored is held
+/// to the same contract as what the reporter produced.
+const SCHEMA: &str = include_str!("../../../src/client/driver-config-schema.json");
+
+/// The whole point of the feature, end to end: the driver sends the options,
+/// the server stores them, and an operator reading `system.clients` can find
+/// them and correlate them with a session.
+///
+/// `system.clients` is ScyllaDB-only, hence the Cassandra gate, and node-local:
+/// each node reports only the clients connected to it, so the query is run once
+/// against every node and the rows unioned. Nothing has to be waited for - the
+/// server registers a client while establishing its connection, and
+/// `Session::builder().build()` only returns once the control connection has
+/// completed its `STARTUP` exchange, so every row asserted on here was written
+/// before the session existed to query with.
+#[cfg_attr(cassandra_tests, ignore)]
+#[tokio::test]
+async fn driver_config_is_readable_from_system_clients() {
+    setup_tracing();
+
+    let session = create_new_session_builder()
+        .fetch_schema_metadata(false)
+        .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
+        .build()
+        .await
+        .unwrap();
+
+    // Capability detection rather than a version check: `client_options` was
+    // added to the virtual table at some point and older clusters simply do not
+    // have the column.
+    let has_column = session
+        .query_unpaged(
+            "SELECT column_name FROM system_schema.columns \
+             WHERE keyspace_name = 'system' AND table_name = 'clients' \
+             AND column_name = 'client_options'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .rows::<(String,)>()
+        .unwrap()
+        .next()
+        .is_some();
+
+    if !has_column {
+        tracing::warn!(
+            "skipping: this cluster's system.clients has no client_options column, \
+             so there is nothing for the driver configuration report to land in"
+        );
+        return;
+    }
+
+    let session_id = session.session_id().to_string();
+    let statement = Statement::new("SELECT client_options FROM system.clients");
+    let cluster = session.get_cluster_state();
+    let results = execute_unprepared_statement_on_every_node(&session, &cluster, &statement, &[])
+        .await
+        .unwrap();
+
+    let mut own_rows = Vec::new();
+    for result in results {
+        let rows = result.into_rows_result().unwrap();
+        for row in rows
+            .rows::<(Option<HashMap<String, String>>,)>()
+            .unwrap()
+            .map(Result::unwrap)
+        {
+            let Some(client_options) = row.0 else {
+                continue;
+            };
+            if client_options.get("SESSION_ID") == Some(&session_id) {
+                own_rows.push(client_options);
+            }
+        }
+    }
+
+    assert!(
+        !own_rows.is_empty(),
+        "no system.clients row reports this session's SESSION_ID {session_id}"
+    );
+
+    let reports: Vec<&String> = own_rows
+        .iter()
+        .filter_map(|options| options.get("DRIVER_CONFIG"))
+        .collect();
+    assert_eq!(
+        reports.len(),
+        1,
+        "exactly one of this session's {} connections must report its configuration",
+        own_rows.len()
+    );
+
+    let report = reports[0];
+    // The spec omits the option only *above* the limit, and
+    // `oversized_reports_are_omitted` pins that a report of exactly the limit is
+    // still sent, so the bound here has to be inclusive too.
+    assert!(report.len() <= 32 * 1024, "report is too large: {report}");
+
+    let report: serde_json::Value = serde_json::from_str(report).unwrap();
+    assert_eq!(report["version"], 1);
+
+    let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let errors: Vec<String> = validator
+        .iter_errors(&report)
+        .map(|error| format!("  at {}: {error}", error.instance_path()))
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "the configuration stored by the server does not conform to the schema:\n{}\nreport: {report}",
+        errors.join("\n")
+    );
 }

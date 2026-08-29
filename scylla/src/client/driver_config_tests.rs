@@ -1057,3 +1057,454 @@ fn percentile_speculative_execution_report_cases() {
     assert_eq!(percentile_report(0, 99.0), None);
     assert_eq!(percentile_report(0, f64::NAN), None);
 }
+
+/// The cross-driver schema the reported document must conform to.
+///
+/// A verbatim vendored copy of
+/// <https://raw.githubusercontent.com/scylladb/gocql/master/docs/driver-config-schema.json>,
+/// whose `$id` is `https://scylladb.com/schemas/driver-client-options/v1.json`.
+/// It is an external contract shared by every ScyllaDB driver, so the copy
+/// is never edited locally - editing it would validate the report against a
+/// schema nobody else uses - and must be refreshed in lockstep with upstream
+/// whenever the shared schema changes. Checked in rather than fetched so the
+/// test needs no network.
+const SCHEMA: &str = include_str!("driver-config-schema.json");
+
+/// The configurations [`every_report_conforms_to_the_schema`] validates.
+///
+/// A per-axis sweep against the default configuration, plus a few configs
+/// combining several axes. A full cartesian product of the axes below runs
+/// into the millions of documents for no gain: the reporter reads each group
+/// from a disjoint part of the configuration, so a key can only go invalid
+/// because of its own axis. The combined configs are there for the one place
+/// that is not true - `node-preference` and
+/// `fallback-to-non-preferred-nodes` are derived from the same preference -
+/// and to keep a document where every optional key is populated at once.
+fn conformance_configurations() -> Vec<(String, SessionConfig, Arc<dyn ReconnectPolicy>)> {
+    type Configs = Vec<(String, SessionConfig, Arc<dyn ReconnectPolicy>)>;
+
+    fn push(configs: &mut Configs, name: impl Into<String>, config: SessionConfig) {
+        configs.push((
+            name.into(),
+            config,
+            Arc::new(ExponentialReconnectPolicy::new()),
+        ));
+    }
+
+    fn with_profile(configs: &mut Configs, name: impl Into<String>, profile: ExecutionProfile) {
+        let mut config = SessionConfig::new();
+        config.default_execution_profile_handle = profile.into_handle();
+        push(configs, name, config);
+    }
+
+    fn with_load_balancing(
+        configs: &mut Configs,
+        name: impl Into<String>,
+        policy: Arc<dyn LoadBalancingPolicy>,
+        session_preference: NodeLocationPreference,
+    ) {
+        let mut config = SessionConfig::new();
+        config.node_location_preference = session_preference;
+        config.default_execution_profile_handle = ExecutionProfile::builder()
+            .load_balancing_policy(policy)
+            .build()
+            .into_handle();
+        push(configs, name, config);
+    }
+
+    let configs = &mut Configs::new();
+
+    push(configs, "default", SessionConfig::new());
+
+    // Connection group: the zero values are where `positiveInteger` keys can
+    // go invalid, and the pool flags are booleans that cannot.
+    let mut config = SessionConfig::new();
+    config.connect_timeout = Duration::ZERO;
+    push(configs, "zero connect timeout", config);
+
+    let mut config = SessionConfig::new();
+    config.tcp_recv_buffer_size = Some(0);
+    config.tcp_send_buffer_size = Some(0);
+    push(configs, "zero socket buffers", config);
+
+    let mut config = SessionConfig::new();
+    config.tcp_linger = Some(Duration::ZERO);
+    push(configs, "zero linger", config);
+
+    let mut config = SessionConfig::new();
+    config.connection_pool_size = PoolSize::PerHost(NonZeroUsize::new(2).unwrap());
+    push(configs, "per-host pool", config);
+
+    let mut config = SessionConfig::new();
+    config.timestamp_generator = Some(Arc::new(SimpleTimestampGenerator::new()));
+    push(configs, "client timestamps", config);
+
+    for (name, filter, _) in host_filters() {
+        let mut config = SessionConfig::new();
+        config.host_filter = Some(filter);
+        push(configs, name, config);
+    }
+
+    for (name, policy, _) in reconnection_policies() {
+        configs.push((name.to_owned(), SessionConfig::new(), policy));
+    }
+
+    // Control plane.
+    let mut config = SessionConfig::new();
+    config.schema_agreement_timeout = Duration::ZERO;
+    push(configs, "zero schema agreement timeout", config);
+
+    let mut config = SessionConfig::new();
+    config.metadata_request_serverside_timeout = Some(Duration::from_micros(500));
+    push(
+        configs,
+        "sub-millisecond server-side metadata timeout",
+        config,
+    );
+
+    let mut config = SessionConfig::new();
+    config.metadata_request_serverside_timeout = None;
+    push(configs, "no server-side metadata timeout", config);
+
+    // Query defaults: every consistency name the schema enumerates, and the
+    // two optional keys in both states.
+    for (consistency, name) in CONSISTENCY_NAMES {
+        with_profile(
+            configs,
+            format!("consistency {name}"),
+            ExecutionProfile::builder().consistency(consistency).build(),
+        );
+    }
+
+    with_profile(
+        configs,
+        "no serial consistency and no request timeout",
+        ExecutionProfile::builder()
+            .serial_consistency(None)
+            .request_timeout(None)
+            .build(),
+    );
+    with_profile(
+        configs,
+        "non-local serial consistency",
+        ExecutionProfile::builder()
+            .serial_consistency(Some(SerialConsistency::Serial))
+            .build(),
+    );
+    with_profile(
+        configs,
+        "sub-millisecond request timeout",
+        ExecutionProfile::builder()
+            .request_timeout(Some(Duration::from_micros(500)))
+            .build(),
+    );
+
+    for (name, policy, _) in retry_policies() {
+        with_profile(
+            configs,
+            name,
+            ExecutionProfile::builder().retry_policy(policy).build(),
+        );
+    }
+
+    // Load balancing: the policy shape, and every preference the report can
+    // carry - including the two that are only partly expressible.
+    with_load_balancing(
+        configs,
+        "token-unaware default policy",
+        DefaultPolicy::builder().token_aware(false).build(),
+        NodeLocationPreference::Any,
+    );
+    with_load_balancing(
+        configs,
+        "unshuffled replicas",
+        DefaultPolicy::builder()
+            .enable_shuffling_replicas(false)
+            .build(),
+        NodeLocationPreference::Any,
+    );
+    with_load_balancing(
+        configs,
+        "latency awareness",
+        DefaultPolicy::builder()
+            .latency_awareness(LatencyAwarenessBuilder::new())
+            .build(),
+        NodeLocationPreference::Any,
+    );
+
+    let preferences = [
+        ("no preference", NodeLocationPreference::Any),
+        (
+            "datacenter preference",
+            NodeLocationPreference::Datacenter("dc1".to_owned()),
+        ),
+        (
+            "empty datacenter preference",
+            NodeLocationPreference::Datacenter(String::new()),
+        ),
+        (
+            "rack preference",
+            NodeLocationPreference::DatacenterAndRack("dc1".to_owned(), "rack1".to_owned()),
+        ),
+        (
+            "empty rack preference",
+            NodeLocationPreference::DatacenterAndRack("dc1".to_owned(), String::new()),
+        ),
+        (
+            "empty datacenter and rack preference",
+            NodeLocationPreference::DatacenterAndRack(String::new(), String::new()),
+        ),
+    ];
+
+    for (name, preference) in preferences {
+        for permit_dc_failover in [false, true] {
+            with_load_balancing(
+                configs,
+                format!("{name}, dc failover {permit_dc_failover}"),
+                DefaultPolicy::builder()
+                    .permit_dc_failover(permit_dc_failover)
+                    .build(),
+                preference.clone(),
+            );
+        }
+    }
+
+    // A user policy names itself, and may name itself with the empty string
+    // that `nonEmptyString` rejects.
+    for name in ["ForeignPolicy", ""] {
+        with_load_balancing(
+            configs,
+            format!("foreign load balancing policy named {name:?}"),
+            ForeignLoadBalancingPolicy::new(name),
+            NodeLocationPreference::Datacenter("dc1".to_owned()),
+        );
+    }
+
+    // Speculative execution.
+    for (name, policy, _) in speculative_execution_policies() {
+        with_profile(
+            configs,
+            name,
+            ExecutionProfile::builder()
+                .speculative_execution_policy(policy)
+                .build(),
+        );
+    }
+
+    // `percentile` is the only floating-point key in the document, and the
+    // schema bounds it exclusively; the policy carrying it needs `metrics`.
+    #[cfg(feature = "metrics")]
+    {
+        use crate::policies::speculative_execution::PercentileSpeculativeExecutionPolicy;
+
+        for percentile in [f64::MIN_POSITIVE, 99.0, 99.999, f64::NAN, 0.0, 100.0] {
+            with_profile(
+                configs,
+                format!("percentile speculative execution at {percentile}"),
+                ExecutionProfile::builder()
+                    .speculative_execution_policy(Some(Arc::new(
+                        PercentileSpeculativeExecutionPolicy {
+                            max_retry_count: 3,
+                            percentile,
+                        },
+                    )))
+                    .build(),
+            );
+        }
+    }
+
+    // Everything at once, so that a document with every optional key
+    // populated is validated too, and the derived
+    // `fallback-to-non-preferred-nodes` is seen next to the preference it is
+    // derived from. `connection.tls` is part of "every optional key", which
+    // is why the TLS context is set here rather than on a config of its own
+    // - and why it needs a feature gate, a `TlsContext` being unbuildable
+    // without a backend. That gate is the only one besides `percentile`
+    // above; gating the whole test on it would hide every other axis from a
+    // default-feature run.
+    let mut config = customised_config();
+    #[cfg(feature = "openssl-010")]
+    {
+        use openssl::ssl::{SslContextBuilder, SslMethod};
+
+        config.tls_context = Some(
+            SslContextBuilder::new(SslMethod::tls())
+                .unwrap()
+                .build()
+                .into(),
+        );
+    }
+    config.default_execution_profile_handle = ExecutionProfile::builder()
+        .consistency(Consistency::Quorum)
+        .serial_consistency(Some(SerialConsistency::Serial))
+        .request_timeout(Some(Duration::from_millis(1500)))
+        .retry_policy(Arc::new(DowngradingConsistencyRetryPolicy::new()))
+        .load_balancing_policy(
+            DefaultPolicy::builder()
+                .prefer_datacenter_and_rack("dc1".to_owned(), "rack1".to_owned())
+                .permit_dc_failover(true)
+                .latency_awareness(LatencyAwarenessBuilder::new())
+                .build(),
+        )
+        .speculative_execution_policy(Some(Arc::new(SimpleSpeculativeExecutionPolicy {
+            max_retry_count: 3,
+            retry_interval: Duration::from_millis(50),
+        })))
+        .build()
+        .into_handle();
+    configs.push((
+        "every optional key populated".to_owned(),
+        config,
+        Arc::new(ConstantReconnectPolicy::new(Duration::from_millis(250))),
+    ));
+
+    std::mem::take(configs)
+}
+
+/// The size of the sweep, asserted so that a generator broken into producing
+/// nothing, or an axis dropped by a bad merge, fails rather than passes.
+const CONFORMANCE_CONFIGURATION_COUNT: usize = 59 + if cfg!(feature = "metrics") { 6 } else { 0 };
+
+/// The report of every configuration of the sweep, against both target
+/// kinds - `server-side-ms` is reported only against ScyllaDB - each paired
+/// with a name for the configuration that produced it.
+///
+/// Shared by the two tests below, which ask different questions of the same
+/// documents: whether each of them is accepted by the schema, and which of
+/// the schema's keys all of them together populate.
+fn conformance_reports() -> Vec<(String, Value)> {
+    let configs = conformance_configurations();
+    assert_eq!(
+        configs.len(),
+        CONFORMANCE_CONFIGURATION_COUNT,
+        "the configuration sweep changed size"
+    );
+
+    // The name is all a failure has to point at the configuration that
+    // produced a report, so two axes must not share one.
+    let mut names: Vec<&str> = configs.iter().map(|(name, ..)| name.as_str()).collect();
+    names.sort_unstable();
+    let named = names.len();
+    names.dedup();
+    assert_eq!(
+        names.len(),
+        named,
+        "the configuration sweep names a configuration more than once"
+    );
+
+    let mut reports = Vec::with_capacity(2 * configs.len());
+    for (name, config, policy) in configs {
+        for target_is_scylladb in [false, true] {
+            let report = reporter_with_policy(&config, Arc::clone(&policy))
+                .report(target_is_scylladb)
+                .unwrap();
+            reports.push((
+                format!("{name:?} (scylladb: {target_is_scylladb})"),
+                serde_json::from_str(&report).unwrap(),
+            ));
+        }
+    }
+
+    reports
+}
+
+/// The report is only worth anything if it validates against the schema
+/// every ScyllaDB driver reports under: that is what makes one
+/// `system.clients` query answer the same question across drivers. Nothing
+/// else in this module checks that - the assertions elsewhere pin the exact
+/// bytes this driver emits, not whether the contract accepts them.
+///
+/// A Tokio runtime is needed only by [`LatencyAwarenessBuilder::build`],
+/// which spawns the task updating latency averages.
+#[tokio::test]
+async fn every_report_conforms_to_the_schema() {
+    let schema: Value = serde_json::from_str(SCHEMA).unwrap();
+    assert_eq!(
+        schema["$id"],
+        "https://scylladb.com/schemas/driver-client-options/v1.json"
+    );
+    let validator = jsonschema::validator_for(&schema).unwrap();
+
+    // Names why a document is rejected, so that a failing sweep points at
+    // the key at fault instead of just at the configuration.
+    let errors = |document: &Value| -> Vec<String> {
+        validator
+            .iter_errors(document)
+            .map(|error| format!("  at {}: {error}", error.instance_path()))
+            .collect()
+    };
+
+    // Negative control, first: a schema that failed to load, or one loaded
+    // with its constraints silently dropped, would accept everything and
+    // make every assertion below vacuously true. The two documents below are
+    // known-bad, so the sweep only means something while they keep failing.
+    let valid: Value =
+        serde_json::from_str(&reporter(&SessionConfig::new()).report(true).unwrap()).unwrap();
+    assert!(
+        errors(&valid).is_empty(),
+        "the default report does not conform to the schema:\n{}\nreport: {valid}",
+        errors(&valid).join("\n")
+    );
+
+    let mut camel_cased = valid.clone();
+    camel_cased["query"]["defaults"]["consistency"] = Value::String("LocalQuorum".to_owned());
+    assert!(
+        !validator.is_valid(&camel_cased),
+        "the schema accepted a CamelCase consistency, so it is not constraining anything"
+    );
+
+    let mut group_removed = valid.clone();
+    group_removed
+        .as_object_mut()
+        .unwrap()
+        .remove("connection")
+        .unwrap();
+    assert!(
+        !validator.is_valid(&group_removed),
+        "the schema accepted a document missing a required group"
+    );
+
+    for (name, report) in conformance_reports() {
+        assert!(
+            errors(&report).is_empty(),
+            "the report of configuration {name} does not conform to the schema:\n{}\n\
+             report: {report}",
+            errors(&report).join("\n")
+        );
+    }
+}
+
+/// The spec requires an oversized report to be omitted rather than sent, and
+/// here the requirement has teeth: `write_string` length-prefixes every
+/// `STARTUP` value with a `u16`, so a report above 64 KiB would fail
+/// serialization and take the control-connection handshake, and with it
+/// session creation, down with it.
+///
+/// A user policy's `name` is the one input to the document with no bound on
+/// its length, so it is what drives the size here.
+#[test]
+fn oversized_reports_are_omitted() {
+    // The padding is measured rather than hardcoded: any key added to the
+    // document elsewhere shifts it, and a magic number would then either
+    // stop testing the boundary or start failing for the wrong reason. `a`
+    // needs no JSON escaping, so each byte of the name is one byte of the
+    // document.
+    let report_len = |name_len: usize| {
+        let profile = ExecutionProfile::builder()
+            .load_balancing_policy(ForeignLoadBalancingPolicy::new("a".repeat(name_len)))
+            .build();
+        reporter_with_profile(profile)
+            .report(true)
+            .map(|report| report.len())
+    };
+
+    // A one-character name, not an empty one: the empty name is replaced by
+    // a literal, so it is the only length that does not scale linearly.
+    let padding = MAX_REPORT_SIZE - report_len(1).unwrap();
+
+    assert_eq!(report_len(padding), Some(MAX_REPORT_SIZE - 1));
+    // The limit itself is not exceeded, so the report is still sent.
+    assert_eq!(report_len(1 + padding), Some(MAX_REPORT_SIZE));
+    assert_eq!(report_len(2 + padding), None);
+    assert_eq!(report_len(2 * MAX_REPORT_SIZE), None);
+}
