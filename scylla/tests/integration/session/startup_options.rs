@@ -143,9 +143,10 @@ async fn session_id_is_sent_on_every_connection() {
 
 /// The configuration report must be sent by the control connection and by no
 /// other connection of the session, and must be a JSON document of the current
-/// schema version, small enough that the server accepts it.
+/// schema version, small enough that the server accepts it. Disabling it must
+/// suppress it on every connection, and must leave `SESSION_ID` alone.
 #[tokio::test]
-async fn driver_config_is_sent_only_on_the_control_connection() {
+async fn driver_config_is_sent_only_on_the_control_connection_and_can_be_disabled() {
     setup_tracing();
 
     let res = test_with_3_node_cluster(
@@ -191,6 +192,33 @@ async fn driver_config_is_sent_only_on_the_control_connection() {
             assert!(report.len() < 32 * 1024, "report is too large: {report}");
             let parsed: serde_json::Value = serde_json::from_str(report).unwrap();
             assert_eq!(parsed["version"], 1);
+
+            // A session that opted out must not report anything, while still
+            // identifying itself with SESSION_ID on every connection. The first
+            // session stays alive and may open connections of its own, so its
+            // id is tolerated here, and nothing else is.
+            let silent_session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::clone(&translation_map))
+                .driver_config_reporting(false)
+                .build()
+                .await
+                .unwrap();
+
+            let silent_expected = expected_connection_count(&silent_session);
+            let silent_frames = recv_session_ids(
+                &mut startup_rx,
+                silent_session.session_id(),
+                silent_expected,
+                &[session.session_id()],
+            )
+            .await;
+            assert!(
+                silent_frames
+                    .iter()
+                    .all(|opts| !opts.contains_key(options::DRIVER_CONFIG)),
+                "a session with reporting disabled sent a configuration report"
+            );
 
             running_proxy
         },

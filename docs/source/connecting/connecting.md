@@ -65,6 +65,11 @@ println!("session id: {}", session.session_id());
 # }
 ```
 
+The control connection additionally sends a `DRIVER_CONFIG` option: a JSON document describing the configuration the session actually runs with - timeouts, connection pooling, load balancing and retry policy.
+It surfaces in `system.clients.client_options` as well, and follows a schema shared by all ScyllaDB drivers, so the same query answers the question for any of them.
+
+If the client's configuration should not be disclosed to the cluster, `SessionBuilder::driver_config_reporting(false)` turns the report off. That does not affect `SESSION_ID`.
+
 ## Metadata
 
 The driver keeps an up-to-date view of the cluster topology (and client routes, if used) and of the cluster schema.

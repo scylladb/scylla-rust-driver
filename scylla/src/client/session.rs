@@ -441,6 +441,13 @@ pub struct SessionConfig {
     /// Driver and application self-identifying information,
     /// to be sent to server in STARTUP message.
     pub identity: SelfIdentity<'static>,
+
+    /// Whether the driver describes its effective configuration to the server
+    /// in the `DRIVER_CONFIG` STARTUP option.
+    /// Turn it off if the client's configuration must not be disclosed to the
+    /// cluster. Does not affect `SESSION_ID`, which describes nothing about the
+    /// client.
+    pub driver_config_reporting: bool,
 }
 
 impl SessionConfig {
@@ -503,6 +510,7 @@ impl SessionConfig {
             cluster_metadata_refresh_interval: Duration::from_secs(60),
             periodic_metadata_fetch_mode: PeriodicFetchMode::AffectedKeyspaces,
             identity: SelfIdentity::default(),
+            driver_config_reporting: true,
             #[cfg(feature = "unstable-client-routes")]
             client_routes_config: None,
         }
@@ -1398,7 +1406,9 @@ impl Session {
 
         let tcp_socket_options = config.tcp_socket_options();
 
-        let driver_config_reporter = Some(Arc::new(DriverConfigReporter::new()));
+        let driver_config_reporter = config
+            .driver_config_reporting
+            .then(|| Arc::new(DriverConfigReporter::new()));
 
         let node_location_preference = config.node_location_preference;
         let known_nodes = config.known_nodes;
