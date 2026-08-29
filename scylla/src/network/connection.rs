@@ -496,6 +496,28 @@ impl Connection {
             }
         };
 
+        #[cfg(test)]
+        let socket = {
+            use std::os::unix::io::AsFd;
+            Some(socket2::Socket::from(stream.as_fd().try_clone_to_owned()?))
+        };
+
+        Self::new_with_transport(
+            stream,
+            connect_address,
+            config,
+            #[cfg(test)]
+            socket,
+        )
+        .await
+    }
+
+    async fn new_with_transport(
+        stream: TcpStream,
+        connect_address: SocketAddr,
+        config: HostConnectionConfig,
+        #[cfg(test)] socket: Option<socket2::Socket>,
+    ) -> Result<(Self, ErrorReceiver), ConnectionError> {
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(1024);
         let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
@@ -508,12 +530,6 @@ impl Connection {
             orphan_notification_sender,
             keepalive_hint: Notify::new(),
         });
-
-        #[cfg(test)]
-        let socket = {
-            use std::os::unix::io::AsFd;
-            Some(socket2::Socket::from(stream.as_fd().try_clone_to_owned()?))
-        };
 
         let _worker_handle = Self::run_router(
             config.clone(),
