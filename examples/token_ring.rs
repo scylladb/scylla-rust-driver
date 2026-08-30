@@ -5,7 +5,7 @@
 //! at a given token starts just after the previous token in the ring and is owned
 //! by the replicas the cluster returns for any token inside it. Which nodes those
 //! are depends on the keyspace's replication strategy, so replica sets are looked
-//! up per keyspace and table.
+//! up per keyspace.
 
 use anyhow::Result;
 use scylla::client::session::Session;
@@ -43,35 +43,32 @@ async fn main() -> Result<()> {
     let ring = cluster_state.replica_locator().ring();
     println!("The token ring has {} entries.", ring.len());
 
-    let mut previous_token: Option<i64> = None;
+    // Seed the lower bound from the ring's last token so the first (wrap-around)
+    // range prints its real start rather than a placeholder. An empty ring simply
+    // skips the loop below.
+    let mut previous_token: Option<i64> = ring.iter().last().map(|(token, _)| token.value());
+
     for (token, _owner) in ring.iter() {
         // Replicas that own the range ending at this token. `get_token_endpoints`
         // resolves them through the keyspace's replication strategy, so a token
-        // range can have different replicas in different keyspaces.
+        // range can have different replicas in different keyspaces. An empty table
+        // name keeps the lookup on the keyspace-wide vnode ring instead of any
+        // per-table tablet routing.
         let replicas: Vec<NodeAddr> = cluster_state
-            .get_token_endpoints("examples_ks", "token_ring", *token)
+            .get_token_endpoints("examples_ks", "", *token)
             .into_iter()
             .map(|(node, _shard)| node.address)
             .collect();
 
-        match previous_token {
-            Some(previous) => {
-                println!(
-                    "Range ({}, {}] is owned by {:?}",
-                    previous,
-                    token.value(),
-                    replicas
-                );
-            }
-            None => {
-                // The first range wraps around: it starts after the highest token
-                // in the ring and continues up to the lowest one.
-                println!(
-                    "Range (highest token, {}] is owned by {:?}",
-                    token.value(),
-                    replicas
-                );
-            }
+        // `previous_token` is always `Some` here: it was seeded from the ring's
+        // last token and the loop only runs when the ring is non-empty.
+        if let Some(previous) = previous_token {
+            println!(
+                "Range ({}, {}] is owned by {:?}",
+                previous,
+                token.value(),
+                replicas
+            );
         }
 
         previous_token = Some(token.value());
