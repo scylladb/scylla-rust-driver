@@ -369,6 +369,8 @@ impl ConnectionConfig {
             keepalive_timeout: self.keepalive_timeout,
             tablet_sender: self.tablet_sender.clone(),
             identity: self.identity.clone(),
+            #[cfg(test)]
+            transport_factory: None,
         }
     }
 }
@@ -397,6 +399,9 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
 
     pub(crate) identity: SelfIdentity<'static>,
+
+    #[cfg(test)]
+    pub(crate) transport_factory: Option<Arc<scylla_proxy::TransportFactory>>,
 }
 
 #[cfg(test)]
@@ -423,6 +428,9 @@ impl Default for HostConnectionConfig {
             tablet_sender: None,
 
             identity: SelfIdentity::default(),
+
+            #[cfg(test)]
+            transport_factory: None,
         }
     }
 }
@@ -479,6 +487,21 @@ impl Connection {
         source_port: Option<u16>,
         config: HostConnectionConfig,
     ) -> Result<(Self, ErrorReceiver), ConnectionError> {
+        #[cfg(test)]
+        if let Some(transport_factory) = &config.transport_factory {
+            let duplex =
+                transport_factory.connect(connect_address, config.local_ip_address, source_port)?;
+
+            return Self::new_with_transport(
+                duplex,
+                connect_address,
+                config,
+                #[cfg(test)]
+                None,
+            )
+            .await;
+        }
+
         let stream_connector = tokio::time::timeout(
             config.connect_timeout,
             connect_with_source_ip_and_port(
@@ -513,7 +536,7 @@ impl Connection {
     }
 
     async fn new_with_transport(
-        stream: TcpStream,
+        stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
         connect_address: SocketAddr,
         config: HostConnectionConfig,
         #[cfg(test)] socket: Option<socket2::Socket>,
@@ -1467,7 +1490,7 @@ impl Connection {
 
     async fn run_router(
         config: HostConnectionConfig,
-        stream: TcpStream,
+        stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,

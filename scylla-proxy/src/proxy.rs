@@ -7,6 +7,7 @@ use crate::frame::{
 use crate::{RequestOpcode, TargetShard};
 use bytes::Bytes;
 use compression::no_compression;
+use itertools::Either;
 use scylla_cql::frame::types::read_string_multimap;
 use std::collections::HashMap;
 use std::env::VarError;
@@ -15,9 +16,10 @@ use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, DuplexStream};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::sync::mpsc::error::TryRecvError;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, trace, warn};
 
@@ -343,7 +345,7 @@ impl Proxy {
         let (finish_guard, finish_waiter) = mpsc::channel(1);
 
         let (error_propagator, error_sink) = mpsc::unbounded_channel();
-        let (doorkeepers, running_nodes): (Vec<_>, Vec<RunningNode>) = self
+        let (addresses_and_doorkeepers, running_nodes): (Vec<_>, Vec<RunningNode>) = self
             .nodes
             .into_iter()
             .map(|node| {
@@ -365,29 +367,86 @@ impl Proxy {
                         cc_event_sender: cc_event_sender.clone(),
                     }
                 };
-                (
+                let proxy_addr = node.proxy_addr();
+                let doorkeeper = {
                     Doorkeeper::spawn(
                         node,
                         terminate_signaler.clone(),
                         finish_guard.clone(),
                         error_propagator.clone(),
                         cc_event_sender,
-                    ),
-                    running,
-                )
+                    )
+                };
+                let address_and_doorkeeper = async move { Ok((proxy_addr, doorkeeper.await?)) };
+                (address_and_doorkeeper, running)
             })
             .unzip();
 
-        for doorkeeper in doorkeepers {
-            doorkeeper.await?; // await doorkeeper creation, including binding to a socket
+        let mut duplex_submitter_map = HashMap::new();
+        for address_and_doorkeeper in addresses_and_doorkeepers {
+            let (proxy_addr, duplex_submitter) = address_and_doorkeeper.await?; // await doorkeeper creation, including binding to a socket
+            duplex_submitter_map.insert(proxy_addr, duplex_submitter);
         }
+
+        let transport_factory = Arc::new(TransportFactory {
+            duplex_submitter_map,
+        });
 
         Ok(RunningProxy {
             terminate_signaler,
             finish_waiter,
             running_nodes,
             error_sink,
+            transport_factory,
         })
+    }
+}
+
+/// Creates [`DuplexStream`]s that directly connect to the associated proxy's
+/// nodes.
+///
+/// This is an alternative method of establishing a transport layer connection
+/// to the proxy nodes. The purpose of this alternative method is to allow
+/// writing tests that use tokio's paused time feature. The advantage of using
+/// a channel is that, when some data is sent on the channel, the waiting
+/// task will be immediately notified and scheduled for execution. For
+/// system sockets this is not guaranteed and the receiving task may be
+/// notified after a real-time delay, which can trick tokio's timer auto-advance
+/// and make it move the time forward, even if the task on the receiving
+/// side would have been notified earlier in a real scenario.
+pub struct TransportFactory {
+    duplex_submitter_map: HashMap<SocketAddr, UnboundedSender<(DuplexStream, SocketAddr)>>,
+}
+
+impl TransportFactory {
+    pub fn connect(
+        &self,
+        connect_address: SocketAddr,
+        source_ip: Option<IpAddr>,
+        source_port: Option<u16>,
+    ) -> Result<tokio::io::DuplexStream, std::io::Error> {
+        let sender = self
+            .duplex_submitter_map
+            .get(&connect_address)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::HostUnreachable,
+                    format!("No host under address {connect_address}"),
+                )
+            })?;
+
+        let source_ip = source_ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        let source_port = source_port.unwrap_or_else(|| rand::random_range(49152..=65535));
+        let source_address = SocketAddr::from((source_ip, source_port));
+
+        let (duplex1, duplex2) = tokio::io::duplex(8 * 1024);
+        sender.send((duplex2, source_address)).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                format!("The proxy node {connect_address} no longer accepts connections"),
+            )
+        })?;
+        Ok(duplex1)
     }
 }
 
@@ -502,6 +561,7 @@ pub struct RunningProxy {
     finish_waiter: FinishWaiter,
     pub running_nodes: Vec<RunningNode>,
     error_sink: ErrorSink,
+    transport_factory: Arc<TransportFactory>,
 }
 
 impl RunningProxy {
@@ -535,6 +595,11 @@ impl RunningProxy {
     /// Waits until an error occurs in proxy. If proxy finishes with no errors occurred, returns Err(()).
     pub async fn wait_for_error(&mut self) -> Option<ProxyError> {
         self.error_sink.recv().await
+    }
+
+    /// Returns the [`TransportFactory`] object associated with the proxy.
+    pub fn transport_factory(&self) -> Arc<TransportFactory> {
+        Arc::clone(&self.transport_factory)
     }
 
     /// Requests termination of all proxy workers and awaits its completion.
@@ -578,6 +643,11 @@ struct Doorkeeper {
     shards_count: Option<u16>,
     error_propagator: ErrorPropagator,
     cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
+    duplex_receiver: UnboundedReceiver<(DuplexStream, SocketAddr)>,
+    // The other side of the `duplex_receiver`. Not used directly by the doorkeeper
+    // but kept as a field in order to keep `duplex_receiver` open which allows
+    // to simplify some logic and not care about it getting closed.
+    _duplex_submitter: UnboundedSender<(DuplexStream, SocketAddr)>,
 }
 
 impl Doorkeeper {
@@ -587,7 +657,7 @@ impl Doorkeeper {
         finish_guard: FinishGuard,
         error_propagator: ErrorPropagator,
         cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
-    ) -> Result<(), DoorkeeperError> {
+    ) -> Result<UnboundedSender<(DuplexStream, SocketAddr)>, DoorkeeperError> {
         let listener = TcpListener::bind(node.proxy_addr())
             .await
             .map_err(|err| DoorkeeperError::DriverConnectionAttempt(node.proxy_addr(), err))?;
@@ -615,6 +685,7 @@ impl Doorkeeper {
             )
         };
 
+        let (duplex_submitter, duplex_receiver) = mpsc::unbounded_channel();
         let doorkeeper = Doorkeeper {
             shards_count: None, // temporarily, until Doorkeeper examines its ShardAwareness
             node,
@@ -623,9 +694,11 @@ impl Doorkeeper {
             finish_guard,
             error_propagator,
             cc_event_sender,
+            duplex_receiver,
+            _duplex_submitter: duplex_submitter.clone(),
         };
         tokio::task::spawn(doorkeeper.run());
-        Ok(())
+        Ok(duplex_submitter)
     }
 
     async fn run(mut self) {
@@ -695,17 +768,17 @@ impl Doorkeeper {
         }
     }
 
+    #[expect(clippy::too_many_arguments)]
     async fn spawn_workers(
         &mut self,
         driver_addr: SocketAddr,
         connection_close_tx: &ConnectionCloseSignaler,
         connection_no: usize,
-        driver_stream: TcpStream,
+        driver_read: impl AsyncRead + Send + Unpin + 'static,
+        driver_write: impl AsyncWrite + Send + Unpin + 'static,
         cluster_stream: Option<TcpStream>,
         shard: Option<TargetShard>,
     ) {
-        let (driver_read, driver_write) = driver_stream.into_split();
-
         let new_worker = || ProxyWorker {
             terminate_notifier: self.terminate_signaler.subscribe(),
             finish_guard: self.finish_guard.clone(),
@@ -858,11 +931,22 @@ impl Doorkeeper {
             InternalNode::Simulated { .. } => (None, None),
         };
 
+        let (driver_read, driver_write): (
+            Box<dyn AsyncRead + Send + Unpin + 'static>,
+            Box<dyn AsyncWrite + Send + Unpin + 'static>,
+        ) = driver_stream
+            .map_either(TcpStream::into_split, tokio::io::split)
+            .either(
+                |(l, r)| (Box::new(l) as _, Box::new(r) as _),
+                |(l, r)| (Box::new(l) as _, Box::new(r) as _),
+            );
+
         self.spawn_workers(
             driver_addr,
             connection_close_tx,
             connection_no,
-            driver_stream,
+            driver_read,
+            driver_write,
             cluster_stream,
             shard,
         )
@@ -874,11 +958,21 @@ impl Doorkeeper {
     async fn make_driver_stream(
         &mut self,
         connection_no: usize,
-    ) -> Result<(TcpStream, SocketAddr), DoorkeeperError> {
-        let (driver_stream, driver_addr) =
-            self.listener.accept().await.map_err(|err| {
-                DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr(), err)
-            })?;
+    ) -> Result<(Either<TcpStream, DuplexStream>, SocketAddr), DoorkeeperError> {
+        let (driver_stream, driver_addr) = tokio::select! {
+            v = self.listener.accept() => {
+                let (stream, addr) = v.map_err(|err| DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr(), err))?;
+                (Either::Left(stream), addr)
+            },
+            v = self.duplex_receiver.recv(), if !self.duplex_receiver.is_closed() => {
+                // Doorkeeper (which is passed by reference in `self`) keeps
+                // the send half of the `duplex_receiver` alive as one of its
+                // fields, just so that we can avoid dealing with the doorkeeper
+                // becoming closed here
+                let (duplex, addr) = v.expect("receiver should be open because Doorkeeper keeps the sender alive");
+                (Either::Right(duplex), addr)
+            },
+        };
         info!(
             "Connected driver from {} to {}, connection no={}.",
             driver_addr,
