@@ -20,6 +20,9 @@ impl SerializableRequest for Options {
 pub const SCYLLA_SHARD_AWARE_PORT: &str = "SCYLLA_SHARD_AWARE_PORT";
 pub const SCYLLA_SHARD_AWARE_PORT_SSL: &str = "SCYLLA_SHARD_AWARE_PORT_SSL";
 
+// Only ever returned by the server in SUPPORTED; never sent by the driver in STARTUP.
+pub const SCYLLA_HOST_ID: &str = "SCYLLA_HOST_ID";
+
 pub const COMPRESSION: &str = "COMPRESSION";
 pub const CQL_VERSION: &str = "CQL_VERSION";
 pub const DRIVER_NAME: &str = "DRIVER_NAME";

@@ -928,6 +928,10 @@ impl PoolRefiller {
                     return;
                 }
 
+                // Do this after keyspace is set to avoid warning twice
+                // for the same connection.
+                self.verify_host_id(&connection);
+
                 // Update sharding and optionally reshard
                 let shard_info = connection.get_shard_info().as_ref();
                 let sharder = shard_info.map(|s| s.get_sharder());
@@ -1033,6 +1037,38 @@ impl PoolRefiller {
                     }
                 }
             }
+        }
+    }
+
+    /// Logs an error if the node that accepted the connection reported a host ID other than
+    /// the one this pool serves.
+    ///
+    /// A mismatch means requests routed here reach a different node than the driver believes,
+    /// which silently breaks token-aware routing; the likely causes are stale topology metadata
+    /// (the node was replaced by another one reusing its address) or misconfigured address
+    /// translation. Only ScyllaDB new enough to support host ID discovery reports its host ID
+    /// in `SUPPORTED`, so a node that reports none is accepted without complaint.
+    fn verify_host_id(&self, connection: &Connection) {
+        let Some(reported_host_id) = connection.get_host_id() else {
+            return;
+        };
+        let expected_host_id = match &*self.endpoint.read().unwrap() {
+            UntranslatedEndpoint::Peer(PeerEndpoint { host_id, .. }) => *host_id,
+            // Pools are always created for a known peer (`Node::new`); a contact point endpoint
+            // only occurs in unit tests, and then there is no host ID to expect.
+            UntranslatedEndpoint::ContactPoint(_) => return,
+        };
+
+        if expected_host_id != reported_host_id {
+            error!(
+                "[{}] Node reported host ID {} but the pool serves host ID {}. \
+                 Requests routed to this node reach a different node than the driver believes, \
+                 breaking token-aware routing, and possibly the connection pool itself. \
+                 Check for misconfigured address translation or network.",
+                self.endpoint_description(),
+                reported_host_id,
+                expected_host_id,
+            );
         }
     }
 
@@ -1449,7 +1485,8 @@ mod tests {
         ADVANCED_SHARD_AWARENESS_BLOCK_DURATION, ConnectionSetupError, HostPoolConfig,
         MaybePoolConnections, OpenedConnectionEvent, PoolConnections, PoolRefiller, RequestedShard,
     };
-    use crate::cluster::metadata::UntranslatedEndpoint;
+    use crate::cluster::NodeAddr;
+    use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
     use crate::cluster::node::ResolvedContactPoint;
     use crate::errors::{ConnectionError, UseKeyspaceError};
     use crate::frame::request::options;
@@ -1457,7 +1494,7 @@ mod tests {
     use crate::observability::metrics::Metrics;
     use crate::policies::reconnect::{ExponentialReconnectPolicy, ReconnectPolicy as _};
     use crate::routing::{Shard, ShardCount, ShardInfo, Sharder};
-    use crate::test_utils::setup_tracing;
+    use crate::test_utils::{CapturedLogs, capturing_errors, setup_tracing};
     use bytes::Bytes;
     use futures::{FutureExt, StreamExt};
     use scylla_proxy::{
@@ -1469,6 +1506,7 @@ mod tests {
     use std::sync::{Arc, RwLock};
     use std::time::Duration;
     use tokio::sync::{Notify, mpsc};
+    use uuid::Uuid;
 
     #[test]
     fn keyspace_setup_failure_triggers_refill() {
@@ -1752,16 +1790,18 @@ mod tests {
     }
 
     fn mock_pool_refiller() -> PoolRefiller {
-        let endpoint = Arc::new(RwLock::new(UntranslatedEndpoint::ContactPoint(
-            ResolvedContactPoint {
-                address: SocketAddr::from(([127, 0, 0, 1], 9042)),
-            },
-        )));
+        mock_pool_refiller_for(UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+            address: SocketAddr::from(([127, 0, 0, 1], 9042)),
+        }))
+    }
+
+    /// Like [mock_pool_refiller], but for a pool that serves the given endpoint.
+    fn mock_pool_refiller_for(endpoint: UntranslatedEndpoint) -> PoolRefiller {
         // The receiver is dropped right away; the refiller only does a best-effort `try_send()`.
         let (pool_empty_notifier, _) = mpsc::channel(1);
 
         PoolRefiller::new(
-            endpoint,
+            Arc::new(RwLock::new(endpoint)),
             HostPoolConfig::default(),
             None,
             None,
@@ -2117,5 +2157,161 @@ mod tests {
 
         drop(refiller);
         let _ = proxy.finish().await;
+    }
+
+    #[tokio::test]
+    async fn unexpected_host_id_is_reported() {
+        setup_tracing();
+
+        let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+        let make_rules = |host_id: Option<Uuid>| {
+            vec![
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Options),
+                    RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                        ResponseFrame::forged_supported(frame.params, &{
+                            let mut options = HashMap::new();
+                            if let Some(host_id) = host_id {
+                                options.insert(
+                                    options::SCYLLA_HOST_ID.to_owned(),
+                                    vec![host_id.to_string()],
+                                );
+                            }
+                            options
+                        })
+                        .unwrap()
+                    })),
+                ),
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Startup),
+                    RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                        ResponseFrame::forged_ready(frame.params)
+                    })),
+                ),
+            ]
+        };
+
+        let expected_host_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+        let other_host_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
+
+        let mut proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .proxy_address(proxy_addr)
+                    .request_rules(make_rules(Some(expected_host_id)))
+                    .build_dry_mode(),
+            )
+            .build()
+            .run()
+            .await
+            .unwrap();
+
+        let endpoint = UntranslatedEndpoint::Peer(PeerEndpoint {
+            host_id: expected_host_id,
+            address: NodeAddr::Untranslatable(proxy_addr),
+            datacenter: None,
+            rack: None,
+        });
+        let connection_config = HostConnectionConfig::default();
+        let mut refiller = mock_pool_refiller_for(endpoint.clone());
+
+        // Feeds one freshly opened connection through the pool, returning whatever was logged
+        // at ERROR level while it was being handled.
+        let handle_connection = async |refiller: &mut PoolRefiller| -> String {
+            let (connection, error_receiver) = open_connection(&endpoint, None, &connection_config)
+                .await
+                .unwrap();
+            let evt = OpenedConnectionEvent {
+                result: Ok((connection, error_receiver)),
+                requested_shard: None,
+                keyspace_name: None,
+            };
+            let capture = CapturedLogs::default();
+            capturing_errors(&capture, || refiller.handle_ready_connection(evt));
+            capture.text()
+        };
+
+        // Sub-case 1: the node reports the host ID the pool expects - nothing to report.
+        let logs = handle_connection(&mut refiller).await;
+        assert!(
+            logs.is_empty(),
+            "matching host ID must not be logged, got: {logs}"
+        );
+
+        // Sub-case 2: the node reports a different host ID - both IDs must appear, exactly once.
+        proxy.running_nodes[0].change_request_rules(Some(make_rules(Some(other_host_id))));
+        let logs = handle_connection(&mut refiller).await;
+        assert!(
+            logs.contains(&expected_host_id.to_string()),
+            "mismatch report must contain the expected host ID, got: {logs}"
+        );
+        assert!(
+            logs.contains(&other_host_id.to_string()),
+            "mismatch report must contain the reported host ID, got: {logs}"
+        );
+        assert_eq!(
+            logs.lines().count(),
+            1,
+            "the mismatch must be reported exactly once, got: {logs}"
+        );
+
+        // Sub-case 3: the node reports no host ID at all (Cassandra / older ScyllaDB) - this must
+        // not produce any log noise.
+        proxy.running_nodes[0].change_request_rules(Some(make_rules(None)));
+        let logs = handle_connection(&mut refiller).await;
+        assert!(
+            logs.is_empty(),
+            "a node that reports no host ID must not be logged about, got: {logs}"
+        );
+
+        // Sub-case 4: a connection that must first switch keyspace travels through
+        // `handle_ready_connection` twice, so the report must not be duplicated.
+        refiller.current_keyspace =
+            Some(VerifiedKeyspaceName::new("keyspace".to_owned(), false).unwrap());
+        proxy.running_nodes[0].change_request_rules(Some({
+            let mut rules = make_rules(Some(other_host_id));
+            rules.push(RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Query),
+                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                    ResponseFrame {
+                        params: frame.params.for_response(),
+                        opcode: ResponseOpcode::Result,
+                        body: Bytes::from_static(b"\0\0\0\x03\0\x08keyspace"),
+                    }
+                })),
+            ));
+            rules
+        }));
+        let (connection, error_receiver) = open_connection(&endpoint, None, &connection_config)
+            .await
+            .unwrap();
+        let capture = CapturedLogs::default();
+        capturing_errors(&capture, || {
+            refiller.handle_ready_connection(OpenedConnectionEvent {
+                result: Ok((connection, error_receiver)),
+                requested_shard: None,
+                keyspace_name: None,
+            })
+        });
+        // The first pass only started the keyspace switch, so nothing is verified yet.
+        assert!(
+            capture.text().is_empty(),
+            "the keyspace switch must not report anything on its own, got: {}",
+            capture.text()
+        );
+        let evt = refiller.ready_connections.next().await.unwrap();
+        capturing_errors(&capture, || refiller.handle_ready_connection(evt));
+        let logs = capture.text();
+        assert_eq!(
+            logs.lines().count(),
+            1,
+            "a keyspace-bound connection must be reported exactly once, got: {logs}"
+        );
+
+        match proxy.finish().await {
+            Ok(()) | Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => {}
+            Err(err) => panic!("{err}"),
+        }
+        drop(refiller);
     }
 }
