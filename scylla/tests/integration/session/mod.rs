@@ -2,6 +2,7 @@ mod caching_session;
 mod cluster_reachability;
 mod db_errors;
 mod history;
+mod host_id_mismatch;
 mod internal_requests;
 #[cfg(feature = "metrics")]
 mod metrics;

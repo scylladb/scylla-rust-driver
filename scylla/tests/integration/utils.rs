@@ -32,7 +32,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::process::Command;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{env, iter};
 use tokio::sync::mpsc;
@@ -56,6 +56,70 @@ pub(crate) fn setup_tracing() {
         .with(testing_layer)
         .with(noop_layer)
         .try_init();
+}
+
+/// A `tracing` writer that accumulates the emitted log text in memory, so that a test can assert
+/// on log-only driver behaviour.
+#[derive(Clone, Default)]
+pub(crate) struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+impl CapturedLogs {
+    pub(crate) fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+impl std::io::Write for CapturedLogs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogs {
+    type Writer = CapturedLogs;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// Drives `test_body` to completion with everything it logs at ERROR level appended to `capture`.
+///
+/// The driver emits the logs a test may want to assert on from tasks it spawns itself, so the
+/// capturing subscriber has to be active while those tasks are polled. A **scoped** subscriber
+/// suffices because the runtime built here is current-thread, so it polls every task on this very
+/// thread, inside the `with_default` scope - which is also what `#[tokio::test]` does, hence the
+/// hand-rolled runtime rather than that attribute.
+///
+/// A global subscriber is deliberately not used: `cargo test` runs the whole integration binary in
+/// one process, where only the first installation would win and the buffer would additionally
+/// receive errors from tests running concurrently.
+///
+/// Being thread-local is also what keeps the capture free of errors logged by tests running
+/// concurrently in the same process. The flip side is that anything the driver logs off this
+/// thread - currently only `tokio::task::spawn_blocking` work - falls back to the global
+/// subscriber and is not captured.
+pub(crate) fn run_capturing_errors<F: Future>(capture: &CapturedLogs, test_body: F) -> F::Output {
+    let testing_layer = tracing_subscriber::fmt::layer()
+        .with_test_writer()
+        .with_filter(tracing_subscriber::EnvFilter::from_default_env());
+    let capturing_layer = tracing_subscriber::fmt::layer()
+        .with_writer(capture.clone())
+        .with_filter(tracing_subscriber::filter::LevelFilter::ERROR);
+    let subscriber = tracing_subscriber::registry()
+        .with(testing_layer)
+        .with(capturing_layer);
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    tracing::subscriber::with_default(subscriber, || runtime.block_on(test_body))
 }
 
 /// Finds the local IP address for a given destination IP address.
