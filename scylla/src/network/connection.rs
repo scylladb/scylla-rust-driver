@@ -1525,12 +1525,9 @@ impl Connection {
         if let Some(tls_config) = &config.tls_config {
             // To silence warnings when TlsContext is an empty enum (tls features are disabled).
             #[allow(unreachable_code)]
-            match tls_config.new_tls()? {
+            match tls_config.new_tls(node_address)? {
                 #[cfg(feature = "openssl-010")]
-                crate::network::tls::Tls::OpenSsl010(mut ssl) => {
-                    ssl.param_mut()
-                        .set_ip(node_address.ip())
-                        .map_err(crate::network::tls::TlsError::OpenSsl010)?;
+                crate::network::tls::Tls::OpenSsl010(ssl) => {
                     let mut stream = tokio_openssl::SslStream::new(ssl, stream)
                         .map_err(crate::network::tls::TlsError::OpenSsl010)?;
                     std::pin::Pin::new(&mut stream)

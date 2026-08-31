@@ -1,5 +1,7 @@
 //! The OpenSSL 0.10 TLS backend of the driver.
 
+use std::net::SocketAddr;
+
 use openssl::error::ErrorStack;
 use openssl::ssl::{Ssl, SslConnectorBuilder, SslContext, SslContextBuilder};
 
@@ -48,15 +50,18 @@ impl OpenSsl010Config {
     fn configure(_builder: &mut SslContextBuilder) {}
 
     /// Creates a fresh per-connection [`Ssl`] object out of this context.
-    pub(crate) fn new_ssl(&self) -> Result<Ssl, ErrorStack> {
-        new_ssl(&self.context)
+    pub(crate) fn new_ssl(&self, node_address: SocketAddr) -> Result<Ssl, ErrorStack> {
+        new_ssl(&self.context, node_address)
     }
 }
 
 /// Creates a fresh per-connection [`Ssl`] object out of an [`SslContext`].
-pub(crate) fn new_ssl(context: &SslContext) -> Result<Ssl, ErrorStack> {
+pub(crate) fn new_ssl(context: &SslContext, node_address: SocketAddr) -> Result<Ssl, ErrorStack> {
     let mut ssl = Ssl::new(context)?;
     ssl.set_connect_state();
+    // Makes OpenSSL verify the node's certificate against its IP address.
+    // Corresponds to `X509_VERIFY_PARAM_set1_ip`.
+    ssl.param_mut().set_ip(node_address.ip())?;
     Ok(ssl)
 }
 

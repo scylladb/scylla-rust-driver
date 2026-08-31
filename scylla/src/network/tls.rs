@@ -25,6 +25,7 @@
 //! for example if we wanted to support more elastic hostname verification.
 
 use std::io;
+use std::net::SocketAddr;
 
 #[cfg(feature = "openssl-010")]
 pub(crate) mod openssl;
@@ -125,14 +126,23 @@ impl TlsConfig {
     }
 
     /// Produces a new Tls object that is able to wrap a TCP stream.
-    pub(crate) fn new_tls(&self) -> Result<Tls, TlsError> {
+    pub(crate) fn new_tls(
+        &self,
+        // Only the openssl backend needs it: the rustls connector gets the address from
+        // the caller, which needs it for `ServerName` anyway.
+        #[cfg_attr(not(feature = "openssl-010"), expect(unused))] node_address: SocketAddr,
+    ) -> Result<Tls, TlsError> {
         match self.context {
             #[cfg(feature = "openssl-010")]
             // `TlsContext::OpenSsl010` is the deprecated variant we still have to support.
             #[expect(deprecated)]
-            TlsContext::OpenSsl010(ref context) => Ok(Tls::OpenSsl010(openssl::new_ssl(context)?)),
+            TlsContext::OpenSsl010(ref context) => {
+                Ok(Tls::OpenSsl010(openssl::new_ssl(context, node_address)?))
+            }
             #[cfg(feature = "openssl-010")]
-            TlsContext::OpenSsl010Config(ref context) => Ok(Tls::OpenSsl010(context.new_ssl()?)),
+            TlsContext::OpenSsl010Config(ref context) => {
+                Ok(Tls::OpenSsl010(context.new_ssl(node_address)?))
+            }
             #[cfg(feature = "rustls-023")]
             TlsContext::Rustls023(ref config) => {
                 let connector = tokio_rustls::TlsConnector::from(config.clone());
