@@ -35,7 +35,7 @@ session
     .await?;
 
 // Sending an integer and a string using a named struct.
-// Names of fields must match names of columns in request,
+// Names of fields must match names of bind markers in the request,
 // but having them in the same order is not required.
 // If the fields are in the same order, you can use attribute:
 // `#[scylla(flavor = "enforce_order")]`
@@ -54,10 +54,10 @@ let int_string = IntString {
 };
 
 session
-    .query_unpaged("INSERT INTO ks.tab (a, b) VALUES(?, ?)", int_string)
+    .query_unpaged("INSERT INTO ks.tab (a, b) VALUES(:a, :b)", int_string)
     .await?;
 
-// You can use named bind markers in statement if you want
+// You can name bind markers differently than the columns if you want
 // your names in struct to be different than column names.
 #[derive(SerializeRow)]
 struct IntStringCustom {
