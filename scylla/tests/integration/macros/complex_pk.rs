@@ -34,7 +34,7 @@ async fn test_macros_complex_pk() {
         };
         session
             .query_unpaged(
-                "INSERT INTO complex_pk (a,b,c,d,e) VALUES (?,?,?,?,?)",
+                "INSERT INTO complex_pk (a,b,c,d,e) VALUES (:a,:b,:c,:d,:e)",
                 input.clone(),
             )
             .await

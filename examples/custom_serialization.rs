@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
 
     session
         .query_unpaged(
-            "INSERT INTO examples_ks.custom_serialization (k, my) VALUES (?, ?)",
+            "INSERT INTO examples_ks.custom_serialization (k, my) VALUES (:k, :my)",
             to_insert,
         )
         .await?;
@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
 
     session
         .query_unpaged(
-            "INSERT INTO examples_ks.custom_serialization (k, my) VALUES (?, ?)",
+            "INSERT INTO examples_ks.custom_serialization (k, my) VALUES (:k, :my)",
             to_insert_2,
         )
         .await?;
