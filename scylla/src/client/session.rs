@@ -36,9 +36,7 @@ use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};
-use crate::policies::reconnect::ExponentialReconnectPolicy;
-#[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
-use crate::policies::reconnect::ReconnectPolicy;
+use crate::policies::reconnect::{ExponentialReconnectPolicy, ReconnectPolicy};
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::response::{
@@ -579,6 +577,19 @@ impl Default for SessionConfig {
 }
 
 impl SessionConfig {
+    /// The socket options connections are opened with, mapping the individual
+    /// `tcp_*` fields in one place rather than at the use site.
+    pub(crate) fn tcp_socket_options(&self) -> TcpSocketOptions {
+        TcpSocketOptions {
+            nodelay: self.tcp_nodelay,
+            keepalive_interval: self.tcp_keepalive_interval,
+            recv_buffer_size: self.tcp_recv_buffer_size,
+            send_buffer_size: self.tcp_send_buffer_size,
+            reuse_address: self.tcp_reuse_address,
+            linger: self.tcp_linger,
+        }
+    }
+
     /// [SessionConfig] may unfortunately represent invalid configurations. We need to rule them out
     /// at runtime by running validation.
     fn validate(&self) -> Result<(), NewSessionError> {
@@ -1370,6 +1381,22 @@ impl Session {
 
         let session_id = Uuid::new_v4();
 
+        // The policy the connection pools will actually use. Derived here
+        // because without the unstable feature the configuration carries no
+        // policy at all and a default stands in for it.
+        let reconnect_policy: Arc<dyn ReconnectPolicy> = {
+            #[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
+            {
+                Arc::clone(&config.reconnect_policy)
+            }
+            #[cfg(not(all(scylla_unstable, feature = "unstable-reconnect-policy")))]
+            {
+                Arc::new(ExponentialReconnectPolicy::new())
+            }
+        };
+
+        let tcp_socket_options = config.tcp_socket_options();
+
         let node_location_preference = config.node_location_preference;
         let known_nodes = config.known_nodes;
 
@@ -1398,14 +1425,7 @@ impl Session {
             local_ip_address: config.local_ip_address,
             shard_aware_local_port_range: config.shard_aware_local_port_range,
             compression: config.compression,
-            tcp_socket_options: TcpSocketOptions {
-                nodelay: config.tcp_nodelay,
-                keepalive_interval: config.tcp_keepalive_interval,
-                recv_buffer_size: config.tcp_recv_buffer_size,
-                send_buffer_size: config.tcp_send_buffer_size,
-                reuse_address: config.tcp_reuse_address,
-                linger: config.tcp_linger,
-            },
+            tcp_socket_options,
             timestamp_generator: config.timestamp_generator,
             tls_provider,
             authenticator: config.authenticator,
@@ -1427,10 +1447,7 @@ impl Session {
             connection_config,
             pool_size: config.connection_pool_size,
             can_use_shard_aware_port: !config.disallow_shard_aware_port,
-            #[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
-            reconnect_policy: config.reconnect_policy,
-            #[cfg(not(all(scylla_unstable, feature = "unstable-reconnect-policy")))]
-            reconnect_policy: Arc::new(ExponentialReconnectPolicy::new()),
+            reconnect_policy,
         };
 
         let metrics = Arc::new(Metrics::new());
