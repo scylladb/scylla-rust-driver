@@ -12,7 +12,7 @@ pub use actions::{
 };
 pub use errors::{DoorkeeperError, ProxyError, WorkerError};
 pub use frame::{RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode};
-pub use proxy::{Node, Proxy, RunningProxy, ShardAwareness};
+pub use proxy::{Node, Proxy, RunningProxy, ShardAwareness, TransportFactory};
 
 pub use proxy::get_exclusive_local_address;
 
