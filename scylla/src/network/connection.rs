@@ -64,6 +64,7 @@ use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::Instant;
 use tracing::{debug, error, trace, warn};
+use uuid::Uuid;
 
 // FIXME: Make this constants configurable
 // The term "orphan" refers to stream ids, that were allocated for a {request, response} that no
@@ -180,6 +181,7 @@ pub(crate) struct ConnectionFeatures {
     shard_info: Option<ShardInfo>,
     shard_aware_port: Option<u16>,
     protocol_features: ProtocolFeatures,
+    host_id: Option<Uuid>,
 }
 
 type RequestId = u64;
@@ -1957,6 +1959,14 @@ impl Connection {
         self.features.shard_aware_port
     }
 
+    /// The host ID that the node reported in its `SUPPORTED` response.
+    ///
+    /// `None` if the node did not report one (Cassandra, ScyllaDB without host ID
+    /// discovery) or reported a malformed value.
+    pub(crate) fn get_host_id(&self) -> Option<Uuid> {
+        self.features.host_id
+    }
+
     fn set_features(&mut self, features: ConnectionFeatures) {
         self.features = features;
     }
@@ -2139,6 +2149,27 @@ pub(crate) async fn open_connection(
         .first()
         .and_then(|p| p.parse::<u16>().ok());
 
+    // ScyllaDB reports the host ID of the node that accepted the connection, which lets the
+    // driver verify it reached the node it intended to. Cassandra and older ScyllaDB do not
+    // report it, hence the `Option`.
+    let host_id = supported
+        .options
+        .remove(options::SCYLLA_HOST_ID)
+        .unwrap_or_default()
+        .first()
+        .and_then(|id| match Uuid::parse_str(id) {
+            Ok(uuid) => Some(uuid),
+            Err(err) => {
+                tracing::warn!(
+                    "[{}] Node reported a malformed host ID {:?}: {}. Proceeding with no host ID.",
+                    addr,
+                    id,
+                    err
+                );
+                None
+            }
+        });
+
     // Parse nonstandard protocol extensions.
     let protocol_features = ProtocolFeatures::parse_from_supported(&supported.options);
 
@@ -2148,6 +2179,7 @@ pub(crate) async fn open_connection(
         shard_info,
         shard_aware_port,
         protocol_features,
+        host_id,
     };
     connection.set_features(features);
 
@@ -2558,8 +2590,8 @@ mod tests {
     use crate::serialize::row::SerializedValues;
     use assert_matches::assert_matches;
     use scylla_proxy::{
-        Condition, Node, Proxy, Reaction, RequestFrame, RequestOpcode, RequestReaction,
-        RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, ShardAwareness,
+        Condition, Node, Proxy, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction,
+        RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, ShardAwareness, WorkerError,
     };
 
     use bytes::Bytes;
@@ -2568,7 +2600,7 @@ mod tests {
     use tokio::task::JoinHandle;
     use tokio::time::Instant;
 
-    use super::{HostConnectionConfig, open_connection};
+    use super::{HostConnectionConfig, open_connection, options};
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
     use crate::errors::{
@@ -2584,6 +2616,7 @@ mod tests {
     use std::net::SocketAddr;
     use std::sync::Arc;
     use std::time::Duration;
+    use uuid::Uuid;
 
     /// Tests for Connection::execute_iter
     /// 1. SELECT from an empty table.
@@ -3252,6 +3285,79 @@ mod tests {
                 .unwrap(),
             &lwt_optimisation_entry
         )
+    }
+
+    /// The driver must read the host ID that the node reports in SUPPORTED, and degrade
+    /// gracefully (to `None`) when it is malformed or missing.
+    #[tokio::test]
+    async fn host_id_is_read_from_supported() {
+        setup_tracing();
+
+        let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+        let config = HostConnectionConfig::default();
+        let endpoint = UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+            address: proxy_addr,
+        });
+
+        let make_rules = |options: HashMap<String, Vec<String>>| {
+            vec![
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Options),
+                    RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                        ResponseFrame::forged_supported(frame.params, &options).unwrap()
+                    })),
+                ),
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Startup),
+                    RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                        ResponseFrame::forged_ready(frame.params)
+                    })),
+                ),
+            ]
+        };
+
+        let host_id = Uuid::parse_str("6bd8b1b6-5b0d-4b0e-8f45-1f3d1a9e0b12").unwrap();
+        let options_with_host_id = HashMap::from([(
+            options::SCYLLA_HOST_ID.to_owned(),
+            vec![host_id.to_string()],
+        )]);
+
+        let mut proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .proxy_address(proxy_addr)
+                    .request_rules(make_rules(options_with_host_id))
+                    .build_dry_mode(),
+            )
+            .build()
+            .run()
+            .await
+            .unwrap();
+
+        // A valid UUID is picked up.
+        let (connection, _error_receiver) =
+            open_connection(&endpoint, None, &config).await.unwrap();
+        assert_eq!(connection.get_host_id(), Some(host_id));
+
+        // A malformed value must not fail the connection - it just yields no host ID.
+        proxy.running_nodes[0].change_request_rules(Some(make_rules(HashMap::from([(
+            options::SCYLLA_HOST_ID.to_owned(),
+            vec!["not-a-uuid".to_owned()],
+        )]))));
+        let (connection, _error_receiver) =
+            open_connection(&endpoint, None, &config).await.unwrap();
+        assert_eq!(connection.get_host_id(), None);
+
+        // Nodes that do not report a host ID at all (Cassandra, older ScyllaDB).
+        proxy.running_nodes[0].change_request_rules(Some(make_rules(HashMap::new())));
+        let (connection, _error_receiver) =
+            open_connection(&endpoint, None, &config).await.unwrap();
+        assert_eq!(connection.get_host_id(), None);
+
+        match proxy.finish().await {
+            Ok(()) | Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => {}
+            Err(err) => panic!("{err}"),
+        }
     }
 
     #[tokio::test]
