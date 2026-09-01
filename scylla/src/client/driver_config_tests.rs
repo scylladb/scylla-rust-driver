@@ -15,6 +15,10 @@ use crate::policies::host_filter::{
 use crate::policies::reconnect::{
     ConstantReconnectPolicy, ExponentialReconnectPolicy, ReconnectPolicy, ReconnectPolicySession,
 };
+use crate::policies::retry::{
+    DefaultRetryPolicy, DowngradingConsistencyRetryPolicy, FallthroughRetryPolicy, RetryPolicy,
+    RetrySession,
+};
 use crate::policies::timestamp_generator::SimpleTimestampGenerator;
 use crate::statement::{Consistency, SerialConsistency};
 
@@ -65,6 +69,15 @@ struct ForeignHostFilter;
 impl HostFilter for ForeignHostFilter {
     fn accept(&self, _peer: &Peer) -> bool {
         true
+    }
+}
+
+#[derive(Debug)]
+struct ForeignRetryPolicy;
+
+impl RetryPolicy for ForeignRetryPolicy {
+    fn new_session(&self) -> Box<dyn RetrySession> {
+        unimplemented!("the report never runs the policy")
     }
 }
 
@@ -120,7 +133,7 @@ fn patched(report: &str, patches: &[(&str, &str)]) -> String {
 /// The report of an unconfigured session against a ScyllaDB target, spelled
 /// out in full: the one document key order is pinned on, and the baseline
 /// the single-axis cases below are expressed as patches of.
-const DEFAULT_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":5000},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":true}},"socket":{"tcp-no-delay":true,"keep-alive":false,"reuse-address":false},"reconnection":{"policy":{"type":"exponential","base-ms":50,"max-ms":10000}}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}},"query":{"defaults":{"consistency":"LOCAL_QUORUM","serial-consistency":"LOCAL_SERIAL","idempotence":false,"client-timestamps":false,"page":{"size":5000},"request":{"timeout-ms":30000}}}}"#;
+const DEFAULT_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":5000},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":true}},"socket":{"tcp-no-delay":true,"keep-alive":false,"reuse-address":false},"reconnection":{"policy":{"type":"exponential","base-ms":50,"max-ms":10000}}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}},"query":{"defaults":{"consistency":"LOCAL_QUORUM","serial-consistency":"LOCAL_SERIAL","idempotence":false,"client-timestamps":false,"page":{"size":5000},"request":{"timeout-ms":30000}},"retry":{"policy":{"type":"standard-error-aware"}}}}"#;
 
 fn reporter(config: &SessionConfig) -> DriverConfigReporter {
     reporter_with_policy(config, Arc::new(ExponentialReconnectPolicy::new()))
@@ -205,6 +218,7 @@ fn customised_config() -> SessionConfig {
         .consistency(Consistency::Quorum)
         .serial_consistency(Some(SerialConsistency::Serial))
         .request_timeout(Some(Duration::from_millis(1500)))
+        .retry_policy(Arc::new(DowngradingConsistencyRetryPolicy::new()))
         .build()
         .into_handle();
     config
@@ -222,7 +236,7 @@ fn customised_report(config: &SessionConfig) -> String {
 /// The report of [`customised_config`], the second document spelled out in
 /// full: nearly every key of it differs from [`DEFAULT_REPORT`], so there is
 /// no difference to point at.
-const CUSTOMISED_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":1234},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":false}},"socket":{"tcp-no-delay":false,"keep-alive":true,"reuse-address":true,"linger":{"interval-s":7},"receive-buffer":{"size-bytes":65536},"send-buffer":{"size-bytes":32768}},"reconnection":{"policy":{"type":"constant","delay-ms":250}},"node-preference":{"type":"dc","local-dc":"dc1"}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}},"query":{"defaults":{"consistency":"QUORUM","serial-consistency":"SERIAL","idempotence":false,"client-timestamps":true,"page":{"size":5000},"request":{"timeout-ms":1500}}}}"#;
+const CUSTOMISED_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":1234},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":false}},"socket":{"tcp-no-delay":false,"keep-alive":true,"reuse-address":true,"linger":{"interval-s":7},"receive-buffer":{"size-bytes":65536},"send-buffer":{"size-bytes":32768}},"reconnection":{"policy":{"type":"constant","delay-ms":250}},"node-preference":{"type":"dc","local-dc":"dc1"}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}},"query":{"defaults":{"consistency":"QUORUM","serial-consistency":"SERIAL","idempotence":false,"client-timestamps":true,"page":{"size":5000},"request":{"timeout-ms":1500}},"retry":{"policy":{"type":"downgrading-consistency"}}}}"#;
 
 #[test]
 fn fully_customised_configuration_report() {
@@ -470,6 +484,7 @@ fn remapping_the_default_profile_changes_the_report() {
                 "page": {"size": 5000},
                 "request": {"timeout-ms": 30000},
             },
+            "retry": {"policy": {"type": "standard-error-aware"}},
         })
     );
 
@@ -478,6 +493,7 @@ fn remapping_the_default_profile_changes_the_report() {
             .consistency(Consistency::EachQuorum)
             .serial_consistency(Some(SerialConsistency::Serial))
             .request_timeout(Some(Duration::from_secs(3)))
+            .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
             .build(),
     );
 
@@ -494,8 +510,45 @@ fn remapping_the_default_profile_changes_the_report() {
                 "page": {"size": 5000},
                 "request": {"timeout-ms": 3000},
             },
+            "retry": {"policy": {"type": "fallthrough"}},
         })
     );
+}
+
+/// [`reconnection_policies`] for the retry policies, with the `query.retry`
+/// group each must be reported as.
+fn retry_policies() -> [(&'static str, Arc<dyn RetryPolicy>, Value); 4] {
+    [
+        (
+            "default retry",
+            Arc::new(DefaultRetryPolicy::new()),
+            serde_json::json!({"policy": {"type": "standard-error-aware"}}),
+        ),
+        (
+            "fallthrough retry",
+            Arc::new(FallthroughRetryPolicy::new()),
+            serde_json::json!({"policy": {"type": "fallthrough"}}),
+        ),
+        (
+            "downgrading consistency retry",
+            Arc::new(DowngradingConsistencyRetryPolicy::new()),
+            serde_json::json!({"policy": {"type": "downgrading-consistency"}}),
+        ),
+        (
+            "foreign retry policy",
+            Arc::new(ForeignRetryPolicy),
+            serde_json::json!({"policy": {"type": "custom", "name": "ForeignRetryPolicy"}}),
+        ),
+    ]
+}
+
+#[test]
+fn retry_policy_variants() {
+    for (name, policy, expected) in retry_policies() {
+        let profile = ExecutionProfile::builder().retry_policy(policy).build();
+        let report = reporter_with_profile(profile).report(true).unwrap();
+        assert_eq!(group(&report, "/query/retry"), expected, "{name}");
+    }
 }
 
 /// The schema's consistency enums are SCREAMING_SNAKE, which neither

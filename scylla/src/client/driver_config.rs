@@ -27,6 +27,9 @@ use crate::policies::host_filter::{DcHostFilter, HostFilter};
 use crate::policies::reconnect::{
     ConstantReconnectPolicy, ExponentialReconnectPolicy, ReconnectPolicy,
 };
+use crate::policies::retry::{
+    DefaultRetryPolicy, DowngradingConsistencyRetryPolicy, FallthroughRetryPolicy, RetryPolicy,
+};
 use crate::statement::PageSize;
 
 /// The major version of the reported configuration schema.
@@ -261,12 +264,13 @@ struct TlsReport {}
 
 /// The schema's `query` group.
 ///
-/// Its `retry`, `load-balancing` and `speculative-execution` members are yet
-/// to be added.
+/// Its `load-balancing` and `speculative-execution` members are yet to be
+/// added.
 #[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct QueryReport {
     defaults: QueryDefaultsReport,
+    retry: QueryRetryReport,
 }
 
 /// The defaults a statement gets when it overrides nothing, read from the
@@ -312,6 +316,36 @@ struct PageReport {
 #[serde(rename_all = "kebab-case")]
 struct RequestDefaultsReport {
     timeout_ms: u64,
+}
+
+/// `backoff` is never reported: no retry policy of this driver waits between
+/// attempts. Neither is `max-retries`, which every variant below leaves
+/// optional: the built-ins do cap some retries - each keeps an "already
+/// retried" flag per error kind - but that cap does not bound the retries on
+/// the next target that a connection or server error triggers, so there is no
+/// single count to report.
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct QueryRetryReport {
+    policy: RetryPolicyReport,
+}
+
+#[derive(Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case"
+)]
+enum RetryPolicyReport {
+    /// [`DefaultRetryPolicy`], whose decisions are driven by the error kind -
+    /// what the schema calls error-aware. csharp-driver maps its own default
+    /// policy to this type as well.
+    StandardErrorAware,
+    Fallthrough,
+    DowngradingConsistency,
+    Custom {
+        name: &'static str,
+    },
 }
 
 /// The schema's `query.defaults.consistency` name of `consistency`.
@@ -618,6 +652,29 @@ impl DriverConfigReporter {
                         timeout_ms: positive_millis(timeout),
                     }),
             },
+            retry: QueryRetryReport {
+                policy: Self::retry_policy_report(&profile.retry_policy),
+            },
+        }
+    }
+
+    fn retry_policy_report(policy: &Arc<dyn RetryPolicy>) -> RetryPolicyReport {
+        let Some(downcastable) = policy.as_any() else {
+            return RetryPolicyReport::Custom {
+                name: policy.reported_name(),
+            };
+        };
+
+        if downcastable.is::<DefaultRetryPolicy>() {
+            RetryPolicyReport::StandardErrorAware
+        } else if downcastable.is::<FallthroughRetryPolicy>() {
+            RetryPolicyReport::Fallthrough
+        } else if downcastable.is::<DowngradingConsistencyRetryPolicy>() {
+            RetryPolicyReport::DowngradingConsistency
+        } else {
+            RetryPolicyReport::Custom {
+                name: policy.reported_name(),
+            }
         }
     }
 }
