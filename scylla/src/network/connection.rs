@@ -2545,11 +2545,15 @@ struct StreamIdSet {
     used_bitmap: Box<[u64]>,
 }
 
+/// Number of stream ids usable on one connection, i.e. the maximum number of
+/// requests in flight on it. Every id in `0..MAX_IN_FLIGHT_REQUESTS` is
+/// allocatable; none is reserved.
+const MAX_IN_FLIGHT_REQUESTS: usize = i16::MAX as usize + 1;
+
 impl StreamIdSet {
     fn new() -> Self {
-        const BITMAP_SIZE: usize = (i16::MAX as usize + 1) / 64;
         Self {
-            used_bitmap: vec![0; BITMAP_SIZE].into_boxed_slice(),
+            used_bitmap: vec![0; MAX_IN_FLIGHT_REQUESTS / 64].into_boxed_slice(),
         }
     }
 
