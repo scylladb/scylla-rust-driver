@@ -24,12 +24,14 @@ use crate::network::{
     MAX_IN_FLIGHT_REQUESTS, OLD_ORPHAN_COUNT_THRESHOLD, PoolSize, TcpSocketOptions,
 };
 use crate::policies::host_filter::{DcHostFilter, HostFilter};
+use crate::policies::load_balancing::{DefaultPolicy, LoadBalancingPolicy};
 use crate::policies::reconnect::{
     ConstantReconnectPolicy, ExponentialReconnectPolicy, ReconnectPolicy,
 };
 use crate::policies::retry::{
     DefaultRetryPolicy, DowngradingConsistencyRetryPolicy, FallthroughRetryPolicy, RetryPolicy,
 };
+use crate::routing::NodeLocationPreference;
 use crate::statement::PageSize;
 
 /// The major version of the reported configuration schema.
@@ -53,9 +55,10 @@ const MAX_REPORT_SIZE: usize = 32 * 1024;
 
 /// The reported configuration document.
 ///
-/// The `query` group is still incomplete: the schema requires its
-/// `load-balancing` member, which is yet to be added, so the report this
-/// currently produces does not validate against the schema.
+/// Carries every group the schema requires, so the produced document validates
+/// against it. Of the optional ones only `query.speculative-execution` is yet
+/// to be added; each type below states why the keys it does not populate are
+/// absent.
 #[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct Report {
@@ -237,11 +240,13 @@ enum ReconnectionPolicyReport {
     },
 }
 
-/// Which nodes the driver holds connections to at all - a different claim from
-/// `query.load-balancing.node-preference`, which is about where a request may be
-/// routed. Only a datacenter preference is representable: the schema has no
-/// branch for selection by address, and no other built-in filter states a
-/// location.
+/// The schema's `node-location-preference`, used by both `connection` and
+/// `query.load-balancing`: which nodes the driver holds connections to at all,
+/// and which of those a request may be routed to. The two are different claims
+/// but have the same shape, and the schema's `$def` is shared.
+///
+/// The `dc-auto` and `rack-auto` branches are never produced: this driver
+/// infers no location, every preference it reports is one a user configured.
 #[derive(Serialize)]
 #[serde(
     tag = "type",
@@ -249,7 +254,13 @@ enum ReconnectionPolicyReport {
     rename_all_fields = "kebab-case"
 )]
 enum NodePreferenceReport {
-    Dc { local_dc: String },
+    Dc {
+        local_dc: String,
+    },
+    Rack {
+        local_dc: String,
+        local_rack: String,
+    },
 }
 
 /// `hostname-verification` is deliberately absent, which the schema permits
@@ -263,14 +274,12 @@ enum NodePreferenceReport {
 struct TlsReport {}
 
 /// The schema's `query` group.
-///
-/// Its `load-balancing` and `speculative-execution` members are yet to be
-/// added.
 #[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct QueryReport {
     defaults: QueryDefaultsReport,
     retry: QueryRetryReport,
+    load_balancing: QueryLoadBalancingReport,
 }
 
 /// The defaults a statement gets when it overrides nothing, read from the
@@ -348,6 +357,54 @@ enum RetryPolicyReport {
     },
 }
 
+/// The schema's `query.load-balancing`, read from the default execution
+/// profile's load balancing policy.
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct QueryLoadBalancingReport {
+    policy: LoadBalancingPolicyReport,
+    /// The effective node location preference: the policy's own, or the
+    /// session-level one it falls back to. `policy`'s
+    /// `fallback-to-non-preferred-nodes` is derived from this very value, so
+    /// that the two cannot contradict each other.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    node_preference: Option<NodePreferenceReport>,
+}
+
+#[derive(Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case"
+)]
+enum LoadBalancingPolicyReport {
+    /// A token-aware [`DefaultPolicy`]. The schema's only built-in branch
+    /// presumes token awareness, so a `DefaultPolicy` with it switched off is
+    /// reported as [`Custom`](Self::Custom) instead - naming it `token-aware`
+    /// would be a plain lie about how plans are built.
+    TokenAware {
+        load_distribution: &'static str,
+        fallback_to_non_preferred_nodes: bool,
+        /// Present only when latency awareness is enabled, which the schema
+        /// spells as "absent when adaptive ordering is disabled".
+        #[serde(skip_serializing_if = "Option::is_none")]
+        adaptive_ordering: Option<AdaptiveOrderingReport>,
+    },
+    Custom {
+        name: String,
+    },
+}
+
+/// Which runtime observations reorder otherwise eligible candidates. The schema
+/// stops there deliberately: it records the signals, not the algorithm or its
+/// thresholds, so `DefaultPolicy`'s exclusion threshold and retry period have
+/// nowhere to go and are not reported.
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct AdaptiveOrderingReport {
+    signals: &'static [&'static str],
+}
+
 /// The schema's `query.defaults.consistency` name of `consistency`.
 ///
 /// Neither [`Consistency`]'s `Display` nor its `Debug` can serve here: both
@@ -416,6 +473,82 @@ fn buffer_report(size: Option<usize>) -> Option<BufferReport> {
         })
 }
 
+/// The schema's `node-location-preference` of an effective
+/// [`NodeLocationPreference`].
+///
+/// An empty datacenter name drops the whole preference: `local-dc` is a
+/// `nonEmptyString` and required on every branch that names a location, so there
+/// is nothing left to report. An empty rack name only drops the rack half, and
+/// the datacenter is still reported: at runtime the rack tier of the plan
+/// matches no node - `make_rack_predicate` compares against `Some("")` - while
+/// `preferred_node_set` and `is_datacenter_failover_possible` keep scoping and
+/// gating by the datacenter, so routing is confined exactly as a plain
+/// [`NodeLocationPreference::Datacenter`] would confine it.
+fn location_preference_report(preference: &NodeLocationPreference) -> Option<NodePreferenceReport> {
+    match preference {
+        NodeLocationPreference::Any => None,
+        NodeLocationPreference::Datacenter(dc) => {
+            (!dc.is_empty()).then(|| NodePreferenceReport::Dc {
+                local_dc: dc.clone(),
+            })
+        }
+        NodeLocationPreference::DatacenterAndRack(dc, rack) => (!dc.is_empty()).then(|| {
+            if rack.is_empty() {
+                NodePreferenceReport::Dc {
+                    local_dc: dc.clone(),
+                }
+            } else {
+                NodePreferenceReport::Rack {
+                    local_dc: dc.clone(),
+                    local_rack: rack.clone(),
+                }
+            }
+        }),
+    }
+}
+
+/// Whether a request may reach a node outside the reported `node-preference`.
+///
+/// Derived from the very preference report the document carries, so the two
+/// keys cannot disagree about which preference they describe.
+fn fallback_to_non_preferred_nodes(
+    node_preference: Option<&NodePreferenceReport>,
+    permit_dc_failover: bool,
+) -> bool {
+    match node_preference {
+        // Nothing confines requests, and `permit_dc_failover` has no effect
+        // without a preferred datacenter.
+        None => true,
+        Some(NodePreferenceReport::Dc { .. }) => permit_dc_failover,
+        // A rack preference is always escaped, whatever `permit_dc_failover`
+        // says. `is_datacenter_failover_possible` only ever gates tiers that
+        // leave the preferred datacenter; every tier scoped to that datacenter
+        // is unconditional. In `DefaultPolicy::fallback` those are the whole-
+        // datacenter replica tier inside `maybe_replicas`, `robinned_local_nodes`
+        // and `maybe_down_local_nodes`, all three covering the datacenter's other
+        // racks. `pick` behaves the same, falling from its local-rack attempt
+        // straight to the whole-datacenter one with no failover check. Disabling
+        // failover only stops requests leaving the datacenter, which the schema's
+        // single boolean cannot express.
+        Some(NodePreferenceReport::Rack { .. }) => true,
+    }
+}
+
+/// The schema's `name` of a load balancing policy the driver cannot describe
+/// precisely.
+///
+/// [`LoadBalancingPolicy::name`] is implemented by the user and may return an
+/// empty string, which `nonEmptyString` rejects. A literal stands in for it,
+/// matching what gocql reports for a policy it cannot name.
+fn custom_policy_name(policy: &Arc<dyn LoadBalancingPolicy>) -> String {
+    let name = policy.name();
+    if name.is_empty() {
+        "unknown".to_owned()
+    } else {
+        name
+    }
+}
+
 /// Builds the configuration report of a session.
 ///
 /// Holds a snapshot of everything fixed for the session's lifetime, because
@@ -431,6 +564,9 @@ pub(crate) struct DriverConfigReporter {
     reconnect_policy: Arc<dyn ReconnectPolicy>,
     metadata_request_timeouts: MetadataRequestTimeouts,
     schema_agreement_timeout: Duration,
+    /// The session-level preference a load balancing policy that states none of
+    /// its own falls back to.
+    node_location_preference: NodeLocationPreference,
     default_execution_profile_handle: ExecutionProfileHandle,
     timestamp_generator_configured: bool,
 }
@@ -463,6 +599,7 @@ impl DriverConfigReporter {
             reconnect_policy,
             metadata_request_timeouts,
             schema_agreement_timeout: config.schema_agreement_timeout,
+            node_location_preference: config.node_location_preference.clone(),
             default_execution_profile_handle: config.default_execution_profile_handle.clone(),
             timestamp_generator_configured: config.timestamp_generator.is_some(),
         }
@@ -585,6 +722,11 @@ impl DriverConfigReporter {
         }
     }
 
+    /// The schema's `connection.node-preference`: which nodes the driver holds
+    /// connections to at all, which only the host filter narrows. Of the
+    /// built-in filters only [`DcHostFilter`] states a location - the schema has
+    /// no branch for selection by address - so every other filter reports no
+    /// preference.
     fn node_preference_report(&self) -> Option<NodePreferenceReport> {
         let filter = self.host_filter.as_ref()?.as_any()?;
         let filter = filter.downcast_ref::<DcHostFilter>()?;
@@ -655,6 +797,85 @@ impl DriverConfigReporter {
             retry: QueryRetryReport {
                 policy: Self::retry_policy_report(&profile.retry_policy),
             },
+            load_balancing: self.load_balancing_report(&profile.load_balancing_policy),
+        }
+    }
+
+    fn load_balancing_report(
+        &self,
+        policy: &Arc<dyn LoadBalancingPolicy>,
+    ) -> QueryLoadBalancingReport {
+        let default_policy = policy
+            .as_any()
+            .and_then(|policy| policy.downcast_ref::<DefaultPolicy>());
+
+        // The effective preference, resolved the way `DefaultPolicy::routing_info`
+        // resolves it: the policy's own preference if it states one, else the
+        // session-level one. Computed once, because `node-preference` and
+        // `fallback-to-non-preferred-nodes` both describe it and would contradict
+        // each other if they were derived separately.
+        let preference = default_policy
+            .and_then(|policy| policy.preferences.as_ref())
+            .unwrap_or(&self.node_location_preference);
+        let node_preference = location_preference_report(preference);
+
+        QueryLoadBalancingReport {
+            policy: Self::load_balancing_policy_report(
+                policy,
+                default_policy,
+                node_preference.as_ref(),
+            ),
+            node_preference,
+        }
+    }
+
+    fn load_balancing_policy_report(
+        policy: &Arc<dyn LoadBalancingPolicy>,
+        default_policy: Option<&DefaultPolicy>,
+        node_preference: Option<&NodePreferenceReport>,
+    ) -> LoadBalancingPolicyReport {
+        // A `DefaultPolicy` with token awareness switched off falls in here too:
+        // the schema's only built-in load-balancing type presumes token
+        // awareness, so there is no built-in shape such a chain could be reported
+        // under.
+        let custom = || LoadBalancingPolicyReport::Custom {
+            name: custom_policy_name(policy),
+        };
+
+        let Some(default_policy) = default_policy.filter(|policy| policy.is_token_aware) else {
+            return custom();
+        };
+
+        LoadBalancingPolicyReport::TokenAware {
+            // Keyed on `fixed_seed`, which is what the policy branches on at
+            // runtime: `pick_random_replica` and `maybe_shuffled_replicas` build
+            // a fresh `Pcg32::new(seed, 0)` per call, so a fixed seed yields the
+            // same choice and the same permutation for every query plan - not
+            // randomised selection, which is what the schema's `shuffle` means.
+            // An unfixed seed draws from the thread rng and does randomise.
+            // `replica-set` is then the closest of the remaining two: it is the
+            // only value asserting an order stable across plans, and gocql
+            // branches on its own equivalent flag to the same value.
+            //
+            // One value per policy is all the schema has, so this necessarily
+            // describes only the replica tiers: other tiers are round-robined
+            // regardless (`round_robin_nodes`, which ignores `fixed_seed`), and
+            // LWT statements always get deterministic ring order
+            // (`ReplicaOrder::Deterministic`).
+            load_distribution: if default_policy.fixed_seed.is_some() {
+                "replica-set"
+            } else {
+                "shuffle"
+            },
+            fallback_to_non_preferred_nodes: fallback_to_non_preferred_nodes(
+                node_preference,
+                default_policy.permit_dc_failover,
+            ),
+            adaptive_ordering: default_policy.latency_awareness.is_some().then_some(
+                AdaptiveOrderingReport {
+                    signals: &["latency"],
+                },
+            ),
         }
     }
 

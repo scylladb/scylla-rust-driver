@@ -3,14 +3,20 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
+use uuid::Uuid;
 
 use super::{DriverConfigReporter, MAX_REPORT_SIZE, non_negative_millis, positive_millis};
 use crate::client::execution_profile::ExecutionProfile;
 use crate::client::session::SessionConfig;
 use crate::cluster::metadata::Peer;
+use crate::cluster::{ClusterState, NodeRef};
 use crate::network::PoolSize;
 use crate::policies::host_filter::{
     AcceptAllHostFilter, AllowListHostFilter, DcHostFilter, HostFilter,
+};
+use crate::policies::load_balancing::{
+    DefaultPolicy, FallbackPlan, LatencyAwarenessBuilder, LoadBalancingPolicy, NodeIdentifier,
+    RoutingInfo, SingleTargetLoadBalancingPolicy,
 };
 use crate::policies::reconnect::{
     ConstantReconnectPolicy, ExponentialReconnectPolicy, ReconnectPolicy, ReconnectPolicySession,
@@ -20,6 +26,7 @@ use crate::policies::retry::{
     RetrySession,
 };
 use crate::policies::timestamp_generator::SimpleTimestampGenerator;
+use crate::routing::{NodeLocationPreference, Shard};
 use crate::statement::{Consistency, SerialConsistency};
 
 /// Every consistency level the schema enumerates, with the SCREAMING_SNAKE
@@ -81,6 +88,42 @@ impl RetryPolicy for ForeignRetryPolicy {
     }
 }
 
+/// Unlike its siblings this one carries its `name`, because a load balancing
+/// policy is reported by [`LoadBalancingPolicy::name`] rather than by type
+/// name. That makes it the only input to the document with no bound on its
+/// length, which [`oversized_reports_are_omitted`] relies on, and the only
+/// one that can be empty, which `nonEmptyString` rejects.
+#[derive(Debug)]
+struct ForeignLoadBalancingPolicy(String);
+
+impl ForeignLoadBalancingPolicy {
+    fn new(name: impl Into<String>) -> Arc<Self> {
+        Arc::new(Self(name.into()))
+    }
+}
+
+impl LoadBalancingPolicy for ForeignLoadBalancingPolicy {
+    fn pick<'a>(
+        &'a self,
+        _request: &'a RoutingInfo,
+        _cluster: &'a ClusterState,
+    ) -> Option<(NodeRef<'a>, Option<Shard>)> {
+        unimplemented!("the report never runs the policy")
+    }
+
+    fn fallback<'a>(
+        &'a self,
+        _request: &'a RoutingInfo,
+        _cluster: &'a ClusterState,
+    ) -> FallbackPlan<'a> {
+        unimplemented!("the report never runs the policy")
+    }
+
+    fn name(&self) -> String {
+        self.0.clone()
+    }
+}
+
 /// The value the report carries at `pointer`.
 ///
 /// Assertions on one group of the document go through this rather than
@@ -133,7 +176,7 @@ fn patched(report: &str, patches: &[(&str, &str)]) -> String {
 /// The report of an unconfigured session against a ScyllaDB target, spelled
 /// out in full: the one document key order is pinned on, and the baseline
 /// the single-axis cases below are expressed as patches of.
-const DEFAULT_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":5000},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":true}},"socket":{"tcp-no-delay":true,"keep-alive":false,"reuse-address":false},"reconnection":{"policy":{"type":"exponential","base-ms":50,"max-ms":10000}}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}},"query":{"defaults":{"consistency":"LOCAL_QUORUM","serial-consistency":"LOCAL_SERIAL","idempotence":false,"client-timestamps":false,"page":{"size":5000},"request":{"timeout-ms":30000}},"retry":{"policy":{"type":"standard-error-aware"}}}}"#;
+const DEFAULT_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":5000},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":true}},"socket":{"tcp-no-delay":true,"keep-alive":false,"reuse-address":false},"reconnection":{"policy":{"type":"exponential","base-ms":50,"max-ms":10000}}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}},"query":{"defaults":{"consistency":"LOCAL_QUORUM","serial-consistency":"LOCAL_SERIAL","idempotence":false,"client-timestamps":false,"page":{"size":5000},"request":{"timeout-ms":30000}},"retry":{"policy":{"type":"standard-error-aware"}},"load-balancing":{"policy":{"type":"token-aware","load-distribution":"shuffle","fallback-to-non-preferred-nodes":true}}}}"#;
 
 fn reporter(config: &SessionConfig) -> DriverConfigReporter {
     reporter_with_policy(config, Arc::new(ExponentialReconnectPolicy::new()))
@@ -236,7 +279,7 @@ fn customised_report(config: &SessionConfig) -> String {
 /// The report of [`customised_config`], the second document spelled out in
 /// full: nearly every key of it differs from [`DEFAULT_REPORT`], so there is
 /// no difference to point at.
-const CUSTOMISED_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":1234},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":false}},"socket":{"tcp-no-delay":false,"keep-alive":true,"reuse-address":true,"linger":{"interval-s":7},"receive-buffer":{"size-bytes":65536},"send-buffer":{"size-bytes":32768}},"reconnection":{"policy":{"type":"constant","delay-ms":250}},"node-preference":{"type":"dc","local-dc":"dc1"}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}},"query":{"defaults":{"consistency":"QUORUM","serial-consistency":"SERIAL","idempotence":false,"client-timestamps":true,"page":{"size":5000},"request":{"timeout-ms":1500}},"retry":{"policy":{"type":"downgrading-consistency"}}}}"#;
+const CUSTOMISED_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":1234},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":false}},"socket":{"tcp-no-delay":false,"keep-alive":true,"reuse-address":true,"linger":{"interval-s":7},"receive-buffer":{"size-bytes":65536},"send-buffer":{"size-bytes":32768}},"reconnection":{"policy":{"type":"constant","delay-ms":250}},"node-preference":{"type":"dc","local-dc":"dc1"}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}},"query":{"defaults":{"consistency":"QUORUM","serial-consistency":"SERIAL","idempotence":false,"client-timestamps":true,"page":{"size":5000},"request":{"timeout-ms":1500}},"retry":{"policy":{"type":"downgrading-consistency"}},"load-balancing":{"policy":{"type":"token-aware","load-distribution":"shuffle","fallback-to-non-preferred-nodes":true}}}}"#;
 
 #[test]
 fn fully_customised_configuration_report() {
@@ -472,6 +515,16 @@ fn remapping_the_default_profile_changes_the_report() {
     config.default_execution_profile_handle = handle.clone();
     let reporter = reporter(&config);
 
+    // The one group a profile feeds, in full, so that remapping is seen to
+    // change every key of it that the new profile touches - and none other.
+    let token_aware_load_balancing = serde_json::json!({
+        "policy": {
+            "type": "token-aware",
+            "load-distribution": "shuffle",
+            "fallback-to-non-preferred-nodes": true,
+        },
+    });
+
     let before = reporter.report(true).unwrap();
     assert_eq!(
         group(&before, "/query"),
@@ -485,6 +538,7 @@ fn remapping_the_default_profile_changes_the_report() {
                 "request": {"timeout-ms": 30000},
             },
             "retry": {"policy": {"type": "standard-error-aware"}},
+            "load-balancing": token_aware_load_balancing,
         })
     );
 
@@ -511,6 +565,7 @@ fn remapping_the_default_profile_changes_the_report() {
                 "request": {"timeout-ms": 3000},
             },
             "retry": {"policy": {"type": "fallthrough"}},
+            "load-balancing": token_aware_load_balancing,
         })
     );
 }
@@ -597,4 +652,261 @@ fn unset_query_defaults_are_omitted() {
             "page": {"size": 5000},
         })
     );
+}
+
+fn load_balancing_report(
+    policy: Arc<dyn LoadBalancingPolicy>,
+    session_preference: NodeLocationPreference,
+) -> serde_json::Value {
+    let mut config = SessionConfig::new();
+    config.node_location_preference = session_preference;
+    config.default_execution_profile_handle = ExecutionProfile::builder()
+        .load_balancing_policy(policy)
+        .build()
+        .into_handle();
+
+    let report = reporter(&config).report(true).unwrap();
+    group(&report, "/query/load-balancing")
+}
+
+/// The expected `query.load-balancing` of a token-aware `DefaultPolicy`
+/// with replica shuffling on and adaptive ordering off: the shape nearly
+/// every case below shares, differing only in the derived
+/// `fallback-to-non-preferred-nodes` and in the preference beside it. The
+/// few cases that vary anything else fill in the difference themselves.
+fn token_aware_expectation(
+    fallback_to_non_preferred_nodes: bool,
+    node_preference: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut expected = serde_json::json!({
+        "policy": {
+            "type": "token-aware",
+            "load-distribution": "shuffle",
+            "fallback-to-non-preferred-nodes": fallback_to_non_preferred_nodes,
+        },
+    });
+
+    if let Some(node_preference) = node_preference {
+        expected["node-preference"] = node_preference;
+    }
+    expected
+}
+
+/// [`dc_preference`] naming a rack as well, which only a load balancing
+/// policy ever does: no host filter states a rack.
+fn rack_preference(local_dc: &str, local_rack: &str) -> serde_json::Value {
+    serde_json::json!({"type": "rack", "local-dc": local_dc, "local-rack": local_rack})
+}
+
+/// Every combination of `DefaultPolicy`'s reportable knobs, and above all
+/// every case of `fallback-to-non-preferred-nodes`: it is the one key
+/// derived rather than read, and the rack case says `true` even with
+/// datacenter failover disabled, which reads like a bug until one follows
+/// `DefaultPolicy::fallback`'s plan composition.
+///
+/// A Tokio runtime is needed only by [`LatencyAwarenessBuilder::build`],
+/// which spawns the task updating latency averages.
+#[tokio::test]
+async fn default_load_balancing_policy_matrix() {
+    let dc = || "dc1".to_owned();
+    let rack = || "rack1".to_owned();
+
+    // Token awareness off: the schema's built-in branch presumes it, so the
+    // policy is reported as custom - preference and failover included, since
+    // the custom branch carries neither.
+    assert_eq!(
+        load_balancing_report(
+            DefaultPolicy::builder()
+                .token_aware(false)
+                .prefer_datacenter(dc())
+                .build(),
+            NodeLocationPreference::Any,
+        ),
+        serde_json::json!({
+            "policy": {"type": "custom", "name": "DefaultPolicy"},
+            "node-preference": dc_preference("dc1"),
+        })
+    );
+
+    // No preference at all: nothing confines requests, so failover cannot
+    // change the answer.
+    for permit_dc_failover in [false, true] {
+        assert_eq!(
+            load_balancing_report(
+                DefaultPolicy::builder()
+                    .permit_dc_failover(permit_dc_failover)
+                    .build(),
+                NodeLocationPreference::Any,
+            ),
+            token_aware_expectation(true, None)
+        );
+    }
+
+    // A datacenter preference is the only case failover decides.
+    for (permit_dc_failover, fallback) in [(false, false), (true, true)] {
+        assert_eq!(
+            load_balancing_report(
+                DefaultPolicy::builder()
+                    .prefer_datacenter(dc())
+                    .permit_dc_failover(permit_dc_failover)
+                    .build(),
+                NodeLocationPreference::Any,
+            ),
+            token_aware_expectation(fallback, Some(dc_preference("dc1")))
+        );
+    }
+
+    // A rack preference is always escaped: the fallback plan chains the
+    // local datacenter's other racks after the local rack unconditionally.
+    for permit_dc_failover in [false, true] {
+        assert_eq!(
+            load_balancing_report(
+                DefaultPolicy::builder()
+                    .prefer_datacenter_and_rack(dc(), rack())
+                    .permit_dc_failover(permit_dc_failover)
+                    .build(),
+                NodeLocationPreference::Any,
+            ),
+            token_aware_expectation(true, Some(rack_preference("dc1", "rack1")))
+        );
+    }
+
+    // Latency awareness is the only adaptive-ordering signal the driver has.
+    let mut adaptive = token_aware_expectation(false, Some(dc_preference("dc1")));
+    adaptive["policy"]["adaptive-ordering"] = serde_json::json!({"signals": ["latency"]});
+    assert_eq!(
+        load_balancing_report(
+            DefaultPolicy::builder()
+                .prefer_datacenter(dc())
+                .permit_dc_failover(false)
+                .latency_awareness(LatencyAwarenessBuilder::new())
+                .build(),
+            NodeLocationPreference::Any,
+        ),
+        adaptive
+    );
+}
+
+/// `load-distribution` is the one key that must follow `fixed_seed` rather
+/// than the policy's type: a fixed seed makes every query plan reuse the
+/// same replica choice and the same permutation, which is not the schema's
+/// randomised `shuffle`.
+#[test]
+fn load_distribution_follows_replica_shuffling() {
+    for (enable_shuffling, distribution) in [(true, "shuffle"), (false, "replica-set")] {
+        let mut expected = token_aware_expectation(true, None);
+        expected["policy"]["load-distribution"] = serde_json::json!(distribution);
+
+        assert_eq!(
+            load_balancing_report(
+                DefaultPolicy::builder()
+                    .enable_shuffling_replicas(enable_shuffling)
+                    .build(),
+                NodeLocationPreference::Any,
+            ),
+            expected
+        );
+    }
+}
+
+/// `node-preference` reports the preference the policy actually routes by,
+/// which `DefaultPolicy::routing_info` takes from the policy when it states
+/// one and from the session otherwise. An empty datacenter name is no
+/// preference at all; an empty rack name only drops the rack half.
+#[test]
+fn effective_node_preference_is_reported() {
+    let unconfined = token_aware_expectation(true, None);
+
+    // No policy-level preference: the session-level one is reported.
+    assert_eq!(
+        load_balancing_report(
+            DefaultPolicy::builder().permit_dc_failover(false).build(),
+            NodeLocationPreference::DatacenterAndRack("dc9".to_owned(), "rack9".to_owned()),
+        ),
+        token_aware_expectation(true, Some(rack_preference("dc9", "rack9")))
+    );
+
+    // A policy-level preference wins over the session-level one.
+    assert_eq!(
+        load_balancing_report(
+            DefaultPolicy::builder()
+                .prefer_datacenter("dc1".to_owned())
+                .permit_dc_failover(false)
+                .build(),
+            NodeLocationPreference::Datacenter("dc9".to_owned()),
+        ),
+        token_aware_expectation(false, Some(dc_preference("dc1")))
+    );
+
+    // Including when it is an explicit "no preference", which also makes
+    // `fallback-to-non-preferred-nodes` true despite failover being off.
+    assert_eq!(
+        load_balancing_report(
+            DefaultPolicy::builder()
+                .prefer_no_datacenter()
+                .permit_dc_failover(false)
+                .build(),
+            NodeLocationPreference::Datacenter("dc9".to_owned()),
+        ),
+        unconfined
+    );
+
+    // An empty datacenter name leaves nothing expressible to report.
+    let empty_datacenters = [
+        NodeLocationPreference::Datacenter(String::new()),
+        NodeLocationPreference::DatacenterAndRack(String::new(), "rack1".to_owned()),
+        NodeLocationPreference::DatacenterAndRack(String::new(), String::new()),
+    ];
+
+    for preference in empty_datacenters {
+        assert_eq!(
+            load_balancing_report(
+                DefaultPolicy::builder().permit_dc_failover(false).build(),
+                preference,
+            ),
+            unconfined
+        );
+    }
+
+    // An empty rack name drops only the rack half: the datacenter still
+    // confines routing, so it is reported and `permit_dc_failover` decides
+    // `fallback-to-non-preferred-nodes` exactly as for a plain datacenter
+    // preference.
+    for (permit_dc_failover, fallback) in [(false, false), (true, true)] {
+        assert_eq!(
+            load_balancing_report(
+                DefaultPolicy::builder()
+                    .permit_dc_failover(permit_dc_failover)
+                    .build(),
+                NodeLocationPreference::DatacenterAndRack("dc1".to_owned(), String::new()),
+            ),
+            token_aware_expectation(fallback, Some(dc_preference("dc1")))
+        );
+    }
+}
+
+/// Anything that is not a token-aware `DefaultPolicy` is named by its own
+/// [`LoadBalancingPolicy::name`], which is user-implemented and may be
+/// empty - and an empty `name` is not a value the schema accepts.
+#[test]
+fn custom_load_balancing_policies_are_reported_by_name() {
+    let named: [(Arc<dyn LoadBalancingPolicy>, &str); 3] = [
+        (
+            ForeignLoadBalancingPolicy::new("ForeignPolicy"),
+            "ForeignPolicy",
+        ),
+        // An empty name would fail the schema's `nonEmptyString`.
+        (ForeignLoadBalancingPolicy::new(""), "unknown"),
+        (
+            SingleTargetLoadBalancingPolicy::new(NodeIdentifier::HostId(Uuid::nil()), None),
+            "SingleTargetLoadBalancingPolicy",
+        ),
+    ];
+
+    for (policy, name) in named {
+        assert_eq!(
+            load_balancing_report(policy, NodeLocationPreference::Any),
+            serde_json::json!({"policy": {"type": "custom", "name": name}})
+        );
+    }
 }

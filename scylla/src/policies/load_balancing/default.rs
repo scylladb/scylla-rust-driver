@@ -96,16 +96,16 @@ enum PickedReplica<'a> {
 pub struct DefaultPolicy {
     /// Preferences regarding node location. One of: rack and DC, DC, no DC preference,
     /// or fallback to Session-level preference.
-    preferences: Option<NodeLocationPreference>,
+    pub(crate) preferences: Option<NodeLocationPreference>,
 
     /// Configures whether the policy takes token into consideration when creating plans.
     /// If this is set to `true` AND token, keyspace and table are available,
     /// then policy prefers replicas and puts them earlier in the query plan.
-    is_token_aware: bool,
+    pub(crate) is_token_aware: bool,
 
     /// Whether to permit remote nodes (those not located in the preferred DC) in plans.
     /// If no preferred DC is set, this has no effect.
-    permit_dc_failover: bool,
+    pub(crate) permit_dc_failover: bool,
 
     /// A predicate that a target (node + shard) must satisfy in order to be picked.
     /// This was introduced to make latency awareness cleaner.
@@ -122,12 +122,12 @@ pub struct DefaultPolicy {
     ///   to the end, in a stable way.
     ///
     /// Penalisation is done based on collected and updated latencies.
-    latency_awareness: Option<LatencyAwareness>,
+    pub(crate) latency_awareness: Option<LatencyAwareness>,
 
     /// The policy chooses (in `pick`) and shuffles (in `fallback`) replicas and nodes
     /// based on random number generator. For sake of deterministic testing,
     /// a fixed seed can be used.
-    fixed_seed: Option<u64>,
+    pub(crate) fixed_seed: Option<u64>,
 }
 
 impl fmt::Debug for DefaultPolicy {
@@ -3377,7 +3377,7 @@ mod latency_awareness {
 
     /// A latency-aware load balancing policy module, which enables penalising nodes that are too slow.
     #[derive(Debug)]
-    pub(super) struct LatencyAwareness {
+    pub(crate) struct LatencyAwareness {
         pub(super) exclusion_threshold: f64,
         pub(super) retry_period: Duration,
         pub(super) _update_rate: Duration,
