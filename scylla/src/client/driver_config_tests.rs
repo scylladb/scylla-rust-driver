@@ -5,6 +5,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use super::{DriverConfigReporter, MAX_REPORT_SIZE, non_negative_millis, positive_millis};
+use crate::client::execution_profile::ExecutionProfile;
 use crate::client::session::SessionConfig;
 use crate::cluster::metadata::Peer;
 use crate::network::PoolSize;
@@ -14,6 +15,32 @@ use crate::policies::host_filter::{
 use crate::policies::reconnect::{
     ConstantReconnectPolicy, ExponentialReconnectPolicy, ReconnectPolicy, ReconnectPolicySession,
 };
+use crate::policies::timestamp_generator::SimpleTimestampGenerator;
+use crate::statement::{Consistency, SerialConsistency};
+
+/// Every consistency level the schema enumerates, with the SCREAMING_SNAKE
+/// name it must be reported under. Shared by the test pinning the mapping
+/// and the sweep validating the names against the schema's own enum, so the
+/// two cannot come to disagree about which levels exist.
+const CONSISTENCY_NAMES: [(Consistency, &str); 11] = [
+    (Consistency::Any, "ANY"),
+    (Consistency::One, "ONE"),
+    (Consistency::Two, "TWO"),
+    (Consistency::Three, "THREE"),
+    (Consistency::Quorum, "QUORUM"),
+    (Consistency::All, "ALL"),
+    (Consistency::LocalQuorum, "LOCAL_QUORUM"),
+    (Consistency::EachQuorum, "EACH_QUORUM"),
+    (Consistency::LocalOne, "LOCAL_ONE"),
+    (Consistency::Serial, "SERIAL"),
+    (Consistency::LocalSerial, "LOCAL_SERIAL"),
+];
+
+/// [`CONSISTENCY_NAMES`] for the serial levels.
+const SERIAL_CONSISTENCY_NAMES: [(SerialConsistency, &str); 2] = [
+    (SerialConsistency::Serial, "SERIAL"),
+    (SerialConsistency::LocalSerial, "LOCAL_SERIAL"),
+];
 
 /// A reconnection policy the driver cannot recognise: it keeps the trait's
 /// introspection defaults, so it is neither downcastable nor named.
@@ -93,7 +120,7 @@ fn patched(report: &str, patches: &[(&str, &str)]) -> String {
 /// The report of an unconfigured session against a ScyllaDB target, spelled
 /// out in full: the one document key order is pinned on, and the baseline
 /// the single-axis cases below are expressed as patches of.
-const DEFAULT_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":5000},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":true}},"socket":{"tcp-no-delay":true,"keep-alive":false,"reuse-address":false},"reconnection":{"policy":{"type":"exponential","base-ms":50,"max-ms":10000}}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}}}"#;
+const DEFAULT_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":5000},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":true}},"socket":{"tcp-no-delay":true,"keep-alive":false,"reuse-address":false},"reconnection":{"policy":{"type":"exponential","base-ms":50,"max-ms":10000}}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}},"query":{"defaults":{"consistency":"LOCAL_QUORUM","serial-consistency":"LOCAL_SERIAL","idempotence":false,"client-timestamps":false,"page":{"size":5000},"request":{"timeout-ms":30000}}}}"#;
 
 fn reporter(config: &SessionConfig) -> DriverConfigReporter {
     reporter_with_policy(config, Arc::new(ExponentialReconnectPolicy::new()))
@@ -173,6 +200,13 @@ fn customised_config() -> SessionConfig {
     config.tcp_linger = Some(Duration::from_secs(7));
     config.disallow_shard_aware_port = true;
     config.host_filter = Some(Arc::new(DcHostFilter::new("dc1".to_owned())));
+    config.timestamp_generator = Some(Arc::new(SimpleTimestampGenerator::new()));
+    config.default_execution_profile_handle = ExecutionProfile::builder()
+        .consistency(Consistency::Quorum)
+        .serial_consistency(Some(SerialConsistency::Serial))
+        .request_timeout(Some(Duration::from_millis(1500)))
+        .build()
+        .into_handle();
     config
 }
 
@@ -188,7 +222,7 @@ fn customised_report(config: &SessionConfig) -> String {
 /// The report of [`customised_config`], the second document spelled out in
 /// full: nearly every key of it differs from [`DEFAULT_REPORT`], so there is
 /// no difference to point at.
-const CUSTOMISED_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":1234},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":false}},"socket":{"tcp-no-delay":false,"keep-alive":true,"reuse-address":true,"linger":{"interval-s":7},"receive-buffer":{"size-bytes":65536},"send-buffer":{"size-bytes":32768}},"reconnection":{"policy":{"type":"constant","delay-ms":250}},"node-preference":{"type":"dc","local-dc":"dc1"}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}}}"#;
+const CUSTOMISED_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":1234},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":false}},"socket":{"tcp-no-delay":false,"keep-alive":true,"reuse-address":true,"linger":{"interval-s":7},"receive-buffer":{"size-bytes":65536},"send-buffer":{"size-bytes":32768}},"reconnection":{"policy":{"type":"constant","delay-ms":250}},"node-preference":{"type":"dc","local-dc":"dc1"}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}},"query":{"defaults":{"consistency":"QUORUM","serial-consistency":"SERIAL","idempotence":false,"client-timestamps":true,"page":{"size":5000},"request":{"timeout-ms":1500}}}}"#;
 
 #[test]
 fn fully_customised_configuration_report() {
@@ -405,5 +439,109 @@ fn sub_second_linger_is_reported_as_zero() {
     assert_eq!(
         linger(Duration::from_millis(1999)),
         serde_json::json!({"interval-s": 1})
+    );
+}
+
+fn reporter_with_profile(profile: ExecutionProfile) -> DriverConfigReporter {
+    let mut config = SessionConfig::new();
+    config.default_execution_profile_handle = profile.into_handle();
+    reporter(&config)
+}
+
+/// The profile is read at report time, so remapping the handle a session was
+/// built with must change what the next report says. Nothing would otherwise
+/// stop the report from describing a profile the session no longer uses.
+#[test]
+fn remapping_the_default_profile_changes_the_report() {
+    let mut handle = ExecutionProfile::builder().build().into_handle();
+    let mut config = SessionConfig::new();
+    config.default_execution_profile_handle = handle.clone();
+    let reporter = reporter(&config);
+
+    let before = reporter.report(true).unwrap();
+    assert_eq!(
+        group(&before, "/query"),
+        serde_json::json!({
+            "defaults": {
+                "consistency": "LOCAL_QUORUM",
+                "serial-consistency": "LOCAL_SERIAL",
+                "idempotence": false,
+                "client-timestamps": false,
+                "page": {"size": 5000},
+                "request": {"timeout-ms": 30000},
+            },
+        })
+    );
+
+    handle.map_to_another_profile(
+        ExecutionProfile::builder()
+            .consistency(Consistency::EachQuorum)
+            .serial_consistency(Some(SerialConsistency::Serial))
+            .request_timeout(Some(Duration::from_secs(3)))
+            .build(),
+    );
+
+    let after = reporter.report(true).unwrap();
+    assert_ne!(before, after);
+    assert_eq!(
+        group(&after, "/query"),
+        serde_json::json!({
+            "defaults": {
+                "consistency": "EACH_QUORUM",
+                "serial-consistency": "SERIAL",
+                "idempotence": false,
+                "client-timestamps": false,
+                "page": {"size": 5000},
+                "request": {"timeout-ms": 3000},
+            },
+        })
+    );
+}
+
+/// The schema's consistency enums are SCREAMING_SNAKE, which neither
+/// `Display` nor `Debug` produces, so every name is spelled out by hand -
+/// and every one of them is checked here, both levels being an exhaustive
+/// match that a variant added upstream must fail to compile against.
+#[test]
+fn consistency_names_follow_the_schema() {
+    for (level, name) in CONSISTENCY_NAMES {
+        let profile = ExecutionProfile::builder().consistency(level).build();
+        let report = reporter_with_profile(profile).report(true).unwrap();
+        assert_eq!(
+            group(&report, "/query/defaults/consistency"),
+            serde_json::json!(name)
+        );
+    }
+
+    for (level, name) in SERIAL_CONSISTENCY_NAMES {
+        let profile = ExecutionProfile::builder()
+            .serial_consistency(Some(level))
+            .build();
+        let report = reporter_with_profile(profile).report(true).unwrap();
+        assert_eq!(
+            group(&report, "/query/defaults/serial-consistency"),
+            serde_json::json!(name)
+        );
+    }
+}
+
+/// Both keys the schema leaves optional: an unset serial consistency drops
+/// its key, a disabled request timeout drops the whole `request` object.
+#[test]
+fn unset_query_defaults_are_omitted() {
+    let profile = ExecutionProfile::builder()
+        .serial_consistency(None)
+        .request_timeout(None)
+        .build();
+
+    let report = reporter_with_profile(profile).report(true).unwrap();
+    assert_eq!(
+        group(&report, "/query/defaults"),
+        serde_json::json!({
+            "consistency": "LOCAL_QUORUM",
+            "idempotence": false,
+            "client-timestamps": false,
+            "page": {"size": 5000},
+        })
     );
 }

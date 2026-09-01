@@ -16,8 +16,10 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::client::session::SessionConfig;
 use crate::cluster::control_connection::MetadataRequestTimeouts;
+use crate::frame::types::{Consistency, SerialConsistency};
 use crate::network::{
     MAX_IN_FLIGHT_REQUESTS, OLD_ORPHAN_COUNT_THRESHOLD, PoolSize, TcpSocketOptions,
 };
@@ -25,6 +27,7 @@ use crate::policies::host_filter::{DcHostFilter, HostFilter};
 use crate::policies::reconnect::{
     ConstantReconnectPolicy, ExponentialReconnectPolicy, ReconnectPolicy,
 };
+use crate::statement::PageSize;
 
 /// The major version of the reported configuration schema.
 ///
@@ -47,15 +50,16 @@ const MAX_REPORT_SIZE: usize = 32 * 1024;
 
 /// The reported configuration document.
 ///
-/// The `query` group is yet to be added. The schema requires it next to
-/// `connection` and `control-plane`, so the report this currently produces does
-/// not validate against it.
+/// The `query` group is still incomplete: the schema requires its
+/// `load-balancing` member, which is yet to be added, so the report this
+/// currently produces does not validate against the schema.
 #[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct Report {
     version: u32,
     connection: ConnectionReport,
     control_plane: ControlPlaneReport,
+    query: QueryReport,
 }
 
 /// The schema's `control-plane` group: the timeouts of the metadata statements
@@ -255,6 +259,95 @@ enum NodePreferenceReport {
 #[serde(rename_all = "kebab-case")]
 struct TlsReport {}
 
+/// The schema's `query` group.
+///
+/// Its `retry`, `load-balancing` and `speculative-execution` members are yet
+/// to be added.
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct QueryReport {
+    defaults: QueryDefaultsReport,
+}
+
+/// The defaults a statement gets when it overrides nothing, read from the
+/// session's default execution profile.
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct QueryDefaultsReport {
+    consistency: &'static str,
+    /// Omitted when the profile has no serial consistency, in which case the
+    /// server's own default applies.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    serial_consistency: Option<&'static str>,
+    /// Always `false`, because idempotence is only ever set per statement, via
+    /// `StatementConfig::is_idempotent`, with neither a session- nor a
+    /// profile-level setting to read. A statement that sets nothing is
+    /// therefore treated as not known to be idempotent.
+    idempotence: bool,
+    /// Always present, unlike in drivers whose timestamp generator may decline
+    /// to produce a timestamp: [`TimestampGenerator::next_timestamp`] returns a
+    /// plain `i64`, so a configured generator always assigns the timestamp
+    /// client side.
+    ///
+    /// [`TimestampGenerator::next_timestamp`]: crate::policies::timestamp_generator::TimestampGenerator::next_timestamp
+    client_timestamps: bool,
+    page: PageReport,
+    /// Omitted entirely when the profile disables the request timeout. The
+    /// schema does not require the group, so an empty object would say no more
+    /// than its absence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request: Option<RequestDefaultsReport>,
+}
+
+/// The page size a paged statement that sets none is executed with; the unpaged
+/// APIs send none at all. There is no session- or profile-level setting, so
+/// this is always the driver's default.
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct PageReport {
+    size: i32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct RequestDefaultsReport {
+    timeout_ms: u64,
+}
+
+/// The schema's `query.defaults.consistency` name of `consistency`.
+///
+/// Neither [`Consistency`]'s `Display` nor its `Debug` can serve here: both
+/// render CamelCase, and the schema's enum is SCREAMING_SNAKE. The match has no
+/// `_` arm on purpose - a variant added upstream must fail to compile here
+/// rather than silently report a name the schema rejects.
+fn consistency_name(consistency: Consistency) -> &'static str {
+    match consistency {
+        Consistency::Any => "ANY",
+        Consistency::One => "ONE",
+        Consistency::Two => "TWO",
+        Consistency::Three => "THREE",
+        Consistency::Quorum => "QUORUM",
+        Consistency::All => "ALL",
+        Consistency::LocalQuorum => "LOCAL_QUORUM",
+        Consistency::EachQuorum => "EACH_QUORUM",
+        Consistency::LocalOne => "LOCAL_ONE",
+        // The schema's enum includes the serial levels, which a `SELECT` may
+        // legitimately run at, so every variant is reportable.
+        Consistency::Serial => "SERIAL",
+        Consistency::LocalSerial => "LOCAL_SERIAL",
+    }
+}
+
+/// The schema's `query.defaults.serial-consistency` name of
+/// `serial_consistency`. Exhaustive for the same reason as
+/// [`consistency_name`].
+fn serial_consistency_name(consistency: SerialConsistency) -> &'static str {
+    match consistency {
+        SerialConsistency::Serial => "SERIAL",
+        SerialConsistency::LocalSerial => "LOCAL_SERIAL",
+    }
+}
+
 /// Milliseconds of a duration reported under a schema `positiveInteger` key.
 ///
 /// Floored at 1: a sub-millisecond duration truncates to 0, which the schema
@@ -291,8 +384,10 @@ fn buffer_report(size: Option<usize>) -> Option<BufferReport> {
 
 /// Builds the configuration report of a session.
 ///
-/// Holds a snapshot of the configuration taken when the session was created,
-/// because [`SessionConfig`] itself is consumed by session creation.
+/// Holds a snapshot of everything fixed for the session's lifetime, because
+/// [`SessionConfig`] itself is consumed by session creation. The default
+/// execution profile is not such a thing: the handle is held instead of its
+/// contents, so that remapping it is reflected by the next report.
 pub(crate) struct DriverConfigReporter {
     connect_timeout: Duration,
     socket_options: TcpSocketOptions,
@@ -302,6 +397,8 @@ pub(crate) struct DriverConfigReporter {
     reconnect_policy: Arc<dyn ReconnectPolicy>,
     metadata_request_timeouts: MetadataRequestTimeouts,
     schema_agreement_timeout: Duration,
+    default_execution_profile_handle: ExecutionProfileHandle,
+    timestamp_generator_configured: bool,
 }
 
 impl DriverConfigReporter {
@@ -332,6 +429,8 @@ impl DriverConfigReporter {
             reconnect_policy,
             metadata_request_timeouts,
             schema_agreement_timeout: config.schema_agreement_timeout,
+            default_execution_profile_handle: config.default_execution_profile_handle.clone(),
+            timestamp_generator_configured: config.timestamp_generator.is_some(),
         }
     }
 
@@ -355,6 +454,7 @@ impl DriverConfigReporter {
             version: REPORT_VERSION,
             connection: self.connection_report(),
             control_plane: self.control_plane_report(target_is_scylladb),
+            query: self.query_report(),
         };
 
         // `serde_json::to_string` cannot fail for the report's current shape; the
@@ -494,6 +594,29 @@ impl DriverConfigReporter {
                 agreement: SchemaAgreementReport {
                     timeout_ms: non_negative_millis(self.schema_agreement_timeout),
                 },
+            },
+        }
+    }
+
+    /// The profile is read here rather than at construction: the handle may have
+    /// been remapped since, and the report must name the configuration in force.
+    fn query_report(&self) -> QueryReport {
+        let profile = self.default_execution_profile_handle.access();
+
+        QueryReport {
+            defaults: QueryDefaultsReport {
+                consistency: consistency_name(profile.consistency),
+                serial_consistency: profile.serial_consistency.map(serial_consistency_name),
+                idempotence: false,
+                client_timestamps: self.timestamp_generator_configured,
+                page: PageReport {
+                    size: PageSize::default().inner(),
+                },
+                request: profile
+                    .request_timeout
+                    .map(|timeout| RequestDefaultsReport {
+                        timeout_ms: positive_millis(timeout),
+                    }),
             },
         }
     }
