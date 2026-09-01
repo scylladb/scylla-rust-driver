@@ -1406,9 +1406,13 @@ impl Session {
 
         let tcp_socket_options = config.tcp_socket_options();
 
-        let driver_config_reporter = config
-            .driver_config_reporting
-            .then(|| Arc::new(DriverConfigReporter::new()));
+        let driver_config_reporter = config.driver_config_reporting.then(|| {
+            Arc::new(DriverConfigReporter::new(
+                &config,
+                tcp_socket_options.clone(),
+                Arc::clone(&reconnect_policy),
+            ))
+        });
 
         let node_location_preference = config.node_location_preference;
         let known_nodes = config.known_nodes;

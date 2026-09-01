@@ -43,10 +43,6 @@ pub trait ReconnectPolicy: Send + Sync + std::fmt::Debug {
     ///
     /// Not part of the stable API; may change at any time.
     #[doc(hidden)]
-    #[cfg_attr(
-        not(all(scylla_unstable, feature = "unstable-reconnect-policy")),
-        expect(dead_code)
-    )]
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         None
     }
@@ -57,10 +53,6 @@ pub trait ReconnectPolicy: Send + Sync + std::fmt::Debug {
     ///
     /// Not part of the stable API; may change at any time.
     #[doc(hidden)]
-    #[cfg_attr(
-        not(all(scylla_unstable, feature = "unstable-reconnect-policy")),
-        expect(dead_code)
-    )]
     fn reported_name(&self) -> &'static str {
         crate::policies::simple_type_name::<Self>()
     }
@@ -107,8 +99,8 @@ impl ReconnectPolicySession for HostExponentialReconnectPolicy {
 /// may get close to 0 (when value close to 0.01 is chosen).
 #[derive(Debug)]
 pub struct ExponentialReconnectPolicy {
-    min_fill_backoff: Duration,
-    max_fill_backoff: Duration,
+    pub(crate) min_fill_backoff: Duration,
+    pub(crate) max_fill_backoff: Duration,
     jitter_range: RangeInclusive<f64>,
 }
 
@@ -193,7 +185,7 @@ impl ReconnectPolicy for ExponentialReconnectPolicy {
 /// may get close to 0 (when value close to 0.01 is chosen).
 #[derive(Debug, Clone)]
 pub struct ConstantReconnectPolicy {
-    delay: Duration,
+    pub(crate) delay: Duration,
     jitter_range: RangeInclusive<f64>,
 }
 

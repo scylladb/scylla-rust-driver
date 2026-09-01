@@ -76,7 +76,7 @@ impl HostFilter for AllowListHostFilter {
 
 /// Accepts nodes from given DC.
 pub struct DcHostFilter {
-    local_dc: String,
+    pub(crate) local_dc: String,
 }
 
 impl DcHostFilter {

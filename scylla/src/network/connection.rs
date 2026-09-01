@@ -73,7 +73,7 @@ use uuid::Uuid;
 // a stream id that is orphaned for a long time. This long time is defined below
 // (`OLD_AGE_ORPHAN_THRESHOLD`). Connection that has a big number (`OLD_ORPHAN_COUNT_THRESHOLD`)
 // of old orphans is shut down (and created again by a connection management layer).
-const OLD_ORPHAN_COUNT_THRESHOLD: usize = 1024;
+pub(crate) const OLD_ORPHAN_COUNT_THRESHOLD: usize = 1024;
 const OLD_AGE_ORPHAN_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Represents a write coalescing delay configuration option.
@@ -2580,7 +2580,7 @@ struct StreamIdSet {
 /// Number of stream ids usable on one connection, i.e. the maximum number of
 /// requests in flight on it. Every id in `0..MAX_IN_FLIGHT_REQUESTS` is
 /// allocatable; none is reserved.
-const MAX_IN_FLIGHT_REQUESTS: usize = i16::MAX as usize + 1;
+pub(crate) const MAX_IN_FLIGHT_REQUESTS: usize = i16::MAX as usize + 1;
 
 impl StreamIdSet {
     fn new() -> Self {

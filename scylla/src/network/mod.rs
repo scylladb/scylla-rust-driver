@@ -10,7 +10,10 @@ mod connection;
 pub(crate) use connection::HostConnectionConfig;
 pub(crate) use connection::open_connection;
 
-pub(crate) use connection::{Connection, ConnectionConfig, TcpSocketOptions, VerifiedKeyspaceName};
+pub(crate) use connection::{
+    Connection, ConnectionConfig, MAX_IN_FLIGHT_REQUESTS, OLD_ORPHAN_COUNT_THRESHOLD,
+    TcpSocketOptions, VerifiedKeyspaceName,
+};
 
 mod connection_pool;
 
