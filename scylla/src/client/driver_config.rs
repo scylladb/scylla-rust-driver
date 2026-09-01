@@ -11,6 +11,7 @@
 //! connection of a session, so sending it on all of them would only bloat their
 //! `STARTUP` frames.
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -30,6 +31,11 @@ use crate::policies::reconnect::{
 };
 use crate::policies::retry::{
     DefaultRetryPolicy, DowngradingConsistencyRetryPolicy, FallthroughRetryPolicy, RetryPolicy,
+};
+#[cfg(feature = "metrics")]
+use crate::policies::speculative_execution::PercentileSpeculativeExecutionPolicy;
+use crate::policies::speculative_execution::{
+    SimpleSpeculativeExecutionPolicy, SpeculativeExecutionPolicy,
 };
 use crate::routing::NodeLocationPreference;
 use crate::statement::PageSize;
@@ -56,9 +62,9 @@ const MAX_REPORT_SIZE: usize = 32 * 1024;
 /// The reported configuration document.
 ///
 /// Carries every group the schema requires, so the produced document validates
-/// against it. Of the optional ones only `query.speculative-execution` is yet
-/// to be added; each type below states why the keys it does not populate are
-/// absent.
+/// against it. The schema's optional keys are populated where this driver has
+/// something to report; each type below states why it does not where it does
+/// not.
 #[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct Report {
@@ -280,6 +286,10 @@ struct QueryReport {
     defaults: QueryDefaultsReport,
     retry: QueryRetryReport,
     load_balancing: QueryLoadBalancingReport,
+    /// Omitted when speculative execution never fires, which the schema gives
+    /// the group's absence as its meaning.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    speculative_execution: Option<QuerySpeculativeExecutionReport>,
 }
 
 /// The defaults a statement gets when it overrides nothing, read from the
@@ -403,6 +413,39 @@ enum LoadBalancingPolicyReport {
 #[serde(rename_all = "kebab-case")]
 struct AdaptiveOrderingReport {
     signals: &'static [&'static str],
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct QuerySpeculativeExecutionReport {
+    policy: SpeculativeExecutionPolicyReport,
+}
+
+/// `max-executions` is a [`NonZeroUsize`] because the schema declares it
+/// `positiveInteger`, and a policy that permits zero extra executions never
+/// fires at all - such a policy is reported as no speculative execution rather
+/// than as one with an unrepresentable count.
+#[derive(Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case"
+)]
+enum SpeculativeExecutionPolicyReport {
+    Constant {
+        max_executions: NonZeroUsize,
+        /// A schema `nonNegativeInteger`, where 0 means "launch immediately"
+        /// rather than a disabled feature, so it is reported verbatim.
+        delay_ms: u64,
+    },
+    #[cfg(feature = "metrics")]
+    Percentile {
+        max_executions: NonZeroUsize,
+        percentile: f64,
+    },
+    Custom {
+        name: &'static str,
+    },
 }
 
 /// The schema's `query.defaults.consistency` name of `consistency`.
@@ -547,6 +590,65 @@ fn custom_policy_name(policy: &Arc<dyn LoadBalancingPolicy>) -> String {
     } else {
         name
     }
+}
+
+/// What a speculative execution policy can be reported as.
+///
+/// Three outcomes, named rather than encoded as a nested `Option`, because the
+/// middle one is not simply "not a built-in": a built-in whose parameters fall
+/// outside what the schema can carry lands there too, and a bare
+/// `Option<Option<_>>` gave no place to say so.
+enum SpeculativeExecutionReported {
+    /// The policy never launches an extra execution, so there is no speculative
+    /// execution to report at all and the group is omitted.
+    NeverFires,
+    /// Report the policy as `custom`, named but not described. Either the driver
+    /// does not know the policy, or it does and its parameters cannot be
+    /// expressed under the schema's branch for it.
+    Generic,
+    /// A built-in, described precisely.
+    Precise(SpeculativeExecutionPolicyReport),
+}
+
+/// How to report one of the built-in speculative execution policies.
+fn speculative_execution_policy_report(policy: &dyn std::any::Any) -> SpeculativeExecutionReported {
+    if let Some(policy) = policy.downcast_ref::<SimpleSpeculativeExecutionPolicy>() {
+        let Some(max_executions) = NonZeroUsize::new(policy.max_retry_count) else {
+            return SpeculativeExecutionReported::NeverFires;
+        };
+        return SpeculativeExecutionReported::Precise(SpeculativeExecutionPolicyReport::Constant {
+            max_executions,
+            delay_ms: non_negative_millis(policy.retry_interval),
+        });
+    }
+
+    #[cfg(feature = "metrics")]
+    if let Some(policy) = policy.downcast_ref::<PercentileSpeculativeExecutionPolicy>() {
+        let Some(max_executions) = NonZeroUsize::new(policy.max_retry_count) else {
+            return SpeculativeExecutionReported::NeverFires;
+        };
+
+        // `percentile` is an unvalidated `f64`, and two kinds of value cannot be
+        // reported under it. The schema's bounds are exclusive, so 0, 100 and
+        // anything outside them is simply invalid. A non-finite value is worse:
+        // `serde_json` renders `NaN` and the infinities as `null` rather than
+        // failing, so nothing downstream would catch it and it has to be
+        // rejected here. The policy still fires, so it is named rather than
+        // dropped.
+        if !policy.percentile.is_finite() || policy.percentile <= 0.0 || policy.percentile >= 100.0
+        {
+            return SpeculativeExecutionReported::Generic;
+        }
+
+        return SpeculativeExecutionReported::Precise(
+            SpeculativeExecutionPolicyReport::Percentile {
+                max_executions,
+                percentile: policy.percentile,
+            },
+        );
+    }
+
+    SpeculativeExecutionReported::Generic
 }
 
 /// Builds the configuration report of a session.
@@ -798,6 +900,10 @@ impl DriverConfigReporter {
                 policy: Self::retry_policy_report(&profile.retry_policy),
             },
             load_balancing: self.load_balancing_report(&profile.load_balancing_policy),
+            speculative_execution: profile
+                .speculative_execution_policy
+                .as_ref()
+                .and_then(Self::speculative_execution_report),
         }
     }
 
@@ -877,6 +983,30 @@ impl DriverConfigReporter {
                 },
             ),
         }
+    }
+
+    /// The schema's `query.speculative-execution` group, or `None` when
+    /// speculative execution never fires.
+    fn speculative_execution_report(
+        policy: &Arc<dyn SpeculativeExecutionPolicy>,
+    ) -> Option<QuerySpeculativeExecutionReport> {
+        // `max_retry_count(&Context)` is deliberately not called on a policy
+        // reported generically: building a `Context` requires the session's
+        // metrics, and the schema's `custom` branch does not ask for a count.
+        let generic = || SpeculativeExecutionPolicyReport::Custom {
+            name: policy.reported_name(),
+        };
+
+        let policy = match policy.as_any() {
+            None => generic(),
+            Some(downcastable) => match speculative_execution_policy_report(downcastable) {
+                SpeculativeExecutionReported::NeverFires => return None,
+                SpeculativeExecutionReported::Generic => generic(),
+                SpeculativeExecutionReported::Precise(report) => report,
+            },
+        };
+
+        Some(QuerySpeculativeExecutionReport { policy })
     }
 
     fn retry_policy_report(policy: &Arc<dyn RetryPolicy>) -> RetryPolicyReport {

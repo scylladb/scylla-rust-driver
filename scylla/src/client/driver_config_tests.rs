@@ -25,6 +25,10 @@ use crate::policies::retry::{
     DefaultRetryPolicy, DowngradingConsistencyRetryPolicy, FallthroughRetryPolicy, RetryPolicy,
     RetrySession,
 };
+use crate::policies::speculative_execution::{
+    Context as SpeculativeExecutionContext, SimpleSpeculativeExecutionPolicy,
+    SpeculativeExecutionPolicy,
+};
 use crate::policies::timestamp_generator::SimpleTimestampGenerator;
 use crate::routing::{NodeLocationPreference, Shard};
 use crate::statement::{Consistency, SerialConsistency};
@@ -84,6 +88,19 @@ struct ForeignRetryPolicy;
 
 impl RetryPolicy for ForeignRetryPolicy {
     fn new_session(&self) -> Box<dyn RetrySession> {
+        unimplemented!("the report never runs the policy")
+    }
+}
+
+#[derive(Debug)]
+struct ForeignSpeculativeExecutionPolicy;
+
+impl SpeculativeExecutionPolicy for ForeignSpeculativeExecutionPolicy {
+    fn max_retry_count(&self, _: &SpeculativeExecutionContext) -> usize {
+        unimplemented!("the report never runs the policy")
+    }
+
+    fn retry_interval(&self, _: &SpeculativeExecutionContext) -> Duration {
         unimplemented!("the report never runs the policy")
     }
 }
@@ -909,4 +926,134 @@ fn custom_load_balancing_policies_are_reported_by_name() {
             serde_json::json!({"policy": {"type": "custom", "name": name}})
         );
     }
+}
+
+fn speculative_execution_report(
+    policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
+) -> Option<serde_json::Value> {
+    let profile = ExecutionProfile::builder()
+        .speculative_execution_policy(policy)
+        .build();
+    let report = reporter_with_profile(profile).report(true).unwrap();
+    // Asserted on the serialized report rather than on the parsed value: a
+    // non-finite `f64` reaches the document as a bare `null`, and the point
+    // is to catch it in the bytes the server would be sent.
+    assert!(!report.contains("null"), "{report}");
+    optional_group(&report, "/query/speculative-execution")
+}
+
+/// [`reconnection_policies`] for the speculative execution policies, with
+/// the `query.speculative-execution` group each must be reported as - which
+/// for two of them is no group at all.
+#[expect(clippy::type_complexity)]
+fn speculative_execution_policies() -> [(
+    &'static str,
+    Option<Arc<dyn SpeculativeExecutionPolicy>>,
+    Option<Value>,
+); 5] {
+    [
+        // Speculative execution is disabled by default.
+        ("no speculative execution", None, None),
+        (
+            "constant speculative execution",
+            Some(Arc::new(SimpleSpeculativeExecutionPolicy {
+                max_retry_count: 2,
+                retry_interval: Duration::from_millis(150),
+            })),
+            Some(serde_json::json!({
+                "policy": {"type": "constant", "max-executions": 2, "delay-ms": 150},
+            })),
+        ),
+        (
+            // A zero interval means "launch immediately", not "unset".
+            "zero-interval speculative execution",
+            Some(Arc::new(SimpleSpeculativeExecutionPolicy {
+                max_retry_count: 1,
+                retry_interval: Duration::ZERO,
+            })),
+            Some(serde_json::json!({
+                "policy": {"type": "constant", "max-executions": 1, "delay-ms": 0},
+            })),
+        ),
+        (
+            // A policy permitting no extra execution never fires, so there
+            // is no speculative execution to report.
+            "zero-count speculative execution",
+            Some(Arc::new(SimpleSpeculativeExecutionPolicy {
+                max_retry_count: 0,
+                retry_interval: Duration::from_millis(150),
+            })),
+            None,
+        ),
+        (
+            "foreign speculative execution policy",
+            Some(Arc::new(ForeignSpeculativeExecutionPolicy)),
+            Some(serde_json::json!({
+                "policy": {"type": "custom", "name": "ForeignSpeculativeExecutionPolicy"},
+            })),
+        ),
+    ]
+}
+
+#[test]
+fn speculative_execution_report_cases() {
+    for (name, policy, expected) in speculative_execution_policies() {
+        assert_eq!(speculative_execution_report(policy), expected, "{name}");
+    }
+}
+
+/// [`PercentileSpeculativeExecutionPolicy::percentile`] is an unvalidated
+/// `f64`, and the schema's bounds on it are exclusive. A non-finite value is
+/// the dangerous one: `serde_json` renders it as `null`, which no downstream
+/// check would catch, hence the `null`-free assertion on every report here.
+#[cfg(feature = "metrics")]
+#[test]
+fn percentile_speculative_execution_report_cases() {
+    use crate::policies::speculative_execution::PercentileSpeculativeExecutionPolicy;
+
+    let percentile_report = |max_retry_count, percentile| {
+        speculative_execution_report(Some(Arc::new(PercentileSpeculativeExecutionPolicy {
+            max_retry_count,
+            percentile,
+        })))
+    };
+
+    assert_eq!(
+        percentile_report(3, 99.0),
+        Some(serde_json::json!({
+            "policy": {"type": "percentile", "max-executions": 3, "percentile": 99.0},
+        }))
+    );
+
+    // Out of the schema's exclusive range, or not a number at all: reported
+    // as a policy the driver cannot describe rather than not at all, because
+    // speculative execution does fire. `-1.0` is the only case reaching the
+    // lower-bound comparison - the non-finite values are rejected before it
+    // - so it is what pins `<= 0.0` rather than `== 0.0`.
+    let unreportable = [
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        -1.0,
+        0.0,
+        100.0,
+        150.0,
+    ];
+
+    for percentile in unreportable {
+        assert_eq!(
+            percentile_report(3, percentile),
+            Some(serde_json::json!({
+                "policy": {
+                    "type": "custom",
+                    "name": "PercentileSpeculativeExecutionPolicy",
+                },
+            })),
+            "{percentile}"
+        );
+    }
+
+    // The zero-count rule applies whatever the percentile is.
+    assert_eq!(percentile_report(0, 99.0), None);
+    assert_eq!(percentile_report(0, f64::NAN), None);
 }

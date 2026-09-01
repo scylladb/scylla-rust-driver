@@ -1556,10 +1556,11 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// The default is `true`.
     ///
     /// The control connection sends a JSON description of the session's
-    /// configuration - timeouts, connection pooling, load balancing and retry
-    /// policy - as the `DRIVER_CONFIG` option of the STARTUP message, which the
-    /// server exposes in `system.clients.client_options`. The document follows
-    /// a schema shared by all ScyllaDB drivers, so one query answers the question of how
+    /// configuration - timeouts, connection pooling, load balancing, retry and
+    /// speculative execution policies - as the `DRIVER_CONFIG` option of the
+    /// STARTUP message, which the server exposes in
+    /// `system.clients.client_options`. The document follows a schema
+    /// shared by all ScyllaDB drivers, so one query answers the question of how
     /// a client is configured regardless of which driver it uses.
     ///
     /// Disable it if the configuration of the client must not be disclosed to
