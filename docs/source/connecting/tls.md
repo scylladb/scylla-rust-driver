@@ -23,7 +23,7 @@ For rustls, we use `ServerName::IpAddress`, which is passed to `ClientConnection
 To enable use of TLS using `openssl`, add in `Cargo.toml`:
 
 ```toml
-scylla = { version = "0.4", features = ["openssl-010"] }
+scylla = { version = "1.8", features = ["openssl-010"] }
 openssl = "0.10.70"
 ```
 
