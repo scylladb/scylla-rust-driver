@@ -238,7 +238,7 @@ impl WriteType {
 }
 
 /// An error sent from the database in response to a query
-/// as described in the [specification](https://github.com/apache/cassandra/blob/5ed5e84613ef0e9664a774493db7d2604e3596e0/doc/native_protocol_v4.spec#L1029)\
+/// as described in the [specification](https://github.com/apache/cassandra/blob/5ed5e84613ef0e9664a774493db7d2604e3596e0/doc/native_protocol_v4.spec#L1029)
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DbError {

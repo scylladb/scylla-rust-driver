@@ -1,5 +1,6 @@
 # User defined types
-ScyllaDB allows users to define their own data types with named fields (See [the official documentation](https://opensource.docs.scylladb.com/stable/cql/types.html#user-defined-types))\
+ScyllaDB allows users to define their own data types with named fields (See [the official documentation](https://opensource.docs.scylladb.com/stable/cql/types.html#user-defined-types)).
+
 To use user defined types in the driver, you can create a corresponding struct in Rust, and use it to read and write UDT values.
 
 
@@ -9,11 +10,12 @@ CREATE TYPE ks.my_type (int_val int, text_val text)
 ```
 
 To use this type in the driver, create a matching struct and derive:
-- `SerializeValue`: in order to be able to use this struct in query parameters. \
-- `DeserializeValue`: in order to be able to use this struct in query results. \
+- `SerializeValue`: in order to be able to use this struct in query parameters.
+- `DeserializeValue`: in order to be able to use this struct in query results.
 
 Both macros require fields of UDT and struct to have matching names, but the order
-of the fields is not required to be the same. \
+of the fields is not required to be the same.
+
 Note: you can use different name using `rename` attribute - see `SerializeValue`
 and `DeserializeValue` macros documentation.
 
@@ -35,7 +37,8 @@ struct MyType {
 # }
 ```
 
-> ***Important***\
+> ***Important***
+>
 > For (de)serialization, by default fields in the Rust struct must be defined with the same names as they are in the database.
 > The driver will (de)serialize the fields in the order defined by the UDT, matching Rust fields by name.
 > You can change this behaviour using macro attributes, see `SerializeValue`/`DeserializeValue` macro documentation for more information.

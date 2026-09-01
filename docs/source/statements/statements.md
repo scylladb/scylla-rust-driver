@@ -12,18 +12,22 @@ They include recommendations on which API to use in what cases.
 
 This is **NOT** strictly related to content of the CQL statement string.
 
-> ***Interesting note***\
+> ***Interesting note***
+>
 > In fact, any kind of CQL statement could contain any CQL statement string.
 > Yet, some of such combinations don't make sense and will be rejected by the DB.
 > For example, SELECTs in a Batch are nonsense.
 
 ### [Unprepared](unprepared.md) vs [Prepared](prepared.md)
 
-> ***GOOD TO KNOW***\
-> Each time a statement is executed by sending a statement string to the DB, it needs to be parsed. Driver does not parse CQL, therefore it sees statement strings as opaque.\
+> ***GOOD TO KNOW***
+>
+> Each time a statement is executed by sending a statement string to the DB, it needs to be parsed. Driver does not parse CQL, therefore it sees statement strings as opaque.
+>
 > There is an option to *prepare* a statement, i.e. parse it once by the DB and associate it with an ID. After preparation, it's enough that driver sends the ID
 > and the DB already knows what operation to perform - no more expensive parsing necessary! Moreover, upon preparation driver receives valuable data for load balancing,
-> enabling advanced load balancing (so better performance!) of all further executions of that prepared statement.\
+> enabling advanced load balancing (so better performance!) of all further executions of that prepared statement.
+>
 > ***Key take-over:*** always prepare statements that you are going to execute multiple times.
 
 :::{warning}
@@ -78,10 +82,14 @@ Takeway from the above: Do NOT use unprepared statements in a batch, unless such
 
 ### [Paged](paged.md) vs Unpaged query
 
-> ***GOOD TO KNOW***\
-> SELECT statements return a [result set](result.md), possibly a large one. Therefore, paging is available to fetch it in chunks, relieving load on cluster and lowering latency.\
-> ***Key take-overs:***\
-> For SELECTs you had better **avoid unpaged queries**.\
+> ***GOOD TO KNOW***
+>
+> SELECT statements return a [result set](result.md), possibly a large one. Therefore, paging is available to fetch it in chunks, relieving load on cluster and lowering latency.
+>
+> ***Key take-overs:***
+>
+> For SELECTs you had better **avoid unpaged queries**.
+>
 > For non-SELECTs, unpaged API is preferred.
 
 | Query result fetching | Unpaged                                                                                                                 | Paged                                                                                                                                                                |

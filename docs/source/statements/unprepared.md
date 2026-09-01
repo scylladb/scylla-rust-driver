@@ -15,21 +15,26 @@ session
 # }
 ```
 
-> ***Warning***\
-> Don't use unprepared queries to receive large amounts of data.\
-> By default the query is unpaged and might cause heavy load on the cluster.\
-> In such cases use [paged query](paged.md) instead.\
+> ***Warning***
+>
+> Don't use unprepared queries to receive large amounts of data.
+>
+> By default the query is unpaged and might cause heavy load on the cluster.
+>
+> In such cases use [paged query](paged.md) instead.
 > 
 > `query_unpaged` will return all results in one, possibly giant, piece
 > (unless a timeout occurs due to high load incurred by the cluster).
 
-> ***Warning***\
+> ***Warning***
+>
 > If the values are not empty, driver first needs to send a `PREPARE` request
 > in order to fetch information required to serialize values. This will affect
 > performance because 2 round trips will be required instead of 1.
 
 ### First argument - the statement
-As the first argument `Session::query_unpaged` takes anything implementing `Into<Statement>`.\
+As the first argument `Session::query_unpaged` takes anything implementing `Into<Statement>`.
+
 You can create a statement manually to set custom options. For example to change statement consistency:
 ```rust
 # extern crate scylla;
@@ -53,7 +58,8 @@ See [Statement API documentation](https://docs.rs/scylla/latest/scylla/statement
 
 ### Second argument - the values
 Statement text is constant, but the values may change.
-You can pass changing values to a statement by specifying a list of variables as bound values.\
+You can pass changing values to a statement by specifying a list of variables as bound values.
+
 Each `?` in statement text will be filled with the matching value. 
 
 The easiest way is to pass values using a tuple:
@@ -115,9 +121,10 @@ while let Some(read_row) = iter.next().transpose()? {
 See [Query result](result.md) for more information about handling query results
 
 ### Performance
-Unprepared statements should not be used in places where performance matters.\
+Unprepared statements should not be used in places where performance matters.
+
 If performance matters use a [Prepared statement](prepared.md) instead.
 
-With unprepared statement the database has to parse statement text each time it's executed, which worsens performance.\
+With unprepared statement the database has to parse statement text each time it's executed, which worsens performance.
 
 Additionally token and shard aware load balancing does not work with unprepared statements. They are sent to random nodes.

@@ -1,5 +1,7 @@
-//! Load balancing configurations\
-//! `Session` can use any load balancing policy which implements the `LoadBalancingPolicy` trait\
+//! Load balancing configurations
+//!
+//! `Session` can use any load balancing policy which implements the `LoadBalancingPolicy` trait
+//!
 //! See [the book](https://rust-driver.docs.scylladb.com/stable/load-balancing/load-balancing.html) for more information
 
 use crate::cluster::{ClusterState, NodeRef};

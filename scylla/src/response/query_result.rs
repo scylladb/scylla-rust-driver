@@ -165,8 +165,10 @@ impl QueryResult {
         self.deserialized_metadata_and_rows.is_some()
     }
 
-    /// Returns `Ok` for a request's result that shouldn't contain any rows.\
-    /// Will return `Ok` for `INSERT` result, but a `SELECT` result, even an empty one, will cause an error.\
+    /// Returns `Ok` for a request's result that shouldn't contain any rows.
+    ///
+    /// Will return `Ok` for `INSERT` result, but a `SELECT` result, even an empty one, will cause an error.
+    ///
     /// Opposite of [QueryResult::into_rows_result].
     #[inline]
     pub fn result_not_rows(&self) -> Result<(), ResultNotRowsError> {

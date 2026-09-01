@@ -1,7 +1,8 @@
 # Batch statement
 
-A batch statement allows to execute many data-modifying statements at once.\
-These statements can be [unprepared](unprepared.md) or [prepared](prepared.md).\
+A batch statement allows to execute many data-modifying statements at once.
+
+These statements can be [unprepared](unprepared.md) or [prepared](prepared.md).
 Only `INSERT`, `UPDATE` and `DELETE` statements are allowed.
 
 ```rust
@@ -40,7 +41,8 @@ session.batch(&batch, batch_values).await?;
 # }
 ```
 
-> ***Warning***\
+> ***Warning***
+>
 > Using unprepared statements with bind markers in batches is strongly discouraged.
 > For each unprepared statement with a non-empty list of values in the batch,
 > the driver will send a prepare request, and it will be done **sequentially**.
@@ -79,7 +81,8 @@ session.batch(&prepared_batch, batch_values).await?;
 ```
 
 ### Batch options
-You can set various options by operating on the `Batch` object.\
+You can set various options by operating on the `Batch` object.
+
 For example to change consistency:
 ```rust
 # extern crate scylla;
@@ -108,10 +111,12 @@ for more options
 ### Batch values
 Batch takes a tuple of values specified just like in [unprepared](unprepared.md) or [prepared](prepared.md) statements.
 
-Length of batch values must be equal to the number of statements in a batch.\
+Length of batch values must be equal to the number of statements in a batch.
+
 Each statement must have its values specified, even if they are empty.
 
-Values passed to `Session::batch` must implement the trait `BatchValues`.\
+Values passed to `Session::batch` must implement the trait `BatchValues`.
+
 By default this includes tuples `()` and slices `&[]` of tuples and slices which implement `SerializeRow`.
 
 Example:

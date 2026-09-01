@@ -43,7 +43,8 @@ must be sent as bound values (see [performance section](#performance))
 :::
 
 :::{warning}
-Don't use `execute_unpaged` to receive large amounts of data.\
+Don't use `execute_unpaged` to receive large amounts of data.
+
 Unpaged requests might cause heavy load on the cluster.
 In reality, its almost always wrong to use unpaged SELECTs.
 

@@ -55,12 +55,14 @@ const INTERVAL: u64 = 5;
 struct ExponentiallyWeightedMovingAverage {
     /// Smoothing factor, a value between 0 and 1.
     alpha: f64,
-    /// Atomic counter to keep track of the number of requests. \
+    /// Atomic counter to keep track of the number of requests.
+    ///
     /// Indicates the number of requests that have not been accounted for EWMA yet.
     uncounted: AtomicU64,
     /// To check if the EWMA has been initialized.
     is_initialized: Mutex<bool>,
-    ///  Atomic value representing the current rate of requests per second. \
+    ///  Atomic value representing the current rate of requests per second.
+    ///
     ///  AtomicU64 is used to store a floating point number as a bit representation.
     rate: AtomicU64,
 }
@@ -80,17 +82,21 @@ impl ExponentiallyWeightedMovingAverage {
         f64::from_bits(self.rate.load(Ordering::Acquire))
     }
 
-    /// Increments the `uncounted` requests counter. \
+    /// Increments the `uncounted` requests counter.
+    ///
     /// Should be called every time a new request is made.
     fn update(&self) {
         self.uncounted.fetch_add(1, ORDER_TYPE);
     }
 
-    /// Updates the `rate` based on the current number of requests. \
+    /// Updates the `rate` based on the current number of requests.
+    ///
     /// Should be called every time the interval has passed.
     ///
-    /// The rate is updated using the formula: \
-    /// `rate = rate + alpha * (instant_rate - rate)` \
+    /// The rate is updated using the formula:
+    ///
+    /// `rate = rate + alpha * (instant_rate - rate)`
+    ///
     /// where `instant_rate` is the number of requests in the last interval.
     ///
     /// The first time this function is called, the `rate` is set to the `instant_rate`.
@@ -393,7 +399,8 @@ impl Metrics {
         }
     }
 
-    /// Returns snapshot of histogram metrics taken at the moment of calling this function. \
+    /// Returns snapshot of histogram metrics taken at the moment of calling this function.
+    ///
     /// Available metrics: min, max, mean, std_dev, median,
     ///                    percentile_75, percentile_95, percentile_98,
     ///                    percentile_99, and percentile_99_9.

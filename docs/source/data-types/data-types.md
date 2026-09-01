@@ -5,8 +5,9 @@ to achieve seamless sending and receiving of CQL values.
 
 See the following chapters for examples on how to send and receive each data type. Please note that using some of those types requires enabling respective feature flags. Details are available in chapters for such data types.
 
-See [Statement values](../statements/values.md) for more information about sending values along with statements.\
-See [Query result](../statements/result.md) for more information about retrieving values from queries
+See [Statement values](../statements/values.md) for more information about sending values along with statements.
+
+See [Query result](../statements/result.md) for more information about retrieving values from queries.
 
 Database types and their Rust equivalents:
 * `Boolean` <----> `bool`

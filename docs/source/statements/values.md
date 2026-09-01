@@ -1,11 +1,13 @@
 # Statement values
 Statement text is constant, but the values may change.
-You can pass changing values to a statement by specifying a list of variables as bound values.\
+You can pass changing values to a statement by specifying a list of variables as bound values.
+
 Each `?` in statement text will be filled with the matching value. 
 
 > **Never** pass values by adding strings, this could lead to [SQL Injection](https://en.wikipedia.org/wiki/SQL_injection)
 
-Each list of values to send must implement the trait `SerializeRow`.\
+Each list of values to send must implement the trait `SerializeRow`.
+
 By default this can be a slice `&[]`, a tuple `()` (max 16 elements) of values to send,
 or a custom struct which derives from `SerializeRow`.
 
@@ -110,7 +112,8 @@ session
 ```
 
 ### `Unset` values
-When performing an insert with values which might be `NULL`, it's better to use `Unset`.\
+When performing an insert with values which might be `NULL`, it's better to use `Unset`.
+
 Database treats inserting `NULL` as a delete operation and will generate a tombstone.
 Using `Unset` results in better performance:
 

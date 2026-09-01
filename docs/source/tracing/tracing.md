@@ -16,14 +16,17 @@ Queries that support tracing:
 * [`Session::batch()`](basic.md)
 * [`Session::prepare()`](prepare.md)
 
-After obtaining the tracing id you can use `Session::get_tracing_info()` to query tracing information.\
-`TracingInfo` contains values that are the same in ScyllaDB and Cassandra®, skipping any database-specific ones.\
+After obtaining the tracing id you can use `Session::get_tracing_info()` to query tracing information.
+
+`TracingInfo` contains values that are the same in ScyllaDB and Cassandra®, skipping any database-specific ones.
+
 If `TracingInfo` does not contain some needed value it's possible to query it manually from the tables
 `system_traces.sessions` and `system_traces.events`
 
 ### Query Execution History
 
-Tracing provides information about how the query execution went on database nodes, but it doesn't say anything about what was going on inside the driver.\
+Tracing provides information about how the query execution went on database nodes, but it doesn't say anything about what was going on inside the driver.
+
 This is what query execution history was made for.
 
 It allows to follow what the driver was thinking - all query attempts, retry decisions, speculative executions.
