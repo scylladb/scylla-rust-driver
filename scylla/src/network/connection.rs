@@ -3437,6 +3437,7 @@ mod tests {
         let _ = proxy.finish().await;
     }
 
+    const SUCCESSFUL_QUERY: &str = "SUCCESSFUL";
     const DROP_QUERY: &str = "DROP";
     const DELAY_HALF_THRESHOLD_QUERY: &str = "DELAY_HALF_THRESHOLD";
     const DELAY_DOUBLE_THRESHOLD_QUERY: &str = "DELAY_DOUBLE_THRESHOLD";
@@ -3444,8 +3445,6 @@ mod tests {
     async fn orphaning_test_setup() -> (RunningProxy, Arc<super::Connection>, super::ErrorReceiver)
     {
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
-        let node_addr: SocketAddr = resolve_hostname(&uri).await;
 
         let mk_rule = |marker: &str, reaction: RequestReaction| {
             RequestRule(
@@ -3470,6 +3469,28 @@ mod tests {
         };
 
         let request_rules = vec![
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Options),
+                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                    ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
+                })),
+            ),
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Startup),
+                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                    ResponseFrame::forged_ready(frame.params)
+                })),
+            ),
+            mk_rule(
+                SUCCESSFUL_QUERY,
+                RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
+                    ResponseFrame {
+                        params: params.for_response(),
+                        opcode: ResponseOpcode::Result,
+                        body: Bytes::from_static(&[0, 0, 0, 1]), // Void response
+                    }
+                })),
+            ),
             mk_rule(DROP_QUERY, RequestReaction::drop_frame()),
             mk_rule(
                 DELAY_HALF_THRESHOLD_QUERY,
@@ -3485,10 +3506,8 @@ mod tests {
             .with_node(
                 Node::builder()
                     .proxy_address(proxy_addr)
-                    .real_address(node_addr)
-                    .shard_awareness(ShardAwareness::QueryNode)
                     .request_rules(request_rules)
-                    .build(),
+                    .build_dry_mode(),
             )
             .build()
             .run()
@@ -3603,7 +3622,7 @@ mod tests {
         assert!(error_receiver.try_recv().is_err());
 
         // Send one more request to verify that it works
-        let statement = Statement::new("SELECT * FROM system.local");
+        let statement = Statement::new(SUCCESSFUL_QUERY);
         conn.query_unpaged(&statement)
             .await
             .expect("Request should have succeeded");
@@ -3644,7 +3663,7 @@ mod tests {
         assert!(error_receiver.try_recv().is_err());
 
         // Send one more request to verify that it works
-        let statement = Statement::new("SELECT * FROM system.local");
+        let statement = Statement::new(SUCCESSFUL_QUERY);
         conn.query_unpaged(&statement)
             .await
             .expect("Request should have succeeded");
@@ -3718,7 +3737,7 @@ mod tests {
         assert!(error_receiver.try_recv().is_err());
 
         // Send one more request to verify that it works
-        let statement = Statement::new("SELECT * FROM system.local");
+        let statement = Statement::new(SUCCESSFUL_QUERY);
         conn.query_unpaged(&statement)
             .await
             .expect("Request should have succeeded");
