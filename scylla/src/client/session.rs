@@ -599,6 +599,15 @@ impl SessionConfig {
         }
     }
 
+    /// The timeouts applied to requests on the control connection, mapping the
+    /// two override fields in one place rather than at the use site.
+    pub(crate) fn metadata_request_timeouts(&self) -> MetadataRequestTimeouts {
+        MetadataRequestTimeouts {
+            serverside_override: self.metadata_request_serverside_timeout,
+            clientside_override: self.metadata_request_clientside_timeout,
+        }
+    }
+
     /// [SessionConfig] may unfortunately represent invalid configurations. We need to rule them out
     /// at runtime by running validation.
     fn validate(&self) -> Result<(), NewSessionError> {
@@ -1406,6 +1415,8 @@ impl Session {
 
         let tcp_socket_options = config.tcp_socket_options();
 
+        let metadata_request_timeouts = config.metadata_request_timeouts();
+
         let driver_config_reporter = config.driver_config_reporting.then(|| {
             Arc::new(DriverConfigReporter::new(
                 &config,
@@ -1510,10 +1521,7 @@ impl Session {
             driver_config_reporter,
             config.keyspaces_to_fetch,
             schema_metadata_fetch_mode,
-            MetadataRequestTimeouts {
-                serverside_override: config.metadata_request_serverside_timeout,
-                clientside_override: config.metadata_request_clientside_timeout,
-            },
+            metadata_request_timeouts,
             config.hostname_resolution_timeout,
             config.host_filter,
             host_listener,
