@@ -91,7 +91,7 @@ for cert in X509::stack_from_pem(&std::fs::read("ca.crt")?)? {
 builder.set_cert_store(ca_store.build());
 
 let session: Session = SessionBuilder::new()
-    .known_node("127.0.0.1:9142") // The the port is now 9142
+    .known_node("127.0.0.1:9142") // The port is now 9142
     .tls_context(Some(OpenSsl010Config::new(builder)))
     .build()
     .await?;
