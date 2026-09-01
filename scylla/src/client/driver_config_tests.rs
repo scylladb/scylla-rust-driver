@@ -93,7 +93,7 @@ fn patched(report: &str, patches: &[(&str, &str)]) -> String {
 /// The report of an unconfigured session against a ScyllaDB target, spelled
 /// out in full: the one document key order is pinned on, and the baseline
 /// the single-axis cases below are expressed as patches of.
-const DEFAULT_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":5000},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":true}},"socket":{"tcp-no-delay":true,"keep-alive":false,"reuse-address":false},"reconnection":{"policy":{"type":"exponential","base-ms":50,"max-ms":10000}}}}"#;
+const DEFAULT_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":5000},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":true}},"socket":{"tcp-no-delay":true,"keep-alive":false,"reuse-address":false},"reconnection":{"policy":{"type":"exponential","base-ms":50,"max-ms":10000}}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}}}"#;
 
 fn reporter(config: &SessionConfig) -> DriverConfigReporter {
     reporter_with_policy(config, Arc::new(ExponentialReconnectPolicy::new()))
@@ -103,7 +103,12 @@ fn reporter_with_policy(
     config: &SessionConfig,
     policy: Arc<dyn ReconnectPolicy>,
 ) -> DriverConfigReporter {
-    DriverConfigReporter::new(config, config.tcp_socket_options(), policy)
+    DriverConfigReporter::new(
+        config,
+        config.tcp_socket_options(),
+        policy,
+        config.metadata_request_timeouts(),
+    )
 }
 
 #[test]
@@ -183,7 +188,7 @@ fn customised_report(config: &SessionConfig) -> String {
 /// The report of [`customised_config`], the second document spelled out in
 /// full: nearly every key of it differs from [`DEFAULT_REPORT`], so there is
 /// no difference to point at.
-const CUSTOMISED_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":1234},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":false}},"socket":{"tcp-no-delay":false,"keep-alive":true,"reuse-address":true,"linger":{"interval-s":7},"receive-buffer":{"size-bytes":65536},"send-buffer":{"size-bytes":32768}},"reconnection":{"policy":{"type":"constant","delay-ms":250}},"node-preference":{"type":"dc","local-dc":"dc1"}}}"#;
+const CUSTOMISED_REPORT: &str = r#"{"version":1,"connection":{"connect":{"timeout-ms":1234},"requests":{"in-flight":{"max":32768},"orphaned":{"max":1024}},"pool":{"shard-aware":{"enabled":false}},"socket":{"tcp-no-delay":false,"keep-alive":true,"reuse-address":true,"linger":{"interval-s":7},"receive-buffer":{"size-bytes":65536},"send-buffer":{"size-bytes":32768}},"reconnection":{"policy":{"type":"constant","delay-ms":250}},"node-preference":{"type":"dc","local-dc":"dc1"}},"control-plane":{"queries":{"system":{"timeout":{"client-side-ms":31000,"server-side-ms":30000}}},"schema":{"agreement":{"timeout-ms":60000}}}}"#;
 
 #[test]
 fn fully_customised_configuration_report() {
@@ -210,6 +215,66 @@ fn tls_is_reported_as_an_empty_object() {
             CUSTOMISED_REPORT,
             &[(r#""local-dc":"dc1"}}"#, r#""local-dc":"dc1"},"tls":{}}"#)],
         )
+    );
+}
+
+/// `server-side-ms` describes the `USING TIMEOUT` clause the control
+/// connection appends, so it must be absent whenever no such clause is sent:
+/// against Cassandra, or when the clause would read `0ms`. `client-side-ms`
+/// bounds a client-side deadline and is reported either way.
+#[test]
+fn control_plane_report_cases() {
+    let control_plane = |config: &SessionConfig, target_is_scylladb: bool| {
+        let report = reporter(config).report(target_is_scylladb).unwrap();
+        group(&report, "/control-plane")
+    };
+
+    // A Cassandra target honours no `USING TIMEOUT`, so the whole default
+    // report drops that one key and nothing else.
+    assert_eq!(
+        reporter(&SessionConfig::new()).report(false).unwrap(),
+        patched(DEFAULT_REPORT, &[(r#","server-side-ms":30000"#, "")])
+    );
+
+    // A sub-millisecond server-side timeout would be sent as
+    // `USING TIMEOUT 0ms`, which `positiveInteger` cannot carry.
+    let mut config = SessionConfig::new();
+    config.metadata_request_serverside_timeout = Some(Duration::from_micros(500));
+    assert_eq!(
+        control_plane(&config, true),
+        serde_json::json!({
+            "queries": {"system": {"timeout": {"client-side-ms": 1000}}},
+            "schema": {"agreement": {"timeout-ms": 60000}},
+        })
+    );
+
+    // No server-side timeout at all: the client-side one falls back to its
+    // own default, and there is no clause to report even against ScyllaDB.
+    let mut config = SessionConfig::new();
+    config.metadata_request_serverside_timeout = None;
+    assert_eq!(
+        control_plane(&config, true),
+        serde_json::json!({
+            "queries": {"system": {"timeout": {"client-side-ms": 30000}}},
+            "schema": {"agreement": {"timeout-ms": 60000}},
+        })
+    );
+
+    // An explicit client-side override wins over the derived value; a zero
+    // schema agreement timeout means "do not wait", not "unset".
+    let mut config = SessionConfig::new();
+    config.metadata_request_serverside_timeout = Some(Duration::from_secs(5));
+    config.metadata_request_clientside_timeout = Some(Duration::from_secs(7));
+    config.schema_agreement_timeout = Duration::ZERO;
+    assert_eq!(
+        control_plane(&config, true),
+        serde_json::json!({
+            "queries": {"system": {"timeout": {
+                "client-side-ms": 7000,
+                "server-side-ms": 5000,
+            }}},
+            "schema": {"agreement": {"timeout-ms": 0}},
+        })
     );
 }
 

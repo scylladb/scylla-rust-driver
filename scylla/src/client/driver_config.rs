@@ -17,6 +17,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::client::session::SessionConfig;
+use crate::cluster::control_connection::MetadataRequestTimeouts;
 use crate::network::{
     MAX_IN_FLIGHT_REQUESTS, OLD_ORPHAN_COUNT_THRESHOLD, PoolSize, TcpSocketOptions,
 };
@@ -46,14 +47,60 @@ const MAX_REPORT_SIZE: usize = 32 * 1024;
 
 /// The reported configuration document.
 ///
-/// The `control-plane` and `query` groups are yet to be added. The schema
-/// requires them next to `connection`, so the report this currently produces
-/// does not validate against it.
+/// The `query` group is yet to be added. The schema requires it next to
+/// `connection` and `control-plane`, so the report this currently produces does
+/// not validate against it.
 #[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct Report {
     version: u32,
     connection: ConnectionReport,
+    control_plane: ControlPlaneReport,
+}
+
+/// The schema's `control-plane` group: the timeouts of the metadata statements
+/// the control connection runs, and of schema agreement.
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct ControlPlaneReport {
+    queries: ControlPlaneQueriesReport,
+    schema: ControlPlaneSchemaReport,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct ControlPlaneQueriesReport {
+    system: SystemQueriesReport,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct SystemQueriesReport {
+    timeout: SystemQueriesTimeoutReport,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct SystemQueriesTimeoutReport {
+    /// Always present: the control connection always has a client-side timeout,
+    /// explicit or derived.
+    client_side_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_side_ms: Option<u64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct ControlPlaneSchemaReport {
+    agreement: SchemaAgreementReport,
+}
+
+/// `timeout-ms` is always reported, including 0: the schema documents 0 as
+/// meaningful ("do not wait for agreement"), not as unset.
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct SchemaAgreementReport {
+    timeout_ms: u64,
 }
 
 /// The schema's `connection` group.
@@ -174,6 +221,8 @@ enum ReconnectionPolicyReport {
         max_ms: u64,
     },
     Constant {
+        /// A schema `nonNegativeInteger`, where 0 means an immediate retry rather
+        /// than a disabled feature, so it is reported verbatim.
         delay_ms: u64,
     },
     Custom {
@@ -218,8 +267,9 @@ fn positive_millis(duration: Duration) -> u64 {
         .max(1)
 }
 
-/// Milliseconds of a duration reported under a schema `nonNegativeInteger` key,
-/// verbatim: there 0 is a meaningful value, not a disabled feature.
+/// Milliseconds of a duration, verbatim: truncating as [`Duration::as_millis`]
+/// does, saturating at `u64::MAX` - `u64` milliseconds is half a billion years,
+/// so the clamp is unreachable in practice.
 fn non_negative_millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
@@ -250,19 +300,22 @@ pub(crate) struct DriverConfigReporter {
     tls_configured: bool,
     host_filter: Option<Arc<dyn HostFilter>>,
     reconnect_policy: Arc<dyn ReconnectPolicy>,
+    metadata_request_timeouts: MetadataRequestTimeouts,
+    schema_agreement_timeout: Duration,
 }
 
 impl DriverConfigReporter {
-    /// `socket_options` and `reconnect_policy` are passed in rather than derived
-    /// from `config`, so that the report describes the values the session is
-    /// actually built with: the socket options are assembled once by the caller,
-    /// and the effective reconnect policy is not always the one on `config`
-    /// (without the unstable feature the field does not exist and a default is
-    /// used).
+    /// `socket_options`, `reconnect_policy` and `metadata_request_timeouts` are
+    /// passed in rather than derived from `config`, so that the report describes
+    /// the values the session is actually built with: those are assembled once by
+    /// the caller and handed to the components that use them, and the effective
+    /// reconnect policy is not always the one on `config` (without the unstable
+    /// feature the field does not exist and a default is used).
     pub(crate) fn new(
         config: &SessionConfig,
         socket_options: TcpSocketOptions,
         reconnect_policy: Arc<dyn ReconnectPolicy>,
+        metadata_request_timeouts: MetadataRequestTimeouts,
     ) -> Self {
         Self {
             connect_timeout: config.connect_timeout,
@@ -277,6 +330,8 @@ impl DriverConfigReporter {
             tls_configured: config.tls_context.is_some(),
             host_filter: config.host_filter.clone(),
             reconnect_policy,
+            metadata_request_timeouts,
+            schema_agreement_timeout: config.schema_agreement_timeout,
         }
     }
 
@@ -292,17 +347,14 @@ impl DriverConfigReporter {
     /// established, and configuration read through an `ExecutionProfileHandle`
     /// can be remapped at runtime.
     ///
-    /// `target_is_scylladb` tells whether the peer is a ScyllaDB node, as some
-    /// reported values only apply to ScyllaDB. It is not read yet, hence the
-    /// scoped `expect`: a leading underscore would only have to be renamed once
-    /// a group starts using it.
-    pub(crate) fn report(
-        &self,
-        #[expect(unused_variables)] target_is_scylladb: bool,
-    ) -> Option<String> {
+    /// `target_is_scylladb` tells whether the peer is a ScyllaDB node, which the
+    /// server-side metadata request timeout depends on: `USING TIMEOUT` is a
+    /// ScyllaDB-only extension.
+    pub(crate) fn report(&self, target_is_scylladb: bool) -> Option<String> {
         let report = Report {
             version: REPORT_VERSION,
             connection: self.connection_report(),
+            control_plane: self.control_plane_report(target_is_scylladb),
         };
 
         // `serde_json::to_string` cannot fail for the report's current shape; the
@@ -408,6 +460,42 @@ impl DriverConfigReporter {
         (!filter.local_dc.is_empty()).then(|| NodePreferenceReport::Dc {
             local_dc: filter.local_dc.clone(),
         })
+    }
+
+    fn control_plane_report(&self, target_is_scylladb: bool) -> ControlPlaneReport {
+        let timeouts = &self.metadata_request_timeouts;
+
+        ControlPlaneReport {
+            queries: ControlPlaneQueriesReport {
+                system: SystemQueriesReport {
+                    timeout: SystemQueriesTimeoutReport {
+                        // Floored, unlike `server-side-ms` below: this bounds a
+                        // client-side deadline, which a sub-millisecond duration
+                        // expresses perfectly well.
+                        client_side_ms: positive_millis(timeouts.clientside()),
+                        // Gated on the target, because `USING TIMEOUT` is a
+                        // ScyllaDB-only extension and the control connection only
+                        // appends the clause against ScyllaDB.
+                        //
+                        // Truncating rather than floored, because the report must
+                        // name the value the clause actually carries, and
+                        // `ControlConnection::maybe_append_timeout_override`
+                        // formats `as_millis()`: a sub-millisecond timeout is sent
+                        // as `USING TIMEOUT 0ms`. The key is then omitted, as the
+                        // schema's `positiveInteger` cannot carry 0.
+                        server_side_ms: timeouts
+                            .serverside(target_is_scylladb)
+                            .map(non_negative_millis)
+                            .filter(|&millis| millis > 0),
+                    },
+                },
+            },
+            schema: ControlPlaneSchemaReport {
+                agreement: SchemaAgreementReport {
+                    timeout_ms: non_negative_millis(self.schema_agreement_timeout),
+                },
+            },
+        }
     }
 }
 

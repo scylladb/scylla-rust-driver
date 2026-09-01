@@ -599,8 +599,8 @@ impl SessionConfig {
         }
     }
 
-    /// The timeouts applied to requests on the control connection, mapping the
-    /// two override fields in one place rather than at the use site.
+    /// The timeouts applied to requests on the control connection. Single source
+    /// of the mapping, so that the configuration report cannot drift from it.
     pub(crate) fn metadata_request_timeouts(&self) -> MetadataRequestTimeouts {
         MetadataRequestTimeouts {
             serverside_override: self.metadata_request_serverside_timeout,
@@ -1422,6 +1422,7 @@ impl Session {
                 &config,
                 tcp_socket_options.clone(),
                 Arc::clone(&reconnect_policy),
+                metadata_request_timeouts,
             ))
         });
 

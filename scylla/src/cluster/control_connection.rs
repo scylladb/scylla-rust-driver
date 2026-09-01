@@ -49,13 +49,13 @@ pub(crate) struct MetadataRequestTimeouts {
 
 impl MetadataRequestTimeouts {
     /// The server-side timeout override actually in effect.
-    fn serverside(&self, target_is_scylladb: bool) -> Option<Duration> {
+    pub(crate) fn serverside(&self, target_is_scylladb: bool) -> Option<Duration> {
         self.serverside_override.filter(|_| target_is_scylladb)
     }
 
     /// The client-side timeout actually in effect, derived from the configured
     /// server-side timeout unless explicitly overridden.
-    fn clientside(&self) -> Duration {
+    pub(crate) fn clientside(&self) -> Duration {
         self.clientside_override.unwrap_or_else(|| {
             self.serverside_override.map_or(
                 DEFAULT_CLIENTSIDE_TIMEOUT,
