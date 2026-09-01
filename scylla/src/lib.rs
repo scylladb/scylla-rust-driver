@@ -2,7 +2,8 @@
 //! Although optimized for ScyllaDB, the driver is also compatible with [Apache Cassandra®](https://cassandra.apache.org/).
 //!
 //! # Documentation book
-//! The best source to learn about this driver is the [documentation book](https://rust-driver.docs.scylladb.com/).\
+//! The best source to learn about this driver is the [documentation book](https://rust-driver.docs.scylladb.com/).
+//!
 //! This page contains mainly API documentation.
 //!
 //! # Other documentation
@@ -13,7 +14,8 @@
 //!
 //! # Driver overview
 //! ### Connecting
-//! All driver activity revolves around the [Session](crate::client::session::Session).\
+//! All driver activity revolves around the [Session](crate::client::session::Session).
+//!
 //! `Session` is created by specifying a few known nodes and connecting to them:
 //!
 //! ```rust,no_run
@@ -32,11 +34,13 @@
 //!    Ok(())
 //! }
 //! ```
-//! `Session` is usually created using the [SessionBuilder](crate::client::session_builder::SessionBuilder).\
+//! `Session` is usually created using the [SessionBuilder](crate::client::session_builder::SessionBuilder).
+//!
 //! All configuration options for a `Session` can be specified while building.
 //!
 //! ### Making queries
-//! After successfully connecting to the cluster we can make queries.\
+//! After successfully connecting to the cluster we can make queries.
+//!
 //! The driver supports multiple query types:
 //! * [Simple](crate::client::session::Session::query_unpaged)
 //! * [Simple paged](crate::client::session::Session::query_iter)
@@ -84,7 +88,7 @@
 //!     .into_rows_result()?;
 //!
 //! for row in query_rows.rows()? {
-//!     // Parse row as int and text \
+//!     // Parse row as int and text
 //!     let (int_val, text_val): (i32, &str) = row?;
 //! }
 //! # Ok(())

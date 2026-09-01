@@ -6,7 +6,8 @@ In fact, most SELECTs queries should be done with paging, to avoid big load on c
 
 :::{warning}
 Issuing unpaged SELECTs (`Session::query_unpaged` or `Session::execute_unpaged`)
-may have dramatic performance consequences! **BEWARE!**\
+may have dramatic performance consequences! **BEWARE!**
+
 If the result set is big (or, e.g., there are a lot of tombstones), those atrocities can happen:
  - cluster may experience high load,
  - queries may time out,
@@ -26,7 +27,8 @@ or a [prepared statement](prepared.md), respectively, and return a `QueryPager`.
 to be converted into typed `Stream` (by calling `QueryPager::rows_stream::<RowT>`) in order to
 deserialize rows.
 
-> ***Note***\
+> ***Note***
+>
 > Due to lending stream limitations of Rust, `QueryPager` currently only enables deserialization
 > of owned types (i.e., those with `'static` lifetime). If you want to deserialize borrowed types
 > (such as slices, `&str`, etc.) in order to save allocations, you should use the manual paging

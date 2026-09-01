@@ -1,4 +1,5 @@
-//! `Session` is the main object used in the driver.\
+//! `Session` is the main object used in the driver.
+//!
 //! It manages all connections to the cluster and allows to execute CQL requests.
 
 use super::execution::RequestPaging;
@@ -627,7 +628,8 @@ impl SessionConfig {
 /// Represents a CQL session, which can be used to communicate
 /// with the database
 impl Session {
-    /// Sends a request to the database and receives a response.\
+    /// Sends a request to the database and receives a response.
+    ///
     /// Executes an unprepared CQL statement without paging, i.e. all results are received in a single response.
     ///
     /// This is the easiest way to execute a CQL statement, but performance is worse than that of prepared statements.
@@ -752,10 +754,12 @@ impl Session {
             .await
     }
 
-    /// Execute an unprepared CQL statement with paging\
-    /// This method will query all pages of the result\
+    /// Execute an unprepared CQL statement with paging.
     ///
-    /// Returns an async iterator (stream) over all received rows\
+    /// This method will query all pages of the result.
+    ///
+    /// Returns an async iterator (stream) over all received rows.
+    ///
     /// Page size can be specified in the [`Statement`] passed to the function
     ///
     /// It is discouraged to use this method with non-empty values argument ([`SerializeRow::is_empty()`]
@@ -797,7 +801,8 @@ impl Session {
     }
 
     /// Execute a prepared statement. Requires a [PreparedStatement]
-    /// generated using [`Session::prepare`](Session::prepare).\
+    /// generated using [`Session::prepare`](Session::prepare).
+    ///
     /// Performs an unpaged request, i.e. all results are received in a single response.
     ///
     /// As all results come in one response (no paging is done!), the memory footprint and latency may be huge
@@ -810,7 +815,8 @@ impl Session {
     /// * Database doesn't need to parse the statement string upon each execution (only once)
     /// * They are properly load balanced using token aware routing
     ///
-    /// > ***Warning***\
+    /// > ***Warning***
+    /// >
     /// > For token/shard aware load balancing to work properly, all partition key values
     /// > must be sent as bound values
     /// > (see [performance section](https://rust-driver.docs.scylladb.com/stable/statements/prepared.html#performance)).
@@ -939,10 +945,10 @@ impl Session {
         .await
     }
 
-    /// Execute a prepared statement with paging.\
-    /// This method will query all pages of the result.\
+    /// Execute a prepared statement with paging.
+    /// This method will query all pages of the result.
     ///
-    /// Returns an async iterator (stream) over all received rows.\
+    /// Returns an async iterator (stream) over all received rows.
     /// Page size can be specified in the [PreparedStatement] passed to the function.
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/statements/paged.html) for more information.
@@ -990,8 +996,9 @@ impl Session {
             .await
     }
 
-    /// Execute a batch statement\
-    /// Batch contains many `unprepared` or `prepared` statements which are executed at once\
+    /// Execute a batch statement.
+    ///
+    /// Batch contains many `unprepared` or `prepared` statements which are executed at once.
     /// Batch doesn't return any rows.
     ///
     /// Batch values must contain values for each of the statements.
@@ -1967,13 +1974,15 @@ impl Session {
         Ok(prepared_batch)
     }
 
-    /// Sends `USE <keyspace_name>` request on all connections\
-    /// This allows to write `SELECT * FROM table` instead of `SELECT * FROM keyspace.table`\
+    /// Sends `USE <keyspace_name>` request on all connections.
+    ///
+    /// This allows to write `SELECT * FROM table` instead of `SELECT * FROM keyspace.table`.
     ///
     /// Note that even failed `use_keyspace` can change currently used keyspace - the request is sent on all connections and
     /// can overwrite previously used keyspace.
     ///
-    /// Call only one `use_keyspace` at a time.\
+    /// Call only one `use_keyspace` at a time.
+    ///
     /// Trying to do two `use_keyspace` requests simultaneously with different names
     /// can end with some connections using one keyspace and the rest using the other.
     ///
@@ -2021,11 +2030,12 @@ impl Session {
         self.cluster.use_keyspace(verified_ks_name).await
     }
 
-    /// Manually trigger a metadata refresh\
-    /// The driver will fetch current nodes in the cluster and update its metadata
+    /// Manually trigger a metadata refresh.
     ///
-    /// Normally this is not needed,
-    /// the driver should automatically detect all metadata changes in the cluster
+    /// The driver will fetch current nodes in the cluster and update its metadata.
+    ///
+    /// Normally this is not needed, the driver should automatically detect
+    /// all metadata changes in the cluster.
     pub async fn refresh_metadata(&self) -> Result<(), MetadataError> {
         debug!("Session: requested metadata refresh");
         let res = self.cluster.refresh_metadata().await;
@@ -2033,9 +2043,10 @@ impl Session {
         res
     }
 
-    /// Access metrics collected by the driver\
+    /// Access metrics collected by the driver.
+    ///
     /// Driver collects various metrics like number of queries or query latencies.
-    /// They can be read using this method
+    /// They can be read using this method.
     #[cfg(feature = "metrics")]
     pub fn get_metrics(&self) -> Arc<Metrics> {
         self.get_metrics_priv()

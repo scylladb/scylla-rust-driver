@@ -50,7 +50,8 @@ It must be a full, three-component version (e.g. `2026.2.2`) rather than a trunc
 on each call, making the tests take much more time.
 To run the `docker compose` cluster on a different version ad hoc, set `SCYLLA_VERSION` in your environment - it takes precedence over the value from the file.
 
-When on non-Linux machine, however, it can be impossible to connect to containerized ScyllaDB instance from outside Docker.\
+When on non-Linux machine, however, it can be impossible to connect to containerized ScyllaDB instance from outside Docker.
+
 If you are using macOS, we provide a `dockerized-test` make target for running tests inside another Docker container:
 ```bash
 make dockerized-test
@@ -58,7 +59,8 @@ make dockerized-test
 If working on Windows, run tests in WSL.
 
 The above commands will leave a running ScyllaDB cluster in the background.
-To stop it, use `make down`.\
+To stop it, use `make down`.
+
 Starting a cluster without running any test is possible with `make up`.
 
 The above test commands will run doctests, unit tests and integration tests.
@@ -116,8 +118,10 @@ Tool that we curently use: https://github.com/obi1kenobi/cargo-semver-checks
 
 ## Contributing to the book
 
-The documentation book is written using [mdbook](https://github.com/rust-lang/mdBook)\
-Book source is in `docs/source`\
+The documentation book is written using [mdbook](https://github.com/rust-lang/mdBook).
+
+Book source is in `docs/source`.
+
 This source has to be compatible with `Sphinx` so it might sometimes contain chunks like:
 ````
 ```{eval-rst}

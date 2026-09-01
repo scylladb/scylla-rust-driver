@@ -28,11 +28,14 @@ pub struct AttemptId(pub usize);
 pub struct SpeculativeId(pub usize);
 
 /// Any type implementing this trait can be passed to Session
-/// to collect execution history of specific requests.\
+/// to collect execution history of specific requests.
+///
 /// In order to use it call `set_history_listener` on
-/// `Statement`, `PreparedStatement`, etc...\
+/// `Statement`, `PreparedStatement`, etc...
+///
 /// The listener has to generate unique IDs for new requests, attempts and speculative fibers.
-/// These ids are then used by the caller to identify them.\
+/// These ids are then used by the caller to identify them.
+///
 /// It's important to note that even after a request is finished there still might come events related to it.
 /// These events come from speculative futures that didn't notice the request is done already.
 pub trait HistoryListener: Debug + Send + Sync {
@@ -142,7 +145,8 @@ impl HistoryCollector {
         self.do_with_data(|data| data.clone())
     }
 
-    /// Takes the data out of the collector. The collected events are cleared.\
+    /// Takes the data out of the collector. The collected events are cleared.
+    ///
     /// It's possible that after finishing a request and taking out the events
     /// new ones will still come - from requests that haven't been cancelled yet.
     pub fn take_collected(&self) -> HistoryCollectorData {
@@ -259,9 +263,11 @@ impl HistoryListener for HistoryCollector {
     }
 }
 
-/// Structured representation of requests history.\
+/// Structured representation of requests history.
+///
 /// [HistoryCollector] collects raw events which later can be converted
-/// to this pretty representation.\
+/// to this pretty representation.
+///
 /// It has a `Display` impl which can be used for printing pretty request history.
 #[derive(Debug, Clone)]
 pub struct StructuredHistory {

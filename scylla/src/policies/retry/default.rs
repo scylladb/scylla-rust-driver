@@ -4,7 +4,8 @@ use crate::errors::RequestAttemptError;
 
 use super::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 
-/// Default retry policy - retries when there is a high chance that a retry might help.\
+/// Default retry policy - retries when there is a high chance that a retry might help.
+///
 /// Behaviour based on [DataStax Java Driver](https://docs.datastax.com/en/developer/java-driver/4.10/manual/core/retries/)
 #[derive(Debug)]
 pub struct DefaultRetryPolicy;

@@ -2,8 +2,10 @@
 
 You always have a default execution profile set for the `Session`, either the default one or overridden upon `Session` creation. Moreover, you can set a profile for specific statements, in which case the statement's profile has higher priority. Some options are also available for specific statements to be set directly on them, such as request timeout and consistency. In such case, the directly set options are preferred over those specified in execution profiles.
 
-> **Recap**\
-> Priorities are as follows:\
+> **Recap**
+>
+> Priorities are as follows:
+>
 > `Session`'s default profile < Statement's profile < options set directly on a Statement
 
 

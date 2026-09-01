@@ -386,8 +386,7 @@ impl<K: SessionBuilderKindSupportsTls> GenericSessionBuilder<K> {
 // This block contains configuration options that make sense both for any `Session` type.
 // If an option fit only some of them, it should be put in a specialised block.
 impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
-    /// Set username and password for plain text authentication.\
-    /// If the database server will require authentication\
+    /// Set username and password for plain text authentication.
     ///
     /// # Example
     /// ```
@@ -800,8 +799,10 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
-    /// Set keyspace to be used on all connections.\
-    /// Each connection will send `"USE <keyspace_name>"` before sending any requests.\
+    /// Set keyspace to be used on all connections.
+    ///
+    /// Each connection will send `"USE <keyspace_name>"` before sending any requests.
+    ///
     /// This can be later changed with [`crate::client::session::Session::use_keyspace`]
     ///
     /// # Example

@@ -1,6 +1,7 @@
 # Query Execution History
 
-The driver allows to collect history of query execution.\
+The driver allows to collect history of query execution.
+
 This history includes all requests sent, decisions to retry and speculative execution fibers started.
 
 ## Example code

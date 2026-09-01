@@ -4,7 +4,8 @@ use tracing::debug;
 use super::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::errors::{DbError, RequestAttemptError, WriteType};
 
-/// Downgrading consistency retry policy - retries with lower consistency level if it knows\
+/// Downgrading consistency retry policy - retries with lower consistency level if it knows
+///
 /// that the initial CL is unreachable. Also, it behaves as [DefaultRetryPolicy](crate::policies::retry::DefaultRetryPolicy)
 /// when it believes that the initial CL is reachable.
 /// Behaviour based on [DataStax Java Driver]\

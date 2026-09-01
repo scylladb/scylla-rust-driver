@@ -3,7 +3,8 @@
 `Session::query_unpaged`, `Session::query_single_page`, `Session::execute_unpaged` and `Session::execute_single_page`
 return a `QueryResult` with rows in a raw form, yet-to-be lazily deserialized.
 
-> ***Note***\
+> ***Note***
+>
 > Using unpaged queries for SELECTs is discouraged in general.
 > Query results may be so big that it is not preferable to fetch them all at once.
 > Even with small results, if there are a lot of tombstones, then there can be similar bad consequences.
@@ -85,7 +86,8 @@ for row in rows_result.rows::<(i32, Option<&str>)>()? {
 ```
 
 ### Parsing row as a custom struct
-It is possible to receive row as a struct with fields matching the columns.\
+It is possible to receive row as a struct with fields matching the columns.
+
 The struct must:
 * have the same number of fields as the number of queried columns
 * have field types matching the columns being received

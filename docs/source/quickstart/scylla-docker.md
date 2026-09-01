@@ -1,6 +1,7 @@
 # Running ScyllaDB using Docker
 
-To make queries we will need a running ScyllaDB instance. The easiest way is to use a [Docker](https://www.docker.com/) image.\
+To make queries we will need a running ScyllaDB instance. The easiest way is to use a [Docker](https://www.docker.com/) image.
+
 Please [install Docker](https://docs.docker.com/engine/install) if it's not installed.
 
 ### Running scylla

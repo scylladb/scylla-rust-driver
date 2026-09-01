@@ -1,6 +1,7 @@
-//! Request retries configurations\
+//! Request retries configurations
+//!
 //! To decide when to retry a request the `Session` can use any object which implements
-//! the `RetryPolicy` trait
+//! the `RetryPolicy` trait.
 
 use crate::errors::RequestAttemptError;
 use crate::frame::types::Consistency;
@@ -8,11 +9,13 @@ use crate::frame::types::Consistency;
 /// Information about a failed request
 #[non_exhaustive]
 pub struct RequestInfo<'a> {
-    /// The error with which the request failed
+    /// The error with which the request failed.
     pub error: &'a RequestAttemptError,
-    /// A request is idempotent if it can be applied multiple times without changing the result of the initial application\
-    /// If set to `true` we can be sure that it is idempotent\
-    /// If set to `false` it is unknown whether it is idempotent
+    /// A request is idempotent if it can be applied multiple times without changing the result of the initial application.
+    ///
+    /// If set to `true` we can be sure that it is idempotent.
+    ///
+    /// If set to `false` it is unknown whether it is idempotent.
     pub is_idempotent: bool,
     /// Consistency with which the request failed
     pub consistency: Consistency,
