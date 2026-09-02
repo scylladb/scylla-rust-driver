@@ -132,3 +132,19 @@ The deprecated `TlsContext::OpenSsl010` never resumes: the driver cannot install
 callback on a context it did not build.
 
 See the full [openssl example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/tls_openssl.rs) and [rustls example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/tls_rustls.rs) for more details.
+
+### TLS tickets limitations
+
+TLS 1.2 tickets should work perfectly fine.
+TLS 1.3 tickets are single-use, and:
+ - At the time of writing this, Scylla server offerc exactly 2 tickets on each connection
+ - Driver has no mechanism to take into consideration the amount of stored tickets when deciding when and how many connections to open.
+
+Because of that, TLS 1.3 tickets may often be not offered by the driver. Consider the following scenario:
+ - Node has 20 shards
+ - Driver opens first connection, gets 2 TLS 1.3 tickets.
+ - Driver opens remaining 19 connections.
+ - Only 2 will use tickets, 17 will perform full handshake.
+
+ This problem happens both with Rustls and Openssl backends.
+ Use TLS 1.2 for now if you care about tickets being offered whenever possible.
