@@ -4,9 +4,13 @@
 //! Expectation being verified:
 //! - the rustls backend reuses session tickets; TLS 1.2 pools resume every connection after
 //!   the first, while TLS 1.3 pools resume at least two connections per node,
-//! - neither openssl backend reuses session tickets, so every connection performs a full
-//!   handshake. That holds both for `TlsContext::OpenSsl010`, which takes an already-built
-//!   `SslContext`, and for `OpenSsl010Config`, which the driver builds itself.
+//! - the openssl backend, used through `OpenSsl010Config`, does the same by hand: it banks
+//!   the tickets the server issues and offers them on later connections, unless that is
+//!   switched off with `OpenSsl010Config::set_use_tls_tickets(false)`, in which case it
+//!   banks nothing, offers nothing and every connection performs a full handshake,
+//! - the deprecated `TlsContext::OpenSsl010`, which hands the driver an already-built
+//!   `SslContext`, never resumes: the driver cannot install a session callback on a
+//!   context it did not build, so it has no ticket to offer.
 //!
 //! This is verified for both TLS 1.2 and TLS 1.3.
 //!
@@ -62,20 +66,29 @@ const CQL_PORT: u16 = 9042;
 #[derive(Clone, Copy, Debug)]
 enum Backend {
     Rustls023,
-    /// The variant taking an already-built `SslContext`.
+    /// The variant taking an already-built `SslContext`, which is deprecated.
     OpenSsl010,
-    /// The variant taking an `SslConnectorBuilder`, which the driver finishes itself.
-    OpenSsl010Config,
+    /// The variant taking an `SslConnectorBuilder`, which the driver finishes itself,
+    /// with ticket reuse on or off.
+    OpenSsl010Config {
+        tickets: bool,
+    },
 }
 
 impl Backend {
     /// Whether the driver reuses TLS session tickets on this backend.
     fn reuses_session_tickets(self) -> bool {
         match self {
+            // Resumes natively.
             Backend::Rustls023 => true,
-            // For either openssl flavour the driver builds a fresh `Ssl` from the
-            // `SslContext` per connection and never calls `SSL_set_session`.
-            Backend::OpenSsl010 | Backend::OpenSsl010Config => false,
+            // The driver banks the sessions the server issues (via the new-session
+            // callback it installs on the context it builds) and calls `SSL_set_session`
+            // with one on every new connection. With tickets switched off it neither
+            // banks nor offers anything.
+            Backend::OpenSsl010Config { tickets } => tickets,
+            // The driver gets a context it did not build, so it can install no
+            // new-session callback and has nothing to offer.
+            Backend::OpenSsl010 => false,
         }
     }
 }
@@ -287,7 +300,9 @@ async fn run_subtest(
     let tls_context: TlsContext = match backend {
         Backend::Rustls023 => TlsContext::Rustls023(make_rustls_023_config(ca, version)),
         Backend::OpenSsl010 => openssl_010_context(configure),
-        Backend::OpenSsl010Config => openssl_010_builder_context(configure).into(),
+        Backend::OpenSsl010Config { tickets } => openssl_010_builder_context(configure)
+            .set_use_tls_tickets(tickets)
+            .into(),
     };
 
     // One pool of POOL_SIZE connections per node, plus the single control connection,
@@ -481,8 +496,22 @@ async fn test_tls_session_tickets() {
                     (Backend::Rustls023, TlsVersion::V1_3),
                     (Backend::OpenSsl010, TlsVersion::V1_2),
                     (Backend::OpenSsl010, TlsVersion::V1_3),
-                    (Backend::OpenSsl010Config, TlsVersion::V1_2),
-                    (Backend::OpenSsl010Config, TlsVersion::V1_3),
+                    (
+                        Backend::OpenSsl010Config { tickets: true },
+                        TlsVersion::V1_2,
+                    ),
+                    (
+                        Backend::OpenSsl010Config { tickets: true },
+                        TlsVersion::V1_3,
+                    ),
+                    (
+                        Backend::OpenSsl010Config { tickets: false },
+                        TlsVersion::V1_2,
+                    ),
+                    (
+                        Backend::OpenSsl010Config { tickets: false },
+                        TlsVersion::V1_3,
+                    ),
                 ] {
                     run_subtest(
                         backend,
