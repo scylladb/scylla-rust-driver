@@ -345,24 +345,39 @@ impl<K: SessionBuilderKindSupportsTls> GenericSessionBuilder<K> {
     #[cfg_attr(
         feature = "openssl-010",
         doc = r#"
-# Example
+# OpenSSL 0.10 example
 
 ```
     # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     use std::fs;
     use std::path::PathBuf;
-    use scylla::client::session::Session;
+    use scylla::client::session::{OpenSsl010Config, Session};
     use scylla::client::session_builder::SessionBuilder;
-    use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
+    use openssl::ssl::{SslConnector, SslMethod};
+    use openssl::x509::X509;
+    use openssl::x509::store::X509StoreBuilder;
 
-    let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
-    let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
-    context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
-    context_builder.set_verify(SslVerifyMode::NONE);
+    let mut builder = SslConnector::builder(SslMethod::tls())?;
+    let certdir = fs::canonicalize(PathBuf::from("ca.crt"))?;
+
+    {
+        // Trust the cluster's CA, and nothing else. `SslConnector` would otherwise also
+        // trust the system's CA store, which is not always what you want.
+        let mut ca_store = X509StoreBuilder::new()?;
+        for cert in X509::stack_from_pem(&fs::read("ca.crt")?)? {
+            ca_store.add_cert(cert)?;
+        }
+        builder.set_cert_store(ca_store.build());
+    }
+
+    {
+        // The alternative to the above, if you are fine with also trusting system CA store.
+        builder.set_ca_file(certdir.as_path())?;
+    }
 
     let session: Session = SessionBuilder::new()
         .known_node("127.0.0.1:9042")
-        .tls_context(Some(context_builder.build()))
+        .tls_context(Some(OpenSsl010Config::new(builder)))
         .build()
         .await?;
     # Ok(())

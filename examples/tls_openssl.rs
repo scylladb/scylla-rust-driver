@@ -5,9 +5,10 @@
 //! generic one to point at.
 
 use anyhow::Result;
-use openssl::ssl::{SslContextBuilder, SslMethod, SslVerifyMode};
+use openssl::ssl::{SslConnector, SslMethod};
 use openssl::x509::X509;
-use scylla::client::session::Session;
+use openssl::x509::store::X509StoreBuilder;
+use scylla::client::session::{OpenSsl010Config, Session};
 
 // Not an example itself: shared CI-only cluster setup, see `examples/ci/`.
 #[path = "ci/tls_cluster.rs"]
@@ -26,21 +27,22 @@ async fn main() -> Result<()> {
     let session_builder = cluster.session_builder().await;
     // --- end of CI setup --------------------------------------------------
 
-    // Teach openssl to trust the certificate authority that signed the nodes'
-    // certificates. Had the CA been handed to us as a `ca.crt` file, this would
-    // be `context_builder.set_ca_file("ca.crt")?`.
-    let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
-    context_builder
-        .cert_store_mut()
-        .add_cert(X509::from_der(ca_cert_der)?)?;
-    // Verify the node's certificate. The driver additionally checks that the
-    // certificate covers the IP address it connected to, so the nodes' certs
-    // must carry that address in their subject alternative name.
-    context_builder.set_verify(SslVerifyMode::PEER);
+    let mut builder = SslConnector::builder(SslMethod::tls())?;
+    // Trust the certificate authority that signed the nodes' certificates, and
+    // nothing else: `SslConnector` starts out trusting the system roots, which may not be
+    // what you want if you use your own CA. `builder.set_ca_file("ca.crt")?` is the
+    // shorter route when the CA is a file, but it adds to that default trust instead
+    // of replacing it.
+    let mut ca_store = X509StoreBuilder::new()?;
+    ca_store.add_cert(X509::from_der(ca_cert_der)?)?;
+    builder.set_cert_store(ca_store.build());
+    // `SslConnector` verifies the node's certificate by default. The driver
+    // additionally checks that the certificate covers the IP address it
+    // connected to, so the nodes' certs must carry that address in their
+    // subject alternative name.
 
-    // An `SslContext` is accepted by `tls_context` directly.
     let session: Session = session_builder
-        .tls_context(Some(context_builder.build()))
+        .tls_context(Some(OpenSsl010Config::new(builder)))
         .build()
         .await?;
 

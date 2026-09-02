@@ -156,16 +156,36 @@ impl std::fmt::Debug for Session {
 #[non_exhaustive]
 pub enum TlsContext {
     /// TLS context backed by OpenSSL 0.10.
+    ///
+    /// Deprecated in favour of [`TlsContext::OpenSsl010Config`].
     #[cfg(feature = "openssl-010")]
+    #[deprecated(
+        since = "1.9.0",
+        note = "the driver cannot configure a context it did not build, so this variant \
+                cannot support TLS session tickets; use `OpenSsl010Config` instead"
+    )]
     OpenSsl010(openssl::ssl::SslContext),
+    /// TLS context backed by OpenSSL 0.10, created from a builder.
+    #[cfg(feature = "openssl-010")]
+    OpenSsl010Config(OpenSsl010Config),
     /// TLS context backed by Rustls 0.23.
     #[cfg(feature = "rustls-023")]
     Rustls023(Arc<rustls::ClientConfig>),
 }
 
 #[cfg(feature = "openssl-010")]
+pub use crate::network::tls::openssl::OpenSsl010Config;
+
+/// Deprecated since 1.9.0: prefer [`TlsContext::OpenSsl010Config`].
+///
+/// An already-built `SslContext` cannot be configured by the driver, so it cannot support
+/// TLS session tickets.
+// Documentation-only: rustc rejects `#[deprecated]` on a trait impl block and on a trait
+// method inside one, so this conversion cannot warn at the call site.
+#[cfg(feature = "openssl-010")]
 impl From<openssl::ssl::SslContext> for TlsContext {
     fn from(value: openssl::ssl::SslContext) -> Self {
+        #[expect(deprecated)] // This is the deprecated variant we still have to support.
         TlsContext::OpenSsl010(value)
     }
 }

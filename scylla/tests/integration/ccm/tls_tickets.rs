@@ -1,11 +1,12 @@
 //! Tests verifying TLS session resumption (via TLS session tickets / PSK) behaviour
-//! of the driver's two TLS backends.
+//! of the driver's TLS backends.
 //!
 //! Expectation being verified:
 //! - the rustls backend reuses session tickets; TLS 1.2 pools resume every connection after
 //!   the first, while TLS 1.3 pools resume at least two connections per node,
-//! - the openssl backend (as used by the driver) does NOT reuse session tickets, so every
-//!   connection performs a full handshake.
+//! - neither openssl backend reuses session tickets, so every connection performs a full
+//!   handshake. That holds both for `TlsContext::OpenSsl010`, which takes an already-built
+//!   `SslContext`, and for `OpenSsl010Config`, which the driver builds itself.
 //!
 //! This is verified for both TLS 1.2 and TLS 1.3.
 //!
@@ -38,7 +39,7 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use openssl::ssl::{SslContext, SslMethod, SslVerifyMode, SslVersion};
+use openssl::ssl::{SslContextBuilder, SslVersion};
 use rcgen::{CertificateParams, CertifiedIssuer, KeyPair, SanType};
 use rustls::ClientConfig;
 use scylla::client::PoolSize;
@@ -47,7 +48,9 @@ use scylla::client::session_builder::SessionBuilder;
 use scylla_proxy::get_exclusive_local_address;
 use tokio::net::TcpListener;
 
-use super::tls::{build_openssl_ca_store, run_ccm_tls_test};
+use super::tls::{
+    build_openssl_ca_store, openssl_010_builder_context, openssl_010_context, run_ccm_tls_test,
+};
 use super::tls_inspecting_proxy::{ConnRecord, Handshake, SharedRecords, TlsVersion, run_proxy};
 use crate::utils::setup_tracing;
 use scylla_ccm_bridge::cluster::Cluster;
@@ -59,7 +62,10 @@ const CQL_PORT: u16 = 9042;
 #[derive(Clone, Copy, Debug)]
 enum Backend {
     Rustls023,
+    /// The variant taking an already-built `SslContext`.
     OpenSsl010,
+    /// The variant taking an `SslConnectorBuilder`, which the driver finishes itself.
+    OpenSsl010Config,
 }
 
 impl Backend {
@@ -67,9 +73,9 @@ impl Backend {
     fn reuses_session_tickets(self) -> bool {
         match self {
             Backend::Rustls023 => true,
-            // The driver builds a fresh `Ssl` from the `SslContext` per connection and
-            // never calls `SSL_set_session`.
-            Backend::OpenSsl010 => false,
+            // For either openssl flavour the driver builds a fresh `Ssl` from the
+            // `SslContext` per connection and never calls `SSL_set_session`.
+            Backend::OpenSsl010 | Backend::OpenSsl010Config => false,
         }
     }
 }
@@ -157,9 +163,13 @@ const TLS13_TICKETS_PER_HANDSHAKE: usize = 2;
 // TLS context construction
 // -----------------------------------------------------------------------------
 
-fn make_openssl_010_context(ca: &CertifiedIssuer<'_, KeyPair>, version: TlsVersion) -> SslContext {
-    let mut builder = SslContext::builder(SslMethod::tls()).unwrap();
-    builder.set_verify(SslVerifyMode::PEER);
+/// The configuration both openssl flavours share: trust only `ca`, and pin the TLS
+/// version so that a sub-test cannot silently exercise the wrong one.
+fn configure_openssl(
+    builder: &mut SslContextBuilder,
+    ca: &CertifiedIssuer<'_, KeyPair>,
+    version: TlsVersion,
+) {
     builder.set_cert_store(build_openssl_ca_store(ca));
     let ssl_version = match version {
         TlsVersion::V1_2 => SslVersion::TLS1_2,
@@ -167,7 +177,6 @@ fn make_openssl_010_context(ca: &CertifiedIssuer<'_, KeyPair>, version: TlsVersi
     };
     builder.set_min_proto_version(Some(ssl_version)).unwrap();
     builder.set_max_proto_version(Some(ssl_version)).unwrap();
-    builder.build()
 }
 
 fn make_rustls_023_config(
@@ -274,9 +283,11 @@ async fn run_subtest(
     tracing::info!("TLS session ticket sub-test: {case}");
 
     // A fresh TLS context per sub-test, hence a fresh (empty) session cache.
+    let configure = |builder: &mut SslContextBuilder| configure_openssl(builder, ca, version);
     let tls_context: TlsContext = match backend {
         Backend::Rustls023 => TlsContext::Rustls023(make_rustls_023_config(ca, version)),
-        Backend::OpenSsl010 => TlsContext::OpenSsl010(make_openssl_010_context(ca, version)),
+        Backend::OpenSsl010 => openssl_010_context(configure),
+        Backend::OpenSsl010Config => openssl_010_builder_context(configure).into(),
     };
 
     // One pool of POOL_SIZE connections per node, plus the single control connection,
@@ -406,7 +417,7 @@ async fn enable_session_tickets(mut cluster: Cluster) -> Cluster {
     cluster
 }
 
-/// Verifies TLS session-ticket resumption behaviour of both TLS backends, for both
+/// Verifies TLS session-ticket resumption behaviour of every TLS backend, for both
 /// TLS 1.2 and TLS 1.3.
 #[tokio::test]
 async fn test_tls_session_tickets() {
@@ -470,6 +481,8 @@ async fn test_tls_session_tickets() {
                     (Backend::Rustls023, TlsVersion::V1_3),
                     (Backend::OpenSsl010, TlsVersion::V1_2),
                     (Backend::OpenSsl010, TlsVersion::V1_3),
+                    (Backend::OpenSsl010Config, TlsVersion::V1_2),
+                    (Backend::OpenSsl010Config, TlsVersion::V1_3),
                 ] {
                     run_subtest(
                         backend,
