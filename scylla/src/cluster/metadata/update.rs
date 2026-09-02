@@ -797,7 +797,9 @@ mod tests {
     use crate::cluster::metadata::update::{
         FetchedKeyspace, MetadataChanges, MetadataUpdate, SchemaUpdate,
     };
-    use crate::cluster::metadata::{Keyspace, Metadata, SingleKeyspaceMetadataError, Strategy};
+    use crate::cluster::metadata::{
+        ConsistencyMode, Keyspace, Metadata, SingleKeyspaceMetadataError, Strategy,
+    };
 
     // Keyspaces are told apart by `durable_writes`, which is all it takes to
     // tell which reading of a keyspace a merge kept.
@@ -806,6 +808,7 @@ mod tests {
             strategy: Strategy::LocalStrategy,
             durable_writes,
             tablet_based: false,
+            consistency_mode: ConsistencyMode::Eventual,
             tables: HashMap::new(),
             views: HashMap::new(),
             user_defined_types: HashMap::new(),

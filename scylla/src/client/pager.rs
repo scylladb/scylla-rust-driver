@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::client::execution::{
     NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RequestPaging,
-    RunRequestResult, SingleConnectionTarget,
+    RunRequestResult, SingleConnectionTarget, choose_tablet_block_hint,
 };
 use crate::client::session::Session;
 use crate::cluster::{ClusterState, Node};
@@ -587,6 +587,9 @@ impl SingleConnectionPagingExecutor {
                         self.serial_consistency,
                         Some(self.page_size),
                         paging_state,
+                        // This API executes on one given connection and has no `ClusterState`
+                        // to consult, so there is no cached tablet version to probe.
+                        0,
                     )
                     .await
                     .and_then(QueryResponse::into_non_error_query_response)
@@ -969,6 +972,10 @@ If you are using this API, you are probably doing something wrong."
         let page_size = prepared.get_validated_page_size();
         let prepared_ref = &prepared;
         let values_ref = &values;
+        // Chosen once for the whole paged request: computed here for the eager fetch of the
+        // first page and reused as-is for every remaining page.
+        let tablet_block_hint =
+            choose_tablet_block_hint(&executor.cluster_state, table_spec, token);
         let page_query = |connection: Arc<Connection>,
                           consistency: Consistency,
                           paging_state: PagingState| async move {
@@ -980,6 +987,7 @@ If you are using this API, you are probably doing something wrong."
                     serial_consistency,
                     Some(page_size),
                     paging_state,
+                    tablet_block_hint,
                 )
                 .await
         };
@@ -1061,6 +1069,7 @@ If you are using this API, you are probably doing something wrong."
                                     serial_consistency,
                                     Some(page_size),
                                     paging_state,
+                                    tablet_block_hint,
                                 )
                                 .await
                         };

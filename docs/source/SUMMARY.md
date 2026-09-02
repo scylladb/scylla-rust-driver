@@ -56,6 +56,7 @@
 
 - [Load balancing](load-balancing/load-balancing.md)
     - [Default policy](load-balancing/default-policy.md)
+    - [Tablet awareness](load-balancing/tablets.md)
 
 - [Retry policy configuration](retry-policy/retry-policy.md)
     - [Fallthrough retry policy](retry-policy/fallthrough.md)

@@ -343,6 +343,7 @@ mod tests {
             id,
             result_metadata_id,
             parameters,
+            tablet_version_block: None,
         };
         {
             let mut buf = Vec::new();

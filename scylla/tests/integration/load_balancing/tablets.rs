@@ -228,12 +228,20 @@ fn cdc_stream_id_key_per_tablet(tablets: &[Tablet]) -> Vec<Vec<u8>> {
         .collect()
 }
 
+const CUSTOM_PAYLOAD_TABLETS_V1_KEY: &str = "tablets-routing-v1";
+const CUSTOM_PAYLOAD_TABLETS_V2_KEY: &str = "tablets-routing-v2";
+
+/// Whether a captured response carries tablets-routing feedback, under either
+/// V1 or V2 extension's key.
 fn frame_has_tablet_feedback(frame: ResponseFrame) -> bool {
     let response =
         scylla_cql::frame::parse_response_body_extensions(frame.params.flags, None, frame.body)
             .unwrap();
     match response.custom_payload {
-        Some(map) => map.contains_key("tablets-routing-v1"),
+        Some(map) => {
+            map.contains_key(CUSTOM_PAYLOAD_TABLETS_V1_KEY)
+                || map.contains_key(CUSTOM_PAYLOAD_TABLETS_V2_KEY)
+        }
         None => false,
     }
 }
@@ -283,9 +291,14 @@ async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: 
 /// tablet feedback that teaches the driver where each tablet lives.
 ///
 /// Also asserts that every key produced at least one feedback, which confirms
-/// the `TABLETS_ROUTING_V1` extension was negotiated and feedback is flowing --
+/// a tablet-routing extension was negotiated and feedback is flowing --
 /// otherwise the later verification phase, which relies on the *absence* of
 /// feedback, would pass vacuously.
+///
+/// Note that this function is non-deterministic when TABLETS_ROUTING_V2 is used.
+/// That extension relies on randomization and so the driver may not receive any
+/// feedback from any server. However, the probability of this happening rapidly
+/// decreases with the number of requests sent for a given token.
 async fn learn_tablet_info(
     session: &Session,
     per_key: &[PreparedForKey],
@@ -643,33 +656,17 @@ async fn verify_feedback_for_keys(
 /// verifies routing), retrying while tablet migrations invalidate the driver's
 /// cache mid-run.
 ///
-/// Tablet info for `base_table` is read before each attempt and passed in. On
-/// failure we re-read it: if the tablets are unchanged the failure is real and
-/// we panic; if they changed a migration raced the test and we retry.
+/// Thin wrapper over [`crate::utils::with_migration_retry`] that snapshots this
+/// module's resolved tablet view of `base_table` and hands it to each attempt.
 async fn with_migration_retry<F>(session: &Session, ks: &str, base_table: &str, mut attempt: F)
 where
     F: AsyncFnMut(&[Tablet]) -> Result<(), String>,
 {
-    let mut last_error = None;
-    for _ in 0..5 {
-        let tablets = get_tablets(session, ks, base_table).await;
-        match attempt(&tablets).await {
-            Ok(()) => return,
-            Err(e) => {
-                let new_tablets = get_tablets(session, ks, base_table).await;
-                if tablets == new_tablets {
-                    // We failed, but there was no migration.
-                    panic!("Test attempt failed despite no migration. Error: {e}");
-                }
-                last_error = Some(e);
-                // There was a migration, let's try again.
-            }
-        }
-    }
-    panic!(
-        "There was a tablet migration during each attempt! Last error: {}",
-        last_error.unwrap()
-    );
+    crate::utils::with_migration_retry(
+        async || get_tablets(session, ks, base_table).await,
+        async |tablets: &Vec<Tablet>| attempt(tablets).await,
+    )
+    .await
 }
 
 /// Prepares the statement(s) needed to run `descriptor` for every key, pairing

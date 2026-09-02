@@ -21,7 +21,7 @@ use crate::frame::response::result::TableSpec;
 use rand::{Rng, seq::IteratorRandom};
 pub use token_ring::TokenRing;
 
-use self::tablets::TabletsInfo;
+use self::tablets::{TabletVersion, TabletsInfo};
 
 use crate::cluster::metadata::Strategy;
 use crate::cluster::{Node, NodeRef};
@@ -193,6 +193,37 @@ impl ReplicaLocator {
                 table_spec,
             )
         }
+    }
+
+    /// Returns the cached tablet version for the tablet owning `token` in `table_spec`, if
+    /// known via the TABLETS_ROUTING_V2 protocol extension.
+    ///
+    /// `None` means the table does not use tablets, no tablet is cached for the token, or the
+    /// cached tablet was learned via TABLETS_ROUTING_V1 (which carries no version).
+    pub(crate) fn tablet_version_for_token(
+        &self,
+        table_spec: &TableSpec,
+        token: Token,
+    ) -> Option<TabletVersion> {
+        self.tablets
+            .tablets_for_table(table_spec)
+            .and_then(|tablets| tablets.tablet_version_for_token(token))
+    }
+
+    /// Returns the replica leading the Raft group of the tablet owning `token`, if it is known.
+    ///
+    /// The caller must ensure the tablet is strongly-consistent.
+    ///
+    /// `None` means the table does not use tablets, no tablet is cached for the token, or the
+    /// cached tablet does not identify its leader. See [`Tablet::known_leader`].
+    pub(crate) fn tablet_leader_for_token(
+        &self,
+        table_spec: &TableSpec,
+        token: Token,
+    ) -> Option<(&Arc<Node>, Shard)> {
+        self.tablets
+            .tablets_for_table(table_spec)
+            .and_then(|tablets| tablets.leader_for_token(token))
     }
 
     /// Gives access to the token ring, based on which all token ranges/replica sets are computed.
