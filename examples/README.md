@@ -36,6 +36,7 @@ cargo run -p examples --example basic
 | `auth` | Connecting to a cluster that requires password authentication - and what a wrong password looks like. |
 | `basic` | The end-to-end basics: connect, create a keyspace and a table, insert, and read rows as tuples, as derived structs, or untyped. |
 | `batch` | Grouping `INSERT`/`UPDATE`/`DELETE` statements into one batch, what atomicity it does and does not buy, and why a batch is not a throughput tool. |
+| `bound_statement` | Binding values to a prepared statement up front, so that statements of different shapes - values already serialized and type erased - can be stored and executed together, and their values serialized only once even when both a token and an execution need them. |
 | `client_routes` | Reaching nodes through the private endpoints they publish in `system.client_routes` instead of the addresses from `system.local` / `system.peers`. |
 | `compare_tokens` | Computing a partition key's token in the driver, checking it against the token the cluster reports, and listing the replicas that own it. |
 | `cql_time_types` | Reading and writing `date`, `time` and `timestamp` using `chrono`, `time`, and the raw `CqlDate`/`CqlTime`/`CqlTimestamp` types. |

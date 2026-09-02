@@ -55,6 +55,10 @@ name = "batch"
 path = "batch.rs"
 
 [[example]]
+name = "bound_statement"
+path = "bound_statement.rs"
+
+[[example]]
 name = "client_routes"
 path = "client_routes.rs"
 
