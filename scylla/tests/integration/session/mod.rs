@@ -11,6 +11,7 @@ mod pager;
 mod retries;
 mod schema_agreement;
 mod self_identity;
+mod startup_options;
 mod status_change_hints;
 mod tracing;
 mod use_keyspace;

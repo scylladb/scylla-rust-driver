@@ -51,6 +51,20 @@ Creating many `Session`'s in one application (e.g. `Session` per thread / per To
 
 If you need to share `Session` with different threads / Tokio tasks etc. use `Arc<Session>` - all methods of `Session` take `&self`, so it doesn't hinder the functionality in any way.
 
+## Session identification
+
+Every connection the driver opens sends a `SESSION_ID` option in the CQL `STARTUP` message - a UUID generated once per `Session`.
+The server exposes it in `system.clients.client_options`, so all rows belonging to one session can be told apart from other clients.
+
+`Session::session_id()` returns that UUID; log it to correlate client-side observations with `system.clients`:
+```rust
+# extern crate scylla;
+# use scylla::client::session::Session;
+# fn check_only_compiles(session: &Session) {
+println!("session id: {}", session.session_id());
+# }
+```
+
 ## Metadata
 
 The driver keeps an up-to-date view of the cluster topology (and client routes, if used) and of the cluster schema.

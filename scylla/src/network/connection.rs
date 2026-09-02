@@ -341,6 +341,13 @@ pub(crate) struct ConnectionConfig {
     pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
 
     pub(crate) identity: SelfIdentity<'static>,
+
+    /// Identifier of the [`Session`](crate::client::session::Session) that owns
+    /// the connections created with this config.
+    ///
+    /// Reported to the cluster in `STARTUP`, so that the `system.clients` rows
+    /// of all connections belonging to one session can be correlated.
+    pub(crate) session_id: Uuid,
 }
 
 impl ConnectionConfig {
@@ -371,6 +378,7 @@ impl ConnectionConfig {
             keepalive_timeout: self.keepalive_timeout,
             tablet_sender: self.tablet_sender.clone(),
             identity: self.identity.clone(),
+            session_id: self.session_id,
             #[cfg(test)]
             transport_factory: None,
         }
@@ -401,6 +409,7 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
 
     pub(crate) identity: SelfIdentity<'static>,
+    pub(crate) session_id: Uuid,
 
     #[cfg(test)]
     pub(crate) transport_factory: Option<Arc<scylla_proxy::TransportFactory>>,
@@ -430,6 +439,9 @@ impl Default for HostConnectionConfig {
             tablet_sender: None,
 
             identity: SelfIdentity::default(),
+
+            // Test connections do not correlate anything in `system.clients`.
+            session_id: Uuid::nil(),
 
             #[cfg(test)]
             transport_factory: None,
@@ -461,6 +473,9 @@ impl Default for ConnectionConfig {
             tablet_sender: None,
 
             identity: SelfIdentity::default(),
+
+            // Test connections do not correlate anything in `system.clients`.
+            session_id: Uuid::nil(),
         }
     }
 }
@@ -2206,6 +2221,14 @@ pub(crate) async fn open_connection(
     connection.set_features(features);
 
     /* Prepare options that the driver opts-in in STARTUP frame. */
+    // Formatted into a stack buffer: this runs for every connection, and a
+    // heap allocation per connection is avoidable here.
+    let mut session_id_buf = Uuid::encode_buffer();
+    let session_id = config
+        .session_id
+        .hyphenated()
+        .encode_lower(&mut session_id_buf);
+
     let mut options = HashMap::new();
     protocol_features.add_startup_options(&mut options);
 
@@ -2217,6 +2240,13 @@ pub(crate) async fn open_connection(
 
     // Application & driver's identity.
     config.identity.add_startup_options(&mut options);
+
+    // Session identity, reported on every connection so that `system.clients`
+    // rows of one session can be correlated.
+    options.insert(
+        Cow::Borrowed(options::SESSION_ID),
+        Cow::Borrowed(&*session_id),
+    );
 
     // Optional compression.
     if let Some(compression) = &config.compression {
