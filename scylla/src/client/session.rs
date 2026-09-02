@@ -1615,6 +1615,7 @@ impl Session {
             .access();
 
         let cluster_state = self.get_cluster_state();
+        let cluster_state_ref = &cluster_state;
 
         let exec_params = RequestExecutionParams::new_for_session_apis(
             &statement.config,
@@ -1664,6 +1665,22 @@ impl Session {
                         } else {
                             let prepared = connection.prepare(statement).await?;
                             let serialized = prepared.serialize_values(values_ref)?;
+                            // We calculate the tablet hint to avoid getting unnecessary tablet feedbacks
+                            // from the server
+                            let tablet_hint = {
+                                let maybe_token = prepared
+                                    .extract_partition_key_and_calculate_token(&serialized)
+                                    // The error is benign: we can still execute the request, just without the hint.
+                                    .unwrap_or(None)
+                                    // We only care about token to calculate tablet hint.
+                                    .map(|(_pk, token)| token);
+                                choose_tablet_block_hint(
+                                    cluster_state_ref,
+                                    prepared.get_table_spec(),
+                                    maybe_token,
+                                )
+                            };
+
                             span_ref.record_request_size(serialized.buffer_size());
                             connection
                                 .execute_raw_with_consistency(
@@ -1673,9 +1690,7 @@ impl Session {
                                     serial_consistency,
                                     page_size,
                                     paging_state_ref.clone(),
-                                    // An unprepared statement is not routed by token, so there
-                                    // is no tablet version to probe.
-                                    0,
+                                    tablet_hint,
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
