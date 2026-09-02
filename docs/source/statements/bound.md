@@ -110,9 +110,9 @@ session.execute_unpaged(&prepared, (12345,)).await?; // serializes them again
 
 ### Configuration
 
-`BoundStatement` does not expose configuration modifiers. Configure the `PreparedStatement`
-(consistency, page size, execution profile, ...) *before* binding - the bound statement
-inherits all of its settings, and you can inspect them through `BoundStatement::prepared`.
+`BoundStatement` inherits the prepared statement's configuration when it is created. You can
+also update options such as consistency, page size, and execution profile directly on the bound
+statement before execution.
 
 ```rust
 # extern crate scylla;
@@ -121,15 +121,12 @@ inherits all of its settings, and you can inspect them through `BoundStatement::
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::statement::Consistency;
 
-let mut prepared = session
+let prepared = session
     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
     .await?;
 
-// Set the options first...
-prepared.set_consistency(Consistency::One);
-
-// ...then bind. The bound statement will be executed with Consistency::One.
-let bound = prepared.bind(&(12345,))?;
+let mut bound = prepared.bind(&(12345,))?;
+bound.set_consistency(Consistency::One);
 assert_eq!(bound.prepared().get_consistency(), Some(Consistency::One));
 
 session.execute_bound_unpaged(&bound).await?;
