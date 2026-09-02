@@ -26,6 +26,9 @@
 
 use std::io;
 
+#[cfg(feature = "openssl-010")]
+pub(crate) mod openssl;
+
 use crate::client::session::TlsContext;
 use crate::cluster::metadata::UntranslatedEndpoint;
 
@@ -72,7 +75,7 @@ pub(crate) struct TlsConfig {
 /// An abstraction over connection's TLS layer which holds its state and configuration.
 pub(crate) enum Tls {
     #[cfg(feature = "openssl-010")]
-    OpenSsl010(openssl::ssl::Ssl),
+    OpenSsl010(::openssl::ssl::Ssl),
     #[cfg(feature = "rustls-023")]
     Rustls023 {
         connector: tokio_rustls::TlsConnector,
@@ -88,7 +91,7 @@ pub(crate) enum Tls {
 pub enum TlsError {
     /// Collection of errors coming from OpenSSL 0.10.
     #[cfg(feature = "openssl-010")]
-    OpenSsl010(#[from] openssl::error::ErrorStack),
+    OpenSsl010(#[from] ::openssl::error::ErrorStack),
     /// Invalid DNS name error, coming from rustls 0.23.
     #[cfg(feature = "rustls-023")]
     InvalidName(#[from] rustls::pki_types::InvalidDnsNameError),
@@ -125,12 +128,7 @@ impl TlsConfig {
     pub(crate) fn new_tls(&self) -> Result<Tls, TlsError> {
         match self.context {
             #[cfg(feature = "openssl-010")]
-            TlsContext::OpenSsl010(ref context) => {
-                #[allow(unused_mut)]
-                let mut ssl = openssl::ssl::Ssl::new(context)?;
-                ssl.set_connect_state();
-                Ok(Tls::OpenSsl010(ssl))
-            }
+            TlsContext::OpenSsl010(ref context) => Ok(Tls::OpenSsl010(openssl::new_ssl(context)?)),
             #[cfg(feature = "rustls-023")]
             TlsContext::Rustls023(ref config) => {
                 let connector = tokio_rustls::TlsConnector::from(config.clone());
