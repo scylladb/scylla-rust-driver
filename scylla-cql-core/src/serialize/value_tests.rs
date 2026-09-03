@@ -4,6 +4,7 @@ use crate::serialize::value::{
     BuiltinTypeCheckErrorKind, MapSerializationErrorKind, MapTypeCheckErrorKind, SerializeValue,
     SetOrListSerializationErrorKind, SetOrListTypeCheckErrorKind, TupleSerializationErrorKind,
     TupleTypeCheckErrorKind, UdtSerializationErrorKind, UdtTypeCheckErrorKind,
+    VectorSerializationErrorKind,
 };
 use crate::serialize::writers::WrittenCellProof;
 use crate::serialize::{CellWriter, SerializationError};
@@ -1944,4 +1945,239 @@ fn test_maybe_empty_with_custom_error() {
     let err = do_serialize_err(value, &ColumnType::Native(NativeType::Int));
     err.downcast_ref::<CustomSerializationError>()
         .expect("CustomSerializationError");
+}
+
+// Tests for https://github.com/scylladb/scylla-rust-driver/issues/1669:
+// a size-less CellWriter cannot refuse null, unset or a wrong-length payload,
+// so those used to reach the wire as raw bytes inside a vector element.
+
+/// A `SerializeValue` that writes an arbitrary payload through `set_value`,
+/// ignoring the width the element type declares. Used to reach the
+/// wrong-length case, which no built-in type produces.
+struct RawPayload(&'static [u8]);
+
+impl SerializeValue for RawPayload {
+    fn serialize<'b>(
+        &self,
+        _typ: &ColumnType,
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
+        Ok(writer.set_value(self.0).unwrap())
+    }
+}
+
+fn vector_of(element: ColumnType<'static>, dimensions: u16) -> ColumnType<'static> {
+    ColumnType::Vector {
+        typ: Box::new(element),
+        dimensions,
+    }
+}
+
+fn vector_err_kind(err: &SerializationError) -> VectorSerializationErrorKind {
+    match &get_ser_err(err).kind {
+        BuiltinSerializationErrorKind::VectorError(kind) => kind.clone(),
+        other => panic!("not a vector serialization error: {other:?}"),
+    }
+}
+
+#[test]
+fn vector_rejects_null_constant_length_element() {
+    let typ = vector_of(ColumnType::Native(NativeType::Int), 1);
+    // Before the fix this returned Ok with the payload ff ff ff ff, which the
+    // server reads back as the int -1.
+    let err = do_serialize_err(vec![None::<i32>], &typ);
+    assert_matches!(
+        vector_err_kind(&err),
+        VectorSerializationErrorKind::ElementIsNotRepresentable
+    );
+}
+
+#[test]
+fn vector_rejects_unset_constant_length_element() {
+    let typ = vector_of(ColumnType::Native(NativeType::Int), 1);
+    let err = do_serialize_err(vec![MaybeUnset::<i32>::Unset], &typ);
+    assert_matches!(
+        vector_err_kind(&err),
+        VectorSerializationErrorKind::ElementIsNotRepresentable
+    );
+}
+
+#[test]
+fn vector_rejects_null_variable_length_element() {
+    let typ = vector_of(ColumnType::Native(NativeType::Text), 1);
+    let err = do_serialize_err(vec![None::<String>], &typ);
+    assert_matches!(
+        vector_err_kind(&err),
+        VectorSerializationErrorKind::ElementIsNullOrUnset
+    );
+}
+
+#[test]
+fn vector_rejects_unset_variable_length_element() {
+    let typ = vector_of(ColumnType::Native(NativeType::Text), 1);
+    let err = do_serialize_err(vec![MaybeUnset::<String>::Unset], &typ);
+    assert_matches!(
+        vector_err_kind(&err),
+        VectorSerializationErrorKind::ElementIsNullOrUnset
+    );
+}
+
+/// A null in a variable-length element is not distinguishable from an empty
+/// value by length, which is why that path checks the length header instead.
+#[test]
+fn vector_accepts_empty_variable_length_element() {
+    let typ = vector_of(ColumnType::Native(NativeType::Text), 1);
+    assert_eq!(
+        do_serialize(vec!["".to_string()], &typ),
+        vec![0, 0, 0, 1, 0]
+    );
+}
+
+#[test]
+fn vector_rejects_wrong_size_constant_length_element() {
+    let typ = vector_of(ColumnType::Native(NativeType::Int), 2);
+    let err = do_serialize_err(
+        vec![RawPayload(&[1, 2, 3]), RawPayload(&[4, 5, 6, 7])],
+        &typ,
+    );
+    assert_matches!(
+        vector_err_kind(&err),
+        VectorSerializationErrorKind::ElementSizeMismatch {
+            expected: 4,
+            actual: 3
+        }
+    );
+}
+
+/// A null and a legal payload can have the same length, which is exactly the
+/// case for `int` and `float`. Comparing the bytes a size-less writer produced
+/// therefore cannot work; the fix makes null write nothing instead.
+#[test]
+fn vector_null_and_minus_one_would_have_the_same_bytes() {
+    let typ = vector_of(ColumnType::Native(NativeType::Int), 1);
+    assert_eq!(
+        do_serialize(vec![-1_i32], &typ),
+        vec![0, 0, 0, 4, 255, 255, 255, 255]
+    );
+
+    let err = do_serialize_err(vec![None::<i32>], &typ);
+    assert_matches!(
+        vector_err_kind(&err),
+        VectorSerializationErrorKind::ElementIsNotRepresentable
+    );
+}
+
+/// Round-trip harness. For every element type, the vector encoding must be
+/// exactly what the sized cell path produces with the length headers removed
+/// for constant-length elements, or replaced by a vint length for
+/// variable-length ones. This is what proves the fix leaves valid values
+/// byte-for-byte unchanged.
+#[test]
+fn vector_matches_sized_path_byte_for_byte() {
+    fn check<T: SerializeValue + Clone>(element_type: ColumnType<'static>, elements: Vec<T>) {
+        let dimensions: u16 = elements.len().try_into().unwrap();
+        let vector_type = vector_of(element_type.clone(), dimensions);
+        let got = do_serialize(elements.clone(), &vector_type);
+
+        // Rebuild the expected bytes using the sized path only.
+        let mut payload = Vec::new();
+        let constant_length = element_type.type_size_for_vector();
+        for element in &elements {
+            let cell = do_serialize(element.clone(), &element_type);
+            let (header, body) = cell.split_at(4);
+            let len = i32::from_be_bytes(header.try_into().unwrap());
+            assert!(len >= 0, "{element_type:?} produced a null/unset cell");
+            assert_eq!(len as usize, body.len());
+            match constant_length {
+                Some(expected) => {
+                    assert_eq!(
+                        body.len(),
+                        expected,
+                        "{element_type:?} is not constant width"
+                    );
+                    payload.extend_from_slice(body);
+                }
+                None => {
+                    crate::frame::types::unsigned_vint_encode(
+                        body.len().try_into().unwrap(),
+                        &mut payload,
+                    );
+                    payload.extend_from_slice(body);
+                }
+            }
+        }
+        let mut expected = (payload.len() as i32).to_be_bytes().to_vec();
+        expected.extend_from_slice(&payload);
+
+        assert_eq!(got, expected, "mismatch for {element_type:?}");
+    }
+
+    // Constant-width element types, the size-less encoding.
+    check(ColumnType::Native(NativeType::Boolean), vec![true, false]);
+    check(
+        ColumnType::Native(NativeType::Int),
+        vec![-1_i32, -2, 0, i32::MAX],
+    );
+    check(
+        ColumnType::Native(NativeType::Float),
+        vec![-1.0_f32, 0.0, f32::MAX],
+    );
+    check(
+        ColumnType::Native(NativeType::BigInt),
+        vec![-1_i64, 0, i64::MAX],
+    );
+    check(
+        ColumnType::Native(NativeType::Uuid),
+        vec![Uuid::from_u128(0), Uuid::from_u128(u128::MAX)],
+    );
+
+    // Variable-width element types, the vint-prefixed encoding.
+    check(
+        ColumnType::Native(NativeType::Text),
+        vec!["".to_string(), "a".to_string(), "ą".repeat(200)],
+    );
+    check(
+        ColumnType::Native(NativeType::Blob),
+        vec![vec![], vec![0_u8], vec![255_u8; 300]],
+    );
+    check(
+        ColumnType::Native(NativeType::SmallInt),
+        vec![-1_i16, 0, i16::MAX],
+    );
+}
+
+/// An empty value has no constant-width vector element encoding either, and is
+/// caught by the same zero-length check.
+#[test]
+fn vector_rejects_empty_constant_length_element() {
+    let typ = vector_of(ColumnType::Native(NativeType::Int), 1);
+    let err = do_serialize_err(vec![MaybeEmpty::<i32>::Empty], &typ);
+    assert_matches!(
+        vector_err_kind(&err),
+        VectorSerializationErrorKind::ElementIsNotRepresentable
+    );
+}
+
+/// Null and unset stay legal everywhere the cell does carry a length header.
+#[test]
+fn null_and_unset_still_work_outside_vectors() {
+    let list = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+    };
+    assert_eq!(
+        do_serialize(vec![None::<i32>], &list),
+        vec![0, 0, 0, 8, 0, 0, 0, 1, 255, 255, 255, 255]
+    );
+    assert_eq!(
+        do_serialize(None::<i32>, &ColumnType::Native(NativeType::Int)),
+        vec![255, 255, 255, 255]
+    );
+    assert_eq!(
+        do_serialize(
+            MaybeUnset::<i32>::Unset,
+            &ColumnType::Native(NativeType::Int)
+        ),
+        vec![255, 255, 255, 254]
+    );
 }
