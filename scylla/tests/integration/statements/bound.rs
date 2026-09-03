@@ -215,10 +215,13 @@ async fn bound_statement_inherits_prepared_statement_config(session: &Session) {
 /// available after values have been bound, without exposing mutable access to
 /// the prepared statement itself.
 async fn bound_statement_can_be_configured_after_binding(session: &Session) {
-    let prepared = session
+    let mut prepared = session
         .prepare("SELECT table_name FROM system_schema.tables WHERE keyspace_name = ?")
         .await
         .unwrap();
+    prepared.set_page_size(3);
+    prepared.set_consistency(Consistency::One);
+    prepared.set_serial_consistency(Some(SerialConsistency::LocalSerial));
     let mut bound = prepared.bind(&("system_schema",)).unwrap();
 
     let retry_policy: Arc<dyn RetryPolicy> = Arc::new(FallthroughRetryPolicy::new());
@@ -228,6 +231,16 @@ async fn bound_statement_can_be_configured_after_binding(session: &Session) {
 
     bound.set_page_size(7);
     bound.set_consistency(Consistency::Two);
+
+    // Options changed on the bound statement override the prepared statement,
+    // while options not changed after binding retain their inherited value.
+    assert_eq!(bound.prepared().get_page_size(), 7);
+    assert_eq!(bound.prepared().get_consistency(), Some(Consistency::Two));
+    assert_eq!(
+        bound.prepared().get_serial_consistency(),
+        Some(SerialConsistency::LocalSerial)
+    );
+
     bound.set_serial_consistency(Some(SerialConsistency::Serial));
     bound.set_is_idempotent(true);
     bound.set_tracing(true);

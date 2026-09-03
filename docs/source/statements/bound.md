@@ -121,13 +121,16 @@ statement before execution.
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::statement::Consistency;
 
-let prepared = session
+let mut prepared = session
     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
     .await?;
+prepared.set_consistency(Consistency::Quorum);
+prepared.set_page_size(100);
 
 let mut bound = prepared.bind(&(12345,))?;
 bound.set_consistency(Consistency::One);
 assert_eq!(bound.prepared().get_consistency(), Some(Consistency::One));
+assert_eq!(bound.prepared().get_page_size(), 100);
 
 session.execute_bound_unpaged(&bound).await?;
 # Ok(())
