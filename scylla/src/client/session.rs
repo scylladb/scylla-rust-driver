@@ -1273,6 +1273,8 @@ impl Session {
             ));
         }
 
+        let cluster_state = self.get_cluster_state();
+
         let execution_profile = batch
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
@@ -1315,10 +1317,10 @@ impl Session {
             Coordinator,
         ) = self
             .run_request(
+                &cluster_state,
                 routing_info,
                 exec_params,
-                // A BATCH frame carries no tablet-version block, so the hint is unused here.
-                |connection: Arc<Connection>, consistency: Consistency, _: u8| async move {
+                |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
                         .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
                         .await
@@ -1612,6 +1614,9 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
+        let cluster_state = self.get_cluster_state();
+        let cluster_state_ref = &cluster_state;
+
         let exec_params = RequestExecutionParams::new_for_session_apis(
             &statement.config,
             &execution_profile,
@@ -1637,10 +1642,10 @@ impl Session {
             Coordinator,
         ) = self
             .run_request(
+                &cluster_state,
                 routing_info,
                 exec_params,
-                // A QUERY frame carries no tablet-version block, so the hint is unused here.
-                |connection: Arc<Connection>, consistency: Consistency, _: u8| {
+                |connection: Arc<Connection>, consistency: Consistency| {
                     // Needed to avoid moving query and values into async move block
                     let values_ref = &values;
                     let paging_state_ref = &paging_state;
@@ -1660,6 +1665,22 @@ impl Session {
                         } else {
                             let prepared = connection.prepare(statement).await?;
                             let serialized = prepared.serialize_values(values_ref)?;
+                            // We calculate the tablet hint to avoid getting unnecessary tablet feedbacks
+                            // from the server
+                            let tablet_hint = {
+                                let maybe_token = prepared
+                                    .extract_partition_key_and_calculate_token(&serialized)
+                                    // The error is benign: we can still execute the request, just without the hint.
+                                    .unwrap_or(None)
+                                    // We only care about token to calculate tablet hint.
+                                    .map(|(_pk, token)| token);
+                                choose_tablet_block_hint(
+                                    cluster_state_ref,
+                                    prepared.get_table_spec(),
+                                    maybe_token,
+                                )
+                            };
+
                             span_ref.record_request_size(serialized.buffer_size());
                             connection
                                 .execute_raw_with_consistency(
@@ -1669,9 +1690,7 @@ impl Session {
                                     serial_consistency,
                                     page_size,
                                     paging_state_ref.clone(),
-                                    // An unprepared statement is not routed by token, so there
-                                    // is no tablet version to probe.
-                                    0,
+                                    tablet_hint,
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
@@ -2031,6 +2050,8 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
+        let cluster_state = self.get_cluster_state();
+
         let exec_params = RequestExecutionParams::new_for_session_apis(
             &prepared.config,
             &execution_profile,
@@ -2051,6 +2072,9 @@ impl Session {
             node_location_preference: &self.node_location_preference,
         };
 
+        let tablet_block_hint =
+            choose_tablet_block_hint(&cluster_state, routing_info.table, routing_info.token);
+
         let span = RequestSpan::new_prepared(
             partition_key.as_ref().map(|pk| pk.iter()),
             token,
@@ -2060,7 +2084,6 @@ impl Session {
         if !span.span().is_disabled()
             && let (Some(table_spec), Some(token)) = (routing_info.table, token)
         {
-            let cluster_state = self.get_cluster_state();
             let replicas = cluster_state.get_token_endpoints_iter(table_spec, token);
             span.record_replicas(replicas)
         }
@@ -2070,11 +2093,10 @@ impl Session {
             Coordinator,
         ) = self
             .run_request(
+                &cluster_state,
                 routing_info,
                 exec_params,
-                |connection: Arc<Connection>,
-                 consistency: Consistency,
-                 tablet_block_hint: u8| async move {
+                |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
                         .execute_raw_with_consistency(
                             prepared,
@@ -2413,24 +2435,18 @@ impl Session {
     // maybe once async closures get stabilized this can be fixed
     async fn run_request<'a, QueryFut>(
         &'a self,
+        state: &ClusterState,
         routing_info: RoutingInfo<'a>,
         exec_params: RequestExecutionParams<'a>,
-        run_request_once: impl Fn(Arc<Connection>, Consistency, u8) -> QueryFut,
+        run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), ExecutionError>
     where
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
-        let cluster_state = self.cluster.get_state();
-        let request_plan = load_balancing::Plan::new(
-            exec_params.load_balancing_policy,
-            &routing_info,
-            &cluster_state,
-        )
-        .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
-
-        let tablet_block_hint =
-            choose_tablet_block_hint(&cluster_state, routing_info.table, routing_info.token);
+        let request_plan =
+            load_balancing::Plan::new(exec_params.load_balancing_policy, &routing_info, state)
+                .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
 
         let RequestExecutionOutcome {
             result,
@@ -2439,9 +2455,7 @@ impl Session {
             .run_request_no_side_effects(
                 &routing_info,
                 request_plan,
-                |connection: Arc<Connection>, consistency: Consistency| {
-                    run_request_once(connection, consistency, tablet_block_hint)
-                },
+                run_request_once,
                 request_span,
             )
             .await
