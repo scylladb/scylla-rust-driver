@@ -735,7 +735,10 @@ impl ClusterState {
 }
 
 /// Additional API for interop-based code.
-#[cfg(all(scylla_unstable, feature = "unstable-csharp-rs"))]
+#[cfg(all(
+    scylla_unstable,
+    any(feature = "unstable-csharp-rs", feature = "unstable-nodejs-rs")
+))]
 impl ClusterState {
     /// Compute token for an externally-provided **serialized** partition key.
     ///
