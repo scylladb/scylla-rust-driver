@@ -1920,9 +1920,10 @@ struct ScyllaKeyspacesMetadata {
 /// Maps the raw `consistency` column value from `system_schema.scylla_keyspaces` to a
 /// [`ConsistencyMode`]. A missing or unrecognized value means eventual consistency.
 fn consistency_mode_from_str(consistency: Option<&str>) -> ConsistencyMode {
+    // Note that local consistency isn't implemented yet, so we only
+    // treat globally-consistent keyspaces as non-eventually-consistent.
     match consistency {
         Some("global") => ConsistencyMode::Global,
-        Some("local") => ConsistencyMode::Local,
         _ => ConsistencyMode::Eventual,
     }
 }
@@ -2012,13 +2013,11 @@ mod tests {
             consistency_mode_from_str(Some("global")),
             ConsistencyMode::Global
         );
-        assert_eq!(
-            consistency_mode_from_str(Some("local")),
-            ConsistencyMode::Local
-        );
         for unrecognised in [
             None,
             Some(""),
+            // Note: Local strong consistency hasn't been implemented yet.
+            Some("local"),
             Some("GLOBAL"),
             Some("none"),
             Some("whatever"),
