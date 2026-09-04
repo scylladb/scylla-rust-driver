@@ -1474,6 +1474,265 @@ async fn every_report_conforms_to_the_schema() {
     }
 }
 
+/// What the driver leaves out of the report, as opposed to what it puts in.
+///
+/// Gated on `metrics`, which
+/// [`PercentileSpeculativeExecutionPolicy`](crate::policies::speculative_execution::PercentileSpeculativeExecutionPolicy)
+/// needs: without it [`conformance_configurations`] cannot reach the
+/// `percentile` branch of the schema and the allowlist below would have to
+/// differ.
+#[cfg(feature = "metrics")]
+mod coverage {
+    use std::collections::BTreeSet;
+
+    use serde_json::Value;
+
+    use super::{SCHEMA, conformance_reports};
+
+    /// Schema keys the driver never populates, as dotted paths whose `<...>`
+    /// segments name the branch of a discriminated union they belong to.
+    ///
+    /// Every entry is a deliberate omission, documented at the type that would
+    /// have carried it above. The reasons in brief:
+    const UNREPORTED_KEYS: &[&str] = &[
+        // Placeholders that schema v1 declares as empty objects with
+        // `additionalProperties: false`, so the driver's own idle heartbeat
+        // (`keepalive_interval`) and write coalescing (`write_coalescing`)
+        // settings have nowhere to go, and the two direction-specific timeouts
+        // describe per-operation deadlines this driver does not have.
+        "connection.heartbeat",
+        "connection.read.timeout-ms",
+        "connection.write.coalescing",
+        "connection.write.timeout-ms",
+        // Only `DcHostFilter` narrows which nodes the driver connects to at all,
+        // and it names a datacenter and nothing more: there is no filter that
+        // states a rack, and none that infers a location.
+        "connection.node-preference.<dc-auto>.local-dc",
+        "connection.node-preference.<dc-auto>.type",
+        "connection.node-preference.<rack-auto>.inferred-local-dc",
+        "connection.node-preference.<rack-auto>.inferred-local-rack",
+        "connection.node-preference.<rack-auto>.local-dc",
+        "connection.node-preference.<rack-auto>.local-rack",
+        "connection.node-preference.<rack-auto>.type",
+        "connection.node-preference.<rack>.local-dc",
+        "connection.node-preference.<rack>.local-rack",
+        "connection.node-preference.<rack>.type",
+        // The pool retries forever, which the schema spells as an absent
+        // `max-attempts`, and a session always has a reconnection policy in
+        // force, so the `null` branch that means "never reconnect" never
+        // applies.
+        "connection.reconnection.policy.<constant>.max-attempts",
+        "connection.reconnection.policy.<exponential>.max-attempts",
+        "connection.reconnection.policy.<null>",
+        // Neither TLS backend exposes whether hostname verification is on, so
+        // reporting the boolean either way would be a guess. Nothing else lives
+        // under `connection.tls`, which is why a TLS context only ever adds the
+        // empty group that `tls_is_reported_as_an_empty_object` pins.
+        "connection.tls.hostname-verification",
+        // The load balancing policy resolves the preference it reports from
+        // configured values only, never from the connected node.
+        "query.load-balancing.node-preference.<dc-auto>.local-dc",
+        "query.load-balancing.node-preference.<dc-auto>.type",
+        "query.load-balancing.node-preference.<rack-auto>.inferred-local-dc",
+        "query.load-balancing.node-preference.<rack-auto>.inferred-local-rack",
+        "query.load-balancing.node-preference.<rack-auto>.local-dc",
+        "query.load-balancing.node-preference.<rack-auto>.local-rack",
+        "query.load-balancing.node-preference.<rack-auto>.type",
+        // A policy the driver does not recognise is named, not described: the
+        // `name` a user implementation supplies is all there is to go on.
+        "query.load-balancing.policy.<custom>.description",
+        "query.retry.policy.<custom>.description",
+        "query.speculative-execution.policy.<custom>.description",
+        // No retry policy of this driver waits between attempts, and none of
+        // them has a single retry count to report - the built-ins cap retries
+        // per error kind, which does not bound the retries a new target may
+        // trigger.
+        "query.retry.backoff.<constant>.delay-ms",
+        "query.retry.backoff.<constant>.type",
+        "query.retry.backoff.<exponential>.base-ms",
+        "query.retry.backoff.<exponential>.max-ms",
+        "query.retry.backoff.<exponential>.type",
+        "query.retry.policy.<custom>.max-retries",
+        "query.retry.policy.<downgrading-consistency>.max-retries",
+        "query.retry.policy.<standard-error-aware>.max-retries",
+        // Two retry policies of the schema this driver has no equivalent of at
+        // all.
+        "query.retry.policy.<never>.max-retries",
+        "query.retry.policy.<never>.type",
+        "query.retry.policy.<simple>.max-retries",
+        "query.retry.policy.<simple>.type",
+    ];
+
+    /// Follows a `$ref`, which this schema only ever points at its own `$defs`.
+    fn resolve<'schema>(schema: &'schema Value, mut node: &'schema Value) -> &'schema Value {
+        while let Some(reference) = node.get("$ref").and_then(Value::as_str) {
+            let name = reference
+                .strip_prefix("#/$defs/")
+                .unwrap_or_else(|| panic!("unsupported schema reference {reference}"));
+            node = schema
+                .pointer("/$defs")
+                .and_then(|defs| defs.get(name))
+                .unwrap_or_else(|| panic!("dangling schema reference {reference}"));
+        }
+        node
+    }
+
+    /// The `type` const discriminating one branch of a `oneOf`. Every union in
+    /// the schema has one, bar the single `null` branch of the reconnection
+    /// policy.
+    fn branch_discriminant<'schema>(
+        schema: &'schema Value,
+        branch: &'schema Value,
+    ) -> Option<&'schema str> {
+        resolve(schema, branch)
+            .pointer("/properties/type/const")
+            .and_then(Value::as_str)
+    }
+
+    /// The path segment naming one branch of a `oneOf`. The index is the
+    /// fallback for a union shaped some other way, so that a schema bump
+    /// introducing one still yields distinct paths.
+    fn branch_tag(schema: &Value, branch: &Value, index: usize) -> String {
+        match branch_discriminant(schema, branch) {
+            Some(discriminant) => format!("<{discriminant}>"),
+            None if resolve(schema, branch).get("type") == Some(&Value::from("null")) => {
+                "<null>".to_owned()
+            }
+            None => format!("<oneOf{index}>"),
+        }
+    }
+
+    /// Whether a schema node describes a group of keys rather than a key.
+    ///
+    /// A group is an object with properties; everything else - a scalar, an
+    /// array, or one of the schema's deliberately empty placeholder objects - is
+    /// a key that a report either carries or does not.
+    fn group_properties(node: &Value) -> Option<&serde_json::Map<String, Value>> {
+        node.get("properties")
+            .and_then(Value::as_object)
+            .filter(|properties| !properties.is_empty())
+    }
+
+    /// Collects every key the schema declares, into `found`.
+    fn schema_keys(
+        schema: &Value,
+        node: &Value,
+        path: &mut Vec<String>,
+        found: &mut BTreeSet<String>,
+    ) {
+        let node = resolve(schema, node);
+
+        if let Some(branches) = node.get("oneOf").and_then(Value::as_array) {
+            for (index, branch) in branches.iter().enumerate() {
+                path.push(branch_tag(schema, branch, index));
+                schema_keys(schema, branch, path, found);
+                path.pop();
+            }
+        } else if let Some(properties) = group_properties(node) {
+            for (name, property) in properties {
+                path.push(name.clone());
+                schema_keys(schema, property, path, found);
+                path.pop();
+            }
+        } else {
+            found.insert(path.join("."));
+        }
+    }
+
+    /// Collects the keys `report` populates, into `found`.
+    ///
+    /// Walks the report and the schema in lockstep rather than the report alone,
+    /// so that a key is credited to the union branch it actually belongs to:
+    /// `max-retries` under one retry policy is a different key from
+    /// `max-retries` under another, and only the schema says which branch a
+    /// report is in. That a report fits the schema at all is not rechecked here
+    /// - [`every_report_conforms_to_the_schema`] validates these very documents.
+    fn reported_keys(
+        schema: &Value,
+        node: &Value,
+        report: &Value,
+        path: &mut Vec<String>,
+        found: &mut BTreeSet<String>,
+    ) {
+        let node = resolve(schema, node);
+
+        if let Some(branches) = node.get("oneOf").and_then(Value::as_array) {
+            let (index, branch) = branches
+                .iter()
+                .enumerate()
+                .find(|(_, branch)| match branch_discriminant(schema, branch) {
+                    Some(discriminant) => {
+                        report.get("type").and_then(Value::as_str) == Some(discriminant)
+                    }
+                    None => report.is_null(),
+                })
+                .expect("the schema accepted a report matching no branch of a union");
+
+            path.push(branch_tag(schema, branch, index));
+            reported_keys(schema, branch, report, path, found);
+            path.pop();
+        } else if let Some(properties) = group_properties(node) {
+            for (name, value) in report
+                .as_object()
+                .expect("the schema accepted a key where it declares a group")
+            {
+                path.push(name.clone());
+                reported_keys(schema, &properties[name], value, path, found);
+                path.pop();
+            }
+        } else {
+            found.insert(path.join("."));
+        }
+    }
+
+    /// Schema validation only constrains what the report does say. Every key the
+    /// schema declares is optional unless a `required` list names it, so a value
+    /// the driver forgot to report is indistinguishable from one it has nothing
+    /// to say about. This closes that gap from the other side: the keys the
+    /// sweep's reports leave over must be *exactly* [`UNREPORTED_KEYS`].
+    ///
+    /// Both directions of that equality are load-bearing. A key that stops being
+    /// reported fails here rather than silently disappearing from what operators
+    /// can inspect, and a schema bump that adds keys fails here until someone
+    /// either reports them or writes down why the driver cannot.
+    ///
+    /// A Tokio runtime is needed only by `LatencyAwarenessBuilder::build`,
+    /// which spawns the task updating latency averages.
+    #[tokio::test]
+    async fn every_reportable_schema_key_is_reported() {
+        let schema: Value = serde_json::from_str(SCHEMA).unwrap();
+
+        let mut declared = BTreeSet::new();
+        schema_keys(&schema, &schema, &mut Vec::new(), &mut declared);
+
+        let mut reported = BTreeSet::new();
+        for (_, report) in conformance_reports() {
+            reported_keys(&schema, &schema, &report, &mut Vec::new(), &mut reported);
+        }
+
+        let unreported: BTreeSet<&str> = declared
+            .iter()
+            .map(String::as_str)
+            .filter(|key| !reported.contains(*key))
+            .collect();
+        let allowed: BTreeSet<&str> = UNREPORTED_KEYS.iter().copied().collect();
+
+        let undocumented: Vec<&&str> = unreported.difference(&allowed).collect();
+        let stale: Vec<&&str> = allowed.difference(&unreported).collect();
+        assert!(
+            undocumented.is_empty() && stale.is_empty(),
+            "the set of schema keys the driver does not report has changed.\n\
+             Not reported and not in UNREPORTED_KEYS - report them, or add them \
+             to the list with a reason: {undocumented:#?}\n\
+             In UNREPORTED_KEYS but reported after all - drop them from the \
+             list: {stale:#?}\n\
+             Of the {} keys the schema declares, {} were reported.",
+            declared.len(),
+            reported.len(),
+        );
+    }
+}
+
 /// The spec requires an oversized report to be omitted rather than sent, and
 /// here the requirement has teeth: `write_string` length-prefixes every
 /// `STARTUP` value with a `u16`, so a report above 64 KiB would fail
