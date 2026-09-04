@@ -188,13 +188,13 @@ impl Peer {
 /// these mode names come straight from it, so making the type public would freeze names we may
 /// yet have to change - and an enum's variants cannot be renamed without a major release. Should
 /// this ever become public, it needs `#[non_exhaustive]`, which is pointless until then.
+//
+// Note: Local strong consistency isn't implemented yet.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ConsistencyMode {
     /// Eventual consistency. Covers every non-tablet keyspace and every keyspace
     /// on a server that does not report a consistency mode.
     Eventual,
-    /// Reserved for a future per-datacenter strong-consistency mode (`consistency = 'local'`).
-    Local,
     /// Global strong consistency (`consistency = 'global'`): the keyspace uses
     /// strongly-consistent (Raft-based) tablets.
     Global,
