@@ -112,6 +112,10 @@ jobs:
       - name: Cargo check with unstable-client-routes feature
         run: cargo check --all-targets -p scylla --features "unstable-client-routes"
 
+      # unstable-strong-consistency feature.
+      - name: Cargo check with unstable-strong-consistency feature
+        run: cargo check --all-targets -p scylla --features "unstable-strong-consistency"
+
       # No scylla_unstable flag with features
       - name: Cargo check without scylla_unstable
         run: RUSTFLAGS="-Dwarnings" cargo clippy --all-features --tests --examples # No benches, because they require unstable features.
