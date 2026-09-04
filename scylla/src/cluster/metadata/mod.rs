@@ -184,13 +184,31 @@ impl Peer {
 /// The consistency mode of a keyspace, as reported by the `consistency` column of
 /// `system_schema.scylla_keyspaces`.
 ///
-/// Deliberately crate-private. Strong consistency is an experimental server-side feature and
-/// these mode names come straight from it, so making the type public would freeze names we may
-/// yet have to change - and an enum's variants cannot be renamed without a major release. Should
-/// this ever become public, it needs `#[non_exhaustive]`, which is pointless until then.
+/// Strong consistency is an experimental feature, and so this type is still unstable.
+/// That's why it's gated behind an unstable feature.
 //
 // Note: Local strong consistency isn't implemented yet.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+#[cfg(all(scylla_unstable, feature = "unstable-strong-consistency"))]
+pub enum ConsistencyMode {
+    /// Eventual consistency. Covers every non-tablet keyspace and every keyspace
+    /// on a server that does not report a consistency mode.
+    Eventual,
+    /// Global strong consistency (`consistency = 'global'`): the keyspace uses
+    /// strongly-consistent (Raft-based) tablets.
+    Global,
+}
+
+/// The consistency mode of a keyspace, as reported by the `consistency` column of
+/// `system_schema.scylla_keyspaces`.
+///
+/// Strong consistency is an experimental feature, and so this type is still unstable.
+/// Hence crate-private.
+//
+// Note: Local strong consistency isn't implemented yet.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg(not(all(scylla_unstable, feature = "unstable-strong-consistency")))]
 pub(crate) enum ConsistencyMode {
     /// Eventual consistency. Covers every non-tablet keyspace and every keyspace
     /// on a server that does not report a consistency mode.
@@ -216,7 +234,14 @@ pub struct Keyspace {
     pub tablet_based: bool,
     /// The consistency mode of the keyspace.
     ///
-    /// Crate-private along with [`ConsistencyMode`] itself; see that type for why.
+    /// Public only behind the `unstable-strong-consistency` feature because
+    /// strong consistency is still experimental.
+    #[cfg(all(scylla_unstable, feature = "unstable-strong-consistency"))]
+    pub consistency_mode: ConsistencyMode,
+    /// The consistency mode of the keyspace.
+    ///
+    /// Strong consistency is still experimental; hence crate-private.
+    #[cfg(not(all(scylla_unstable, feature = "unstable-strong-consistency")))]
     pub(crate) consistency_mode: ConsistencyMode,
     /// Tables in the keyspace.
     ///
