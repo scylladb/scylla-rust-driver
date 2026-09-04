@@ -17,7 +17,7 @@ use std::time::Duration;
 use futures::TryStreamExt as _;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
-use scylla::observability::history::HistoryCollector;
+use scylla::observability::history::{HistoryCollector, HistoryListener};
 use scylla::policies::load_balancing::{DefaultPolicy, LoadBalancingPolicy};
 use scylla::policies::retry::{FallthroughRetryPolicy, RetryPolicy};
 use scylla::response::{PagingState, PagingStateResponse};
@@ -35,6 +35,7 @@ async fn test_bound_statement() {
 
     // Cases that only read - system tables suffice.
     bound_statement_inherits_prepared_statement_config(&session).await;
+    bound_statement_can_be_configured_after_binding(&session).await;
     bound_statement_is_executed_with_inherited_config(&session).await;
     bound_statement_calculates_token_from_its_values(&session).await;
     bind_rejects_invalid_values(&session).await;
@@ -208,6 +209,90 @@ async fn bound_statement_inherits_prepared_statement_config(session: &Session) {
     // The prepared statement itself is, of course, untouched by all of this.
     assert_eq!(inherited.get_statement(), prepared.get_statement());
     assert_eq!(inherited.get_id(), prepared.get_id());
+}
+
+/// Every public configuration setter exposed by `PreparedStatement` remains
+/// available after values have been bound, without exposing mutable access to
+/// the prepared statement itself.
+async fn bound_statement_can_be_configured_after_binding(session: &Session) {
+    let mut prepared = session
+        .prepare("SELECT table_name FROM system_schema.tables WHERE keyspace_name = ?")
+        .await
+        .unwrap();
+    prepared.set_page_size(3);
+    prepared.set_consistency(Consistency::One);
+    prepared.set_serial_consistency(Some(SerialConsistency::LocalSerial));
+    let mut bound = prepared.bind(&("system_schema",)).unwrap();
+
+    let retry_policy: Arc<dyn RetryPolicy> = Arc::new(FallthroughRetryPolicy::new());
+    let load_balancing_policy: Arc<dyn LoadBalancingPolicy> = DefaultPolicy::builder().build();
+    let execution_profile_handle = ExecutionProfile::builder().build().into_handle();
+    let history_listener: Arc<dyn HistoryListener> = Arc::new(HistoryCollector::new());
+
+    bound.set_page_size(7);
+    bound.set_consistency(Consistency::Two);
+
+    // Options changed on the bound statement override the prepared statement,
+    // while options not changed after binding retain their inherited value.
+    assert_eq!(bound.prepared().get_page_size(), 7);
+    assert_eq!(bound.prepared().get_consistency(), Some(Consistency::Two));
+    assert_eq!(
+        bound.prepared().get_serial_consistency(),
+        Some(SerialConsistency::LocalSerial)
+    );
+
+    bound.set_serial_consistency(Some(SerialConsistency::Serial));
+    bound.set_is_idempotent(true);
+    bound.set_tracing(true);
+    bound.set_use_cached_result_metadata(true);
+    bound.set_timestamp(Some(123));
+    bound.set_request_timeout(Some(Duration::from_secs(9)));
+    bound.set_retry_policy(Some(Arc::clone(&retry_policy)));
+    bound.set_load_balancing_policy(Some(Arc::clone(&load_balancing_policy)));
+    bound.set_history_listener(history_listener.clone());
+    bound.set_execution_profile_handle(Some(execution_profile_handle));
+
+    let configured = bound.prepared();
+    assert_eq!(configured.get_page_size(), 7);
+    assert_eq!(configured.get_consistency(), Some(Consistency::Two));
+    assert_eq!(
+        configured.get_serial_consistency(),
+        Some(SerialConsistency::Serial)
+    );
+    assert!(configured.get_is_idempotent());
+    assert!(configured.get_tracing());
+    assert!(configured.get_use_cached_result_metadata());
+    assert_eq!(configured.get_timestamp(), Some(123));
+    assert_eq!(
+        configured.get_request_timeout(),
+        Some(Duration::from_secs(9))
+    );
+    assert!(Arc::ptr_eq(
+        configured.get_retry_policy().unwrap(),
+        &retry_policy
+    ));
+    assert!(Arc::ptr_eq(
+        configured.get_load_balancing_policy().unwrap(),
+        &load_balancing_policy
+    ));
+    assert!(configured.get_execution_profile_handle().is_some());
+
+    assert!(Arc::ptr_eq(
+        &bound.remove_history_listener().unwrap(),
+        &history_listener
+    ));
+    bound.unset_consistency();
+    bound.unset_serial_consistency();
+    bound.set_retry_policy(None);
+    bound.set_load_balancing_policy(None);
+    bound.set_execution_profile_handle(None);
+
+    let reset = bound.prepared();
+    assert_eq!(reset.get_consistency(), None);
+    assert_eq!(reset.get_serial_consistency(), None);
+    assert!(reset.get_retry_policy().is_none());
+    assert!(reset.get_load_balancing_policy().is_none());
+    assert!(reset.get_execution_profile_handle().is_none());
 }
 
 /// The inherited configuration is not merely stored in the bound statement -
