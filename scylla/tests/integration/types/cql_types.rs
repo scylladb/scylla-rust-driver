@@ -7,6 +7,7 @@ use std::cmp::PartialEq;
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
+use uuid::Uuid;
 
 use crate::utils::{
     DeserializeOwnedValue, PerformDDL, create_new_session_builder,
@@ -208,6 +209,30 @@ async fn run_literal_and_bound_tests<T>(
         .map(|(literal, expected)| (*literal, Some(expected.clone())))
         .collect();
     run_literal_and_bound_tests_maybe_representable(session, table, quote_literal, &tests).await;
+}
+
+// `run_literal_and_bound_tests` for a type that has no table of its own yet:
+// creates `tab_{type_name}` in the current keyspace and drops it afterwards, so
+// that a number of types can be covered without a keyspace each.
+async fn run_tests_in_new_table<T>(
+    session: &Session,
+    type_name: &str,
+    quote_literal: bool,
+    tests: &[(&str, T)],
+) where
+    T: SerializeValue + DeserializeOwnedValue + Debug + Clone + PartialEq,
+{
+    let table = format!("tab_{type_name}");
+    session
+        .ddl(format!(
+            "CREATE TABLE {table} (id int PRIMARY KEY, val {type_name})"
+        ))
+        .await
+        .unwrap();
+
+    run_literal_and_bound_tests(session, &table, quote_literal, tests).await;
+
+    session.ddl(format!("DROP TABLE {table}")).await.unwrap();
 }
 
 #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
@@ -1655,6 +1680,156 @@ async fn test_unusual_serializerow_impls() {
             (1, 3, "Box dyn".to_owned())
         ]
     );
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+/// Serialization and deserialization of the scalar types that have no test of
+/// their own above: the integer widths other than `varint`, `double`, `uuid`,
+/// and the two string types.
+///
+/// All the types share one session and one keyspace - a table each, dropped as
+/// the case ends - so that the shared cluster is not burdened with a keyspace
+/// per type.
+#[tokio::test]
+async fn test_remaining_scalar_types() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+    session.ddl(format!(
+        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    )).await.unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
+    session.await_schema_agreement().await.unwrap();
+
+    let (min, max) = (i64::MIN.to_string(), i64::MAX.to_string());
+    run_tests_in_new_table::<i64>(
+        &session,
+        "bigint",
+        false,
+        &[
+            ("0", 0),
+            ("1", 1),
+            ("-1", -1),
+            ("997", 997),
+            (&min, i64::MIN),
+            (&max, i64::MAX),
+        ],
+    )
+    .await;
+
+    let (min, max) = (i32::MIN.to_string(), i32::MAX.to_string());
+    run_tests_in_new_table::<i32>(
+        &session,
+        "int",
+        false,
+        &[
+            ("0", 0),
+            ("1", 1),
+            ("-1", -1),
+            ("997", 997),
+            (&min, i32::MIN),
+            (&max, i32::MAX),
+        ],
+    )
+    .await;
+
+    let (min, max) = (i16::MIN.to_string(), i16::MAX.to_string());
+    run_tests_in_new_table::<i16>(
+        &session,
+        "smallint",
+        false,
+        &[
+            ("0", 0),
+            ("1", 1),
+            ("-1", -1),
+            (&min, i16::MIN),
+            (&max, i16::MAX),
+        ],
+    )
+    .await;
+
+    let (min, max) = (i8::MIN.to_string(), i8::MAX.to_string());
+    run_tests_in_new_table::<i8>(
+        &session,
+        "tinyint",
+        false,
+        &[
+            ("0", 0),
+            ("1", 1),
+            ("-1", -1),
+            (&min, i8::MIN),
+            (&max, i8::MAX),
+        ],
+    )
+    .await;
+
+    let (min, max) = (f64::MIN.to_string(), f64::MAX.to_string());
+    run_tests_in_new_table::<f64>(
+        &session,
+        "double",
+        false,
+        &[
+            ("3.5", 3.5),
+            ("997", 997.),
+            ("0.1", 0.1),
+            ("128", 128.),
+            ("-128", -128.),
+            (&min, f64::MIN),
+            (&max, f64::MAX),
+        ],
+    )
+    .await;
+
+    // A `uuid` literal is unquoted, hence `quote_literal: false`.
+    run_tests_in_new_table::<Uuid>(
+        &session,
+        "uuid",
+        false,
+        &[
+            (
+                "00000000-0000-0000-0000-000000000000",
+                Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0000),
+            ),
+            (
+                "ffffffff-ffff-ffff-ffff-ffffffffffff",
+                Uuid::from_u128(0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff),
+            ),
+            (
+                "8e14e760-7fa8-11eb-bc66-000000000001",
+                Uuid::from_u128(0x8e14_e760_7fa8_11eb_bc66_0000_0000_0001),
+            ),
+        ],
+    )
+    .await;
+
+    // `text` is an alias of `varchar`, so testing the latter covers both.
+    run_tests_in_new_table::<String>(
+        &session,
+        "varchar",
+        true,
+        &[
+            ("", "".to_owned()),
+            ("a", "a".to_owned()),
+            ("Zażółć gęślą jaźń", "Zażółć gęślą jaźń".to_owned()),
+            ("quote \' inside", "quote \' inside".to_owned()),
+            ("🦀", "🦀".to_owned()),
+        ],
+    )
+    .await;
+
+    run_tests_in_new_table::<String>(
+        &session,
+        "ascii",
+        true,
+        &[
+            ("", "".to_owned()),
+            ("a", "a".to_owned()),
+            ("plain ascii text", "plain ascii text".to_owned()),
+            ("quote \' inside", "quote \' inside".to_owned()),
+        ],
+    )
+    .await;
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
