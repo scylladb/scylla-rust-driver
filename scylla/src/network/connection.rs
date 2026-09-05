@@ -3054,11 +3054,13 @@ mod tests {
     /// Forges a RESULT response of Void kind, i.e. the kind of response that a
     /// non-SELECT statement would yield.
     fn forge_void_result() -> RequestReaction {
-        RequestReaction::forge_response(Arc::new(|frame: RequestFrame| ResponseFrame {
-            params: frame.params.for_response(),
-            opcode: scylla_proxy::ResponseOpcode::Result,
-            // The body of a RESULT response begins with its kind; 0x0001 is Void.
-            body: Bytes::from_static(&[0, 0, 0, 1]),
+        RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+            ResponseFrame::new(
+                frame.params.for_response(),
+                scylla_proxy::ResponseOpcode::Result,
+                // The body of a RESULT response begins with its kind; 0x0001 is Void.
+                Bytes::from_static(&[0, 0, 0, 1]),
+            )
         }))
     }
 
@@ -3618,10 +3620,12 @@ mod tests {
         let make_delayed_response = |delay: Duration| {
             RequestReaction::forge_response_with_delay(
                 delay,
-                Arc::new(|RequestFrame { params, .. }| ResponseFrame {
-                    params: params.for_response(),
-                    opcode: ResponseOpcode::Result,
-                    body: Bytes::from_static(&[0, 0, 0, 1]), // Void response
+                Arc::new(|RequestFrame { params, .. }| {
+                    ResponseFrame::new(
+                        params.for_response(),
+                        ResponseOpcode::Result,
+                        Bytes::from_static(&[0, 0, 0, 1]), // Void response
+                    )
                 }),
             )
         };
@@ -3642,11 +3646,11 @@ mod tests {
             mk_rule(
                 SUCCESSFUL_QUERY,
                 RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
-                    ResponseFrame {
-                        params: params.for_response(),
-                        opcode: ResponseOpcode::Result,
-                        body: Bytes::from_static(&[0, 0, 0, 1]), // Void response
-                    }
+                    ResponseFrame::new(
+                        params.for_response(),
+                        ResponseOpcode::Result,
+                        Bytes::from_static(&[0, 0, 0, 1]), // Void response
+                    )
                 })),
             ),
             mk_rule(DROP_QUERY, RequestReaction::drop_frame()),

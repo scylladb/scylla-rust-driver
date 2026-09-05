@@ -1,5 +1,6 @@
 mod caching_session;
 mod cluster_reachability;
+mod compression;
 mod db_errors;
 mod history;
 mod host_id_mismatch;

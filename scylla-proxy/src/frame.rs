@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use scylla_cql::frame::flag;
 use scylla_cql::frame::frame_errors::FrameHeaderParseError;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 pub use scylla_cql::frame::request::RequestOpcode;
@@ -38,6 +39,15 @@ impl FrameParams {
             ..*self
         }
     }
+
+    /// Tells whether the frame carried a compressed body on the wire.
+    ///
+    /// Note that frames handed out by the proxy always expose a *decompressed*
+    /// body, so this flag (together with [`RequestFrame::wire_body_len`]) is the
+    /// only way to tell that compression was in play.
+    pub const fn is_compressed(&self) -> bool {
+        self.flags & flag::COMPRESSION != 0
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -52,14 +62,41 @@ pub(crate) enum FrameOpcode {
     Response(ResponseOpcode),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq)]
 pub struct RequestFrame {
     pub params: FrameParams,
     pub opcode: RequestOpcode,
+    /// The frame body, decompressed if the frame arrived compressed.
     pub body: Bytes,
+    /// Number of body bytes as they appeared on the wire, i.e. *before* decompression.
+    /// For frames that were not compressed this is equal to `body.len()`.
+    ///
+    /// This is what makes it possible to observe how effective compression is;
+    /// [`Self::body`] is always decompressed, so its length says nothing about
+    /// how much data actually travelled over the network.
+    pub wire_body_len: usize,
+}
+
+/// Excludes [`RequestFrame::wire_body_len`], which is an observation about how the frame
+/// was transferred rather than a part of its logical content.
+impl PartialEq for RequestFrame {
+    fn eq(&self, other: &Self) -> bool {
+        self.params == other.params && self.opcode == other.opcode && self.body == other.body
+    }
 }
 
 impl RequestFrame {
+    /// Creates a frame whose body did not undergo compression, so that its
+    /// [`Self::wire_body_len`] is simply the body length.
+    pub fn new(params: FrameParams, opcode: RequestOpcode, body: Bytes) -> Self {
+        Self {
+            params,
+            opcode,
+            wire_body_len: body.len(),
+            body,
+        }
+    }
+
     pub(crate) async fn write(
         &self,
         writer: &mut (impl AsyncWrite + Unpin),
@@ -82,14 +119,39 @@ impl RequestFrame {
         RequestV2::deserialize(&mut &self.body[..], self.opcode, features)
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq)]
 pub struct ResponseFrame {
     pub params: FrameParams,
     pub opcode: ResponseOpcode,
+    /// The frame body, decompressed if the frame arrived compressed.
     pub body: Bytes,
+    /// Number of body bytes as they appeared on the wire, i.e. *before* decompression.
+    /// For frames that were not compressed this is equal to `body.len()`.
+    ///
+    /// See [`RequestFrame::wire_body_len`] for the rationale.
+    pub wire_body_len: usize,
+}
+
+/// Excludes [`ResponseFrame::wire_body_len`], which is an observation about how the frame
+/// was transferred rather than a part of its logical content.
+impl PartialEq for ResponseFrame {
+    fn eq(&self, other: &Self) -> bool {
+        self.params == other.params && self.opcode == other.opcode && self.body == other.body
+    }
 }
 
 impl ResponseFrame {
+    /// Creates a frame whose body did not undergo compression, so that its
+    /// [`Self::wire_body_len`] is simply the body length.
+    pub fn new(params: FrameParams, opcode: ResponseOpcode, body: Bytes) -> Self {
+        Self {
+            params,
+            opcode,
+            wire_body_len: body.len(),
+            body,
+        }
+    }
+
     /// Creates a response frame that signifies the given DbError type.
     /// Useful for testing server-side error handling in drivers.
     pub fn forged_error(
@@ -109,11 +171,11 @@ impl ResponseFrame {
 
         serialize_error_specific_fields(&mut buf, error)?;
 
-        Ok(ResponseFrame {
-            params: request_params.for_response(),
-            opcode: ResponseOpcode::Error,
-            body: buf.freeze(),
-        })
+        Ok(ResponseFrame::new(
+            request_params.for_response(),
+            ResponseOpcode::Error,
+            buf.freeze(),
+        ))
     }
 
     /// Creates a Supported response frame with given supported options.
@@ -124,19 +186,19 @@ impl ResponseFrame {
         let mut buf = BytesMut::new();
         types::write_string_multimap(options, &mut buf)?;
 
-        Ok(ResponseFrame {
-            params: request_params.for_response(),
-            opcode: ResponseOpcode::Supported,
-            body: buf.freeze(),
-        })
+        Ok(ResponseFrame::new(
+            request_params.for_response(),
+            ResponseOpcode::Supported,
+            buf.freeze(),
+        ))
     }
 
     pub fn forged_ready(request_params: FrameParams) -> Self {
-        ResponseFrame {
-            params: request_params.for_response(),
-            opcode: ResponseOpcode::Ready,
-            body: Bytes::new(),
-        }
+        ResponseFrame::new(
+            request_params.for_response(),
+            ResponseOpcode::Ready,
+            Bytes::new(),
+        )
     }
 
     pub(crate) async fn write(
@@ -268,11 +330,16 @@ pub(crate) async fn write_frame(
     Ok(())
 }
 
+/// Reads a single frame off the wire.
+///
+/// Returns the body already decompressed, accompanied by the number of body bytes
+/// that were actually read from the socket (i.e. the compressed length, if the frame
+/// was compressed).
 pub(crate) async fn read_frame(
     reader: &mut (impl AsyncRead + Unpin),
     frame_type: FrameType,
     compression: &CompressionReader,
-) -> Result<(FrameParams, FrameOpcode, Bytes), ReadFrameError> {
+) -> Result<(FrameParams, FrameOpcode, Bytes, usize), ReadFrameError> {
     let mut raw_header = [0u8; HEADER_SIZE];
     reader
         .read_exact(&mut raw_header[..])
@@ -338,7 +405,8 @@ pub(crate) async fn read_frame(
 
     let body = compression.maybe_decompress_body(flags, body.into_inner().into())?;
 
-    Ok((frame_params, opcode, body))
+    // `length` is the number of body bytes read off the socket, before any decompression.
+    Ok((frame_params, opcode, body, length))
 }
 
 pub(crate) async fn read_request_frame(
@@ -347,13 +415,14 @@ pub(crate) async fn read_request_frame(
 ) -> Result<RequestFrame, ReadFrameError> {
     read_frame(reader, FrameType::Request, compression)
         .await
-        .map(|(params, opcode, body)| RequestFrame {
+        .map(|(params, opcode, body, wire_body_len)| RequestFrame {
             params,
             opcode: match opcode {
                 FrameOpcode::Request(op) => op,
                 FrameOpcode::Response(_) => unreachable!(),
             },
             body,
+            wire_body_len,
         })
 }
 
@@ -363,12 +432,13 @@ pub(crate) async fn read_response_frame(
 ) -> Result<ResponseFrame, ReadFrameError> {
     read_frame(reader, FrameType::Response, compression)
         .await
-        .map(|(params, opcode, body)| ResponseFrame {
+        .map(|(params, opcode, body, wire_body_len)| ResponseFrame {
             params,
             opcode: match opcode {
                 FrameOpcode::Request(_) => unreachable!(),
                 FrameOpcode::Response(op) => op,
             },
             body,
+            wire_body_len,
         })
 }
