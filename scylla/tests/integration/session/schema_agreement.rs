@@ -5,11 +5,8 @@ use assert_matches::assert_matches;
 use scylla::client::PoolSize;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::errors::{
-    DbError, ExecutionError, PagerExecutionError, RequestAttemptError, SchemaAgreementError,
-};
+use scylla::errors::{DbError, ExecutionError, RequestAttemptError, SchemaAgreementError};
 use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
-use scylla::response::PagingState;
 use scylla::response::query_result::QueryResult;
 use scylla::statement::Statement;
 use scylla_proxy::{
@@ -19,6 +16,7 @@ use scylla_proxy::{
 use tracing::info;
 use uuid::Uuid;
 
+use crate::entry_point::EntryPoint;
 use crate::utils::{
     PerformDDL, calculate_proxy_host_ids, setup_tracing, test_with_3_node_cluster,
     unique_keyspace_name,
@@ -501,117 +499,26 @@ async fn test_schema_await_with_various_apis() {
 
             let host_ids = calculate_proxy_host_ids(&proxy_uris, &translation_map, &session);
 
-            fn check_error(err: Result<(), ExecutionError>) {
+            for entry_point in EntryPoint::ALL {
+                tracing::info!(
+                    "================= Sub test: {} =================",
+                    entry_point.name()
+                );
+
+                let result = run_ddl_with_failing_agreement_check(
+                    async |ddl| entry_point.send(&session, ddl, &()).await,
+                    &mut running_proxy,
+                    &host_ids,
+                )
+                .await;
+
                 assert_matches!(
-                    err,
-                    Err(ExecutionError::SchemaAgreementError(
-                        SchemaAgreementError::RequestError(RequestAttemptError::DbError(
-                            DbError::SyntaxError,
-                            _
-                        ))
+                    result.unwrap_err().into_schema_agreement_error(entry_point),
+                    SchemaAgreementError::RequestError(RequestAttemptError::DbError(
+                        DbError::SyntaxError,
+                        _
                     ))
-                )
-            }
-
-            fn check_paging_error(err: Result<(), PagerExecutionError>) {
-                assert_matches!(
-                    err,
-                    Err(PagerExecutionError::SchemaAgreementError(
-                        SchemaAgreementError::RequestError(RequestAttemptError::DbError(
-                            DbError::SyntaxError,
-                            _
-                        ))
-                    ))
-                )
-            }
-
-            {
-                tracing::info!("================= Sub test: query_unpaged =================");
-
-                let result = run_ddl_with_failing_agreement_check(
-                    async |ddl| session.query_unpaged(ddl, &()).await.map(|_| ()),
-                    &mut running_proxy,
-                    &host_ids,
-                )
-                .await;
-                check_error(result);
-            }
-
-            {
-                tracing::info!("================= Sub test: query_single_page =================");
-
-                let result = run_ddl_with_failing_agreement_check(
-                    async |ddl| {
-                        session
-                            .query_single_page(ddl, &(), PagingState::start())
-                            .await
-                            .map(|_| ())
-                    },
-                    &mut running_proxy,
-                    &host_ids,
-                )
-                .await;
-                check_error(result);
-            }
-
-            {
-                tracing::info!("================= Sub test: query_iter =================");
-
-                let result = run_ddl_with_failing_agreement_check(
-                    async |ddl| session.query_iter(ddl, &()).await.map(|_| ()),
-                    &mut running_proxy,
-                    &host_ids,
-                )
-                .await;
-                check_paging_error(result);
-            }
-
-            {
-                tracing::info!("================= Sub test: execute_unpaged =================");
-
-                let result = run_ddl_with_failing_agreement_check(
-                    async |ddl| {
-                        let stmt = session.prepare(ddl).await?;
-                        session.execute_unpaged(&stmt, &()).await.map(|_| ())
-                    },
-                    &mut running_proxy,
-                    &host_ids,
-                )
-                .await;
-                check_error(result);
-            }
-
-            {
-                tracing::info!("================= Sub test: execute_single_page =================");
-
-                let result = run_ddl_with_failing_agreement_check(
-                    async |ddl| {
-                        let stmt = session.prepare(ddl).await?;
-                        session
-                            .execute_single_page(&stmt, &(), PagingState::start())
-                            .await
-                            .map(|_| ())
-                    },
-                    &mut running_proxy,
-                    &host_ids,
-                )
-                .await;
-                check_error(result);
-            }
-
-            {
-                tracing::info!("================= Sub test: execute_iter =================");
-
-                let result = run_ddl_with_failing_agreement_check(
-                    async |ddl| {
-                        let stmt = session.prepare(ddl).await?;
-                        session.execute_iter(stmt, &()).await.map(|_| ())
-                    },
-                    &mut running_proxy,
-                    &host_ids,
-                )
-                .await;
-                check_paging_error(result);
+                );
             }
 
             running_proxy
@@ -656,70 +563,16 @@ async fn test_schema_await_refreshes_metadata() {
         let _table = keyspace.tables.get(table).unwrap();
     }
 
-    {
-        tracing::info!("================= Sub test: query_unpaged =================");
+    for entry_point in EntryPoint::ALL {
+        tracing::info!(
+            "================= Sub test: {} =================",
+            entry_point.name()
+        );
 
-        run_ddl_and_inspect_schema(&session, &ks, "query_unpaged", async |session, ddl| {
-            session.query_unpaged(ddl, &()).await.unwrap();
-        })
-        .await;
-    }
-
-    {
-        tracing::info!("================= Sub test: query_single_page =================");
-
-        run_ddl_and_inspect_schema(&session, &ks, "query_single_page", async |session, ddl| {
-            session
-                .query_single_page(ddl, &(), PagingState::start())
-                .await
-                .unwrap();
-        })
-        .await;
-    }
-
-    {
-        tracing::info!("================= Sub test: query_iter =================");
-
-        run_ddl_and_inspect_schema(&session, &ks, "query_iter", async |session, ddl| {
-            session.query_iter(ddl, &()).await.unwrap();
-        })
-        .await;
-    }
-
-    {
-        tracing::info!("================= Sub test: execute_unpaged =================");
-
-        run_ddl_and_inspect_schema(&session, &ks, "execute_unpaged", async |session, ddl| {
-            let stmt = session.prepare(ddl).await.unwrap();
-            session.execute_unpaged(&stmt, &()).await.unwrap();
-        })
-        .await;
-    }
-
-    {
-        tracing::info!("================= Sub test: execute_single_page =================");
-
-        run_ddl_and_inspect_schema(
-            &session,
-            &ks,
-            "execute_single_page",
-            async |session, ddl| {
-                let stmt = session.prepare(ddl).await.unwrap();
-                session
-                    .execute_single_page(&stmt, &(), PagingState::start())
-                    .await
-                    .unwrap();
-            },
-        )
-        .await;
-    }
-
-    {
-        tracing::info!("================= Sub test: execute_iter =================");
-
-        run_ddl_and_inspect_schema(&session, &ks, "execute_iter", async |session, ddl| {
-            let stmt = session.prepare(ddl).await.unwrap();
-            session.execute_iter(stmt, &()).await.unwrap();
+        // The table is named after the entry point, so that each gets one of
+        // its own and the metadata refresh is checked per entry point.
+        run_ddl_and_inspect_schema(&session, &ks, entry_point.name(), async |session, ddl| {
+            entry_point.send(session, ddl, &()).await.unwrap();
         })
         .await;
     }
