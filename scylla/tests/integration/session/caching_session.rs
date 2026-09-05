@@ -2,8 +2,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use scylla::client::caching_session::{CachingSession, CachingSessionBuilder};
+use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::statement::batch::{Batch, BatchStatement};
+use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
+use scylla::statement::batch::{Batch, BatchStatement, BatchType};
 use scylla::statement::prepared::PreparedStatement;
 use scylla_cql::frame::request::RequestV2;
 use scylla_cql::frame::request::execute::ExecuteV2;
@@ -18,8 +20,9 @@ use scylla_proxy::WorkerError;
 use tokio::sync::mpsc;
 
 use crate::utils::{
-    PerformDDL, create_new_session_builder, fetch_negotiated_features, setup_tracing,
-    test_with_3_node_cluster, unique_keyspace_name,
+    PerformDDL, calculate_proxy_host_ids, create_new_session_builder, fetch_negotiated_features,
+    setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
+    wait_until_all_shards_are_connected,
 };
 
 #[tokio::test]
@@ -256,4 +259,209 @@ async fn test_batch() {
     }
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+/// Takes all the feedback frames that are in `rx` now, and returns their number.
+/// It does not wait for more frames.
+fn consume_current_feedbacks(
+    rx: &mut mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>,
+) -> usize {
+    std::iter::from_fn(|| rx.try_recv().ok()).count()
+}
+
+/// A `CachingSession` prepares a statement that it did not see before. After
+/// that, it uses the cached prepared statement. Thus, it must not prepare the
+/// same statement again.
+///
+/// The test checks this on the wire. On each node, a proxy rule sends feedback
+/// for every PREPARE frame, and the test counts these frames for each node.
+/// `Session::prepare` sends a statement to one connection per node. Thus, one
+/// statement costs one PREPARE on each node.
+#[tokio::test]
+async fn test_caching_session_statement_cache() {
+    setup_tracing();
+    let res = test_with_3_node_cluster(
+        scylla_proxy::ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            const CLUSTER_SIZE: usize = 3;
+
+            let session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map.clone()))
+                .build()
+                .await
+                .unwrap();
+            // The feedback channels below are in the order of `proxy_uris`. So
+            // are these host IDs.
+            let host_ids = calculate_proxy_host_ids(&proxy_uris, &translation_map, &session);
+
+            // The test sends the batch to each shard. Thus, it needs a connection
+            // to every shard.
+            wait_until_all_shards_are_connected(&session).await;
+
+            let (feedback_txs, mut feedback_rxs): (Vec<_>, Vec<_>) =
+                (0..CLUSTER_SIZE).map(|_| mpsc::unbounded_channel()).unzip();
+            for (node, tx) in running_proxy.running_nodes.iter_mut().zip(feedback_txs) {
+                node.change_request_rules(Some(vec![RequestRule(
+                    Condition::and(
+                        Condition::RequestOpcode(RequestOpcode::Prepare),
+                        Condition::not(Condition::ConnectionRegisteredAnyEvent),
+                    ),
+                    RequestReaction::noop().with_feedback_when_performed(tx),
+                )]));
+            }
+            let mut prepares_per_node = || -> Vec<usize> {
+                feedback_rxs
+                    .iter_mut()
+                    .map(consume_current_feedbacks)
+                    .collect()
+            };
+
+            let ks = unique_keyspace_name();
+            session
+                .ddl(format!(
+                    "CREATE KEYSPACE {ks} WITH REPLICATION = \
+                     {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+                ))
+                .await
+                .unwrap();
+            session.use_keyspace(&ks, false).await.unwrap();
+            session
+                .ddl("CREATE TABLE tab (a int, b int, c int, primary key (a, b, c))")
+                .await
+                .unwrap();
+
+            let caching_session: CachingSession = CachingSession::from(session, 100);
+
+            const BATCH_SIZE: usize = 4;
+            let mut batch = Batch::new(BatchType::Logged);
+            for i in 1..=BATCH_SIZE {
+                batch.append_statement(
+                    format!("INSERT INTO tab (a, b, c) VALUES ({i}, ?, ?)").as_str(),
+                );
+            }
+            let batch_values: Vec<(i32, i32)> = (1..=BATCH_SIZE as i32).map(|i| (i, i)).collect();
+
+            // The cache does not contain any statement of the batch yet. Thus,
+            // the `CachingSession` prepares each statement once per node.
+            // `Session::prepare` sends it to one connection per node, not to
+            // every shard.
+            caching_session
+                .batch(&batch, batch_values.clone())
+                .await
+                .unwrap();
+            assert_eq!(prepares_per_node(), [BATCH_SIZE; CLUSTER_SIZE]);
+
+            // Now the cache contains all the statements of the batch. Thus, the
+            // next runs of the same batch must not prepare anything.
+            for _ in 0..4 {
+                caching_session
+                    .batch(&batch, batch_values.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(prepares_per_node(), [0; CLUSTER_SIZE]);
+            }
+
+            // The cache does not contain this statement. Thus, the
+            // `CachingSession` prepares it once per node.
+            let mut rows: Vec<(i32, i32, i32)> = caching_session
+                .execute_unpaged("SELECT a, b, c FROM tab", &[])
+                .await
+                .unwrap()
+                .into_rows_result()
+                .unwrap()
+                .rows()
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            assert_eq!(prepares_per_node(), [1; CLUSTER_SIZE]);
+
+            // The batches wrote the given values.
+            rows.sort_unstable();
+            let expected: Vec<(i32, i32, i32)> =
+                (1..=BATCH_SIZE as i32).map(|i| (i, i, i)).collect();
+            assert_eq!(rows, expected);
+
+            // Rename the columns back and forth. After that, the table is the
+            // same as before. But the server invalidates the prepared statements
+            // of the table. Thus, the driver must prepare each statement again at
+            // its next execution.
+            for alter in [
+                "ALTER TABLE tab RENAME c to tmp",
+                "ALTER TABLE tab RENAME b to c",
+                "ALTER TABLE tab RENAME tmp to b",
+            ] {
+                caching_session.get_session().ddl(alter).await.unwrap();
+            }
+
+            // Send the batch to each shard of each node in turn. A node updates
+            // its cache at the first mismatch. Thus, on each node, only the shard
+            // that the test contacts first answers `Unprepared` and causes a
+            // repreparation. When the test contacts the other shards, the node
+            // already agrees with the driver.
+            for node in caching_session
+                .get_session()
+                .get_cluster_state()
+                .get_nodes_info()
+                .iter()
+            {
+                let node_index = host_ids
+                    .iter()
+                    .position(|&host_id| host_id == node.host_id)
+                    .unwrap();
+                let sharder = node.sharder();
+                let nr_shards = sharder
+                    .as_ref()
+                    .map_or(1, |sharder| sharder.nr_shards.get());
+                for shard in 0..nr_shards {
+                    let profile = ExecutionProfile::builder()
+                        .load_balancing_policy(SingleTargetLoadBalancingPolicy::new(
+                            NodeIdentifier::Node(Arc::clone(node)),
+                            Some(shard.into()),
+                        ))
+                        .build();
+                    batch.set_execution_profile_handle(Some(profile.into_handle()));
+
+                    let result = caching_session
+                        .batch(&batch, batch_values.clone())
+                        .await
+                        .unwrap();
+
+                    // If the batch goes to a different shard, the count below
+                    // does not check the target shard.
+                    let coordinator = result.request_coordinator();
+                    assert_eq!(coordinator.node().host_id, node.host_id);
+                    // A node without a sharder, for example Cassandra, reports
+                    // no shard in the coordinator.
+                    if sharder.is_some() {
+                        assert_eq!(coordinator.shard(), Some(shard.into()));
+                    }
+
+                    let mut expected = [0; CLUSTER_SIZE];
+                    if shard == 0 {
+                        expected[node_index] = BATCH_SIZE;
+                    }
+                    assert_eq!(
+                        prepares_per_node(),
+                        expected,
+                        "Unexpected number of prepares on node {node:?}, shard {shard}"
+                    );
+                }
+            }
+
+            caching_session
+                .get_session()
+                .ddl(format!("DROP KEYSPACE {ks}"))
+                .await
+                .unwrap();
+
+            running_proxy
+        },
+    )
+    .await;
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
 }
