@@ -136,7 +136,10 @@ async fn test_timestamp_generator() {
 
     impl TimestampGenerator for LocalTimestampGenerator {
         fn next_timestamp(&self) -> i64 {
-            let timestamp = random::<i64>().abs();
+            // Shifting a `u64` right by one yields `0..=i64::MAX`, so the
+            // timestamp is positive without an `abs()` that would overflow on
+            // `i64::MIN`.
+            let timestamp = (random::<u64>() >> 1) as i64;
             self.generated_timestamps.lock().unwrap().insert(timestamp);
             timestamp
         }
