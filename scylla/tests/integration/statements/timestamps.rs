@@ -12,6 +12,7 @@ use scylla::{
     },
 };
 
+use crate::entry_point::PagingMode;
 use crate::utils::{
     PerformDDL as _, create_new_session_builder, setup_tracing, unique_keyspace_name,
 };
@@ -34,42 +35,54 @@ async fn test_timestamp() {
 
     let query_str = format!("INSERT INTO {ks}.t_timestamp (a, b) VALUES (?, ?)");
 
-    // test regular query timestamps
+    // A timestamp set on a statement must be honoured no matter which entry
+    // point sends it, so every one of them is exercised with the same pair of
+    // timestamps: the row must end up carrying the higher one. The timestamp
+    // goes on the statement itself, on the prepared one for the prepared entry
+    // points, so that it is `PreparedStatement::set_timestamp` under test and
+    // not `prepare`'s carrying the configuration over.
+    const TIMESTAMPS: [(i64, &str); 2] = [(420, "higher timestamp"), (42, "lower timestamp")];
 
-    let mut regular_query = Statement::new(query_str.to_string());
+    // test unprepared statement timestamps
 
-    regular_query.set_timestamp(Some(420));
-    session
-        .query_unpaged(regular_query.clone(), ("regular query", "higher timestamp"))
-        .await
-        .unwrap();
-
-    regular_query.set_timestamp(Some(42));
-    session
-        .query_unpaged(regular_query.clone(), ("regular query", "lower timestamp"))
-        .await
-        .unwrap();
+    for (paging_mode, key) in [
+        (PagingMode::Unpaged, "regular query"),
+        (PagingMode::Iter, "regular query iter"),
+        (PagingMode::SinglePage, "regular query single page"),
+    ] {
+        for (timestamp, value) in TIMESTAMPS {
+            let mut stmt = Statement::new(query_str.clone());
+            stmt.set_timestamp(Some(timestamp));
+            paging_mode
+                .send_unprepared(&session, stmt, (key, value))
+                .await
+                .unwrap();
+        }
+    }
 
     // test prepared statement timestamps
 
-    let mut prepared_statement = session.prepare(query_str).await.unwrap();
+    let prepared_statement = session.prepare(query_str.clone()).await.unwrap();
 
-    prepared_statement.set_timestamp(Some(420));
-    session
-        .execute_unpaged(&prepared_statement, ("prepared query", "higher timestamp"))
-        .await
-        .unwrap();
-
-    prepared_statement.set_timestamp(Some(42));
-    session
-        .execute_unpaged(&prepared_statement, ("prepared query", "lower timestamp"))
-        .await
-        .unwrap();
+    for (paging_mode, key) in [
+        (PagingMode::Unpaged, "prepared query"),
+        (PagingMode::Iter, "prepared query iter"),
+        (PagingMode::SinglePage, "prepared query single page"),
+    ] {
+        for (timestamp, value) in TIMESTAMPS {
+            let mut stmt = prepared_statement.clone();
+            stmt.set_timestamp(Some(timestamp));
+            paging_mode
+                .send_prepared(&session, &stmt, (key, value))
+                .await
+                .unwrap();
+        }
+    }
 
     // test batch statement timestamps
 
     let mut batch: Batch = Default::default();
-    batch.append_statement(regular_query);
+    batch.append_statement(Statement::new(query_str));
     batch.append_statement(prepared_statement);
 
     batch.set_timestamp(Some(420));
@@ -116,7 +129,11 @@ async fn test_timestamp() {
     let expected_results = [
         ("first query in batch", "higher timestamp", 420),
         ("prepared query", "higher timestamp", 420),
+        ("prepared query iter", "higher timestamp", 420),
+        ("prepared query single page", "higher timestamp", 420),
         ("regular query", "higher timestamp", 420),
+        ("regular query iter", "higher timestamp", 420),
+        ("regular query single page", "higher timestamp", 420),
         ("second query in batch", "higher timestamp", 420),
     ]
     .into_iter()
