@@ -9,8 +9,8 @@ use scylla::response::{PagingState, PagingStateResponse};
 use scylla::routing::Token;
 use scylla::routing::partitioner::PartitionerName;
 use scylla::serialize::row::SerializeRow;
-use scylla::statement::Statement;
 use scylla::statement::prepared::PreparedStatement;
+use scylla::statement::{Consistency, SerialConsistency, Statement};
 use scylla_cql::frame::types;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
@@ -19,6 +19,7 @@ use scylla_proxy::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -209,11 +210,27 @@ async fn test_prepared_config() {
     let mut query = Statement::new("SELECT * FROM system_schema.tables");
     query.set_is_idempotent(true);
     query.set_page_size(42);
+    query.set_consistency(Consistency::One);
+    query.set_serial_consistency(Some(SerialConsistency::LocalSerial));
+    query.set_tracing(true);
+    query.set_request_timeout(Some(Duration::from_millis(1)));
+    query.set_timestamp(Some(42));
 
     let prepared_statement = session.prepare(query).await.unwrap();
 
     assert!(prepared_statement.get_is_idempotent());
     assert_eq!(prepared_statement.get_page_size(), 42);
+    assert_eq!(prepared_statement.get_consistency(), Some(Consistency::One));
+    assert_eq!(
+        prepared_statement.get_serial_consistency(),
+        Some(SerialConsistency::LocalSerial)
+    );
+    assert!(prepared_statement.get_tracing());
+    assert_eq!(
+        prepared_statement.get_request_timeout(),
+        Some(Duration::from_millis(1))
+    );
+    assert_eq!(prepared_statement.get_timestamp(), Some(42));
 }
 
 #[tokio::test]
