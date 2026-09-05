@@ -1566,11 +1566,11 @@ mod tests {
         let make_rules = |shard_info: Option<ShardInfo>, keyspace_succeeds: bool| {
             let query_reaction = if keyspace_succeeds {
                 RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame {
-                        params: frame.params.for_response(),
-                        opcode: ResponseOpcode::Result,
-                        body: Bytes::from_static(b"\0\0\0\x03\0\x08keyspace"),
-                    }
+                    ResponseFrame::new(
+                        frame.params.for_response(),
+                        ResponseOpcode::Result,
+                        Bytes::from_static(b"\0\0\0\x03\0\x08keyspace"),
+                    )
                 }))
             } else {
                 RequestReaction::forge().server_error()
@@ -2273,11 +2273,11 @@ mod tests {
             rules.push(RequestRule(
                 Condition::RequestOpcode(RequestOpcode::Query),
                 RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame {
-                        params: frame.params.for_response(),
-                        opcode: ResponseOpcode::Result,
-                        body: Bytes::from_static(b"\0\0\0\x03\0\x08keyspace"),
-                    }
+                    ResponseFrame::new(
+                        frame.params.for_response(),
+                        ResponseOpcode::Result,
+                        Bytes::from_static(b"\0\0\0\x03\0\x08keyspace"),
+                    )
                 })),
             ));
             rules

@@ -60,6 +60,15 @@ pub struct RequestFrame {
 }
 
 impl RequestFrame {
+    /// Creates a frame out of its parts.
+    pub fn new(params: FrameParams, opcode: RequestOpcode, body: Bytes) -> Self {
+        Self {
+            params,
+            opcode,
+            body,
+        }
+    }
+
     pub(crate) async fn write(
         &self,
         writer: &mut (impl AsyncWrite + Unpin),
@@ -90,6 +99,15 @@ pub struct ResponseFrame {
 }
 
 impl ResponseFrame {
+    /// Creates a frame out of its parts.
+    pub fn new(params: FrameParams, opcode: ResponseOpcode, body: Bytes) -> Self {
+        Self {
+            params,
+            opcode,
+            body,
+        }
+    }
+
     /// Creates a response frame that signifies the given DbError type.
     /// Useful for testing server-side error handling in drivers.
     pub fn forged_error(
@@ -109,11 +127,11 @@ impl ResponseFrame {
 
         serialize_error_specific_fields(&mut buf, error)?;
 
-        Ok(ResponseFrame {
-            params: request_params.for_response(),
-            opcode: ResponseOpcode::Error,
-            body: buf.freeze(),
-        })
+        Ok(ResponseFrame::new(
+            request_params.for_response(),
+            ResponseOpcode::Error,
+            buf.freeze(),
+        ))
     }
 
     /// Creates a Supported response frame with given supported options.
@@ -124,19 +142,19 @@ impl ResponseFrame {
         let mut buf = BytesMut::new();
         types::write_string_multimap(options, &mut buf)?;
 
-        Ok(ResponseFrame {
-            params: request_params.for_response(),
-            opcode: ResponseOpcode::Supported,
-            body: buf.freeze(),
-        })
+        Ok(ResponseFrame::new(
+            request_params.for_response(),
+            ResponseOpcode::Supported,
+            buf.freeze(),
+        ))
     }
 
     pub fn forged_ready(request_params: FrameParams) -> Self {
-        ResponseFrame {
-            params: request_params.for_response(),
-            opcode: ResponseOpcode::Ready,
-            body: Bytes::new(),
-        }
+        ResponseFrame::new(
+            request_params.for_response(),
+            ResponseOpcode::Ready,
+            Bytes::new(),
+        )
     }
 
     pub(crate) async fn write(

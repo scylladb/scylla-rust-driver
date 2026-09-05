@@ -127,15 +127,15 @@ impl Condition {
 
             Condition::RequestConsistency(expected_cl, features) => match ctx.opcode {
                 FrameOpcode::Request(opcode) => {
-                    let frame = RequestFrame {
-                        params: FrameParams {
+                    let frame = RequestFrame::new(
+                        FrameParams {
                             version: 0x04,
                             flags: 0,
                             stream: 0,
                         },
                         opcode,
-                        body: ctx.frame_body.clone(),
-                    };
+                        ctx.frame_body.clone(),
+                    );
                     frame
                         .deserialize(features)
                         .ok()
