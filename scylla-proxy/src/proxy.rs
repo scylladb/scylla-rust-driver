@@ -1818,6 +1818,7 @@ mod tests {
             params: recvd_params,
             opcode: recvd_opcode,
             body: recvd_body,
+            ..
         } = read_request_frame(conn, compression).await.unwrap();
         assert_eq!(recvd_params, HARDCODED_OPTIONS_PARAMS);
         assert_eq!(recvd_opcode, RequestOpcode::Options);
@@ -1923,6 +1924,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = read_request_frame(&mut conn, &no_compression())
                 .await
                 .unwrap();
@@ -2146,6 +2148,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = read_response_frame(&mut conn, &no_compression())
                 .await
                 .unwrap();
@@ -2157,6 +2160,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = read_response_frame(&mut conn, &no_compression())
                 .await
                 .unwrap();
@@ -2173,6 +2177,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = read_request_frame(&mut conn, &no_compression())
                 .await
                 .unwrap();
@@ -2246,6 +2251,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = request(&mut driver, &mut node, params, opcode, &body)
                 .await
                 .unwrap();
@@ -2274,6 +2280,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = request(&mut driver, &mut node, params, opcode, &body)
                 .await
                 .unwrap();
@@ -2367,6 +2374,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = request(&mut driver, &mut node, params, opcode, &body)
                 .await
                 .unwrap();
@@ -2572,6 +2580,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = read_request_frame(&mut conn, &no_compression())
                 .await
                 .unwrap();
@@ -2700,6 +2709,7 @@ mod tests {
             params: recvd_params,
             opcode: recvd_opcode,
             body: recvd_body,
+            ..
         } = read_response_frame(&mut conn, &no_compression())
             .await
             .unwrap();
@@ -2711,6 +2721,7 @@ mod tests {
             params: recvd_params,
             opcode: recvd_opcode,
             body: recvd_body,
+            ..
         } = read_response_frame(&mut conn, &no_compression())
             .await
             .unwrap();
