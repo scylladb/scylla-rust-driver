@@ -1,0 +1,954 @@
+
+
+<!DOCTYPE html>
+<html class="no-js" lang="en" style="visibility: hidden;">
+    
+    
+
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width initial-scale=1" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <title>
+             Tablet awareness | ScyllaDB Docs 
+        </title>
+        <meta name="description" content="ScyllaDB Driver for Rust." />
+        <link rel="icon" href="../_static/img/favicon.ico" type="image/x-icon" />
+        <link rel="icon" href="../_static/img/favicon-32x32.png" sizes="32x32" />
+        <link rel="icon" href="../_static/img/favicon-228x228.png" sizes="192x192" />
+        <link rel="apple-touch-icon" href="../_static/img/favicon-228x228.png" />
+        <meta name="msapplication-TileImage" href="../_static/img/favicon-228x228.png" />
+
+        <script>
+            (function () {
+                if (window.location.hostname === 'previews.docs.scylladb.com') {
+                    var meta = document.createElement('meta');
+                    meta.name = 'robots';
+                    meta.content = 'noindex, nofollow';
+                    document.head.appendChild(meta);
+                }
+            })();
+        </script>
+
+        
+            
+            
+        
+
+        
+            
+            <link rel="canonical" href="https://rust-driver.docs.scylladb.com/stable/load-balancing/tablets.html"/>
+        
+
+        <link rel="author" href="mailto:info@scylladb.com" />
+
+        
+            
+            
+            
+            
+                <link rel="alternate" type="text/markdown" href="https://rust-driver.docs.scylladb.com/main/load-balancing/tablets.md" />
+            
+        
+
+        
+            
+        
+
+
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link rel="preload" as="style"
+              href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap" />
+
+        <!-- async CSS -->
+        <link rel="stylesheet" media="print" onload="this.onload=null;this.removeAttribute('media');"
+              href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap" />
+
+        <!-- no-JS fallback -->
+        <noscript>
+            <link rel="stylesheet"
+                  href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap" />
+        </noscript>
+
+        
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/biel-search@latest/dist/biel-search/biel-search.css">
+            <script type="module" src="https://cdn.jsdelivr.net/npm/biel-search@latest/dist/biel-search/biel-search.esm.js"></script>
+        
+
+        
+            
+                <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+            
+        
+            
+                <link rel="stylesheet" type="text/css" href="../_static/css/main.css?v=041c0933" />
+            
+        
+            
+                <link rel="stylesheet" type="text/css" href="../_static/sphinx_collapse.css?v=226d88b4" />
+            
+        
+            
+                <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+            
+        
+    
+        
+        
+            
+        <script type="text/javascript" src="../_static/js/runtime.bundle.js"></script>
+        <script type="text/javascript" src="../_static/js/main.bundle.js"></script>
+        
+            
+                <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+            
+        
+            
+                <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+            
+        
+            
+                <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+            
+        
+            
+                <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+            
+        
+            
+                <script src="../_static/copybutton.js?v=f281be69"></script>
+            
+        
+    
+            
+                <!-- Local meta tags -->
+            
+            
+                <!-- Google Tag Manager docs -->
+<script>
+    (function (w, d, s, l, i) {
+        var h = w.location.hostname;
+        if (h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' || h === '') return;
+        w[l] = w[l] || [];
+        w[l].push({
+            "gtm.start": new Date().getTime(),
+            event: "gtm.js"
+        });
+        var f = d.getElementsByTagName(s)[0],
+            j = d.createElement(s),
+            dl = l != "dataLayer" ? "&l=" + l : "";
+        j.async = true;
+        j.src = "https://www.googletagmanager.com/gtm.js?id=" + i + dl;
+        f.parentNode.insertBefore(j, f);
+    })(window, document, "script", "dataLayer", "GTM-54NWVS4");
+</script>
+<!-- End Google Tag Manager -->
+
+<!-- Google Tag Manager global -->
+<script>
+    (function (w, d, s, l, i) {
+        var h = w.location.hostname;
+        if (h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' || h === '') return;
+        w[l] = w[l] || [];
+        w[l].push({
+            "gtm.start": new Date().getTime(),
+            event: "gtm.js"
+        });
+        var f = d.getElementsByTagName(s)[0],
+            j = d.createElement(s),
+            dl = l != "dataLayer" ? "&l=" + l : "";
+        j.async = true;
+        j.src = "https://www.googletagmanager.com/gtm.js?id=" + i + dl;
+        f.parentNode.insertBefore(j, f);
+    })(window, document, "script", "dataLayer", "GTM-T8P2JP");
+</script>
+<!-- End Google Tag Manager -->
+            
+        
+    </head>
+
+    <body class="brand-product">
+        <section class="promo-banner  promo-banner--hide" style="display: none;">
+    <div class="promo-banner-wrapper">
+        <div class="promo-banner__content">
+            
+            <div class="promo-banner__title">ScyllaDB University Live | Free Virtual Training Event</div>
+            <a class="promo-banner__button button button--reverse" href="#"
+               target="_blank" rel="noopener noreferrer">Learn more</a>
+        </div>
+        <button class="promo-banner__close">
+            <i class="icon-cancel"></i>
+        </button>
+    </div>
+</section>
+        <header class="header">
+    <div class="header-logo">
+        <a class="header-logo__img" href="https://scylladb.com/">
+            <img src="../_static/img/scylladb-logo-horizontal.svg" alt="ScyllaDB Documentation Logo" />
+        </a>
+        <span class="header-logo__bar"></span>
+        <a class="header-logo__text" href="https://docs.scylladb.com/">
+            Documentation
+        </a>
+    </div>
+    <div class="header-navigation">
+        <ul class="dropdown menu scylla-dropdown scylla-dropdown--header" data-dropdown-menu>
+            <li class="scylla-dropdown__item">
+                <a href="#" class="scylla-dropdown__title">Deployments <i class="chevron icon-arrow-dropdown"></i></a>
+                <ul class="menu scylla-dropdown__content">
+                    <li>
+                        <a href="https://docs.scylladb.com/scylla-cloud/">
+                            <i class="icon-docs-cloud"></i>Cloud</a>
+                    </li>
+                    <li>
+                        <a href="https://docs.scylladb.com/manual/">
+                            <i class="icon-server"></i>Server</a>
+                    </li>
+                </ul>
+            </li>
+            <li class="scylla-dropdown__item">
+                <a href="#" class="scylla-dropdown__title">Tools <i class="chevron icon-arrow-dropdown"></i></a>
+                <ul class="menu scylla-dropdown__content">
+                    <li>
+                        <a href="https://manager.docs.scylladb.com/">
+                            <i class="icon-docs-manager"></i>ScyllaDB Manager</a>
+                    </li>
+                    <li>
+                        <a href="https://monitoring.docs.scylladb.com/">
+                            <i class="icon-docs-monitoring"></i>ScyllaDB
+                            Monitoring Stack</a>
+                    </li>
+                    <li>
+                        <a href="https://operator.docs.scylladb.com/">
+                            <i class="icon-docs-operator"></i>ScyllaDB Operator
+                        </a>
+                    </li>
+                </ul>
+            </li>
+            <li class="scylla-dropdown__item">
+                <a href="#" class="scylla-dropdown__title">Drivers <i class="chevron icon-arrow-dropdown"></i></a>
+                <ul class="menu scylla-dropdown__content">
+                    <li>
+                        <a href="https://docs.scylladb.com/stable/drivers/cql-drivers">
+                            <i class="icon-docs-nsql-guides"></i>CQL Drivers
+                        </a>
+                    </li>
+                    <li>
+                        <a href="https://docs.scylladb.com/stable/drivers/dynamo-drivers">
+                            <i class="icon-docs-alternator"></i>DynamoDB Drivers
+                        </a>
+
+                        <li>
+                            <a href="https://docs.scylladb.com/stable/versioning/driver-support">
+                                <i class="icon-docs-blog"></i>Supported Driver Versions
+                            </a>
+                        </li>
+                    </li>
+                </ul>
+            </li>
+            <li class="scylla-dropdown__item">
+                <a href="#" class="scylla-dropdown__title">Resources
+                    <i class="chevron icon-arrow-dropdown"></i></a>
+                <ul class="menu scylla-dropdown__content">
+                    <li>
+                        <a href="https://university.scylladb.com">
+                            <i class="icon-university"></i>
+                            ScyllaDB University
+                        </a>
+                    </li>
+                    <li>
+                        <a href="https://forum.scylladb.com">
+                            <i class="icon-docs-community"></i>
+                            Community Forum
+                        </a>
+                    </li>
+                    <li>
+                        <a href="https://docs.scylladb.com/stable/get-started/develop-with-scylladb/tutorials-example-projects.html">
+                            <i class="icon-docs-training"></i>
+                            Tutorials
+                        </a>
+                    </li>
+                </ul>
+            </li>
+        </ul>
+        <div class="header-button">
+            <a href="https://docs.scylladb.com/manual/stable/getting-started/install-scylla/index.html" class="button"><i class="icon-download me-2"></i> Install</a>
+        </div>
+    </div>
+    <div class="header-search-box">
+        <i class="dark-theme-toggler icon-theme"></i>
+        
+            <biel-search-button
+                project="ddfdo8m94k"
+                button-style="rounded"
+                hide-filters="false"
+                header-title="ScyllaDB chatbot"
+                modal-position="top-center">
+                Search
+            </biel-search-button>
+            
+                <biel-button class="header-ask-ai" project="ddfdo8m94k"
+                             header-title="ScyllaDB chatbot"
+                             button-position="default"
+                             modal-position="sidebar-right"
+                             button-style="dark">
+                    Ask AI
+                </biel-button>
+            
+        
+    </div>
+    <div class="side-nav-toggle">
+    <i class="dark-theme-toggler icon-theme"></i>
+    <div class="side-nav-toggle__button" data-toggle="side-nav">
+        <i class="icon-menu"></i>
+    </div>
+</div>
+</header>
+        <div class="title"></div>
+        <section
+            class="layout  layout--sidebar layout--has-secondary-sidebar ">
+            <div class="content large-order-2">
+                
+                    <div class="pre-content">
+                        <div class="breadcrumbs">
+    <span class="bread__item">
+        <a href="https://docs.scylladb.com"
+           class="bread__highlight">
+            <i class="icon-home"></i> ScyllaDB Docs
+        </a>
+    </span>
+    <span class="bread__item">
+        <a href="https://rust-driver.docs.scylladb.com"
+           class="bread__highlight">
+            ScyllaDB Rust Driver
+        </a>
+    </span>
+    
+        <span class="bread__item">
+            <a href="load-balancing.html" class="bread__highlight">
+                Load balancing
+            </a>
+        </span>
+    
+    <span class="bread__item bread__item--last">Tablet awareness</span>
+</div>
+                    </div>
+                
+                
+                    <div class="sidebar-right-layout">
+                        <div class="body-container">
+                
+
+                <div class="content-body"
+                     
+                         data-llms-txt-url="https://rust-driver.docs.scylladb.com/main/llms.txt"
+                     
+                     
+                         data-view-source-url="https://github.com/scylladb/scylla-rust-driver/blob/main/docs/source/load-balancing/tablets.md"
+                     >
+                    
+                        <div style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;">
+                            For AI agents: a documentation index is available at <a href="https://rust-driver.docs.scylladb.com/main/llms.txt">https://rust-driver.docs.scylladb.com/main/llms.txt</a>. A Markdown version of this page is at <a href="https://rust-driver.docs.scylladb.com/main/load-balancing/tablets.md">https://rust-driver.docs.scylladb.com/main/load-balancing/tablets.md</a>.
+                        </div>
+                    
+                    
+                        
+    <div class="admonition caution">
+        <p class="admonition-title">Caution</p>
+        <p>
+            
+                You're viewing documentation for an unstable version of ScyllaDB Rust Driver.
+            
+            <a href="../../stable/index.html">Switch to the latest stable version.</a>
+        </p>
+    </div>
+
+                    
+
+                    <section id="tablet-awareness">
+<h1>Tablet awareness<a class="headerlink" href="#tablet-awareness" title="Link to this heading">¶</a></h1>
+<p>ScyllaDB can partition a table into <em>tablets</em> instead of distributing it over
+the token ring. A tablet owns a contiguous token range and is replicated on a
+small set of nodes, and — unlike token-ring replication — the driver cannot
+compute a tablet’s replicas from the ring: tablets move between nodes as the
+cluster balances itself, so the mapping has to be learned from the cluster and
+kept up to date.</p>
+<p>The driver learns it from the server, which piggy-backs routing information on
+query responses. Two protocol extensions do this, negotiated per connection
+during the handshake. No configuration is required for either: a token-aware
+<code class="docutils literal notranslate"><span class="pre">DefaultPolicy</span></code> (the default) is all that is needed.</p>
+<p>Because the routing information arrives on responses to prepared statements,
+tablet awareness applies to prepared statements only. Unprepared statements
+carry no token and are routed without it, exactly as they are for token-ring
+tables.</p>
+<section id="tablets-routing-v1">
+<h2><code class="docutils literal notranslate"><span class="pre">TABLETS_ROUTING_V1</span></code><a class="headerlink" href="#tablets-routing-v1" title="Link to this heading">¶</a></h2>
+<p>Whenever the driver sends a request to a shard that does not own the target
+tablet, the response carries a <code class="docutils literal notranslate"><span class="pre">tablets-routing-v1</span></code> payload describing that
+tablet: its token range and its replicas. The driver caches it and routes
+subsequent requests for that token range accordingly.</p>
+<p>This is corrective: the driver only learns about a tablet by first guessing
+wrong about it. That is cheap when a tablet is new to the driver, but it also
+means a stale mapping is only noticed once it causes a misrouted request — and
+if the driver’s replica list is a subset of the real one, requests may keep
+landing on a correct-but-outdated replica and the stale entry survives
+indefinitely.</p>
+</section>
+<section id="tablets-routing-v2">
+<h2><code class="docutils literal notranslate"><span class="pre">TABLETS_ROUTING_V2</span></code><a class="headerlink" href="#tablets-routing-v2" title="Link to this heading">¶</a></h2>
+<p>V2 subsumes V1 — a connection negotiates one or the other, never both — and
+replaces the corrective scheme with an explicit staleness check.</p>
+<p>Every tablet carries a <strong>tablet version</strong>: an opaque 64-bit value that changes
+whenever anything the driver routes by changes, that is, the tablet’s replica
+set or (for the strongly-consistent tables described below) its leader. The
+driver caches the version alongside the replicas.</p>
+<p>On a V2 connection the driver appends a single byte, the <em>tablet-version block</em>,
+to every <code class="docutils literal notranslate"><span class="pre">EXECUTE</span></code> request. The byte encodes one 4-bit slice of the cached
+version together with that slice’s position, and the server compares it against
+its own version for the tablet:</p>
+<ul class="simple">
+<li><p>if they agree, the response carries no routing information at all;</p></li>
+<li><p>if they differ, the response carries a <code class="docutils literal notranslate"><span class="pre">tablets-routing-v2</span></code> payload with the
+tablet’s token range, its replicas and its current version, and the driver
+replaces its cached entry.</p></li>
+</ul>
+<p>The position is chosen at random for each request, so consecutive requests
+sample different parts of the version and the driver converges on any change
+within a few requests. When the driver has no version cached for a tablet, it
+sends a random byte, which almost certainly disagrees and so prompts the server
+to send the routing information straight away.</p>
+<p>Compared to V1, this costs one byte on every request and, in exchange:</p>
+<ul class="simple">
+<li><p>staleness is detected without having to misroute a request first, so a changed
+replica set is picked up even while every request still happens to reach a
+valid replica;</p></li>
+<li><p>conversely, a request that <em>does</em> reach a non-owning shard costs nothing when
+the driver’s cached mapping is already up to date. V1 keys off locality and
+resends the payload every time; V2 keys off the version and stays silent.</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><code class="docutils literal notranslate"><span class="pre">TABLETS_ROUTING_V2</span></code> is experimental. A node advertises it (on the wire as
+<code class="docutils literal notranslate"><span class="pre">TABLETS_ROUTING_V2_EXPERIMENTAL</span></code>) only when started with the
+<code class="docutils literal notranslate"><span class="pre">strongly-consistent-tables</span></code> experimental feature enabled; otherwise it offers
+only <code class="docutils literal notranslate"><span class="pre">TABLETS_ROUTING_V1</span></code>. Negotiation is per connection, so during a rolling
+upgrade a session can hold V2 connections to some nodes and V1 connections to
+others at the same time. Both are handled correctly and no configuration
+changes when this happens.</p>
+</div>
+</section>
+<section id="leader-aware-routing-for-strongly-consistent-tables">
+<h2>Leader-aware routing for strongly-consistent tables<a class="headerlink" href="#leader-aware-routing-for-strongly-consistent-tables" title="Link to this heading">¶</a></h2>
+<p>A keyspace created with <code class="docutils literal notranslate"><span class="pre">consistency</span> <span class="pre">=</span> <span class="pre">'global'</span></code> is <em>strongly consistent</em>: its
+tablets are replicated through Raft, and one replica of each tablet is the Raft
+leader that coordinates the tablet’s writes and its linearizable reads. A
+request that has to go through the leader but arrives elsewhere is forwarded
+there by the receiving node, which costs an extra network hop.</p>
+<p>On a <code class="docutils literal notranslate"><span class="pre">TABLETS_ROUTING_V2</span></code> connection, the driver knows which replica leads each
+tablet it has cached and sends such requests to the leader directly. Nothing
+needs to be configured; as with tablet awareness in general, a token-aware
+<code class="docutils literal notranslate"><span class="pre">DefaultPolicy</span></code> suffices.</p>
+<p>Which requests are routed to the leader follows from how ScyllaDB serves each
+operation on a strongly-consistent table:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Operation</p></th>
+<th class="head"><p>Consistency level</p></th>
+<th class="head"><p>Served by</p></th>
+<th class="head"><p>Routed to the leader</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Read</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ONE</span></code>, <code class="docutils literal notranslate"><span class="pre">LOCAL_ONE</span></code></p></td>
+<td><p>any replica, no read barrier</p></td>
+<td><p>no</p></td>
+</tr>
+<tr class="row-odd"><td><p>Read</p></td>
+<td><p>anything else</p></td>
+<td><p>the Raft leader (linearizable)</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Write</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">QUORUM</span></code>, <code class="docutils literal notranslate"><span class="pre">LOCAL_QUORUM</span></code></p></td>
+<td><p>the Raft leader, through Raft</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Write</p></td>
+<td><p>anything else</p></td>
+<td><p>rejected by the server</p></td>
+<td><p>–</p></td>
+</tr>
+</tbody>
+</table>
+<p>A read at <code class="docutils literal notranslate"><span class="pre">ONE</span></code> or <code class="docutils literal notranslate"><span class="pre">LOCAL_ONE</span></code> is not linearizable: any replica may serve it
+without taking a Raft read barrier, so there is nothing to gain from preferring
+the leader and these keep normal token-aware routing, spread across the
+replicas. Everything else has to be coordinated by the leader, so the driver
+targets it directly. Writes are restricted to <code class="docutils literal notranslate"><span class="pre">QUORUM</span></code> and <code class="docutils literal notranslate"><span class="pre">LOCAL_QUORUM</span></code>;
+the server rejects the rest regardless of routing.</p>
+<p>Eventually-consistent tables are unaffected and keep their usual token-aware
+(optionally shuffled) replica ordering.</p>
+<section id="interaction-with-datacenter-and-rack-preferences">
+<h3>Interaction with datacenter and rack preferences<a class="headerlink" href="#interaction-with-datacenter-and-rack-preferences" title="Link to this heading">¶</a></h3>
+<p>For a leader-requiring request, the leader outranks <em>distance</em>: it is tried
+ahead of nearer replicas, including a leader in a remote datacenter ahead of a
+replica in the preferred rack. A nearer replica would only forward the request
+to the leader anyway, and since the table is globally consistent — there is one
+leader for the whole cluster, not one per datacenter — keeping the request
+inside a single datacenter buys no consistency either.</p>
+<p>Leader awareness does not, however, override the policy’s own restrictions. The
+leader is only targeted if the policy would contact it at all:</p>
+<ul class="simple">
+<li><p>with a preferred datacenter and datacenter failover disabled
+(<code class="docutils literal notranslate"><span class="pre">permit_dc_failover:</span> <span class="pre">false</span></code>, the default), a leader in another datacenter is
+not contacted. The request goes to a local replica and the server forwards it
+to the leader, exactly as it would without V2. <strong>Leader awareness never
+introduces cross-datacenter traffic that the policy would otherwise forbid.</strong></p></li>
+<li><p>a leader that is down, or excluded by the policy’s own predicate, is skipped
+and the request is routed normally.</p></li>
+</ul>
+<p>Rack preference does not restrict the leader: a leader elsewhere in the
+preferred datacenter is still targeted directly.</p>
+<p>Only the leader is promoted. The remaining replicas keep their normal ordering,
+so if the leader cannot be reached, retries still spread across the others
+rather than piling onto one node.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Because the leader is only reported over <code class="docutils literal notranslate"><span class="pre">TABLETS_ROUTING_V2</span></code>, and because that
+extension is experimental, leader-aware routing is active only against a
+cluster that negotiates it. Elsewhere the requests are routed by plain tablet
+awareness and the server does the forwarding — correct either way, just with
+the extra hop.</p>
+</div>
+</section>
+</section>
+</section>
+
+                </div>
+                
+                    <div class="post-content">
+                        
+    <div class="feedback-container">
+        <p class="feedback-container__title">Was this page helpful?</p>
+        <span data-tooltip tabindex="1" title="Yes" data-position="top">
+            <button class="feedback-container__button" id="feedback-positive">
+                <i class="feedback-container__icon icon-docs-thumbs-up"></i>
+            </button>
+        </span>
+        <span data-tooltip tabindex="1" title="No" data-position="top">
+            <button class="feedback-container__button" id="feedback-negative">
+                <i class="feedback-container__icon icon-docs-thumbs-down"></i>
+            </button>
+        </span>
+        <div class="feedback-container__message" id="feedback-message"></div>
+    </div>
+
+    <script>
+        function resetFeedbackButtonActive() {
+            const feedbackButtons = document.getElementsByClassName('feedback-container__button');
+            for (let i = 0; i < feedbackButtons.length; i++) {
+                feedbackButtons[i].classList.remove('active');
+            }
+        }
+
+        function showMessage(liked) {
+            const feedbackMessage = document.getElementById('feedback-message');
+            const themeGithubRepository = true;
+            let message = 'Great! Thanks for your feedback.';
+            if (themeGithubRepository && !liked) {
+                message = "Thanks for your feedback! Please don't hesitate to <a href='https://github.com/scylladb/scylla-rust-driver/issues/new?title=docs:%20Issue on page Tablet awareness&&body=I%20would%20like%20to%20report%20an%20issue%20on%20page%20https://rust-driver.docs.scylladb.com/main/load-balancing/tablets%0A%0A%23%23%23%20Problem%0A%0A%23%23%23%20%20Suggest%20a%20fix&labels=documentation'>create an issue</a> if you have any suggestions on how we can improve.";
+            }
+            feedbackMessage.innerHTML = message;
+        }
+
+        function sendGaEvent(liked) {
+            const event_label = liked ? "positive" : "negative";
+            const event = "feedback_" + event_label;
+            window.dataLayer = window.dataLayer || [];
+            window.dataLayer.push({
+                'event': event,
+            });
+        }
+
+        const positiveFeebackButton = document.getElementById('feedback-positive');
+        const negativeFeedbackButton = document.getElementById('feedback-negative');
+
+        positiveFeebackButton.addEventListener('click', function() {
+            resetFeedbackButtonActive();
+            sendGaEvent(true);
+            showMessage(true);
+            positiveFeebackButton.classList.add('active');
+        });
+
+        negativeFeedbackButton.addEventListener('click', function() {
+            resetFeedbackButtonActive();
+            sendGaEvent(false);
+            showMessage(false);
+            negativeFeedbackButton.classList.add('active');
+        });
+    </script>
+
+                        <div class="content-navigation">
+    <div class="navigation navigation--prev">
+        
+            <a class="navigation__link" href="default-policy.html">
+                <button class="navigation__button">
+                    <i class="icon-chevron-left"></i>
+                </button>
+                <div class="navigation__title">
+                    <span class="colored">PREVIOUS</span> <br />DefaultPolicy
+                </div>
+            </a>
+        
+    </div>
+    <div class="navigation navigation--next">
+        
+            <a class="navigation__link" href="../retry-policy/retry-policy.html">
+                <div class="navigation__title">
+                    <span class="colored">NEXT</span> <br />Retry policy configuration
+                </div>
+                <button class="navigation__button">
+                    <i class="icon-chevron-right"></i>
+                </button>
+            </a>
+        
+    </div>
+</div>
+                        <!-- Post content text -->
+                    </div>
+                
+
+                
+                    </div>
+                    <div class="sidebar-right large-order-3">
+                        <div class="secondary-side-nav custom-scroll-bar">
+    
+    <ul class="contribute">
+        <li class="contribute__item">
+            <a class="button button-sm" href="https://github.com/scylladb/scylla-rust-driver/issues/new?title=docs:%20Issue on page Tablet awareness&&body=I%20would%20like%20to%20report%20an%20issue%20on%20page%20https://rust-driver.docs.scylladb.com/main/load-balancing/tablets%0A%0A%23%23%23%20Problem%0A%0A%23%23%23%20%20Suggest%20a%20fix&labels=documentation"
+               target="_blank">
+                <i class="icon-github" aria-hidden="true"></i>Create an issue
+            </a>
+        </li>
+        
+            <li class="contribute__item">
+                <a class="button button-sm" href="https://github.com/scylladb/scylla-rust-driver/edit/main/docs/source/load-balancing/tablets.md"
+                   target="_blank">
+                    <i class="icon-edit" aria-hidden="true"></i>Edit this page
+                </a>
+            </li>
+        
+    </ul>
+
+    
+        <div class="secondary-side-nav__content">
+            <p class="topic-title">On this page</p>
+            <ul>
+<li><a class="reference internal" href="#">Tablet awareness</a><ul>
+<li><a class="reference internal" href="#tablets-routing-v1"><code class="docutils literal notranslate"><span class="pre">TABLETS_ROUTING_V1</span></code></a></li>
+<li><a class="reference internal" href="#tablets-routing-v2"><code class="docutils literal notranslate"><span class="pre">TABLETS_ROUTING_V2</span></code></a></li>
+<li><a class="reference internal" href="#leader-aware-routing-for-strongly-consistent-tables">Leader-aware routing for strongly-consistent tables</a><ul>
+<li><a class="reference internal" href="#interaction-with-datacenter-and-rack-preferences">Interaction with datacenter and rack preferences</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+        </div>
+    
+</div>
+                    </div>
+                    </div>
+                
+            </div>
+            <div class="sidebar-left  large-order-1">
+                
+                    
+                        <div id="side-nav" class="side-nav custom-scroll-bar" data-closable data-toggler=".show">
+    <button class="collapsible-button">
+        <i class="icon-docs-menu-collapse"></i>
+    </button>
+    <div class="side-nav-content custom-scroll-bar">
+        <div class="side-nav__title">
+            <a href="https://rust-driver.docs.scylladb.com">ScyllaDB Rust Driver</a>
+        </div>
+        <div class="side-nav__search">
+            
+                <biel-search-button
+                    project="ddfdo8m94k"
+                    button-style="rounded"
+                    hide-filters="false"
+                    hide-ctrl-k="true"
+                    header-title="ScyllaDB chatbot"
+                    modal-position="top-center">
+                    Search
+                </biel-search-button>
+                
+                    <biel-button class="side-nav__ask-ai" project="ddfdo8m94k"
+                                 header-title="ScyllaDB chatbot"
+                                 button-position="default"
+                                 modal-position="sidebar-right"
+                                 button-style="dark">
+                        Ask AI
+                    </biel-button>
+                
+            
+        </div>
+        <div class="side-nav__versions"><ul class="dropdown menu scylla-dropdown scylla-dropdown--versions" data-dropdown-menu>
+    <li class="scylla-dropdown__item">
+        <a class="scylla-dropdown__title" href="#">
+            
+                main
+            
+            <i class="chevron icon-docs-chevron-right"></i>
+        </a>
+        <ul class="menu scylla-dropdown__content">
+            
+                
+                    <li>
+                        <a href="tablets.html">main</a>
+                    </li>
+                
+            
+            
+                
+                    <li>
+                        <a href="../../stable/index.html">
+                            v1.8.0
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.7.0/index.html">
+                            v1.7.0
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.6.0/index.html">
+                            v1.6.0
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.5.0/index.html">
+                            v1.5.0
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.4.1/index.html">
+                            v1.4.1
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.4.0/index.html">
+                            v1.4.0
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.3.1/index.html">
+                            v1.3.1
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.3.0/index.html">
+                            v1.3.0
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.2.0/index.html">
+                            v1.2.0
+                        </a>
+                    </li>
+                
+            
+        </ul>
+    </li>
+</ul></div>
+        <div class="side-nav__content">
+            <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../index.html">ScyllaDB Rust Driver</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../quickstart/quickstart.html">Quick Start</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label for="toctree-checkbox-1"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../quickstart/create-project.html">Creating a project</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../quickstart/example.html">Connecting and running a simple query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../quickstart/scylla-docker.html">Running ScyllaDB using Docker</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../connecting/connecting.html">Connecting to the cluster</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label for="toctree-checkbox-2"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../connecting/compression.html">Compression</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../connecting/authentication.html">Authentication</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../connecting/tls.html">TLS</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../connecting/client-routes.html">Client Routes (Private Networking)</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../statements/statements.html">Executing CQL statements - best practices</a><input class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label for="toctree-checkbox-3"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../statements/unprepared.html">Unprepared statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/values.html">Statement values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/result.html">Query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/prepared.html">Prepared statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/bound.html">Bound statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/batch.html">Batch statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/paged.html">Paged query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/usekeyspace.html">USE keyspace</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/schema-agreement.html">Schema agreement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/lwt.html">Lightweight transaction (LWT) statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/timeouts.html">Request timeouts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/timestamp-generators.html">Timestamp generators</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../execution-profiles/execution-profiles.html">Execution profiles</a><input class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" type="checkbox"/><label for="toctree-checkbox-4"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../execution-profiles/create-and-use.html">Creating a profile and setting it</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../execution-profiles/maximal-example.html">All options supported by a profile</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../execution-profiles/priority.html">Priorities of execution settings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../execution-profiles/remap.html">Remapping execution profile handles</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../data-types/data-types.html">Data Types</a><input class="toctree-checkbox" id="toctree-checkbox-5" name="toctree-checkbox-5" type="checkbox"/><label for="toctree-checkbox-5"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/primitive.html">Bool, Tinyint, Smallint, Int, Bigint, Float, Double</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/text.html">Ascii, Text, Varchar</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/counter.html">Counter</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/blob.html">Blob</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/inet.html">Inet</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/uuid.html">Uuid</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/timeuuid.html">Timeuuid</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/date.html">Date</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/time.html">Time</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/timestamp.html">Timestamp</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/duration.html">Duration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/decimal.html">Decimal</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/varint.html">Varint</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/collections.html">List, Set, Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/tuple.html">Tuple</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/udt.html">User defined types</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/vector.html">Vector</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="load-balancing.html">Load balancing</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-6" name="toctree-checkbox-6" type="checkbox"/><label for="toctree-checkbox-6"><i class="icon-chevron-right"></i></label><div class="break"></div><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="default-policy.html">DefaultPolicy</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Tablet awareness</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../retry-policy/retry-policy.html">Retry policy configuration</a><input class="toctree-checkbox" id="toctree-checkbox-7" name="toctree-checkbox-7" type="checkbox"/><label for="toctree-checkbox-7"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../retry-policy/fallthrough.html">Fallthrough retry policy</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../retry-policy/default.html">Default retry policy</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../retry-policy/downgrading-consistency.html">Downgrading consistency retry policy</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../speculative-execution/speculative.html">Speculative execution</a><input class="toctree-checkbox" id="toctree-checkbox-8" name="toctree-checkbox-8" type="checkbox"/><label for="toctree-checkbox-8"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../speculative-execution/simple.html">Simple speculative execution</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../speculative-execution/percentile.html">Percentile speculative execution</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../metrics/metrics.html">Driver metrics</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../migration-guides/migration-guides.html">Migration guides</a><input class="toctree-checkbox" id="toctree-checkbox-9" name="toctree-checkbox-9" type="checkbox"/><label for="toctree-checkbox-9"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../migration-guides/0.11-serialization.html">Adjusting code to changes in serialization API introduced in 0.11</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../migration-guides/0.15-deserialization.html">Adjusting code to changes in deserialization API introduced in 0.15</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../logging/logging.html">Logging</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tracing/tracing.html">Query tracing</a><input class="toctree-checkbox" id="toctree-checkbox-10" name="toctree-checkbox-10" type="checkbox"/><label for="toctree-checkbox-10"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tracing/basic.html">Tracing a simple/prepared/batch query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tracing/paged.html">Tracing a paged query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tracing/prepare.html">Tracing <code class="docutils literal notranslate"><span class="pre">Session::prepare</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tracing/query-history.html">Query Execution History</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../schema/schema.html">Schema</a></li>
+</ul>
+
+        </div>
+    </div>
+</div>
+                    
+                
+            </div>
+
+        </section>
+
+        <footer class="footer">
+    <div class="footer-group">
+        <div class="footer-top">
+            <a class="footer-logo" href="https://www.scylladb.com"></a>
+            <div class="footer-links">
+                <a class="footer-links__link" href="https://docs.scylladb.com/" target="_blank">Docs</a>
+                <a class="footer-links__link" href="https://docs.scylladb.com/stable/get-started/develop-with-scylladb/tutorials-example-projects.html" target="_blank">Tutorials</a>
+                <a class="footer-links__link" href="https://university.scylladb.com/" target="_blank">University</a>
+                <a class="footer-links__link" href="https://www.scylladb.com/company/contact-us/"
+                   target="_blank">Contact Us</a>
+                <a class="footer-links__link" href="https://www.scylladb.com/company/" target="_blank">About Us</a>
+            </div>
+            <div class="footer-actions">
+                <a class="footer-actions__link" href="http://slack.scylladb.com/" target="_blank">
+                    <span data-tooltip tabindex="1" title="User Slack channel" data-position="bottom">
+                        <i class="icon-slack"></i>
+                    </span>
+                </a>
+                <a class="footer-actions__link" href="https://forum.scylladb.com/" target="_blank">
+                    <span data-tooltip tabindex="1" title="Community forum" data-position="bottom">
+                        <i class="icon-docs-community"></i>
+                    </span>
+                </a>
+            </div>
+        </div>
+
+        
+            <div class="footer-copyright">
+                
+                    
+                        &#169; 2026, ScyllaDB. All rights reserved.
+                    
+                    | <a class="footer-copyright__link" href="https://www.scylladb.com/tos/" target="_blank">Terms of Service</a>
+                    | <a class="footer-copyright__link" href="https://www.scylladb.com/privacy/" target="_blank">Privacy Policy</a>
+                    | ScyllaDB, and ScyllaDB Cloud, are registered trademarks of ScyllaDB, Inc.
+                
+            </div>
+        
+
+
+        <div class="footer-bottom">
+            
+                <div class="footer-bottom__last-updated">
+                    
+                        Last updated on 05 September 2026.
+                    
+                </div>
+            
+            <div class="footer-bottom__version">
+                Powered by
+                <a class="footer-bottom__link" href="http://sphinx-doc.org/">Sphinx 9.1.0</a> &amp;
+                <a class="footer-bottom__link" href="https://sphinx-theme.scylladb.com/">ScyllaDB Theme 1.9.3</a>
+            </div>
+        </div>
+    </div>
+</footer>
+
+        <noscript>
+            <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-T8P2JP" height="0" width="0"
+                    style="display: none; visibility: hidden"></iframe>
+        </noscript>
+    </body>
+
+</html>
