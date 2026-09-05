@@ -12,9 +12,14 @@
 //! carries the failure of any of them, and knows where each kind of failure is
 //! expected to surface.
 
+use assert_matches::assert_matches;
 use scylla::client::session::Session;
-use scylla::errors::{ExecutionError, PagerExecutionError, SchemaAgreementError};
+use scylla::errors::{
+    BadQuery, DbError, ExecutionError, NextPageError, PagerExecutionError, RequestAttemptError,
+    RequestError, SchemaAgreementError,
+};
 use scylla::response::PagingState;
+use scylla::serialize::SerializationError;
 use scylla::serialize::row::SerializeRow;
 use scylla::statement::Statement;
 use scylla::statement::prepared::PreparedStatement;
@@ -186,6 +191,52 @@ impl EntryPoint {
 }
 
 impl SendError {
+    /// The serialization error this failure carries, asserting on the way that
+    /// it surfaced where it is supposed to.
+    ///
+    /// A prepared statement knows its bind markers before the request is sent,
+    /// so it rejects the values up front, as a `BadQuery`. An unprepared one
+    /// learns them only from the response to its own request, so it fails per
+    /// attempt, as a `LastAttemptError`. Either way an iterating entry point
+    /// reports it as a `PagerExecutionError` of its own.
+    pub(crate) fn into_serialization_error(self, entry_point: EntryPoint) -> SerializationError {
+        match self {
+            SendError::Pager(PagerExecutionError::SerializationError(err)) => err,
+            SendError::Execution(ExecutionError::BadQuery(BadQuery::SerializationError(err)))
+                if entry_point.is_prepared() =>
+            {
+                err
+            }
+            SendError::Execution(ExecutionError::LastAttemptError(
+                RequestAttemptError::SerializationError(err),
+            )) if !entry_point.is_prepared() => err,
+            other => panic!(
+                "{} failed with an unexpected error: {other:?}",
+                entry_point.name()
+            ),
+        }
+    }
+
+    /// Asserts that this failure is the database rejecting the request with
+    /// `Invalid`, and that its message mentions `substring`.
+    pub(crate) fn assert_is_invalid_db_error(self, entry_point: EntryPoint, substring: &str) {
+        let db_error = match self {
+            SendError::Execution(ExecutionError::LastAttemptError(
+                RequestAttemptError::DbError(err, message),
+            )) => (err, message),
+            SendError::Pager(PagerExecutionError::NextPageError(
+                NextPageError::RequestFailure(RequestError::LastAttemptError(
+                    RequestAttemptError::DbError(err, message),
+                )),
+            )) => (err, message),
+            other => panic!(
+                "{} failed with an unexpected error: {other:?}",
+                entry_point.name()
+            ),
+        };
+        assert_matches!(&db_error, (DbError::Invalid, message) if message.contains(substring));
+    }
+
     /// The schema agreement error this failure carries. Both entry point
     /// families wrap one, in `ExecutionError::SchemaAgreementError` and
     /// `PagerExecutionError::SchemaAgreementError` respectively.
