@@ -205,7 +205,7 @@ pub mod serialize {
             BuiltinTypeCheckErrorKind, MapSerializationErrorKind, MapTypeCheckErrorKind,
             SetOrListSerializationErrorKind, SetOrListTypeCheckErrorKind,
             TupleSerializationErrorKind, TupleTypeCheckErrorKind, UdtSerializationErrorKind,
-            UdtTypeCheckErrorKind,
+            UdtTypeCheckErrorKind, VectorSerializationErrorKind,
         };
     }
 
