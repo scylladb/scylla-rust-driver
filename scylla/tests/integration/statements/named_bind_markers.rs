@@ -1,3 +1,8 @@
+use assert_matches::assert_matches;
+use scylla::errors::{BadQuery, ExecutionError};
+use scylla::serialize::SerializationError;
+use scylla::serialize::row::{BuiltinTypeCheckError, BuiltinTypeCheckErrorKind};
+
 use crate::utils::{
     PerformDDL as _, create_new_session_builder, setup_tracing, unique_keyspace_name,
 };
@@ -51,15 +56,38 @@ async fn test_named_bind_markers() {
 
     assert_eq!(rows, vec![(7, 13, 42), (17, 113, 142)]);
 
-    let wrongmaps: Vec<HashMap<&str, i32>> = vec![
-        HashMap::from([("pk", 7), ("fefe", 42), ("ck", 13)]),
-        HashMap::from([("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 7)]),
-        HashMap::new(),
-        HashMap::from([("ck", 9)]),
+    // A map that does not name every bind marker must be rejected, and rejected
+    // for the right reason: the first column it leaves unset. Merely asserting
+    // that the request errors out would be satisfied by any failure at all.
+    let wrongmaps: Vec<(HashMap<&str, i32>, &str)> = vec![
+        // A name that no marker uses does not stand in for the missing one.
+        (HashMap::from([("pk", 7), ("fefe", 42), ("ck", 13)]), "v"),
+        (HashMap::from([("v", 7), ("fefe", 42), ("ck", 13)]), "pk"),
+        (
+            HashMap::from([("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 7)]),
+            "pk",
+        ),
+        (HashMap::new(), "pk"),
+        (HashMap::from([("ck", 9)]), "pk"),
     ];
-    for wrongmap in wrongmaps {
-        assert!(session.execute_unpaged(&prepared, &wrongmap).await.is_err());
+    for (wrongmap, missing_column) in wrongmaps {
+        let err = session
+            .execute_unpaged(&prepared, &wrongmap)
+            .await
+            .unwrap_err();
+        let ExecutionError::BadQuery(BadQuery::SerializationError(err)) = err else {
+            panic!("Expected a serialization error, got {err:?}");
+        };
+        assert_value_missing_for_column(&err, missing_column);
     }
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+fn assert_value_missing_for_column(err: &SerializationError, column: &str) {
+    let kind = &err.downcast_ref::<BuiltinTypeCheckError>().unwrap().kind;
+    assert_matches!(
+        kind,
+        BuiltinTypeCheckErrorKind::ValueMissingForColumn { name } if name == column
+    );
 }
