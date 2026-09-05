@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use scylla_cql::frame::flag;
 use scylla_cql::frame::frame_errors::FrameHeaderParseError;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 pub use scylla_cql::frame::request::RequestOpcode;
@@ -37,6 +38,14 @@ impl FrameParams {
             version: 0x80 | (self.version & 0x7F),
             ..*self
         }
+    }
+
+    /// Tells whether the frame carried a compressed body on the wire.
+    ///
+    /// Note that frames handed out by the proxy always expose a *decompressed*
+    /// body, so this flag is the only way to tell that compression was in play.
+    pub const fn is_compressed(&self) -> bool {
+        self.flags & flag::COMPRESSION != 0
     }
 }
 
