@@ -535,16 +535,16 @@ impl RunningNode {
         }
         let mut any_sent = false;
         guard.retain(|_conn_no, tx| {
-            let frame = ResponseFrame {
-                params: FrameParams {
+            let frame = ResponseFrame::new(
+                FrameParams {
                     version: 4,
                     flags: 0,
                     stream: -1,
                 }
                 .for_response(),
-                opcode: ResponseOpcode::Event,
-                body: body.clone(),
-            };
+                ResponseOpcode::Event,
+                body.clone(),
+            );
             let ok = tx.send(frame).is_ok();
             any_sent |= ok;
             // Remove dead senders (connection already closed on the
@@ -1818,6 +1818,7 @@ mod tests {
             params: recvd_params,
             opcode: recvd_opcode,
             body: recvd_body,
+            ..
         } = read_request_frame(conn, compression).await.unwrap();
         assert_eq!(recvd_params, HARDCODED_OPTIONS_PARAMS);
         assert_eq!(recvd_opcode, RequestOpcode::Options);
@@ -1923,6 +1924,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = read_request_frame(&mut conn, &no_compression())
                 .await
                 .unwrap();
@@ -2071,11 +2073,11 @@ mod tests {
                 RequestRule(
                     Condition::RequestOpcode(RequestOpcode::Register),
                     RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
-                        ResponseFrame {
-                            params: params.for_response(),
-                            opcode: ResponseOpcode::Event,
-                            body: Bytes::from_static(test_msg),
-                        }
+                        ResponseFrame::new(
+                            params.for_response(),
+                            ResponseOpcode::Event,
+                            Bytes::from_static(test_msg),
+                        )
                     })),
                 ),
                 RequestRule(
@@ -2085,11 +2087,11 @@ mod tests {
                 RequestRule(
                     Condition::True, // only the first matching rule is applied, so "True" covers all remaining cases
                     RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
-                        ResponseFrame {
-                            params: params.for_response(),
-                            opcode: ResponseOpcode::Ready,
-                            body: Bytes::new(),
-                        }
+                        ResponseFrame::new(
+                            params.for_response(),
+                            ResponseOpcode::Ready,
+                            Bytes::new(),
+                        )
                     })),
                 ),
             ]),
@@ -2146,6 +2148,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = read_response_frame(&mut conn, &no_compression())
                 .await
                 .unwrap();
@@ -2157,6 +2160,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = read_response_frame(&mut conn, &no_compression())
                 .await
                 .unwrap();
@@ -2173,6 +2177,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = read_request_frame(&mut conn, &no_compression())
                 .await
                 .unwrap();
@@ -2246,6 +2251,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = request(&mut driver, &mut node, params, opcode, &body)
                 .await
                 .unwrap();
@@ -2274,6 +2280,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = request(&mut driver, &mut node, params, opcode, &body)
                 .await
                 .unwrap();
@@ -2367,6 +2374,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = request(&mut driver, &mut node, params, opcode, &body)
                 .await
                 .unwrap();
@@ -2572,6 +2580,7 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
+                ..
             } = read_request_frame(&mut conn, &no_compression())
                 .await
                 .unwrap();
@@ -2629,11 +2638,11 @@ mod tests {
                 RequestRule(
                     Condition::RequestOpcode(RequestOpcode::Register),
                     RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
-                        ResponseFrame {
-                            params: params.for_response(),
-                            opcode: ResponseOpcode::Event,
-                            body: Bytes::from_static(test_msg),
-                        }
+                        ResponseFrame::new(
+                            params.for_response(),
+                            ResponseOpcode::Event,
+                            Bytes::from_static(test_msg),
+                        )
                     })),
                 ),
                 RequestRule(
@@ -2643,11 +2652,11 @@ mod tests {
                 RequestRule(
                     Condition::True, // only the first matching rule is applied, so "True" covers all remaining cases
                     RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
-                        ResponseFrame {
-                            params: params.for_response(),
-                            opcode: ResponseOpcode::Ready,
-                            body: Bytes::new(),
-                        }
+                        ResponseFrame::new(
+                            params.for_response(),
+                            ResponseOpcode::Ready,
+                            Bytes::new(),
+                        )
                     })),
                 ),
             ]),
@@ -2700,6 +2709,7 @@ mod tests {
             params: recvd_params,
             opcode: recvd_opcode,
             body: recvd_body,
+            ..
         } = read_response_frame(&mut conn, &no_compression())
             .await
             .unwrap();
@@ -2711,6 +2721,7 @@ mod tests {
             params: recvd_params,
             opcode: recvd_opcode,
             body: recvd_body,
+            ..
         } = read_response_frame(&mut conn, &no_compression())
             .await
             .unwrap();
@@ -3080,11 +3091,11 @@ mod tests {
         // 1. "driver" sends an uncompressed, e.g., QUERY frame, feedback returns its uncompressed body,
         //    and "node" receives the uncompressed frame.
         {
-            let sent_frame = RequestFrame {
-                params: PARAMS_REQUEST_NO_COMPRESSION,
-                opcode: RequestOpcode::Query,
-                body: random_body(),
-            };
+            let sent_frame = RequestFrame::new(
+                PARAMS_REQUEST_NO_COMPRESSION,
+                RequestOpcode::Query,
+                random_body(),
+            );
 
             sent_frame
                 .write(&mut driver_conn, &no_compression())
@@ -3103,11 +3114,11 @@ mod tests {
         // 2. "node" responds with an uncompressed RESULT frame, feedback returns its uncompressed body,
         //    and "driver" receives the uncompressed frame.
         {
-            let sent_frame = ResponseFrame {
-                params: PARAMS_RESPONSE_NO_COMPRESSION,
-                opcode: ResponseOpcode::Result,
-                body: random_body(),
-            };
+            let sent_frame = ResponseFrame::new(
+                PARAMS_RESPONSE_NO_COMPRESSION,
+                ResponseOpcode::Result,
+                random_body(),
+            );
 
             sent_frame
                 .write(&mut node_conn, &no_compression())
@@ -3138,11 +3149,11 @@ mod tests {
             .to_bytes()
             .unwrap();
 
-            let sent_frame = RequestFrame {
-                params: PARAMS_REQUEST_NO_COMPRESSION,
-                opcode: RequestOpcode::Startup,
-                body: startup_body,
-            };
+            let sent_frame = RequestFrame::new(
+                PARAMS_REQUEST_NO_COMPRESSION,
+                RequestOpcode::Startup,
+                startup_body,
+            );
 
             sent_frame
                 .write(&mut driver_conn, &no_compression())
@@ -3161,11 +3172,11 @@ mod tests {
         // 4. "driver" sends a compressed, e.g., QUERY frame, feedback returns its uncompressed body,
         //    and "node" receives the compressed frame.
         {
-            let sent_frame = RequestFrame {
-                params: PARAMS_REQUEST_COMPRESSION,
-                opcode: RequestOpcode::Query,
-                body: random_body(),
-            };
+            let sent_frame = RequestFrame::new(
+                PARAMS_REQUEST_COMPRESSION,
+                RequestOpcode::Query,
+                random_body(),
+            );
 
             sent_frame
                 .write(&mut driver_conn, &with_compression(Compression::Lz4))
@@ -3185,11 +3196,11 @@ mod tests {
         // 5. "node" responds with a compressed RESULT frame, feedback returns its uncompressed body,
         //    and "driver" receives the compressed frame.
         {
-            let sent_frame = ResponseFrame {
-                params: PARAMS_RESPONSE_COMPRESSION,
-                opcode: ResponseOpcode::Result,
-                body: random_body(),
-            };
+            let sent_frame = ResponseFrame::new(
+                PARAMS_RESPONSE_COMPRESSION,
+                ResponseOpcode::Result,
+                random_body(),
+            );
 
             sent_frame
                 .write(&mut node_conn, &with_compression(Compression::Lz4))
