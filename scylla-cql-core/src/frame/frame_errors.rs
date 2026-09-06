@@ -680,6 +680,9 @@ pub enum CustomTypeParseError {
     InvalidUtf8(Vec<u8>),
     #[error("Wrong number of parameters {actual}, expected: {expected}")]
     InvalidParameterCount { actual: usize, expected: usize },
+    /// Input remained after parsing a complete custom type name.
+    #[error("Unexpected trailing characters: {0}")]
+    UnexpectedTrailingCharacters(String),
 }
 
 /// An error type returned when deserialization of CQL type name fails.
