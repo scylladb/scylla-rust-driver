@@ -988,15 +988,10 @@ impl Doorkeeper {
         real_addr: SocketAddr,
     ) -> Result<(TcpStream, Option<TargetShard>), DoorkeeperError> {
         let mut cluster_stream = if let Some(shards) = self.shards_count {
-            let socket = match self.node.proxy_addr().ip() {
-                std::net::IpAddr::V4(_) => TcpSocket::new_v4(),
-                std::net::IpAddr::V6(_) => TcpSocket::new_v6(),
-            }
-            .map_err(DoorkeeperError::SocketCreate)?;
+            let (socket, mut desired_addr) = shard_aware_socket(real_addr, driver_addr.port())
+                .map_err(DoorkeeperError::SocketCreate)?;
 
             let shard_preserving_addr = {
-                let mut desired_addr =
-                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), driver_addr.port());
                 while socket.bind(desired_addr).is_err() {
                     // in search for a port that translates to the desired shard
                     let next_port = self.next_port_to_same_shard(desired_addr.port());
@@ -1723,6 +1718,24 @@ impl ProxyWorker {
     }
 }
 
+fn shard_aware_socket(
+    real_addr: SocketAddr,
+    source_port: u16,
+) -> std::io::Result<(TcpSocket, SocketAddr)> {
+    let (socket, unspecified_ip) = match real_addr.ip() {
+        IpAddr::V4(_) => (
+            TcpSocket::new_v4()?,
+            IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+        ),
+        IpAddr::V6(_) => (
+            TcpSocket::new_v6()?,
+            IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+        ),
+    };
+
+    Ok((socket, SocketAddr::new(unspecified_ip, source_port)))
+}
+
 // Returns next free IP address for another proxy instance.
 // Useful for concurrent testing.
 pub fn get_exclusive_local_address() -> IpAddr {
@@ -1801,6 +1814,25 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::sync::oneshot;
+
+    #[test]
+    fn shard_aware_socket_uses_real_node_ip_family() {
+        for (real_addr, expected_bind_addr) in [
+            (
+                SocketAddr::from(([127, 0, 0, 1], 9042)),
+                SocketAddr::from(([0, 0, 0, 0], 4242)),
+            ),
+            (
+                SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 9042)),
+                SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 4242)),
+            ),
+        ] {
+            let (socket, bind_addr) = shard_aware_socket(real_addr, 4242).unwrap();
+            assert_eq!(bind_addr, expected_bind_addr);
+            socket.bind(bind_addr).unwrap();
+            assert_eq!(socket.local_addr().unwrap().is_ipv4(), real_addr.is_ipv4());
+        }
+    }
 
     fn random_body() -> Bytes {
         let body_len = (rand::random::<u32>() % 1000) as usize;
