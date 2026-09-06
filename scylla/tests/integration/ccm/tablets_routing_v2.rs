@@ -8,9 +8,13 @@
 //! exercises the V1 path either way.
 
 use std::cell::Cell;
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use futures::future::try_join_all;
+use futures::{Future, FutureExt};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::metadata::{CollectionType, ColumnType, NativeType};
@@ -30,22 +34,151 @@ use scylla_cql::frame::response::Supported;
 use scylla_cql::frame::types;
 
 use scylla_proxy::{
-    Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
-    ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule, RunningProxy, ShardAwareness,
-    TargetShard, WorkerError,
+    Condition, Node as ProxyNode, Proxy, ProxyError, Reaction, RequestFrame, RequestOpcode,
+    RequestReaction, RequestRule, ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule,
+    RunningProxy, ShardAwareness, TargetShard, WorkerError, get_exclusive_local_address,
 };
 
 use tokio::sync::mpsc;
 
+use scylla_ccm_bridge::CLUSTER_VERSION;
+use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
+
 use crate::utils::{
     PerformDDL, execute_prepared_statement_everywhere, fetch_negotiated_features,
-    scylla_supports_tablets, setup_tracing, supports_feature, test_with_3_node_cluster,
-    unique_keyspace_name, with_migration_retry,
+    scylla_supports_tablets, setup_tracing, supports_feature, unique_keyspace_name,
+    with_migration_retry,
 };
 
 const CUSTOM_PAYLOAD_TABLETS_V2_KEY: &str = "tablets-routing-v2";
 const CUSTOM_PAYLOAD_TABLETS_V1_KEY: &str = "tablets-routing-v1";
 const TABLETS_ROUTING_V2_EXTENSION: &str = "TABLETS_ROUTING_V2_EXPERIMENTAL";
+
+fn cluster_3_nodes() -> ClusterOptions {
+    ClusterOptions {
+        name: "cluster_tablets_routing_v2".to_string(),
+        version: CLUSTER_VERSION.clone(),
+        nodes_per_dc: vec![3],
+        ..ClusterOptions::default()
+    }
+}
+
+async fn enable_strongly_consistent_tables(mut cluster: Cluster) -> Cluster {
+    cluster
+        .updateconf([("experimental_features", "[strongly-consistent-tables]")])
+        .await
+        .expect("failed to enable the strongly-consistent-tables experimental feature");
+    cluster
+}
+
+/// Runs `test` against a freshly created 3-node CCM cluster with the `strongly-consistent-tables`
+/// experimental feature enabled.
+///
+/// `test` is handed the negotiated [`ProtocolFeatures`] for the cluster's first node, so it can
+/// use it to decode frames.
+///
+/// When `skip_if_v2_unsupported` is set and the server did not negotiate
+/// `TABLETS_ROUTING_V2_EXPERIMENTAL`, the test is skipped.
+async fn test_with_3_node_ccm_cluster<F, Fut>(skip_if_v2_unsupported: bool, test: F)
+where
+    F: FnOnce([String; 3], HashMap<SocketAddr, SocketAddr>, RunningProxy, ProtocolFeatures) -> Fut,
+    Fut: Future<Output = RunningProxy>,
+{
+    let mut cluster = Cluster::new(cluster_3_nodes())
+        .await
+        .expect("Failed to create cluster");
+    cluster
+        .init()
+        .await
+        .inspect_err(|_| cluster.mark_as_failed())
+        .expect("failed to initialize cluster");
+    cluster = enable_strongly_consistent_tables(cluster).await;
+
+    // To determine which experimental features the specific version
+    // of Scylla that we're running the test against supports, we'd
+    // probably need to consult the corresponding binary.
+    //
+    // Use a simpler solution for the time being and just skip the
+    // test.
+    //
+    // Refs: https://github.com/scylladb/scylla-rust-driver/issues/1889.
+    if let Err(err) = cluster.start(None).await {
+        cluster.mark_as_failed();
+        tracing::warn!(
+            "Skipping test because the cluster failed to start, possibly because this ScyllaDB \
+             version rejects the `strongly-consistent-tables` experimental feature: {err}"
+        );
+        return;
+    }
+
+    let result = AssertUnwindSafe(run_proxied_test(&mut cluster, skip_if_v2_unsupported, test))
+        .catch_unwind()
+        .await;
+
+    match result {
+        Ok(()) => (),
+        Err(err) => {
+            cluster.mark_as_failed();
+            std::panic::resume_unwind(err);
+        }
+    }
+}
+
+async fn run_proxied_test<F, Fut>(cluster: &mut Cluster, skip_if_v2_unsupported: bool, test: F)
+where
+    F: FnOnce([String; 3], HashMap<SocketAddr, SocketAddr>, RunningProxy, ProtocolFeatures) -> Fut,
+    Fut: Future<Output = RunningProxy>,
+{
+    let real_addrs: [SocketAddr; 3] = cluster
+        .nodes()
+        .iter()
+        .map(|node| SocketAddr::new(node.broadcast_rpc_address(), node.native_transport_port()))
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap_or_else(|addrs: Vec<_>| {
+            panic!("expected a 3-node cluster, got {} nodes", addrs.len())
+        });
+
+    let features = fetch_negotiated_features(Some(real_addrs[0].to_string())).await;
+
+    if skip_if_v2_unsupported && !features.tablets_v2_supported {
+        tracing::warn!(
+            "Skipping test because the server did not negotiate TABLETS_ROUTING_V2_EXPERIMENTAL"
+        );
+        return;
+    }
+
+    let proxy_addrs: [SocketAddr; 3] = std::array::from_fn(|_| {
+        format!("{}:9042", get_exclusive_local_address())
+            .parse()
+            .unwrap()
+    });
+
+    let proxy = Proxy::new(std::iter::zip(proxy_addrs, real_addrs).map(
+        |(proxy_addr, real_addr)| {
+            ProxyNode::builder()
+                .real_address(real_addr)
+                .proxy_address(proxy_addr)
+                .shard_awareness(ShardAwareness::QueryNode)
+                .build()
+        },
+    ));
+
+    let translation_map = proxy.translation_map();
+    let running_proxy = proxy.run().await.unwrap();
+    let proxy_uris = proxy_addrs.map(|addr| addr.to_string());
+
+    let running_proxy = test(proxy_uris, translation_map, running_proxy, features).await;
+
+    // A `DriverDisconnected` error is benign here (the session is dropped as the proxy
+    // shuts down, and an in-flight request can observe the connection closing). Any
+    // other error is a real failure.
+    match running_proxy.finish().await {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+}
 
 /// The driver's *cached* routing view of the tablet owning `pk` in `ks.t`: the replica list in
 /// the order the driver currently holds it.
@@ -276,17 +409,9 @@ async fn execute_concurrently(
 async fn test_tablets_routing_v2_execute_carries_block_and_converges() {
     setup_tracing();
 
-    let features = fetch_negotiated_features(None).await;
-    if !features.tablets_v2_supported {
-        tracing::warn!(
-            "Skipping test because the server did not negotiate TABLETS_ROUTING_V2_EXPERIMENTAL"
-        );
-        return;
-    }
-
-    let res = test_with_3_node_cluster(
-        ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+    test_with_3_node_ccm_cluster(
+        true,
+        |proxy_uris, translation_map, mut running_proxy, features| async move {
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
@@ -434,16 +559,6 @@ async fn test_tablets_routing_v2_execute_carries_block_and_converges() {
         },
     )
     .await;
-
-    // `test_with_3_node_cluster` returns the proxy's final status. When the session is dropped
-    // as the proxy shuts down, an in-flight request can observe the connection closing and the
-    // proxy reports `DriverDisconnected`; that is benign here (the measurement already
-    // finished), so we accept it. Any other error is a real failure.
-    match res {
-        Ok(()) => (),
-        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
-        Err(err) => panic!("{}", err),
-    }
 }
 
 /// A mixed cluster where one node does not advertise `TABLETS_ROUTING_V2`.
@@ -457,21 +572,14 @@ async fn test_tablets_routing_v2_execute_carries_block_and_converges() {
 async fn test_tablets_routing_v2_mixed_feature_connections() {
     setup_tracing();
 
-    let features = fetch_negotiated_features(None).await;
-    if !features.tablets_v2_supported {
-        tracing::warn!(
-            "Skipping test because the server did not negotiate TABLETS_ROUTING_V2_EXPERIMENTAL"
-        );
-        return;
-    }
-    // The non-V2 node keeps every other negotiated feature (e.g. the metadata id), so its
-    // EXECUTE frames must be decoded with V2 turned off but the rest left on.
-    let mut non_v2_features = features;
-    non_v2_features.tablets_v2_supported = false;
+    test_with_3_node_ccm_cluster(
+        true,
+        |proxy_uris, translation_map, mut running_proxy, features| async move {
+            // The non-V2 node keeps every other negotiated feature (e.g. the metadata id), so its
+            // EXECUTE frames must be decoded with V2 turned off but the rest left on.
+            let mut non_v2_features = features;
+            non_v2_features.tablets_v2_supported = false;
 
-    let res = test_with_3_node_cluster(
-        ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
             // Hide the extension from node 0 only, so the driver negotiates V2
             // with nodes 1 and 2 but not with node 0.
             running_proxy.running_nodes[0]
@@ -560,14 +668,6 @@ async fn test_tablets_routing_v2_mixed_feature_connections() {
         },
     )
     .await;
-
-    // A `DriverDisconnected` error is benign here (the session is dropped as the proxy shuts
-    // down). Any other error is a real failure.
-    match res {
-        Ok(()) => (),
-        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
-        Err(err) => panic!("{}", err),
-    }
 }
 
 // -- strongly-consistent (leader-aware) routing -----------------------------
@@ -593,17 +693,9 @@ async fn create_strongly_consistent_tablet_table(session: &Session, ks: &str) {
 async fn test_leader_aware_routing_targets_the_raft_leader() {
     setup_tracing();
 
-    let features = fetch_negotiated_features(None).await;
-    if !features.tablets_v2_supported {
-        tracing::warn!(
-            "Skipping test because the server did not negotiate TABLETS_ROUTING_V2_EXPERIMENTAL"
-        );
-        return;
-    }
-
-    let res = test_with_3_node_cluster(
-        ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+    test_with_3_node_ccm_cluster(
+        true,
+        |proxy_uris, translation_map, mut running_proxy, _features| async move {
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
@@ -742,14 +834,6 @@ async fn test_leader_aware_routing_targets_the_raft_leader() {
         },
     )
     .await;
-
-    // A `DriverDisconnected` error is benign here (the session is dropped as the proxy shuts
-    // down). Any other error is a real failure.
-    match res {
-        Ok(()) => (),
-        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
-        Err(err) => panic!("{}", err),
-    }
 }
 
 /// `TABLETS_ROUTING_V1` must keep working on a server that does not offer V2.
@@ -769,16 +853,16 @@ async fn test_tablets_routing_v1_used_when_v2_unavailable() {
 
     // Deliberately *not* gated on the server supporting V2. On a server that offers V2 the rule
     // below forces the driver back onto V1; on one that does not, the rule is a no-op and the
-    // driver is on V1 anyway. Either way this is a V1 test, so it runs in ordinary CI too --
-    // which is the point, since V1 is not going away when V2 ships.
-    let mut v1_features = fetch_negotiated_features(None).await;
-    // With V2 hidden the driver negotiates V1, so its EXECUTE frames must be decoded with V2
-    // turned off but every other negotiated feature left on.
-    v1_features.tablets_v2_supported = false;
+    // driver is on V1 anyway. Either way this is a V1 test, so it runs regardless -- which is the
+    // point, since V1 is not going away when V2 ships.
+    test_with_3_node_ccm_cluster(
+        false,
+        |proxy_uris, translation_map, mut running_proxy, features| async move {
+            // With V2 hidden the driver negotiates V1, so its EXECUTE frames must be decoded with
+            // V2 turned off but every other negotiated feature left on.
+            let mut v1_features = features;
+            v1_features.tablets_v2_supported = false;
 
-    let res = test_with_3_node_cluster(
-        ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
             // Hide the extension from every node so no connection negotiates V2.
             for node in running_proxy.running_nodes.iter_mut() {
                 node.change_response_rules(Some(vec![hide_v2_extension_rule()]));
@@ -919,12 +1003,4 @@ async fn test_tablets_routing_v1_used_when_v2_unavailable() {
         },
     )
     .await;
-
-    // A `DriverDisconnected` error is benign here (the session is dropped as the proxy shuts
-    // down). Any other error is a real failure.
-    match res {
-        Ok(()) => (),
-        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
-        Err(err) => panic!("{}", err),
-    }
 }

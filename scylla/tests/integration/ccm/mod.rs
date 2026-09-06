@@ -13,4 +13,5 @@ mod tls_inspecting_proxy;
 mod tls_tickets;
 
 mod result_metadata_extension;
+mod tablets_routing_v2;
 mod using_timeout;
