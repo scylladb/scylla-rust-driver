@@ -85,6 +85,8 @@ unstable-reconnect-policy = []
 # Enables fetching contents of the `system.client_routes` table.
 # Needed for custom routing (AWS PrivateLink, GCP PSC, etc.).
 unstable-client-routes = []
+# Exposes the unstable API of strong consistency.
+unstable-strong-consistency = []
 
 
 [dependencies]
