@@ -7,18 +7,26 @@
 //! which fiber each attempt belonged to, how it ended, and whether it went to a
 //! node already tried.
 //!
-//! The driver's own history is the source of truth; the proxy is used only to
-//! make a chosen attempt fail or hang. As the cases are about what happens
-//! while a response is outstanding, they are necessarily written in terms of
-//! time: `TICK` is the unit the speculative policy's interval is expressed in,
-//! and a delay of `NEVER` stands for a response that does not arrive at all.
+//! The driver's own history is the source of truth. Nothing else is real: the
+//! three nodes are `scylla-proxy` nodes in dry mode, backed by no ScyllaDB at
+//! all, answering every request from the rules below. That is what makes the
+//! cases cheap enough to be written in terms of time - `TICK` is the unit the
+//! speculative policy's interval is expressed in - and it removes the variance
+//! a real cluster would add to those windows.
+//!
+//! A passing run logs one "Could not establish control connection and fetch
+//! metadata" error per case. That is expected: there is no cluster to read
+//! metadata from, and a session that cannot read it carries on with a peer list
+//! built from its contact points, which is the topology these cases want.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
+use bytes::{BufMut as _, Bytes, BytesMut};
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -26,28 +34,26 @@ use scylla::errors::{DbError, RequestAttemptError};
 use scylla::observability::history::{
     AttemptResult, HistoryCollector, StructuredHistory, TimePoint,
 };
-use scylla::policies::retry::{
-    FallthroughRetryPolicy, RequestInfo, RetryDecision, RetryPolicy, RetrySession,
-};
+use scylla::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use scylla::policies::speculative_execution::{
     SimpleSpeculativeExecutionPolicy, SpeculativeExecutionPolicy,
 };
 use scylla::statement::unprepared::Statement;
 use scylla_proxy::{
-    Action, Condition, ProxyError, RequestOpcode, RequestReaction, RequestRule, ShardAwareness,
-    WorkerError, example_db_errors,
+    Condition, Node, Proxy, ProxyError, Reaction as _, RequestFrame, RequestOpcode,
+    RequestReaction, RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, WorkerError,
+    example_db_errors, get_exclusive_local_address,
 };
 
-use crate::utils::{
-    PerformDDL as _, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
-};
+use crate::utils::setup_tracing;
 
 /// The unit the timings of these tests are expressed in. One tick has to be
-/// comfortably longer than a request to the local cluster takes.
-const TICK: Duration = Duration::from_millis(200);
+/// comfortably longer than answering a request takes - which, with the proxy
+/// forging every response in-process, is a channel send and a loopback write.
+const TICK: Duration = Duration::from_millis(100);
 
-/// A delay standing for "no response ever arrives".
-const NEVER: Duration = Duration::from_secs(2000);
+/// How many dry-mode nodes the simulated cluster has.
+const NODES: usize = 3;
 
 /// Which fiber an attempt belonged to.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -206,19 +212,174 @@ fn check_attempts(expected: &[ExpectedAttempt], actual: &[Attempt]) -> Result<()
     Ok(())
 }
 
+/// The prepared statement id the forged `RESULT:Prepared` hands out. Its value
+/// is arbitrary - nothing looks it up - but it has to be the same everywhere,
+/// so that a repreparation would agree with what was handed out before.
+const PREPARED_ID: &[u8] = &[0xDE, 0xAD, 0xBE, 0xEF];
+
+/// The CQL type id of `int`, as the protocol encodes it in a column spec.
+const CQL_TYPE_INT: u16 = 0x0009;
+
+/// Distinguishes the statement under test from the queries the driver makes on
+/// its own behalf, both of which reach the proxy as PREPARE and EXECUTE.
+const STATEMENT_MARKER: &str = "ks.t";
+
+/// `RESULT:Void` - what a statement that returns no rows is answered with.
+fn forged_void(frame: RequestFrame) -> ResponseFrame {
+    ResponseFrame::new(
+        frame.params.for_response(),
+        ResponseOpcode::Result,
+        Bytes::from_static(&[0, 0, 0, 1]),
+    )
+}
+
+/// `RESULT:Prepared` for a statement binding exactly one `int`.
+///
+/// Two things about it are load-bearing. It must declare one bound column: with
+/// none, serializing the value fails with `WrongColumnCount` before a request
+/// is ever sent, and the retry and speculative machinery never runs. And it
+/// must declare no partition key indexes, so that the statement is not
+/// token-aware and the load balancer plans over every node - which is what the
+/// "a node not tried before" expectations need. Declaring a key index instead
+/// would send the driver looking for replicas in a keyspace that the simulated
+/// cluster does not have.
+///
+/// The layout is CQL v4 with no protocol extensions negotiated, which is what
+/// the forged `SUPPORTED` below arranges. In particular no result metadata id
+/// is emitted, as the driver only reads one when `SCYLLA_USE_METADATA_ID` was
+/// advertised.
+fn forged_prepared(frame: RequestFrame) -> ResponseFrame {
+    fn write_string(buf: &mut BytesMut, s: &str) {
+        buf.put_u16(s.len() as u16);
+        buf.put_slice(s.as_bytes());
+    }
+
+    let mut body = BytesMut::new();
+    body.put_i32(4); // Result kind: Prepared.
+    body.put_u16(PREPARED_ID.len() as u16);
+    body.put_slice(PREPARED_ID);
+
+    // Prepared metadata.
+    body.put_i32(0x0001); // Flags: GLOBAL_TABLES_SPEC.
+    body.put_i32(1); // One bound column.
+    body.put_i32(0); // No partition key indexes.
+    write_string(&mut body, "ks"); // The global table spec the flag promises.
+    write_string(&mut body, "t");
+    write_string(&mut body, "a"); // The one column: name, then type.
+    body.put_u16(CQL_TYPE_INT);
+
+    // Result metadata: none, as the statement returns no rows.
+    body.put_i32(0); // Flags.
+    body.put_i32(0); // No columns.
+
+    ResponseFrame::new(
+        frame.params.for_response(),
+        ResponseOpcode::Result,
+        body.freeze(),
+    )
+}
+
+/// The rules every dry node needs in order for a `Session` to reach it and run
+/// a statement, before any of the rules a test case adds.
+///
+/// Dry mode drops whatever no rule matches, and the requests a session makes
+/// while connecting have no timeout of their own, so a missing rule here does
+/// not fail the test - it hangs it. Two are easy to overlook:
+///
+/// - REGISTER must be answered. The control connection subscribes to events and
+///   waits for a `READY` before the session is usable.
+/// - The control connection's metadata reads must be *errored*, not dropped. A
+///   session tolerates a failed metadata read - it carries on with a peer list
+///   built from the contact points, which is exactly the topology wanted here -
+///   but only if the read actually fails.
+fn handshake_rules() -> Vec<RequestRule> {
+    vec![
+        RequestRule(
+            Condition::RequestOpcode(RequestOpcode::Options),
+            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
+            })),
+        ),
+        RequestRule(
+            Condition::RequestOpcode(RequestOpcode::Startup),
+            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                ResponseFrame::forged_ready(frame.params)
+            })),
+        ),
+        RequestRule(
+            Condition::RequestOpcode(RequestOpcode::Register),
+            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                ResponseFrame::forged_ready(frame.params)
+            })),
+        ),
+        RequestRule(
+            Condition::RequestOpcode(RequestOpcode::Query),
+            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                ResponseFrame::forged_error(
+                    frame.params,
+                    DbError::ServerError,
+                    Some("No cluster behind this proxy."),
+                )
+                .unwrap()
+            })),
+        ),
+        // Only the statement under test gets a prepared statement it can use.
+        // The forged metadata below describes that statement and nothing else,
+        // so handing it to the driver's own queries would have them fail while
+        // serializing their values rather than while reading the response.
+        RequestRule(
+            Condition::RequestOpcode(RequestOpcode::Prepare).and(
+                Condition::BodyContainsCaseSensitive(STATEMENT_MARKER.as_bytes().into()),
+            ),
+            RequestReaction::forge_response(Arc::new(forged_prepared)),
+        ),
+        RequestRule(
+            Condition::RequestOpcode(RequestOpcode::Prepare),
+            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                ResponseFrame::forged_error(
+                    frame.params,
+                    DbError::ServerError,
+                    Some("No cluster behind this proxy."),
+                )
+                .unwrap()
+            })),
+        ),
+        // The statement succeeds unless a case's own rule, which is matched
+        // first, says otherwise.
+        RequestRule(
+            Condition::RequestOpcode(RequestOpcode::Execute),
+            RequestReaction::forge_response(Arc::new(forged_void)),
+        ),
+    ]
+}
+
 /// What the proxy should do to an attempt.
 enum ProxyRule {
-    /// Answer the next request, wherever in the cluster it lands, with `error`,
-    /// after `delay` if given.
-    Fail {
-        delay: Option<Duration>,
-        error: fn() -> DbError,
-    },
-    /// Answer every request with `error`.
-    FailAll { error: fn() -> DbError },
-    /// Hold the next request, wherever it lands, for `delay` before letting it
-    /// through.
+    /// Answer the next attempt, wherever in the cluster it lands, with an error
+    /// the retry policy retries on the next target, after `delay` if given.
+    Fail { delay: Option<Duration> },
+    /// Answer every attempt with that error.
+    FailAll,
+    /// Hold the next attempt for `delay` before answering it.
     Delay { delay: Duration },
+    /// Never answer the next attempt at all.
+    Never,
+}
+
+fn fail(delay: Option<Duration>) -> ProxyRule {
+    ProxyRule::Fail { delay }
+}
+
+fn fail_all() -> ProxyRule {
+    ProxyRule::FailAll
+}
+
+fn delay(delay: Duration) -> ProxyRule {
+    ProxyRule::Delay { delay }
+}
+
+fn never() -> ProxyRule {
+    ProxyRule::Never
 }
 
 /// True for the first evaluation only, cluster-wide. The rules are installed on
@@ -228,57 +389,34 @@ fn once_in_the_cluster() -> Condition {
     Condition::TrueForLimitedTimesShared(Arc::new(AtomicUsize::new(1)))
 }
 
-fn into_request_rules(rules: Vec<ProxyRule>, opcode: RequestOpcode) -> Vec<RequestRule> {
-    // Only the statement under test is of interest; the control connection's
-    // own traffic must go through untouched.
-    let applies_to_the_statement = || {
-        Condition::not(Condition::ConnectionRegisteredAnyEvent)
-            .and(Condition::RequestOpcode(opcode))
-    };
+fn into_request_rules(rules: Vec<ProxyRule>) -> Vec<RequestRule> {
+    // An error the retry policy below answers with `RetryNextTarget`.
+    let error = example_db_errors::overloaded;
+    let on_an_attempt = || Condition::RequestOpcode(RequestOpcode::Execute);
 
     rules
         .into_iter()
         .map(|rule| match rule {
-            ProxyRule::Fail { delay, error } => RequestRule(
-                applies_to_the_statement().and(once_in_the_cluster()),
+            ProxyRule::Fail { delay } => RequestRule(
+                on_an_attempt().and(once_in_the_cluster()),
                 RequestReaction::forge_with_error_lazy_delay(Box::new(error), delay),
             ),
-            ProxyRule::FailAll { error } => RequestRule(
-                applies_to_the_statement(),
+            ProxyRule::FailAll => RequestRule(
+                on_an_attempt(),
                 RequestReaction::forge_with_error_lazy_delay(Box::new(error), None),
             ),
             ProxyRule::Delay { delay } => RequestRule(
-                applies_to_the_statement().and(once_in_the_cluster()),
-                RequestReaction {
-                    to_addressee: Some(Action {
-                        delay: Some(delay),
-                        msg_processor: None,
-                    }),
-                    to_sender: None,
-                    drop_connection: None,
-                    feedback_channel: None,
-                },
+                on_an_attempt().and(once_in_the_cluster()),
+                RequestReaction::forge_response_with_delay(delay, Arc::new(forged_void)),
+            ),
+            // Dropping the frame is a response that never comes, which is what
+            // a stalled node looks like to the driver.
+            ProxyRule::Never => RequestRule(
+                on_an_attempt().and(once_in_the_cluster()),
+                RequestReaction::drop_frame(),
             ),
         })
         .collect()
-}
-
-fn fail(delay: Option<Duration>) -> ProxyRule {
-    ProxyRule::Fail {
-        delay,
-        // An error the retry policy below answers with `RetryNextTarget`.
-        error: example_db_errors::overloaded,
-    }
-}
-
-fn fail_all() -> ProxyRule {
-    ProxyRule::FailAll {
-        error: example_db_errors::overloaded,
-    }
-}
-
-fn delay(delay: Duration) -> ProxyRule {
-    ProxyRule::Delay { delay }
 }
 
 /// Retries an `Overloaded` on the next target, up to `max_retries` times in
@@ -370,7 +508,7 @@ async fn test_speculative_execution_and_retries() {
             // The regular fiber never hears back, so the request is finished by
             // a speculative fiber - which is the whole point of the feature.
             name: "regular fiber hangs, speculative one succeeds",
-            proxy_rules: vec![delay(NEVER)],
+            proxy_rules: vec![never()],
             speculative: speculative_policy(3),
             retries: retry_policy(3),
             expected_attempts: vec![regular(NoResponse, Any), speculative(Success, Unique)],
@@ -378,7 +516,7 @@ async fn test_speculative_execution_and_retries() {
         },
         TestCase {
             name: "regular fiber hangs, speculative one fails and then succeeds",
-            proxy_rules: vec![delay(NEVER), fail(None)],
+            proxy_rules: vec![never(), fail(None)],
             speculative: speculative_policy(3),
             retries: retry_policy(3),
             expected_attempts: vec![
@@ -445,7 +583,7 @@ async fn test_speculative_execution_and_retries() {
         },
         TestCase {
             name: "one speculative fiber allowed",
-            proxy_rules: vec![delay(NEVER), delay(TICK * 3)],
+            proxy_rules: vec![never(), delay(TICK * 3)],
             speculative: speculative_policy(1),
             retries: retry_policy(3),
             expected_attempts: vec![regular(NoResponse, Any), speculative(Success, Unique)],
@@ -453,7 +591,7 @@ async fn test_speculative_execution_and_retries() {
         },
         TestCase {
             name: "two speculative fibers allowed",
-            proxy_rules: vec![delay(NEVER), delay(NEVER), delay(TICK * 3)],
+            proxy_rules: vec![never(), never(), delay(TICK * 3)],
             speculative: speculative_policy(2),
             retries: retry_policy(3),
             expected_attempts: vec![
@@ -467,7 +605,7 @@ async fn test_speculative_execution_and_retries() {
             // Three fibers are allowed but only three nodes exist, so no more
             // fibers start than there are nodes to send them to.
             name: "three speculative fibers allowed, but only three nodes exist",
-            proxy_rules: vec![delay(NEVER), delay(NEVER), delay(TICK * 5)],
+            proxy_rules: vec![never(), never(), delay(TICK * 5)],
             speculative: speculative_policy(3),
             retries: retry_policy(3),
             expected_attempts: vec![
@@ -479,116 +617,87 @@ async fn test_speculative_execution_and_retries() {
         },
     ];
 
-    let ks = unique_keyspace_name();
-    let res = test_with_3_node_cluster(
-        ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
-            let translation_map = Arc::new(translation_map);
+    let res = with_3_dry_nodes(|contact_points, mut running_proxy| async move {
+        // Every case is reported before the test fails, so that one broken case
+        // does not hide the state of the others.
+        let mut failures: Vec<String> = Vec::new();
 
-            let setup_session: Session = SessionBuilder::new()
-                .known_node(proxy_uris[0].as_str())
-                .address_translator(translation_map.clone())
+        for case in test_cases {
+            // The case's own rules go first, as the first matching rule wins,
+            // and the handshake rules must stay installed - each case builds a
+            // session of its own, which has to connect all over again.
+            let rules = [into_request_rules(case.proxy_rules), handshake_rules()].concat();
+            for node in running_proxy.running_nodes.iter_mut() {
+                node.change_request_rules(Some(rules.clone()));
+            }
+
+            // A session of its own per case, so that no state - a warmed up
+            // connection pool, a retry session - carries over. The metadata
+            // refresh is pushed out of the way so that its requests cannot
+            // land in the middle of a case.
+            let mut builder = SessionBuilder::new()
+                .cluster_metadata_refresh_interval(Duration::from_secs(600))
                 .default_execution_profile_handle(
                     ExecutionProfile::builder()
-                        .retry_policy(Arc::new(FallthroughRetryPolicy))
+                        .speculative_execution_policy(Some(Arc::clone(&case.speculative)))
+                        .retry_policy(Arc::clone(&case.retries))
+                        // Comfortably longer than any case waits for, so it
+                        // never fires in a healthy run. It is here so that a
+                        // case which stops making progress - because the
+                        // simulated cluster came up with fewer nodes than the
+                        // expectations need, say - fails quickly instead of
+                        // hanging until the default timeout.
+                        .request_timeout(Some(TICK * 30))
                         .build()
                         .into_handle(),
-                )
-                .build()
-                .await
-                .unwrap();
+                );
+            for contact_point in contact_points {
+                builder = builder.known_node_addr(contact_point);
+            }
+            let session: Session = builder.build().await.unwrap();
 
-            setup_session
-                .ddl(format!(
-                    "CREATE KEYSPACE {ks} WITH REPLICATION = \
-                 {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}"
-                ))
-                .await
-                .unwrap();
-            setup_session.use_keyspace(&ks, false).await.unwrap();
-            setup_session
-                .ddl("CREATE TABLE t (a int primary key)")
-                .await
-                .unwrap();
+            let history = Arc::new(HistoryCollector::new());
+            let mut statement = Statement::from("INSERT INTO ks.t (a) VALUES (?)");
+            statement.set_is_idempotent(true); // Speculative execution only fires for idempotent statements.
+            statement.set_history_listener(history.clone());
 
-            // Every case is reported before the test fails, so that one broken
-            // case does not hide the state of the others.
-            let mut failures: Vec<String> = Vec::new();
+            let result = session.query_unpaged(statement, (3,)).await;
 
-            for case in test_cases {
-                let rules = into_request_rules(case.proxy_rules, RequestOpcode::Execute);
-                for node in running_proxy.running_nodes.iter_mut() {
-                    node.change_request_rules((!rules.is_empty()).then(|| rules.clone()));
-                }
-
-                // A session of its own per case, so that no state - a warmed up
-                // connection pool, a retry session - carries over.
-                let session: Session = SessionBuilder::new()
-                    .known_node(proxy_uris[0].as_str())
-                    .address_translator(translation_map.clone())
-                    .default_execution_profile_handle(
-                        ExecutionProfile::builder()
-                            .speculative_execution_policy(Some(Arc::clone(&case.speculative)))
-                            .retry_policy(Arc::clone(&case.retries))
-                            .build()
-                            .into_handle(),
-                    )
-                    .build()
-                    .await
-                    .unwrap();
-                session.use_keyspace(&ks, false).await.unwrap();
-
-                let history = Arc::new(HistoryCollector::new());
-                let mut statement = Statement::from("INSERT INTO t (a) VALUES (?)");
-                statement.set_is_idempotent(true); // Speculative execution only fires for idempotent statements.
-                statement.set_history_listener(history.clone());
-
-                let result = session.query_unpaged(statement, (3,)).await;
-
-                if result.is_ok() != case.expected_success {
-                    failures.push(match result {
-                        Ok(_) => {
-                            format!("{}: expected the request to fail, it succeeded", case.name)
-                        }
-                        Err(err) => format!(
-                            "{}: expected the request to succeed, it failed: {err}",
-                            case.name
-                        ),
-                    });
-                }
-
-                let attempts = attempts_of_single_request(history.clone_structured_history());
-                if let Err(mismatch) = check_attempts(&case.expected_attempts, &attempts) {
-                    failures.push(format!(
-                        "{}: {mismatch}\n  expected: {}\n  actual:   {}",
-                        case.name,
-                        case.expected_attempts
-                            .iter()
-                            .map(ExpectedAttempt::to_string)
-                            .collect::<Vec<_>>()
-                            .join(" | "),
-                        attempts
-                            .iter()
-                            .map(Attempt::to_string)
-                            .collect::<Vec<_>>()
-                            .join(" | "),
-                    ));
-                }
+            if result.is_ok() != case.expected_success {
+                failures.push(match result {
+                    Ok(_) => {
+                        format!("{}: expected the request to fail, it succeeded", case.name)
+                    }
+                    Err(err) => format!(
+                        "{}: expected the request to succeed, it failed: {err}",
+                        case.name
+                    ),
+                });
             }
 
-            for node in running_proxy.running_nodes.iter_mut() {
-                node.change_request_rules(None);
+            let attempts = attempts_of_single_request(history.clone_structured_history());
+            if let Err(mismatch) = check_attempts(&case.expected_attempts, &attempts) {
+                failures.push(format!(
+                    "{}: {mismatch}\n  expected: {}\n  actual:   {}",
+                    case.name,
+                    case.expected_attempts
+                        .iter()
+                        .map(ExpectedAttempt::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" | "),
+                    attempts
+                        .iter()
+                        .map(Attempt::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" | "),
+                ));
             }
-            setup_session
-                .ddl(format!("DROP KEYSPACE {ks}"))
-                .await
-                .unwrap();
+        }
 
-            assert!(failures.is_empty(), "{}", failures.join("\n"));
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
 
-            running_proxy
-        },
-    )
+        running_proxy
+    })
     .await;
 
     match res {
@@ -596,4 +705,33 @@ async fn test_speculative_execution_and_retries() {
         Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
         Err(err) => panic!("{}", err),
     }
+}
+
+/// Runs `test` against three `scylla-proxy` nodes in dry mode - simulated nodes
+/// with no ScyllaDB behind them - handing it the addresses to use as contact
+/// points.
+///
+/// This is the cluster-free counterpart of `crate::utils::test_with_3_node_cluster`.
+/// There is no address translation to do: a session that cannot read the
+/// cluster's metadata falls back to a peer list built from its contact points,
+/// so the nodes it knows about are the proxy addresses themselves.
+async fn with_3_dry_nodes<F, Fut>(test: F) -> Result<(), ProxyError>
+where
+    F: FnOnce([SocketAddr; NODES], RunningProxy) -> Fut,
+    Fut: Future<Output = RunningProxy>,
+{
+    // Every call hands out an address of its own.
+    let addresses: [SocketAddr; NODES] =
+        std::array::from_fn(|_| SocketAddr::new(get_exclusive_local_address(), 9042));
+
+    let proxy = Proxy::new(addresses.map(|address| {
+        Node::builder()
+            .proxy_address(address)
+            .request_rules(handshake_rules())
+            .build_dry_mode()
+    }));
+
+    let running_proxy = proxy.run().await.unwrap();
+    let running_proxy = test(addresses, running_proxy).await;
+    running_proxy.finish().await
 }
