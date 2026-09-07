@@ -1817,21 +1817,54 @@ mod tests {
 
     #[test]
     fn shard_aware_socket_uses_real_node_ip_family() {
-        for (real_addr, expected_bind_addr) in [
+        for (real_addr, unspecified_ip) in [
             (
                 SocketAddr::from(([127, 0, 0, 1], 9042)),
-                SocketAddr::from(([0, 0, 0, 0], 4242)),
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             ),
             (
                 SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 9042)),
-                SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 4242)),
+                IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
             ),
         ] {
-            let (socket, bind_addr) = shard_aware_socket(real_addr, 4242).unwrap();
+            let port_probe =
+                std::net::TcpListener::bind(SocketAddr::new(unspecified_ip, 0)).unwrap();
+            let source_port = port_probe.local_addr().unwrap().port();
+            drop(port_probe);
+
+            let (socket, bind_addr) = shard_aware_socket(real_addr, source_port).unwrap();
+            let expected_bind_addr = SocketAddr::new(unspecified_ip, source_port);
             assert_eq!(bind_addr, expected_bind_addr);
             socket.bind(bind_addr).unwrap();
             assert_eq!(socket.local_addr().unwrap().is_ipv4(), real_addr.is_ipv4());
         }
+    }
+
+    #[tokio::test]
+    async fn shard_aware_proxy_connects_to_ipv6_node_from_ipv4_listener() {
+        setup_tracing();
+        let mock_node_listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let real_addr = mock_node_listener.local_addr().unwrap();
+        let proxy_port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let proxy_addr = proxy_port_probe.local_addr().unwrap();
+        drop(proxy_port_probe);
+        let proxy = Proxy::new([Node::new(
+            real_addr,
+            proxy_addr,
+            ShardAwareness::FixedNum(1),
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let connect_driver = TcpStream::connect(proxy_addr);
+        let accept_node = mock_node_listener.accept();
+        let (driver, node) = tokio::join!(connect_driver, accept_node);
+        let _driver = driver.unwrap();
+        let (_node, peer_addr) = node.unwrap();
+        assert!(peer_addr.is_ipv6());
+
+        running_proxy.finish().await.unwrap();
     }
 
     fn random_body() -> Bytes {
