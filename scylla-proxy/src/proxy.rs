@@ -988,8 +988,9 @@ impl Doorkeeper {
         real_addr: SocketAddr,
     ) -> Result<(TcpStream, Option<TargetShard>), DoorkeeperError> {
         let mut cluster_stream = if let Some(shards) = self.shards_count {
-            let (socket, mut desired_addr) = shard_aware_socket(real_addr, driver_addr.port())
-                .map_err(DoorkeeperError::SocketCreate)?;
+            let (socket, mut desired_addr) =
+                open_shard_aware_socket_to_real_node(real_addr, driver_addr.port())
+                    .map_err(DoorkeeperError::SocketCreate)?;
 
             let shard_preserving_addr = {
                 while socket.bind(desired_addr).is_err() {
@@ -1718,7 +1719,7 @@ impl ProxyWorker {
     }
 }
 
-fn shard_aware_socket(
+fn open_shard_aware_socket_to_real_node(
     real_addr: SocketAddr,
     source_port: u16,
 ) -> std::io::Result<(TcpSocket, SocketAddr)> {
@@ -1816,7 +1817,7 @@ mod tests {
     use tokio::sync::oneshot;
 
     #[test]
-    fn shard_aware_socket_uses_real_node_ip_family() {
+    fn open_shard_aware_socket_to_real_node_uses_real_node_ip_family() {
         for (real_addr, unspecified_ip) in [
             (
                 SocketAddr::from(([127, 0, 0, 1], 9042)),
@@ -1827,15 +1828,22 @@ mod tests {
                 IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
             ),
         ] {
-            let port_probe =
-                std::net::TcpListener::bind(SocketAddr::new(unspecified_ip, 0)).unwrap();
-            let source_port = port_probe.local_addr().unwrap().port();
-            drop(port_probe);
+            let (socket, bind_addr) = loop {
+                let port_probe =
+                    std::net::TcpListener::bind(SocketAddr::new(unspecified_ip, 0)).unwrap();
+                let source_port = port_probe.local_addr().unwrap().port();
+                drop(port_probe);
 
-            let (socket, bind_addr) = shard_aware_socket(real_addr, source_port).unwrap();
-            let expected_bind_addr = SocketAddr::new(unspecified_ip, source_port);
-            assert_eq!(bind_addr, expected_bind_addr);
-            socket.bind(bind_addr).unwrap();
+                let (socket, bind_addr) =
+                    open_shard_aware_socket_to_real_node(real_addr, source_port).unwrap();
+                assert_eq!(bind_addr, SocketAddr::new(unspecified_ip, source_port));
+                match socket.bind(bind_addr) {
+                    Ok(()) => break (socket, bind_addr),
+                    Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
+                    Err(error) => panic!("failed to bind shard-aware socket: {error}"),
+                }
+            };
+            assert_eq!(socket.local_addr().unwrap(), bind_addr);
             assert_eq!(socket.local_addr().unwrap().is_ipv4(), real_addr.is_ipv4());
         }
     }
@@ -1845,17 +1853,24 @@ mod tests {
         setup_tracing();
         let mock_node_listener = TcpListener::bind("[::1]:0").await.unwrap();
         let real_addr = mock_node_listener.local_addr().unwrap();
-        let proxy_port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let proxy_addr = proxy_port_probe.local_addr().unwrap();
-        drop(proxy_port_probe);
-        let proxy = Proxy::new([Node::new(
-            real_addr,
-            proxy_addr,
-            ShardAwareness::FixedNum(1),
-            None,
-            None,
-        )]);
-        let running_proxy = proxy.run().await.unwrap();
+        let (proxy_addr, running_proxy) = loop {
+            let proxy_port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let proxy_addr = proxy_port_probe.local_addr().unwrap();
+            drop(proxy_port_probe);
+            let proxy = Proxy::new([Node::new(
+                real_addr,
+                proxy_addr,
+                ShardAwareness::FixedNum(1),
+                None,
+                None,
+            )]);
+            match proxy.run().await {
+                Ok(running_proxy) => break (proxy_addr, running_proxy),
+                Err(DoorkeeperError::DriverConnectionAttempt(_, error))
+                    if error.kind() == std::io::ErrorKind::AddrInUse => {}
+                Err(error) => panic!("failed to start mixed-family proxy: {error}"),
+            }
+        };
 
         let connect_driver = TcpStream::connect(proxy_addr);
         let accept_node = mock_node_listener.accept();
