@@ -2107,6 +2107,11 @@ async fn maybe_translated_addr(
             Ok(addr.address)
         }
 
+        (UntranslatedEndpoint::Maintenance(endpoint), _) => {
+            // A maintenance mode session's endpoint is not inteded to be translated.
+            Ok(endpoint.address)
+        }
+
         (
             UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }),
             None, // no translator
