@@ -2,7 +2,8 @@ use tokio::net::{ToSocketAddrs, lookup_host};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::errors::{ConnectionPoolError, DnsLookupError, UseKeyspaceError};
+use crate::client::maintenance_mode::MaintenanceModeEndpoint;
+use crate::errors::{ConnectionPoolError, DnsLookupError, NewSessionError, UseKeyspaceError};
 use crate::network::VerifiedKeyspaceName;
 use crate::network::{Connection, ConnectivityChangeEvent};
 use crate::network::{NodeConnectionPool, PoolConfig};
@@ -114,21 +115,21 @@ pub type NodeRef<'a> = &'a Arc<Node>;
 impl Node {
     /// Creates a new node which starts connecting in the background.
     pub(crate) fn new(
-        peer: PeerEndpoint,
+        endpoint: UntranslatedEndpoint,
         pool_config: &PoolConfig,
         connectivity_events_sender: tokio::sync::mpsc::UnboundedSender<ConnectivityChangeEvent>,
         keyspace_name: Option<VerifiedKeyspaceName>,
         metrics: Metrics,
     ) -> Self {
-        let host_id = peer.host_id;
-        let address = peer.address;
-        let datacenter = peer.datacenter.clone();
-        let rack = peer.rack.clone();
+        let host_id = endpoint.host_id();
+        let address = endpoint.address();
+        let datacenter = endpoint.datacenter().map(str::to_owned);
+        let rack = endpoint.rack().map(str::to_owned);
 
         // We aren't interested in the fact that the pool becomes empty, so we immediately drop the receiving part.
         let (pool_empty_notifier, _) = tokio::sync::mpsc::channel(1);
         let pool = NodeConnectionPool::new(
-            UntranslatedEndpoint::Peer(peer),
+            endpoint,
             pool_config,
             Some((host_id, connectivity_events_sender)),
             keyspace_name,
@@ -305,6 +306,72 @@ pub enum KnownNode {
     Hostname(String),
     /// A node identified by its IP address + a port.
     Address(SocketAddr),
+}
+
+/// Where a session's endpoints come from: a list of known nodes to discover the
+/// cluster from, or the single endpoint a maintenance mode session is pinned to.
+#[derive(Debug, Clone)]
+pub(crate) enum InitialEndpoints {
+    /// Contact points to discover the cluster from.
+    KnownNodes(Vec<KnownNode>),
+    /// The single endpoint a maintenance mode session talks to, and the only
+    /// place such a session ever connects.
+    Maintenance(MaintenanceModeEndpoint),
+}
+
+impl InitialEndpoints {
+    /// Decides where a session will connect, rejecting configurations that name
+    /// nowhere and configurations that name two places at once.
+    pub(crate) fn from_config(
+        known_nodes: Vec<KnownNode>,
+        maintenance_mode: Option<MaintenanceModeEndpoint>,
+    ) -> Result<Self, NewSessionError> {
+        match (maintenance_mode, known_nodes) {
+            (Some(endpoint), nodes) if nodes.is_empty() => Ok(Self::Maintenance(endpoint)),
+            (Some(_), _) => Err(NewSessionError::IllegalConfig(
+                "Known nodes must not be set together with a maintenance mode endpoint: a \
+                 maintenance mode session is pinned to exactly one node, and that node is the \
+                 maintenance mode endpoint"
+                    .into(),
+            )),
+            (None, nodes) if !nodes.is_empty() => Ok(Self::KnownNodes(nodes)),
+            (None, _) => Err(NewSessionError::EmptyKnownNodesList),
+        }
+    }
+
+    /// Whether these are the endpoints of a maintenance mode session.
+    pub(crate) fn is_maintenance(&self) -> bool {
+        matches!(self, Self::Maintenance(_))
+    }
+
+    /// Resolves into the endpoints to attempt a control connection on.
+    pub(crate) async fn resolve(
+        &self,
+        hostname_resolution_timeout: Option<Duration>,
+    ) -> Result<Vec<UntranslatedEndpoint>, NewSessionError> {
+        Ok(match self {
+            Self::KnownNodes(known_nodes) => {
+                let (contact_points, resolved_hostnames) =
+                    resolve_contact_points(known_nodes, hostname_resolution_timeout).await;
+                // Ensure there is at least one resolved node
+                if contact_points.is_empty() {
+                    return Err(NewSessionError::FailedToResolveAnyHostname(
+                        resolved_hostnames,
+                    ));
+                }
+                contact_points
+                    .into_iter()
+                    .map(UntranslatedEndpoint::ContactPoint)
+                    .collect()
+            }
+            Self::Maintenance(endpoint) => vec![UntranslatedEndpoint::Maintenance(
+                endpoint
+                    .clone()
+                    .resolve(hostname_resolution_timeout)
+                    .await?,
+            )],
+        })
+    }
 }
 
 /// Describes a database server known on Session startup, with already resolved address.

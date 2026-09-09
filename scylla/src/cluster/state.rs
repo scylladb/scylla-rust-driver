@@ -1,5 +1,8 @@
 use crate::cluster::metadata::update::{FetchedKeyspace, SchemaUpdate};
-use crate::cluster::metadata::{Peer, SingleKeyspaceMetadataError};
+use crate::cluster::metadata::{
+    MaintenanceEndpoint, Peer, SingleKeyspaceMetadataError, Topology, UNKNOWN_HOST_ID,
+    UntranslatedEndpoint,
+};
 use crate::errors::{ClusterStateTokenError, ConnectionPoolError};
 use crate::network::{Connection, ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::metrics::Metrics;
@@ -175,8 +178,12 @@ impl ClusterState {
         node_config: &NodeConfig,
         host_filter: Option<&dyn HostFilter>,
     ) -> Self {
-        let (new_known_nodes, ring) =
-            Self::calculate_new_topology(metadata.peers, &HashMap::new(), node_config, host_filter);
+        let (new_known_nodes, ring) = Self::calculate_new_topology(
+            metadata.topology,
+            &HashMap::new(),
+            node_config,
+            host_filter,
+        );
 
         let keyspaces = Self::resolve_metadata_keyspaces(metadata.keyspaces, &HashMap::new());
 
@@ -211,7 +218,7 @@ impl ClusterState {
         let keyspaces = Self::resolve_metadata_keyspaces(metadata.keyspaces, &self.keyspaces);
 
         let (new_known_nodes, ring) = Self::calculate_new_topology(
-            metadata.peers,
+            metadata.topology,
             &self.known_nodes,
             node_config,
             host_filter,
@@ -253,9 +260,12 @@ impl ClusterState {
         host_filter: Option<&dyn HostFilter>,
     ) -> Self {
         let (new_known_nodes, ring) = match peers {
-            Some(peers) => {
-                Self::calculate_new_topology(peers, &self.known_nodes, node_config, host_filter)
-            }
+            Some(peers) => Self::calculate_new_topology(
+                Topology::Peers(peers),
+                &self.known_nodes,
+                node_config,
+                host_filter,
+            ),
             // The ring in place is exactly the (token, node) list that the
             // unchanged topology implies, so it is reused as is.
             None => (
@@ -319,6 +329,46 @@ impl ClusterState {
     ///
     /// Previous topology is used to reuse connection pools and `Node` objects when possible.
     fn calculate_new_topology(
+        topology: Topology,
+        known_nodes: &KnownNodes,
+        node_config: &NodeConfig,
+        host_filter: Option<&dyn HostFilter>,
+    ) -> (KnownNodes, Ring) {
+        match topology {
+            Topology::Peers(peers) => {
+                Self::topology_from_peers(peers, known_nodes, node_config, host_filter)
+            }
+            Topology::Maintenance(endpoint) => {
+                Self::topology_from_maintenance_endpoint(endpoint, known_nodes, node_config)
+            }
+        }
+    }
+
+    /// The topology of a maintenance mode session: the single node it is pinned to.
+    fn topology_from_maintenance_endpoint(
+        endpoint: MaintenanceEndpoint,
+        known_nodes: &KnownNodes,
+        node_config: &NodeConfig,
+    ) -> (KnownNodes, Ring) {
+        let node = match known_nodes.get(&UNKNOWN_HOST_ID) {
+            Some(node) => Arc::clone(node),
+            None => Arc::new(Node::new(
+                UntranslatedEndpoint::Maintenance(endpoint),
+                &node_config.pool_config,
+                node_config.connectivity_events_sender.clone(),
+                node_config.used_keyspace.clone(),
+                node_config.metrics.clone(),
+            )),
+        };
+
+        (
+            HashMap::from([(UNKNOWN_HOST_ID, Arc::clone(&node))]),
+            vec![(Token::new(0), node)],
+        )
+    }
+
+    /// The topology described by a peer list read from the cluster.
+    fn topology_from_peers(
         peers: Vec<Peer>,
         known_nodes: &KnownNodes,
         node_config: &NodeConfig,
@@ -368,7 +418,7 @@ impl ClusterState {
                     }
                 }
                 (true, _) => Arc::new(Node::new(
-                    peer_endpoint,
+                    UntranslatedEndpoint::Peer(peer_endpoint),
                     &node_config.pool_config,
                     node_config.connectivity_events_sender.clone(),
                     node_config.used_keyspace.clone(),
@@ -847,7 +897,7 @@ mod tests {
 
     fn make_metadata(peers: Vec<Peer>) -> Metadata {
         Metadata {
-            peers,
+            topology: Topology::Peers(peers),
             keyspaces: HashMap::new(),
             client_routes: None,
             cluster_name: Some("Test Cluster".into()),

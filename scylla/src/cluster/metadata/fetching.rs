@@ -42,7 +42,7 @@ use crate::client::pager::QueryPager;
 use crate::cluster::NodeAddr;
 use crate::cluster::control_connection::ControlConnection;
 use crate::cluster::metadata::update::{FetchedKeyspace, SchemaUpdate};
-use crate::cluster::metadata::{ClientRoutes, ClientRoutesUpdate};
+use crate::cluster::metadata::{ClientRoutes, ClientRoutesUpdate, Topology, UntranslatedEndpoint};
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{
     ClientRoutesMetadataError, DbError, KeyspaceStrategyError, KeyspacesMetadataError,
@@ -171,7 +171,19 @@ impl ControlConnection {
     pub(super) async fn query_metadata(&self) -> Result<TopologyUpdateGuard, MetadataError> {
         let connect_port = self.endpoint().address().port();
 
-        let peers_query = self.query_peers(connect_port);
+        let topology_query = async {
+            match self.endpoint() {
+                // A maintenance mode session never reads the peer list
+                UntranslatedEndpoint::Maintenance(endpoint) => {
+                    Ok((Topology::Maintenance(endpoint.clone()), None))
+                }
+                _ => {
+                    let (peers, cluster_name) = self.query_peers(connect_port).await?;
+                    Self::validate_peers(&peers)?;
+                    Ok((Topology::Peers(peers), cluster_name))
+                }
+            }
+        };
         let keyspaces_query = self.query_keyspaces(
             &self.config.keyspaces_to_fetch,
             self.config.schema_metadata_fetch_mode,
@@ -184,19 +196,17 @@ impl ControlConnection {
                 .await
                 .map(Some)
         };
-        let peers_and_cluster_name;
+        let topology_and_cluster_name;
         let client_routes: Option<ClientRoutes>;
         let keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>;
 
-        (peers_and_cluster_name, client_routes, keyspaces) =
-            tokio::try_join!(peers_query, client_routes_query, keyspaces_query)?;
+        (topology_and_cluster_name, client_routes, keyspaces) =
+            tokio::try_join!(topology_query, client_routes_query, keyspaces_query)?;
 
-        let (peers, cluster_name) = peers_and_cluster_name;
-
-        Self::validate_peers(&peers)?;
+        let (topology, cluster_name) = topology_and_cluster_name;
 
         Ok(TopologyUpdateGuard::new(Metadata {
-            peers,
+            topology,
             keyspaces,
             cluster_name,
             client_routes,
@@ -215,6 +225,14 @@ impl ControlConnection {
     pub(super) async fn query_topology(
         &self,
     ) -> Result<TopologyUpdateGuard<Vec<Peer>>, MetadataError> {
+        // Unreachable in maintenance mode: a partial topology fetch is only ever
+        // requested by the TOPOLOGY_CHANGE and STATUS_CHANGE handlers, and a
+        // maintenance mode session registers for neither event.
+        debug_assert!(
+            !self.endpoint().is_maintenance(),
+            "a maintenance mode session must never read the peer list"
+        );
+
         let connect_port = self.endpoint().address().port();
 
         let (peers, _cluster_name) = self.query_peers(connect_port).await?;

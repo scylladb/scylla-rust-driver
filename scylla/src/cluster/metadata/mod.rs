@@ -29,6 +29,7 @@ use crate::routing::Token;
 
 use crate::frame::response::result::ColumnSpec;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
@@ -90,9 +91,18 @@ pub(crate) enum SingleKeyspaceMetadataError {
     IncompleteClusteringKey(i32),
 }
 
+/// The nodes a session talks to.
+pub(crate) enum Topology {
+    /// Peers read from `system.peers` and `system.local`.
+    Peers(Vec<Peer>),
+    /// The single endpoint a maintenance mode session is pinned to. Nothing was
+    /// read from the cluster, so there is nothing to describe but the endpoint.
+    Maintenance(MaintenanceEndpoint),
+}
+
 /// Describes all metadata retrieved from the cluster
 pub(crate) struct Metadata {
-    pub(crate) peers: Vec<Peer>,
+    pub(crate) topology: Topology,
     pub(crate) keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
     pub(crate) cluster_name: Option<String>,
 
@@ -127,20 +137,67 @@ pub(crate) enum UntranslatedEndpoint {
     ContactPoint(ResolvedContactPoint),
     /// Fetched in Metadata with `query_peers()`
     Peer(PeerEndpoint),
+    /// The single endpoint a maintenance mode session is pinned to, provided by
+    /// the user in `SessionConfig`.
+    Maintenance(MaintenanceEndpoint),
 }
+
+/// The single endpoint of a maintenance mode session.
+#[derive(Clone, Debug)]
+pub(crate) struct MaintenanceEndpoint {
+    pub(crate) address: SocketAddr,
+}
+
+/// The host id of a node whose identity the driver never read from the cluster:
+/// a contact point, or the endpoint a maintenance mode session is pinned to.
+pub(crate) const UNKNOWN_HOST_ID: Uuid = Uuid::nil();
 
 impl UntranslatedEndpoint {
     pub(crate) fn address(&self) -> NodeAddr {
         match *self {
-            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address, .. }) => {
+            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address, .. })
+            // A maintenance endpoint is user-provided, hence already translated.
+            | UntranslatedEndpoint::Maintenance(MaintenanceEndpoint { address, .. }) => {
                 NodeAddr::Untranslatable(address)
             }
             UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address,
         }
     }
+
+    /// The node's host id, as far as the driver knows it.
+    pub(crate) fn host_id(&self) -> Uuid {
+        match self {
+            UntranslatedEndpoint::Peer(PeerEndpoint { host_id, .. }) => *host_id,
+            UntranslatedEndpoint::ContactPoint(_) | UntranslatedEndpoint::Maintenance(_) => {
+                UNKNOWN_HOST_ID
+            }
+        }
+    }
+
+    /// The datacenter the node is in, if the driver learned it.
+    pub(crate) fn datacenter(&self) -> Option<&str> {
+        match self {
+            UntranslatedEndpoint::Peer(PeerEndpoint { datacenter, .. }) => datacenter.as_deref(),
+            UntranslatedEndpoint::ContactPoint(_) | UntranslatedEndpoint::Maintenance(_) => None,
+        }
+    }
+
+    /// The rack the node is in, if the driver learned it.
+    pub(crate) fn rack(&self) -> Option<&str> {
+        match self {
+            UntranslatedEndpoint::Peer(PeerEndpoint { rack, .. }) => rack.as_deref(),
+            UntranslatedEndpoint::ContactPoint(_) | UntranslatedEndpoint::Maintenance(_) => None,
+        }
+    }
+
+    /// Whether this endpoint is the pinned endpoint of a maintenance mode session.
+    pub(crate) fn is_maintenance(&self) -> bool {
+        matches!(self, UntranslatedEndpoint::Maintenance(_))
+    }
     pub(crate) fn set_port(&mut self, port: u16) {
         let inner_addr = match self {
-            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address, .. }) => address,
+            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address, .. })
+            | UntranslatedEndpoint::Maintenance(MaintenanceEndpoint { address, .. }) => address,
             UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address.inner_mut(),
         };
         inner_addr.set_port(port);
@@ -450,6 +507,15 @@ impl Metadata {
     /// It can be used as a replacement for real metadata when initial
     /// metadata read fails.
     pub(crate) fn new_dummy(initial_peers: &[UntranslatedEndpoint]) -> Self {
+        if let [UntranslatedEndpoint::Maintenance(endpoint)] = initial_peers {
+            return Metadata {
+                topology: Topology::Maintenance(endpoint.clone()),
+                keyspaces: HashMap::new(),
+                cluster_name: None,
+                client_routes: None,
+            };
+        }
+
         let peers = initial_peers
             .iter()
             .enumerate()
@@ -469,7 +535,7 @@ impl Metadata {
             .collect();
 
         Metadata {
-            peers,
+            topology: Topology::Peers(peers),
             keyspaces: HashMap::new(),
             cluster_name: None,
             client_routes: None,

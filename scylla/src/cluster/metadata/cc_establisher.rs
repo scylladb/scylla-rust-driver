@@ -24,15 +24,14 @@ use tracing::{debug, error, warn};
 
 use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::client::driver_config::DriverConfigReporter;
-use crate::cluster::KnownNode;
 use crate::cluster::control_connection::{
     ControlConnection, ControlConnectionCache, ControlConnectionConfig, ControlConnectionEvents,
     MetadataRequestTimeouts,
 };
 use crate::cluster::metadata::{
-    Metadata, Peer, PeerEndpoint, SchemaMetadataFetchMode, UntranslatedEndpoint,
+    Metadata, Peer, PeerEndpoint, SchemaMetadataFetchMode, Topology, UntranslatedEndpoint,
 };
-use crate::cluster::node::resolve_contact_points;
+use crate::cluster::node::InitialEndpoints;
 use crate::errors::{ConnectionPoolError, MetadataError, NewSessionError};
 use crate::frame::server_event_type::EventTypeV2 as EventType;
 use crate::network::{ConnectionConfig, open_connection};
@@ -56,9 +55,9 @@ pub(crate) struct ControlConnectionEstablisher {
     cc_config: ControlConnectionConfig,
     hostname_resolution_timeout: Option<Duration>,
     host_filter: Option<Arc<dyn HostFilter>>,
-    // When no known peer is reachable, initial known nodes are resolved once again as a fallback
-    // and establishing control connection to them is attempted.
-    initial_known_nodes: Vec<KnownNode>,
+    // When no known peer is reachable, the initial endpoints are resolved once again
+    // as a fallback and establishing a control connection to them is attempted.
+    initial_endpoints: InitialEndpoints,
 
     // ====================================================================
     // Mutable state of ControlConnectionEstablisher. It will change during its lifetime.
@@ -105,7 +104,7 @@ impl ControlConnectionEstablisher {
     /// for that.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new(
-        initial_known_nodes: Vec<KnownNode>,
+        initial_endpoints: InitialEndpoints,
         hostname_resolution_timeout: Option<Duration>,
         connection_config: ConnectionConfig,
         driver_config_reporter: Option<Arc<DriverConfigReporter>>,
@@ -115,14 +114,9 @@ impl ControlConnectionEstablisher {
         host_filter: &Option<Arc<dyn HostFilter>>,
         client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
     ) -> Result<Self, NewSessionError> {
-        let (initial_peers, resolved_hostnames) =
-            resolve_contact_points(&initial_known_nodes, hostname_resolution_timeout).await;
-        // Ensure there is at least one resolved node
-        if initial_peers.is_empty() {
-            return Err(NewSessionError::FailedToResolveAnyHostname(
-                resolved_hostnames,
-            ));
-        }
+        let known_peers = initial_endpoints
+            .resolve(hostname_resolution_timeout)
+            .await?;
 
         let cc_cache = Arc::new(ControlConnectionCache::new());
 
@@ -138,12 +132,9 @@ impl ControlConnectionEstablisher {
                 request_timeouts,
             },
             hostname_resolution_timeout,
-            known_peers: initial_peers
-                .into_iter()
-                .map(UntranslatedEndpoint::ContactPoint)
-                .collect(),
+            known_peers,
             host_filter: host_filter.clone(),
-            initial_known_nodes,
+            initial_endpoints,
             cc_cache,
         })
     }
@@ -152,7 +143,10 @@ impl ControlConnectionEstablisher {
     ///
     /// Iterates over known peers (shuffled), trying to connect and run
     /// `fetcher` on each. If `initial` is false and all known peers are
-    /// exhausted, falls back to re-resolving the initial contact points.
+    /// exhausted, falls back to re-resolving the initial contact points -
+    /// except for a maintenance mode session, which is pinned to its one
+    /// endpoint for its whole lifetime and so never falls back to a re-resolve
+    /// that could silently repin it to a different address.
     ///
     /// `fetcher` is invoked once per candidate connection and must perform the
     /// metadata fetch on it; it is also free to consume the connection's server
@@ -212,22 +206,32 @@ impl ControlConnectionEstablisher {
             return Err(err);
         }
 
-        // If no known peer is reachable, try falling back to initial contact points, in hope that
-        // there are some hostnames there which will resolve to reachable new addresses.
+        if self.initial_endpoints.is_maintenance() {
+            // A maintenance mode session is pinned to one node for its whole lifetime.
+            // Re-resolving the endpoint here could silently repin it to a different
+            // address.
+            let err = known_peers_err.unwrap_or_else(no_nodes_available_error);
+            error!(
+                error = ?err,
+                "Could not establish control connection and fetch metadata on the maintenance mode endpoint"
+            );
+            return Err(err);
+        }
+
+        // If no known peer is reachable, try falling back to the initial endpoints, in hope
+        // that there are some hostnames there which will resolve to reachable new addresses.
         warn!(
-            "Failed to establish control connection and fetch metadata on all known peers. Falling back to initial contact points."
+            "Failed to establish control connection and fetch metadata on all known peers. Falling back to initial endpoints."
         );
-        let (initial_peers, _hostnames) =
-            resolve_contact_points(&self.initial_known_nodes, self.hostname_resolution_timeout)
-                .await;
+
+        let initial_peers = self
+            .initial_endpoints
+            .resolve(self.hostname_resolution_timeout)
+            .await
+            .unwrap_or_default();
+
         match self
-            .try_establish_on_nodes(
-                initial,
-                initial_peers
-                    .into_iter()
-                    .map(UntranslatedEndpoint::ContactPoint),
-                fetcher,
-            )
+            .try_establish_on_nodes(initial, initial_peers.into_iter(), fetcher)
             .await
         {
             Ok(result) => Ok(result),
@@ -382,16 +386,20 @@ impl ControlConnectionEstablisher {
         endpoint: &UntranslatedEndpoint,
         metadata: &Metadata,
     ) -> bool {
-        let control_connection_peer = metadata
-            .peers
+        // A maintenance mode session has no peer list to filter, and no host
+        // filter either so its endpoint can never be the rejected node.
+        let Topology::Peers(peers) = &metadata.topology else {
+            return false;
+        };
+
+        let control_connection_peer = peers
             .iter()
             .find(|peer| matches!(endpoint, UntranslatedEndpoint::Peer(PeerEndpoint{address, ..}) if *address == peer.address));
         if let Some(peer) = control_connection_peer
             && !self.host_filter.as_ref().is_none_or(|f| f.accept(peer))
         {
             warn!(
-                filtered_node_ips = tracing::field::display(metadata
-                    .peers
+                filtered_node_ips = tracing::field::display(peers
                     .iter()
                     .filter(|peer| self.host_filter.as_ref().is_none_or(|p| p.accept(peer)))
                     .map(|peer| peer.address)
@@ -419,11 +427,20 @@ impl ControlConnectionEstablisher {
         // setting event_sender field in connection config will cause control connection to
         // - send REGISTER message to receive server events
         // - send received events via server_event_sender
-        let mut events_to_register_for = vec![
-            EventType::TopologyChange,
-            EventType::StatusChange,
-            EventType::SchemaChange,
-        ];
+        //
+        //
+        // A maintenance mode session subscribes to SCHEMA_CHANGE only. It must not
+        // react to TOPOLOGY_CHANGE or STATUS_CHANGE, as both ask for a peer list
+        // re-read, which is exactly the node discovery that maintenance mode exists to avoid.
+        let mut events_to_register_for = if endpoint.is_maintenance() {
+            vec![EventType::SchemaChange]
+        } else {
+            vec![
+                EventType::TopologyChange,
+                EventType::StatusChange,
+                EventType::SchemaChange,
+            ]
+        };
         if cc_config.client_routes_subscriber.is_some() {
             events_to_register_for.push(EventType::ClientRoutesChange);
         }
@@ -477,7 +494,12 @@ impl TopologyUpdateGuard<Metadata> {
     /// Updates the establisher's known peers from the fetched metadata and releases
     /// the metadata itself.
     pub(super) fn apply(self, establisher: &mut ControlConnectionEstablisher) -> Metadata {
-        establisher.update_known_peers(&self.inner.peers);
+        match &self.inner.topology {
+            Topology::Peers(peers) => establisher.update_known_peers(peers),
+            // A maintenance mode session is pinned to the endpoint the user named,
+            // so its known peer list is fixed.
+            Topology::Maintenance(_) => (),
+        }
         self.inner
     }
 }
