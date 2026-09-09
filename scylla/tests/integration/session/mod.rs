@@ -5,6 +5,7 @@ mod db_errors;
 mod history;
 mod host_id_mismatch;
 mod internal_requests;
+mod maintenance_mode;
 #[cfg(feature = "metrics")]
 mod metrics;
 mod new_session;
