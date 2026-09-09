@@ -24,7 +24,7 @@ pub(crate) mod update;
 pub(super) mod worker;
 
 use crate::cluster::metadata::update::ClientRoutesUpdate;
-use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
+use crate::cluster::node::{NodeAddr, ResolvedContactPoint, Transport};
 use crate::routing::Token;
 
 use crate::frame::response::result::ColumnSpec;
@@ -146,6 +146,7 @@ pub(crate) enum UntranslatedEndpoint {
 #[derive(Clone, Debug)]
 pub(crate) struct MaintenanceEndpoint {
     pub(crate) address: SocketAddr,
+    pub(crate) transport: Transport,
 }
 
 /// The host id of a node whose identity the driver never read from the cluster:
@@ -156,7 +157,8 @@ impl UntranslatedEndpoint {
     pub(crate) fn address(&self) -> NodeAddr {
         match *self {
             UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address, .. })
-            // A maintenance endpoint is user-provided, hence already translated.
+            // A maintenance endpoint is user-provided, hence already translated -
+            // and for a Unix socket the address is only a placeholder anyway.
             | UntranslatedEndpoint::Maintenance(MaintenanceEndpoint { address, .. }) => {
                 NodeAddr::Untranslatable(address)
             }
@@ -194,6 +196,16 @@ impl UntranslatedEndpoint {
     pub(crate) fn is_maintenance(&self) -> bool {
         matches!(self, UntranslatedEndpoint::Maintenance(_))
     }
+    /// How to reach the node this endpoint describes.
+    pub(crate) fn transport(&self) -> &Transport {
+        match self {
+            UntranslatedEndpoint::ContactPoint(_) | UntranslatedEndpoint::Peer(_) => {
+                &Transport::Tcp
+            }
+            UntranslatedEndpoint::Maintenance(MaintenanceEndpoint { transport, .. }) => transport,
+        }
+    }
+
     pub(crate) fn set_port(&mut self, port: u16) {
         let inner_addr = match self {
             UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address, .. })

@@ -6,6 +6,7 @@ use crate::client::driver_config::DriverConfigReporter;
 use crate::client::pager::{NextRowError, QueryPager};
 use crate::cluster::NodeAddr;
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
+use crate::cluster::node::Transport;
 use crate::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
@@ -61,6 +62,8 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter, split};
+#[cfg(unix)]
+use tokio::net::UnixStream;
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::Instant;
@@ -369,10 +372,14 @@ impl ConnectionConfig {
         &self,
         endpoint: &UntranslatedEndpoint,
     ) -> HostConnectionConfig {
-        let tls_config = self
-            .tls_provider
-            .as_ref()
-            .and_then(|provider| provider.make_tls_config(endpoint));
+        let transport = endpoint.transport().clone();
+
+        // For a Unix socket TLS context is silently skipped.
+        let tls_provider = self.tls_provider.as_ref();
+        #[cfg(unix)]
+        let tls_provider = tls_provider.filter(|_| !matches!(transport, Transport::UnixSocket(_)));
+
+        let tls_config = tls_provider.and_then(|provider| provider.make_tls_config(endpoint));
 
         HostConnectionConfig {
             local_ip_address: self.local_ip_address,
@@ -393,6 +400,7 @@ impl ConnectionConfig {
             identity: self.identity.clone(),
             session_id: self.session_id,
             driver_config_reporter: self.driver_config_reporter.clone(),
+            transport,
             #[cfg(test)]
             transport_factory: None,
         }
@@ -426,6 +434,10 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) session_id: Uuid,
     // should be Some only in control connections
     pub(crate) driver_config_reporter: Option<Arc<DriverConfigReporter>>,
+
+    /// How to reach the node, taken from its endpoint: over TCP at
+    /// `connect_address`, or over a Unix domain socket whose path this carries.
+    pub(crate) transport: Transport,
 
     #[cfg(test)]
     pub(crate) transport_factory: Option<Arc<scylla_proxy::TransportFactory>>,
@@ -461,6 +473,7 @@ impl Default for HostConnectionConfig {
 
             // Test connections do not report their configuration.
             driver_config_reporter: None,
+            transport: Transport::Tcp,
 
             #[cfg(test)]
             transport_factory: None,
@@ -537,6 +550,34 @@ impl Connection {
                 config,
                 #[cfg(test)]
                 None,
+            )
+            .await;
+        }
+
+        // Maintenance mode may target a Unix domain socket. `connect_address` is then
+        // only a placeholder identity for the endpoint, not something to connect to.
+        #[cfg(unix)]
+        if let Transport::UnixSocket(path) = config.transport.clone() {
+            let stream =
+                match tokio::time::timeout(config.connect_timeout, UnixStream::connect(&*path))
+                    .await
+                {
+                    Ok(stream) => stream.map_err(|e| ConnectionError::IoError(Arc::new(e)))?,
+                    Err(_) => return Err(ConnectionError::ConnectTimeout),
+                };
+
+            #[cfg(test)]
+            let socket = {
+                use std::os::unix::io::AsFd;
+                Some(socket2::Socket::from(stream.as_fd().try_clone_to_owned()?))
+            };
+
+            return Self::new_with_transport(
+                stream,
+                connect_address,
+                config,
+                #[cfg(test)]
+                socket,
             )
             .await;
         }
@@ -2108,7 +2149,7 @@ async fn maybe_translated_addr(
         }
 
         (UntranslatedEndpoint::Maintenance(endpoint), _) => {
-            // A maintenance mode session's endpoint is not inteded to be translated.
+            // A maintenance mode session's endpoint is not intended to be translated.
             Ok(endpoint.address)
         }
 
