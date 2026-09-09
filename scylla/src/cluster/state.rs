@@ -96,7 +96,7 @@ type Ring = Vec<(Token, Arc<Node>)>;
 
 impl ClusterState {
     pub(crate) async fn wait_until_all_pools_are_initialized(&self) {
-        for node in self.locator.unique_nodes_in_global_ring().iter() {
+        for node in self.known_nodes.values() {
             node.wait_until_pool_initialized().await;
         }
     }
