@@ -374,6 +374,19 @@ impl InitialEndpoints {
     }
 }
 
+/// How the driver actually reaches a node, as opposed to how the node is
+/// identified (which is always a [`SocketAddr`], see [`NodeAddr`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Transport {
+    /// A TCP connection to the node's address.
+    #[default]
+    Tcp,
+    /// A connection to a Unix domain socket at the given path. The node's
+    /// address is then only a placeholder identity, never connected to.
+    #[cfg(unix)]
+    UnixSocket(Arc<std::path::Path>),
+}
+
 /// Describes a database server known on Session startup, with already resolved address.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ResolvedContactPoint {
