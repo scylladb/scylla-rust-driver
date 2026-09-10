@@ -988,15 +988,11 @@ impl Doorkeeper {
         real_addr: SocketAddr,
     ) -> Result<(TcpStream, Option<TargetShard>), DoorkeeperError> {
         let mut cluster_stream = if let Some(shards) = self.shards_count {
-            let socket = match self.node.proxy_addr().ip() {
-                std::net::IpAddr::V4(_) => TcpSocket::new_v4(),
-                std::net::IpAddr::V6(_) => TcpSocket::new_v6(),
-            }
-            .map_err(DoorkeeperError::SocketCreate)?;
+            let (socket, mut desired_addr) =
+                open_shard_aware_socket_to_real_node(real_addr, driver_addr.port())
+                    .map_err(DoorkeeperError::SocketCreate)?;
 
             let shard_preserving_addr = {
-                let mut desired_addr =
-                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), driver_addr.port());
                 while socket.bind(desired_addr).is_err() {
                     // in search for a port that translates to the desired shard
                     let next_port = self.next_port_to_same_shard(desired_addr.port());
@@ -1723,6 +1719,24 @@ impl ProxyWorker {
     }
 }
 
+fn open_shard_aware_socket_to_real_node(
+    real_addr: SocketAddr,
+    source_port: u16,
+) -> std::io::Result<(TcpSocket, SocketAddr)> {
+    let (socket, unspecified_ip) = match real_addr.ip() {
+        IpAddr::V4(_) => (
+            TcpSocket::new_v4()?,
+            IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+        ),
+        IpAddr::V6(_) => (
+            TcpSocket::new_v6()?,
+            IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+        ),
+    };
+
+    Ok((socket, SocketAddr::new(unspecified_ip, source_port)))
+}
+
 // Returns next free IP address for another proxy instance.
 // Useful for concurrent testing.
 pub fn get_exclusive_local_address() -> IpAddr {
@@ -1801,6 +1815,72 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::sync::oneshot;
+
+    #[test]
+    fn open_shard_aware_socket_to_real_node_uses_real_node_ip_family() {
+        for (real_addr, unspecified_ip) in [
+            (
+                SocketAddr::from(([127, 0, 0, 1], 9042)),
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            ),
+            (
+                SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 9042)),
+                IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+            ),
+        ] {
+            let (socket, bind_addr) = loop {
+                let port_probe =
+                    std::net::TcpListener::bind(SocketAddr::new(unspecified_ip, 0)).unwrap();
+                let source_port = port_probe.local_addr().unwrap().port();
+                drop(port_probe);
+
+                let (socket, bind_addr) =
+                    open_shard_aware_socket_to_real_node(real_addr, source_port).unwrap();
+                assert_eq!(bind_addr, SocketAddr::new(unspecified_ip, source_port));
+                match socket.bind(bind_addr) {
+                    Ok(()) => break (socket, bind_addr),
+                    Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
+                    Err(error) => panic!("failed to bind shard-aware socket: {error}"),
+                }
+            };
+            assert_eq!(socket.local_addr().unwrap(), bind_addr);
+            assert_eq!(socket.local_addr().unwrap().is_ipv4(), real_addr.is_ipv4());
+        }
+    }
+
+    #[tokio::test]
+    async fn shard_aware_proxy_connects_to_ipv6_node_from_ipv4_listener() {
+        setup_tracing();
+        let mock_node_listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let real_addr = mock_node_listener.local_addr().unwrap();
+        let (proxy_addr, running_proxy) = loop {
+            let proxy_port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let proxy_addr = proxy_port_probe.local_addr().unwrap();
+            drop(proxy_port_probe);
+            let proxy = Proxy::new([Node::new(
+                real_addr,
+                proxy_addr,
+                ShardAwareness::FixedNum(1),
+                None,
+                None,
+            )]);
+            match proxy.run().await {
+                Ok(running_proxy) => break (proxy_addr, running_proxy),
+                Err(DoorkeeperError::DriverConnectionAttempt(_, error))
+                    if error.kind() == std::io::ErrorKind::AddrInUse => {}
+                Err(error) => panic!("failed to start mixed-family proxy: {error}"),
+            }
+        };
+
+        let connect_driver = TcpStream::connect(proxy_addr);
+        let accept_node = mock_node_listener.accept();
+        let (driver, node) = tokio::join!(connect_driver, accept_node);
+        let _driver = driver.unwrap();
+        let (_node, peer_addr) = node.unwrap();
+        assert!(peer_addr.is_ipv6());
+
+        running_proxy.finish().await.unwrap();
+    }
 
     fn random_body() -> Bytes {
         let body_len = (rand::random::<u32>() % 1000) as usize;
