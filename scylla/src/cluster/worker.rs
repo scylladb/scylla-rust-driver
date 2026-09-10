@@ -20,7 +20,7 @@ use crate::routing::locator::tablets::RawTablet;
 
 use crate::frame::response::result::TableSpec;
 use arc_swap::ArcSwap;
-use futures::future::join_all;
+use futures::future::{BoxFuture, OptionFuture, join_all};
 use futures::{FutureExt, future::RemoteHandle};
 
 use std::collections::{HashMap, HashSet};
@@ -173,6 +173,7 @@ impl Cluster {
             tablets_channel: tablet_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
+            pending_use_keyspace: None,
 
             host_filter,
             host_listener,
@@ -270,6 +271,13 @@ struct ClusterWorker {
     // Channel used to receive use keyspace requests
     use_keyspace_channel: tokio::sync::mpsc::Receiver<UseKeyspaceRequest>,
 
+    /// The `USE KEYSPACE` fanout that is currently in progress, if any.
+    ///
+    /// Holding it here, instead of spawning and forgetting, is what serializes the requests:
+    /// the main loop only accepts a new request while this is `None`, so two fanouts
+    /// can never race to set the keyspace of the same connection.
+    pending_use_keyspace: Option<BoxFuture<'static, ()>>,
+
     // Channel used to receive signals that node is no longer reachable or became reachable.
     connectivity_events_receiver: tokio::sync::mpsc::UnboundedReceiver<ConnectivityChangeEvent>,
 
@@ -350,14 +358,21 @@ impl ClusterWorker {
                     self.handle_connectivity_change_event(&event);
                 }
 
-                maybe_use_keyspace_request = self.use_keyspace_channel.recv() => {
+                // A `None` yielded by the `OptionFuture` means there is no fanout in progress.
+                // The pattern then does not match, which disables this branch for this iteration
+                // of the loop instead of completing it immediately.
+                Some(()) = OptionFuture::from(self.pending_use_keyspace.as_mut()) => {
+                    self.pending_use_keyspace = None;
+                }
+
+                maybe_use_keyspace_request = self.use_keyspace_channel.recv(), if self.pending_use_keyspace.is_none() => {
                     match maybe_use_keyspace_request {
                         Some(request) => {
                             self.node_config.used_keyspace = Some(request.keyspace_name.clone());
 
                             let cluster_state = self.cluster_state.load_full();
-                            let use_keyspace_future = Self::handle_use_keyspace_request(cluster_state, request);
-                            tokio::spawn(use_keyspace_future);
+                            self.pending_use_keyspace =
+                                Some(Self::handle_use_keyspace_request(cluster_state, request).boxed());
                         },
                         None => return, // If use_keyspace_channel was closed then cluster was dropped, we can stop working
                     }
