@@ -15,7 +15,7 @@ use crate::statement::Consistency;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::net::{IpAddr, SocketAddr};
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
@@ -33,13 +33,27 @@ mod sealed {
 /// used to connect to Scylla Cloud Serverless.
 /// This is used to conditionally enable different sets of methods
 /// on the session builder based on its kind.
-pub trait SessionBuilderKind: sealed::Sealed + Clone {}
+///
+/// This is the bound that every builder kind satisfies.
+pub trait SessionBuilderKindBase: sealed::Sealed + Clone {}
+
+/// Constraint for session builder kinds whose sessions choose which node to send
+/// a request to.
+pub trait SessionBuilderKindSupportsNodeSelection: SessionBuilderKindBase {}
+
+/// A session builder kind that supports every configuration option.
+pub trait SessionBuilderKind:
+    SessionBuilderKindBase + SessionBuilderKindSupportsNodeSelection
+{
+}
+impl<T: SessionBuilderKindBase + SessionBuilderKindSupportsNodeSelection> SessionBuilderKind for T {}
 
 /// Default session builder kind, used to create regular sessions.
 #[derive(Clone)]
 pub enum DefaultMode {}
 impl sealed::Sealed for DefaultMode {}
-impl SessionBuilderKind for DefaultMode {}
+impl SessionBuilderKindBase for DefaultMode {}
+impl SessionBuilderKindSupportsNodeSelection for DefaultMode {}
 
 /// Builder for regular sessions.
 pub type SessionBuilder = GenericSessionBuilder<DefaultMode>;
@@ -51,10 +65,21 @@ pub enum ClientRoutesMode {}
 #[cfg(feature = "unstable-client-routes")]
 impl sealed::Sealed for ClientRoutesMode {}
 #[cfg(feature = "unstable-client-routes")]
-impl SessionBuilderKind for ClientRoutesMode {}
+impl SessionBuilderKindBase for ClientRoutesMode {}
+#[cfg(feature = "unstable-client-routes")]
+impl SessionBuilderKindSupportsNodeSelection for ClientRoutesMode {}
 /// Builder for ClientRoutes sessions.
 #[cfg(feature = "unstable-client-routes")]
 pub type ClientRoutesSessionBuilder = GenericSessionBuilder<ClientRoutesMode>;
+
+/// Session builder kind used to create maintenance mode sessions: sessions pinned
+/// to a single node that never fetch topology metadata.
+#[derive(Clone)]
+pub enum MaintenanceMode {}
+impl sealed::Sealed for MaintenanceMode {}
+impl SessionBuilderKindBase for MaintenanceMode {}
+/// Builder for maintenance mode sessions.
+pub type MaintenanceSessionBuilder = GenericSessionBuilder<MaintenanceMode>;
 
 /// Used to conveniently configure new Session instances.
 ///
@@ -77,7 +102,7 @@ pub type ClientRoutesSessionBuilder = GenericSessionBuilder<ClientRoutesMode>;
 /// # }
 /// ```
 #[derive(Clone)]
-pub struct GenericSessionBuilder<Kind: SessionBuilderKind> {
+pub struct GenericSessionBuilder<Kind: SessionBuilderKindBase> {
     /// Configuration for the session being built.
     pub config: SessionConfig,
     kind: PhantomData<Kind>,
@@ -151,6 +176,95 @@ impl GenericSessionBuilder<ClientRoutesMode> {
                 // a desired shard) is not yet supported in ClientRoutes Cloud deployments
                 // at the moment of writing, so this is disabled by default.
                 disallow_shard_aware_port: true,
+                ..SessionConfig::new()
+            },
+            kind: PhantomData,
+        }
+    }
+}
+
+// NOTE: this `impl` block contains configuration options specific for maintenance mode.
+// Maintenance mode is deliberately narrow: exactly one endpoint, no node
+// discovery. Options that would contradict that are therefore not available on this builder
+// type at all.
+impl GenericSessionBuilder<MaintenanceMode> {
+    /// Creates a new [`MaintenanceSessionBuilder`] targeting the given endpoint.
+    ///
+    /// A maintenance mode session is pinned to that one node for its whole
+    /// lifetime. It never reads the peer list, so it never learns of - let alone
+    /// connects to - any other node, so it does not react to topology, status. This makes it
+    /// suitable for operating on a single node directly, including an unhealthy
+    /// one whose view of the cluster cannot be trusted, or one reachable only over
+    /// a local Unix domain socket.
+    ///
+    /// # Default configuration
+    ///
+    /// The defaults differ from [`SessionBuilder::new`]'s in the ways that follow
+    /// from being pinned to one node and holding no metadata:
+    ///
+    /// * schema metadata fetching is **disabled** (both
+    ///   `fetch_schema_metadata` and `fetch_full_schema_metadata`), as is every
+    ///   other metadata fetch;
+    /// * the connection pool holds a **single connection** per node
+    ///   ([`PoolSize::PerHost(1)`](crate::client::PoolSize::PerHost)), to keep the
+    ///   load the session puts on the node minimal;
+    /// * the **shard-aware port is not used**, for the same reason;
+    /// * automatic waiting for schema agreement is **off**: with no metadata to
+    ///   keep consistent, and only one node in view, agreement cannot be
+    ///   established meaningfully.
+    ///
+    /// # Example
+    /// ```
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use scylla::client::session::Session;
+    /// use scylla::client::session_builder::MaintenanceSessionBuilder;
+    /// use scylla::client::maintenance_mode::MaintenanceModeEndpoint;
+    ///
+    /// let session: Session = MaintenanceSessionBuilder::new(
+    ///         MaintenanceModeEndpoint::hostname("127.0.0.1:9042"),
+    ///     )
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Over a Unix domain socket - note that a TLS context, if one were configured,
+    /// would simply be ignored here. `MaintenanceModeEndpoint::unix_socket` only
+    /// exists on Unix.
+    /// ```
+    /// # #[cfg(unix)]
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::MaintenanceSessionBuilder;
+    /// # use scylla::client::maintenance_mode::MaintenanceModeEndpoint;
+    /// let session: Session = MaintenanceSessionBuilder::new(
+    ///         MaintenanceModeEndpoint::unix_socket("/var/run/scylla/cql.sock"),
+    ///     )
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// # #[cfg(not(unix))]
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// #     Ok(())
+    /// # }
+    /// ```
+    pub fn new(endpoint: super::maintenance_mode::MaintenanceModeEndpoint) -> Self {
+        MaintenanceSessionBuilder {
+            config: SessionConfig {
+                maintenance_mode: Some(endpoint),
+
+                // Maintenance mode fetches no metadata whatsoever. These two turn
+                // off the schema part of it.
+                fetch_schema_metadata: false,
+                fetch_full_schema_metadata: false,
+
+                connection_pool_size: PoolSize::PerHost(NonZeroUsize::new(1).unwrap()),
+                disallow_shard_aware_port: true,
+                schema_agreement_automatic_waiting: false,
+                refresh_metadata_on_auto_schema_agreement: false,
+
                 ..SessionConfig::new()
             },
             kind: PhantomData,
@@ -326,14 +440,54 @@ impl<K: SessionBuilderKindSupportsAddressTranslation> GenericSessionBuilder<K> {
     }
 }
 
+// TODO: find a better shape for this pair of traits.
+//
+// There are two of them only to avoid an API break. `SessionBuilderKindSupportsTls`
+// used to have `SessionBuilderKind` as its supertrait, so a downstream bound of
+// `K: SessionBuilderKindSupportsTls` also granted everything else, the node
+// selection options included. Maintenance mode supports TLS but not node
+// selection, so gating the `impl` block below on that trait would have forced its
+// supertrait to be weakened to `SessionBuilderKindBase` - and that would silently
+// take those options away from anyone generic over the TLS trait.
+//
+// So the block is gated on the weaker `...SupportsTlsBase`, which is the real
+// constraint ("this kind accepts a TLS context"), while the original trait is kept
+// with its original guarantee, plus the weaker one as a second supertrait so that
+// the old bound still reaches `tls_context`. Collapsing the two is a job for the
+// next major version.
+//
+// Note the two cannot be linked by a blanket `impl<T: ...SupportsTls>
+// ...SupportsTlsBase for T {}`: that would overlap the concrete impl for
+// `MaintenanceMode` (E0119), since coherence cannot prove a type does *not*
+// implement a trait.
+
+/// Constraint for session builder kinds that accept a TLS context.
+///
+/// This is the constraint the `tls_context` option is actually gated on.
+pub trait SessionBuilderKindSupportsTlsBase: SessionBuilderKindBase {}
+impl SessionBuilderKindSupportsTlsBase for DefaultMode {}
+// A maintenance mode session accepts a TLS context, and ignores it when the
+// endpoint it is pinned to is a Unix domain socket - such a socket is local by
+// construction. It does not support node selection, which is why it implements
+// this trait rather than `SessionBuilderKindSupportsTls`.
+impl SessionBuilderKindSupportsTlsBase for MaintenanceMode {}
+
 /// Constraint for session builder kinds that support setting TLS config on them.
-pub trait SessionBuilderKindSupportsTls: SessionBuilderKind {}
+///
+/// Retained with the guarantee it always had - it implies
+/// [`SessionBuilderKind`] - so that existing bounds on it keep granting every
+/// other option too. The `tls_context` option itself is gated on the weaker
+/// [`SessionBuilderKindSupportsTlsBase`], which this trait also implies.
+pub trait SessionBuilderKindSupportsTls:
+    SessionBuilderKind + SessionBuilderKindSupportsTlsBase
+{
+}
 impl SessionBuilderKindSupportsTls for DefaultMode {}
 // TODO: support TLS for ClientRoutesMode once Cloud comes up with a solution.
 // #[cfg(feature = "unstable-client-routes")]
 // impl SessionBuilderKindSupportsTls for ClientRoutesMode {}
 
-impl<K: SessionBuilderKindSupportsTls> GenericSessionBuilder<K> {
+impl<K: SessionBuilderKindSupportsTlsBase> GenericSessionBuilder<K> {
     /// TLS feature
     ///
     /// Provide SessionBuilder with TlsContext that will be
@@ -400,7 +554,7 @@ impl<K: SessionBuilderKindSupportsTls> GenericSessionBuilder<K> {
 
 // This block contains configuration options that make sense both for any `Session` type.
 // If an option fit only some of them, it should be put in a specialised block.
-impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
+impl<K: SessionBuilderKindBase> GenericSessionBuilder<K> {
     /// Set username and password for plain text authentication.
     ///
     /// # Example
@@ -553,36 +707,6 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn compression(mut self, compression: Option<Compression>) -> Self {
         self.config.compression = compression;
-        self
-    }
-
-    /// Sets the preferred datacenter for this session.
-    ///
-    /// Nodes in the given datacenter will be treated as "local" and preferred
-    /// by load balancing policies that do not override this preference.
-    pub fn prefer_datacenter(mut self, datacenter_name: String) -> Self {
-        self.config.node_location_preference = NodeLocationPreference::Datacenter(datacenter_name);
-        self
-    }
-
-    /// Sets the preferred datacenter and rack for this session.
-    ///
-    /// Nodes in the given rack of the given datacenter are tried first,
-    /// followed by other nodes in the same datacenter, and then remote nodes.
-    /// This preference is used by load balancing policies that do not override it.
-    pub fn prefer_datacenter_and_rack(
-        mut self,
-        datacenter_name: String,
-        rack_name: String,
-    ) -> Self {
-        self.config.node_location_preference =
-            NodeLocationPreference::DatacenterAndRack(datacenter_name, rack_name);
-        self
-    }
-
-    /// Clears any node location preference, treating all nodes equally.
-    pub fn prefer_no_datacenter(mut self) -> Self {
-        self.config.node_location_preference = NodeLocationPreference::Any;
         self
     }
 
@@ -1264,40 +1388,6 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
-    /// Sets the host filter. The host filter decides whether any connections
-    /// should be opened to the node or not. The driver will also avoid
-    /// those nodes when re-establishing the control connection.
-    ///
-    /// See the [host filter](crate::policies::host_filter) module for a list
-    /// of pre-defined filters. It is also possible to provide a custom filter
-    /// by implementing the HostFilter trait.
-    ///
-    /// # Example
-    /// ```
-    /// # use async_trait::async_trait;
-    /// # use std::net::SocketAddr;
-    /// # use std::sync::Arc;
-    /// # use scylla::client::session::Session;
-    /// # use scylla::client::session_builder::SessionBuilder;
-    /// # use scylla::errors::TranslationError;
-    /// # use scylla::policies::address_translator::AddressTranslator;
-    /// # use scylla::policies::host_filter::DcHostFilter;
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// // The session will only connect to nodes from "my-local-dc"
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .host_filter(Arc::new(DcHostFilter::new("my-local-dc".to_string())))
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn host_filter(mut self, filter: Arc<dyn HostFilter>) -> Self {
-        self.config.host_filter = Some(filter);
-        self
-    }
-
     /// Set the refresh metadata on schema agreement flag.
     /// The default is true.
     ///
@@ -1582,6 +1672,74 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn driver_config_reporting(mut self, report: bool) -> Self {
         self.config.driver_config_reporting = report;
+        self
+    }
+}
+
+/// Constraint for session builder kinds that support choosing which node a
+/// request goes to: the location preference and the host filter.
+impl<K: SessionBuilderKindSupportsNodeSelection> GenericSessionBuilder<K> {
+    /// Sets the preferred datacenter for this session.
+    ///
+    /// Nodes in the given datacenter will be treated as "local" and preferred
+    /// by load balancing policies that do not override this preference.
+    pub fn prefer_datacenter(mut self, datacenter_name: String) -> Self {
+        self.config.node_location_preference = NodeLocationPreference::Datacenter(datacenter_name);
+        self
+    }
+
+    /// Sets the preferred datacenter and rack for this session.
+    ///
+    /// Nodes in the given rack of the given datacenter are tried first,
+    /// followed by other nodes in the same datacenter, and then remote nodes.
+    /// This preference is used by load balancing policies that do not override it.
+    pub fn prefer_datacenter_and_rack(
+        mut self,
+        datacenter_name: String,
+        rack_name: String,
+    ) -> Self {
+        self.config.node_location_preference =
+            NodeLocationPreference::DatacenterAndRack(datacenter_name, rack_name);
+        self
+    }
+
+    /// Clears any node location preference, treating all nodes equally.
+    pub fn prefer_no_datacenter(mut self) -> Self {
+        self.config.node_location_preference = NodeLocationPreference::Any;
+        self
+    }
+
+    /// Sets the host filter. The host filter decides whether any connections
+    /// should be opened to the node or not. The driver will also avoid
+    /// those nodes when re-establishing the control connection.
+    ///
+    /// See the [host filter](crate::policies::host_filter) module for a list
+    /// of pre-defined filters. It is also possible to provide a custom filter
+    /// by implementing the HostFilter trait.
+    ///
+    /// # Example
+    /// ```
+    /// # use async_trait::async_trait;
+    /// # use std::net::SocketAddr;
+    /// # use std::sync::Arc;
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::errors::TranslationError;
+    /// # use scylla::policies::address_translator::AddressTranslator;
+    /// # use scylla::policies::host_filter::DcHostFilter;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// // The session will only connect to nodes from "my-local-dc"
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .host_filter(Arc::new(DcHostFilter::new("my-local-dc".to_string())))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn host_filter(mut self, filter: Arc<dyn HostFilter>) -> Self {
+        self.config.host_filter = Some(filter);
         self
     }
 }
@@ -1932,6 +2090,94 @@ mod tests {
 
         assert!(builder.config.keyspace_case_sensitive);
         assert!(!builder.config.fetch_schema_metadata);
+    }
+
+    mod maintenance_mode {
+        use super::*;
+        use crate::client::PoolSize;
+        use crate::client::maintenance_mode::MaintenanceModeEndpoint;
+        use crate::client::session::Session;
+        use crate::client::session_builder::MaintenanceSessionBuilder;
+        use std::num::NonZeroUsize;
+        use std::sync::Arc;
+
+        fn builder() -> MaintenanceSessionBuilder {
+            MaintenanceSessionBuilder::new(MaintenanceModeEndpoint::hostname("127.0.0.1:9042"))
+        }
+
+        #[test]
+        fn defaults_differ_from_a_regular_session() {
+            setup_tracing();
+            let config = builder().config;
+
+            // No metadata whatsoever.
+            assert!(!config.fetch_schema_metadata);
+            assert!(!config.fetch_full_schema_metadata);
+
+            // Minimal footprint on the single node.
+            assert!(matches!(
+                config.connection_pool_size,
+                PoolSize::PerHost(n) if n == NonZeroUsize::new(1).unwrap()
+            ));
+            assert!(config.disallow_shard_aware_port);
+
+            // Nothing to agree on with one node and no metadata.
+            assert!(!config.schema_agreement_automatic_waiting);
+            assert!(!config.refresh_metadata_on_auto_schema_agreement);
+
+            // The endpoint stands in for the known nodes list, which stays empty
+            // until `connect` lowers the endpoint onto it.
+            assert!(config.known_nodes.is_empty());
+            assert!(config.maintenance_mode.is_some());
+        }
+
+        #[tokio::test]
+        async fn known_nodes_alongside_a_maintenance_endpoint_are_rejected() {
+            setup_tracing();
+            // The builder makes this unrepresentable, but `SessionConfig` is public
+            // and can be assembled by hand, so the runtime check has to hold too.
+            let mut config = builder().config;
+            config.add_known_node("127.0.0.1:9042");
+
+            let error = Session::connect(config).await.unwrap_err();
+            assert!(matches!(error, NewSessionError::IllegalConfig(_)));
+            assert!(
+                error.to_string().contains(
+                    "Known nodes must not be set together with a maintenance mode endpoint"
+                )
+            );
+        }
+
+        #[tokio::test]
+        async fn host_filter_is_rejected() {
+            setup_tracing();
+            let mut config = builder().config;
+            config.host_filter = Some(Arc::new(crate::policies::host_filter::AcceptAllHostFilter));
+
+            let error = Session::connect(config).await.unwrap_err();
+            assert!(matches!(error, NewSessionError::IllegalConfig(_)));
+            assert!(
+                error
+                    .to_string()
+                    .contains("A host filter is not supported in maintenance mode")
+            );
+        }
+
+        #[tokio::test]
+        async fn node_location_preference_is_rejected() {
+            setup_tracing();
+            let mut config = builder().config;
+            config.node_location_preference =
+                crate::routing::NodeLocationPreference::Datacenter("dc1".to_owned());
+
+            let error = Session::connect(config).await.unwrap_err();
+            assert!(matches!(error, NewSessionError::IllegalConfig(_)));
+            assert!(
+                error
+                    .to_string()
+                    .contains("A node location preference is not supported in maintenance mode")
+            );
+        }
     }
 
     // This is to assert that #705 does not break the API (i.e. it merely extends it).

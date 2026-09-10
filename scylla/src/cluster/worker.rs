@@ -3,13 +3,14 @@ use crate::client::client_routes::{
 };
 use crate::client::driver_config::DriverConfigReporter;
 use crate::client::session::TABLET_CHANNEL_SIZE;
+use crate::cluster::Node;
 use crate::cluster::control_connection::MetadataRequestTimeouts;
 use crate::cluster::metadata::update::{
     MetadataChanges, MetadataUpdate, PartialMetadataChanges, RefreshRequest, StatusHint,
 };
 use crate::cluster::metadata::{PeriodicFetchMode, SchemaMetadataFetchMode};
+use crate::cluster::node::InitialEndpoints;
 use crate::cluster::state::NodeConfig;
-use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::metrics::Metrics;
@@ -63,7 +64,7 @@ impl std::fmt::Debug for ClusterNeatDebug<'_> {
 impl Cluster {
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
-        known_nodes: Vec<KnownNode>,
+        initial_endpoints: InitialEndpoints,
         mut pool_config: PoolConfig,
         driver_config_reporter: Option<Arc<DriverConfigReporter>>,
         keyspaces_to_fetch: Vec<String>,
@@ -104,7 +105,7 @@ impl Cluster {
             .map(|translator| translator as Arc<dyn ClientRoutesSubscriber>);
 
         let cc_establisher = ControlConnectionEstablisher::new(
-            known_nodes,
+            initial_endpoints,
             hostname_resolution_timeout,
             pool_config.connection_config.clone(),
             driver_config_reporter,
