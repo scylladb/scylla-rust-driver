@@ -733,7 +733,7 @@ impl PoolRefiller {
                     self.time_out_keyspace_switch();
                 }
 
-                req = use_keyspace_request_receiver.recv() => {
+                req = use_keyspace_request_receiver.recv(), if self.pending_keyspace_switch.is_none() => {
                     if let Some(req) = req {
                         debug!("[{}] Requested keyspace change: {}", self.endpoint_description(), req.keyspace_name.as_str());
                         self.use_keyspace(req.keyspace_name, req.response_sender);
