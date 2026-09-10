@@ -682,15 +682,7 @@ impl PoolRefiller {
                 .map(|switch| switch.deadline);
 
             tokio::select! {
-                // Note that some default value must be passed to avoid `unwrap()` here; the guard ensures that `scheduled_refill` is `Some`
-                // when the sleep future is polled, but it does not ensure that `scheduled_refill` is `Some` when the sleep future
-                // is created. With `unwrap()`, we'd get a panic here.
-                // The future created with the default value will not be polled anyway, because the guard prevents that.
-                //
-                // `tokio::select!`'s documentation:
-                // > Additionally, each branch may include an optional if precondition. If the precondition returns false, then the branch is disabled.
-                // > **The provided <async expression> is still evaluated** but the resulting future is never polled.
-                _ = tokio::time::sleep_until(scheduled_refill.as_ref().map_or(tokio::time::Instant::now(), |r| r.when)), if scheduled_refill.is_some() => {
+                Some(_) = OptionFuture::from(scheduled_refill.as_ref().map(|r| tokio::time::sleep_until(r.when))) => {
                     self.had_error_since_last_refill = false;
                     self.start_filling();
                     scheduled_refill = None;
