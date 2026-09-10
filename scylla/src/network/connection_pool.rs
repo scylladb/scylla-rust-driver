@@ -1480,14 +1480,17 @@ impl PoolRefiller {
         error_receiver: ErrorReceiver,
         requested_shard: Option<RequestedShard>,
     ) {
-        // TODO: There should be a timeout for this
+        // TODO: We could probably make USE KEYSPACE request timeout configurable in the future.
+        // For now it isn't just like in `use_keyspace`.
 
         let keyspace_name = self.current_keyspace.as_ref().cloned().unwrap();
+        let timeout = self.pool_config.connection_config.connect_timeout;
         self.ready_connections.push(
             async move {
-                let result = connection
-                    .use_keyspace(&keyspace_name)
+                let result = tokio::time::timeout(timeout, connection.use_keyspace(&keyspace_name))
                     .await
+                    .map_err(|_elapsed| UseKeyspaceError::RequestTimeout(timeout))
+                    .flatten() // Flattens both errors, getting a single Result out of a nested one.
                     .map(|()| (connection, error_receiver))
                     .map_err(ConnectionSetupError::Keyspace);
                 OpenedConnectionEvent {
