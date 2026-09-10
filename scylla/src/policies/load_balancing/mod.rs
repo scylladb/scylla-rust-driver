@@ -187,4 +187,15 @@ pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
 
     /// Returns the name of load balancing policy.
     fn name(&self) -> String;
+
+    /// Lets the driver recognise its own built-in policies by downcasting, so that
+    /// the driver configuration report can describe them precisely. Implementations
+    /// outside this crate keep the `None` default and are reported generically,
+    /// using [`LoadBalancingPolicy::name`].
+    ///
+    /// Not part of the stable API; may change at any time.
+    #[doc(hidden)]
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
 }

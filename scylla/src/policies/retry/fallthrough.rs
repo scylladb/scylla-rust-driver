@@ -24,6 +24,10 @@ impl RetryPolicy for FallthroughRetryPolicy {
     fn new_session(&self) -> Box<dyn RetrySession> {
         Box::new(FallthroughRetrySession)
     }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
 }
 
 impl RetrySession for FallthroughRetrySession {

@@ -56,6 +56,26 @@ pub enum RetryDecision {
 pub trait RetryPolicy: std::fmt::Debug + Send + Sync {
     /// Called for each new request, starts a session of deciding about retries
     fn new_session(&self) -> Box<dyn RetrySession>;
+
+    /// Lets the driver recognise its own built-in policies by downcasting, so that
+    /// the driver configuration report can describe them precisely. Implementations
+    /// outside this crate keep the `None` default and are reported generically.
+    ///
+    /// Not part of the stable API; may change at any time.
+    #[doc(hidden)]
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
+    /// Name used to describe this policy generically in the driver configuration
+    /// report. The default is the implementor's own type name, so no implementation
+    /// is required.
+    ///
+    /// Not part of the stable API; may change at any time.
+    #[doc(hidden)]
+    fn reported_name(&self) -> &'static str {
+        crate::policies::simple_type_name::<Self>()
+    }
 }
 
 /// Used throughout a single request to decide when to retry it

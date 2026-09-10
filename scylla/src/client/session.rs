@@ -8,6 +8,7 @@ use super::pager::QueryPager;
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
 use crate::client::client_routes::ClientRoutesConfig;
+use crate::client::driver_config::DriverConfigReporter;
 use crate::client::execution::{
     NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RunRequestResult,
     choose_tablet_block_hint,
@@ -36,9 +37,7 @@ use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};
-use crate::policies::reconnect::ExponentialReconnectPolicy;
-#[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
-use crate::policies::reconnect::ReconnectPolicy;
+use crate::policies::reconnect::{ExponentialReconnectPolicy, ReconnectPolicy};
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::response::{
@@ -442,6 +441,13 @@ pub struct SessionConfig {
     /// Driver and application self-identifying information,
     /// to be sent to server in STARTUP message.
     pub identity: SelfIdentity<'static>,
+
+    /// Whether the driver describes its effective configuration to the server
+    /// in the `DRIVER_CONFIG` STARTUP option.
+    /// Turn it off if the client's configuration must not be disclosed to the
+    /// cluster. Does not affect `SESSION_ID`, which describes nothing about the
+    /// client.
+    pub driver_config_reporting: bool,
 }
 
 impl SessionConfig {
@@ -504,6 +510,7 @@ impl SessionConfig {
             cluster_metadata_refresh_interval: Duration::from_secs(60),
             periodic_metadata_fetch_mode: PeriodicFetchMode::AffectedKeyspaces,
             identity: SelfIdentity::default(),
+            driver_config_reporting: true,
             #[cfg(feature = "unstable-client-routes")]
             client_routes_config: None,
         }
@@ -579,6 +586,28 @@ impl Default for SessionConfig {
 }
 
 impl SessionConfig {
+    /// The socket options connections are opened with, mapping the individual
+    /// `tcp_*` fields in one place rather than at the use site.
+    pub(crate) fn tcp_socket_options(&self) -> TcpSocketOptions {
+        TcpSocketOptions {
+            nodelay: self.tcp_nodelay,
+            keepalive_interval: self.tcp_keepalive_interval,
+            recv_buffer_size: self.tcp_recv_buffer_size,
+            send_buffer_size: self.tcp_send_buffer_size,
+            reuse_address: self.tcp_reuse_address,
+            linger: self.tcp_linger,
+        }
+    }
+
+    /// The timeouts applied to requests on the control connection. Single source
+    /// of the mapping, so that the configuration report cannot drift from it.
+    pub(crate) fn metadata_request_timeouts(&self) -> MetadataRequestTimeouts {
+        MetadataRequestTimeouts {
+            serverside_override: self.metadata_request_serverside_timeout,
+            clientside_override: self.metadata_request_clientside_timeout,
+        }
+    }
+
     /// [SessionConfig] may unfortunately represent invalid configurations. We need to rule them out
     /// at runtime by running validation.
     fn validate(&self) -> Result<(), NewSessionError> {
@@ -1370,6 +1399,33 @@ impl Session {
 
         let session_id = Uuid::new_v4();
 
+        // The policy the connection pools will actually use. Derived here
+        // because without the unstable feature the configuration carries no
+        // policy at all and a default stands in for it.
+        let reconnect_policy: Arc<dyn ReconnectPolicy> = {
+            #[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
+            {
+                Arc::clone(&config.reconnect_policy)
+            }
+            #[cfg(not(all(scylla_unstable, feature = "unstable-reconnect-policy")))]
+            {
+                Arc::new(ExponentialReconnectPolicy::new())
+            }
+        };
+
+        let tcp_socket_options = config.tcp_socket_options();
+
+        let metadata_request_timeouts = config.metadata_request_timeouts();
+
+        let driver_config_reporter = config.driver_config_reporting.then(|| {
+            Arc::new(DriverConfigReporter::new(
+                &config,
+                tcp_socket_options.clone(),
+                Arc::clone(&reconnect_policy),
+                metadata_request_timeouts,
+            ))
+        });
+
         let node_location_preference = config.node_location_preference;
         let known_nodes = config.known_nodes;
 
@@ -1398,14 +1454,7 @@ impl Session {
             local_ip_address: config.local_ip_address,
             shard_aware_local_port_range: config.shard_aware_local_port_range,
             compression: config.compression,
-            tcp_socket_options: TcpSocketOptions {
-                nodelay: config.tcp_nodelay,
-                keepalive_interval: config.tcp_keepalive_interval,
-                recv_buffer_size: config.tcp_recv_buffer_size,
-                send_buffer_size: config.tcp_send_buffer_size,
-                reuse_address: config.tcp_reuse_address,
-                linger: config.tcp_linger,
-            },
+            tcp_socket_options,
             timestamp_generator: config.timestamp_generator,
             tls_provider,
             authenticator: config.authenticator,
@@ -1421,16 +1470,17 @@ impl Session {
             tablet_sender: Some(tablet_sender),
             identity: config.identity,
             session_id,
+            // Pool connections do not report the configuration: only the control
+            // connection's config gets the reporter, in
+            // `ControlConnectionEstablisher::new`.
+            driver_config_reporter: None,
         };
 
         let pool_config = PoolConfig {
             connection_config,
             pool_size: config.connection_pool_size,
             can_use_shard_aware_port: !config.disallow_shard_aware_port,
-            #[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
-            reconnect_policy: config.reconnect_policy,
-            #[cfg(not(all(scylla_unstable, feature = "unstable-reconnect-policy")))]
-            reconnect_policy: Arc::new(ExponentialReconnectPolicy::new()),
+            reconnect_policy,
         };
 
         let metrics = Arc::new(Metrics::new());
@@ -1469,12 +1519,10 @@ impl Session {
         let cluster = Cluster::new(
             known_nodes,
             pool_config,
+            driver_config_reporter,
             config.keyspaces_to_fetch,
             schema_metadata_fetch_mode,
-            MetadataRequestTimeouts {
-                serverside_override: config.metadata_request_serverside_timeout,
-                clientside_override: config.metadata_request_clientside_timeout,
-            },
+            metadata_request_timeouts,
             config.hostname_resolution_timeout,
             config.host_filter,
             host_listener,

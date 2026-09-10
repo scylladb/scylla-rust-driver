@@ -15,6 +15,16 @@ use crate::cluster::metadata::Peer;
 pub trait HostFilter: Send + Sync {
     /// Returns whether a peer should be accepted or not.
     fn accept(&self, peer: &Peer) -> bool;
+
+    /// Lets the driver recognise its own built-in filters by downcasting, so that
+    /// the driver configuration report can describe them precisely. Implementations
+    /// outside this crate keep the `None` default and are omitted from the report.
+    ///
+    /// Not part of the stable API; may change at any time.
+    #[doc(hidden)]
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
 }
 
 /// Unconditionally accepts all nodes.
@@ -66,7 +76,7 @@ impl HostFilter for AllowListHostFilter {
 
 /// Accepts nodes from given DC.
 pub struct DcHostFilter {
-    local_dc: String,
+    pub(crate) local_dc: String,
 }
 
 impl DcHostFilter {
@@ -80,5 +90,9 @@ impl DcHostFilter {
 impl HostFilter for DcHostFilter {
     fn accept(&self, peer: &Peer) -> bool {
         peer.datacenter.as_ref() == Some(&self.local_dc)
+    }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
     }
 }

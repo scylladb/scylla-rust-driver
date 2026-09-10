@@ -23,6 +23,7 @@ use rand::seq::SliceRandom;
 use tracing::{debug, error, warn};
 
 use crate::client::client_routes::ClientRoutesSubscriber;
+use crate::client::driver_config::DriverConfigReporter;
 use crate::cluster::KnownNode;
 use crate::cluster::control_connection::{
     ControlConnection, ControlConnectionCache, ControlConnectionConfig, ControlConnectionEvents,
@@ -45,6 +46,10 @@ pub(crate) struct ControlConnectionEstablisher {
     // =======================================================================================
     // Configuration values - they will stay the same during whole lifetime of ControlConnectionEstablisher.
     // =======================================================================================
+    /// The configuration of every control connection this establisher creates.
+    /// It is the only connection config carrying a
+    /// [`DriverConfigReporter`](crate::client::driver_config::DriverConfigReporter),
+    /// because only control connections report their configuration.
     control_connection_config: ConnectionConfig,
     /// Configuration stamped onto every control connection this establisher creates;
     /// governs what the control connection's metadata queries fetch.
@@ -103,6 +108,7 @@ impl ControlConnectionEstablisher {
         initial_known_nodes: Vec<KnownNode>,
         hostname_resolution_timeout: Option<Duration>,
         connection_config: ConnectionConfig,
+        driver_config_reporter: Option<Arc<DriverConfigReporter>>,
         request_timeouts: MetadataRequestTimeouts,
         keyspaces_to_fetch: Vec<String>,
         schema_metadata_fetch_mode: SchemaMetadataFetchMode,
@@ -121,7 +127,10 @@ impl ControlConnectionEstablisher {
         let cc_cache = Arc::new(ControlConnectionCache::new());
 
         Ok(ControlConnectionEstablisher {
-            control_connection_config: connection_config,
+            control_connection_config: ConnectionConfig {
+                driver_config_reporter,
+                ..connection_config
+            },
             cc_config: ControlConnectionConfig {
                 keyspaces_to_fetch,
                 schema_metadata_fetch_mode,

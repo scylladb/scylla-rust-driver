@@ -1551,6 +1551,39 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self.config.identity = identity;
         self
     }
+
+    /// Sets whether the driver reports its effective configuration to the server.
+    /// The default is `true`.
+    ///
+    /// The control connection sends a JSON description of the session's
+    /// configuration - timeouts, connection pooling, load balancing, retry and
+    /// speculative execution policies - as the `DRIVER_CONFIG` option of the
+    /// STARTUP message, which the server exposes in
+    /// `system.clients.client_options`. The document follows a schema
+    /// shared by all ScyllaDB drivers, so one query answers the question of how
+    /// a client is configured regardless of which driver it uses.
+    ///
+    /// Disable it if the configuration of the client must not be disclosed to
+    /// the cluster. This does not affect `SESSION_ID`, which is an opaque UUID
+    /// that describes nothing about the client.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .driver_config_reporting(false)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn driver_config_reporting(mut self, report: bool) -> Self {
+        self.config.driver_config_reporting = report;
+        self
+    }
 }
 
 /// Creates a [`SessionBuilder`] with default configuration, same as [`SessionBuilder::new`]
@@ -1600,6 +1633,19 @@ mod tests {
                 .config
                 .metadata_request_clientside_timeout,
             Some(timeout)
+        );
+    }
+
+    #[test]
+    fn driver_config_reporting() {
+        setup_tracing();
+        assert!(SessionBuilder::new().config.driver_config_reporting);
+
+        assert!(
+            !SessionBuilder::new()
+                .driver_config_reporting(false)
+                .config
+                .driver_config_reporting
         );
     }
 
