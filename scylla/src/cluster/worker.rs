@@ -783,6 +783,19 @@ impl ClusterWorker {
     }
 }
 
+/// Whether a failed `USE KEYSPACE` means that the connection it was sent on is broken.
+///
+/// This is the one failure that leaves nothing to be done about the connection: it is on its
+/// way out anyway, and the connection that replaces it is set up with the keyspace that is
+/// current by then. Any other failure leaves a live connection whose keyspace is not the
+/// requested one, which is why the pool then closes it.
+pub(crate) fn use_keyspace_broke_connection(err: &UseKeyspaceError) -> bool {
+    matches!(
+        err,
+        UseKeyspaceError::RequestError(RequestAttemptError::BrokenConnectionError(_))
+    )
+}
+
 /// Returns a result of use_keyspace operation, based on the query results
 /// returned from given node/connection.
 ///
@@ -802,12 +815,8 @@ pub(crate) fn use_keyspace_result(
     for result in use_keyspace_results {
         match result {
             Ok(()) => was_ok = true,
-            Err(err) => match err {
-                UseKeyspaceError::RequestError(RequestAttemptError::BrokenConnectionError(_)) => {
-                    broken_conn_error = Some(err)
-                }
-                _ => return Err(err),
-            },
+            Err(err) if use_keyspace_broke_connection(&err) => broken_conn_error = Some(err),
+            Err(err) => return Err(err),
         }
     }
 
