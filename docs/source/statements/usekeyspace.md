@@ -65,10 +65,6 @@ session.query_unpaged("USE my_keyspace", &[]).await?;
 This method has a slightly worse latency than `Session::use_keyspace` - there are two roundtrips needed instead of one.
 Therefore, `Session::use_keyspace` is the preferred method for setting keyspaces.
 
-### Multiple use keyspace requests at once
-Don't run multiple `use_keyspace` requests at once. 
-This could end up with a part of connections using one keyspace and another part using another.
-
 ### Case sensitivity
 
 In CQL a keyspace name can be case insensitive (without `"`) or case sensitive (with `"`).
