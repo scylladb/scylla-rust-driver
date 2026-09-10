@@ -15,8 +15,8 @@ use scylla_proxy::{
 use tokio::sync::mpsc;
 
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, setup_tracing, test_with_3_node_cluster,
-    unique_keyspace_name,
+    HEALTHCHECK_QUERY, PerformDDL as _, create_new_session_builder, setup_tracing,
+    test_with_3_node_cluster, unique_keyspace_name,
 };
 
 #[tokio::test]
@@ -60,14 +60,6 @@ async fn test_use_keyspace() {
     rows.sort();
 
     assert_eq!(rows, vec!["test1".to_string(), "test2".to_string()]);
-
-    // Test that trying to use nonexisting keyspace fails
-    assert!(
-        session
-            .use_keyspace("this_keyspace_does_not_exist_at_all", false)
-            .await
-            .is_err()
-    );
 
     // Test that invalid keyspaces get rejected
     assert!(matches!(
@@ -114,6 +106,17 @@ async fn test_use_keyspace() {
     assert_eq!(rows2, vec!["test1".to_string(), "test2".to_string()]);
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+
+    // Trying to use a nonexisting keyspace fails, and leaves the session unable to execute
+    // requests: the connections that did not switch are closed, and the ones opened to
+    // replace them cannot switch either. This is why it is done last here.
+    assert!(
+        session
+            .use_keyspace("this_keyspace_does_not_exist_at_all", false)
+            .await
+            .is_err()
+    );
+    assert!(session.query_unpaged(HEALTHCHECK_QUERY, &[]).await.is_err());
 }
 
 #[tokio::test]
