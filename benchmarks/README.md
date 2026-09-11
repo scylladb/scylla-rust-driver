@@ -20,10 +20,13 @@ The `requests` benchmark (`benches/requests.rs`) covers:
 | `unpaged_select` | Unpaged `SELECT`s via `Session::execute_unpaged`.                   |
 | `batch`          | Unlogged `BATCH`es of 64 prepared statements.               |
 | `paged_select`   | Auto-paged `SELECT`s via `Session::execute_iter`, draining pages.   |
+| `tablet_learning` | Unpaged `SELECT`s of distinct partitions on a session that has not learned the table's tablets yet, so the tablet-routing feedback and the cluster metadata updates it triggers are measured. |
 
 Connecting, schema creation, statement preparation and data population happen in
 each scenario's `setup`, which the harness excludes from the measurements; only
-the request loop is measured.
+the request loop is measured. The other scenarios also learn the table's
+tablets during `setup`, so that their loops measure only the request path;
+`tablet_learning` skips that on purpose.
 
 ## Requirements
 

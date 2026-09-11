@@ -5,6 +5,8 @@
 //! - `INSERT` via [`Session::execute_unpaged`],
 //! - `BATCH` of a configurable number of statements via [`Session::batch`],
 //! - auto-paged `SELECT` via [`Session::execute_iter`],
+//! - learning the table's tablets from routing feedback, driven by unpaged
+//!   `SELECT`s on a session that has not learned them yet.
 //!
 //! The actual measurement (separating connection setup from the measured
 //! request loop) is handled by the benchmark harness; this crate only provides
@@ -67,6 +69,10 @@ pub struct ScenarioConfig {
     /// Page size used by the auto-paged `SELECT` scenario. Chosen smaller than
     /// `paged_rows` so that multiple pages are actually fetched.
     pub page_size: i32,
+    /// Whether to learn every tablet of the table during context construction
+    /// (see the warmup loop in `BenchContext::build`). Disabled only by the
+    /// `tablet_learning` scenario, which measures that learning itself.
+    pub warm_up_tablets: bool,
 }
 
 impl Default for ScenarioConfig {
@@ -76,6 +82,7 @@ impl Default for ScenarioConfig {
             prefilled_rows_per_partition: 10,
             batch_size: 8,
             page_size: 20,
+            warm_up_tablets: true,
         }
     }
 }
@@ -210,14 +217,16 @@ impl BenchContext {
                 // scenario's full-table scan; tablet learning is driven by where
                 // a request is routed, so a read of a (possibly absent) row
                 // teaches the driver the tablet just as a write would.
-                futures::stream::iter(0..TABLET_WARMUP_REQUESTS as i32)
-                    .for_each_concurrent(64, async |i| {
-                        session
-                            .execute_unpaged(&prepared_select, (i,))
-                            .await
-                            .unwrap();
-                    })
-                    .await;
+                if config.warm_up_tablets {
+                    futures::stream::iter(0..TABLET_WARMUP_REQUESTS as i32)
+                        .for_each_concurrent(64, async |i| {
+                            session
+                                .execute_unpaged(&prepared_select, (i,))
+                                .await
+                                .unwrap();
+                        })
+                        .await;
+                }
 
                 session.refresh_metadata().await?;
 
@@ -266,6 +275,42 @@ impl BenchContext {
                     .await
                     .unwrap();
                 black_box(result);
+            }
+        })
+    }
+
+    /// Learns the table's tablets: runs `n` unpaged `SELECT`s of distinct
+    /// partitions via [`Session::execute_unpaged`] on a session that has not
+    /// warmed up tablet routing (see [`ScenarioConfig::warm_up_tablets`]), so
+    /// that the measurement covers the tablet-routing feedback the requests
+    /// trigger and the cluster metadata updates it causes.
+    ///
+    /// The loop is made deterministic, so that the allocation count can be
+    /// compared exactly between runs:
+    ///
+    /// - The requests are sequential. Concurrent requests to a not yet learned
+    ///   tablet each trigger feedback for it, and how many do depends on timing.
+    /// - After each request the task yields once. The cluster worker, which
+    ///   applies the feedback, runs on this same single-threaded runtime and only
+    ///   gets to run when this task yields; without the yield the next request
+    ///   would be routed using the state from before the feedback and could
+    ///   trigger it again for the same tablet. With the yield every tablet
+    ///   triggers feedback exactly once, so the number of metadata updates is
+    ///   the tablet count, whichever requests happen to hit unlearned tablets.
+    /// - `n` is many times [`TABLET_COUNT`], so that every tablet is hit enough
+    ///   times to be learned even though an individual request to an unlearned
+    ///   tablet is not guaranteed to trigger feedback (it does not when it happens
+    ///   to be routed to the right node and shard).
+    pub fn run_tablet_learning(&self, n: usize) {
+        self.runtime.block_on(async {
+            for i in 0..n as i32 {
+                let result = self
+                    .session
+                    .execute_unpaged(&self.prepared_select, (i,))
+                    .await
+                    .unwrap();
+                black_box(result);
+                tokio::task::yield_now().await;
             }
         })
     }
