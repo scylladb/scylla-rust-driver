@@ -51,7 +51,10 @@ pub struct ReplicaLocator {
     /// tablet update) does not copy the token rings.
     replication_data: Arc<ReplicationInfo>,
 
-    precomputed_replicas: PrecomputedReplicas,
+    /// Behind an `Arc` for the same reason as `replication_data`: it holds a
+    /// replica list per ring token and strategy, so it is the largest part of
+    /// the locator to copy.
+    precomputed_replicas: Arc<PrecomputedReplicas>,
 
     datacenters: Vec<String>,
 
@@ -68,8 +71,10 @@ impl ReplicaLocator {
         tablets: TabletsInfo,
     ) -> Self {
         let replication_data = Arc::new(ReplicationInfo::new(ring_iter));
-        let precomputed_replicas =
-            PrecomputedReplicas::compute(&replication_data, precompute_replica_sets_for);
+        let precomputed_replicas = Arc::new(PrecomputedReplicas::compute(
+            &replication_data,
+            precompute_replica_sets_for,
+        ));
 
         let datacenters = replication_data
             .get_global_ring()
