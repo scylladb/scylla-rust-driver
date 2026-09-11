@@ -57,6 +57,24 @@ fn setup_batch(batch_size: usize, n: usize) -> State {
     )
 }
 
+/// Setup for the `tablet_learning` scenario: a context that has not learned the
+/// table's tablets, so that the measured loop does. The prefill is skipped too,
+/// because its requests would learn tablets as well.
+fn setup_tablet_learning(n: usize) -> State {
+    (
+        BenchContext::new(
+            &node_address(),
+            ScenarioConfig {
+                prefilled_partitions: 0,
+                warm_up_tablets: false,
+                ..ScenarioConfig::default()
+            },
+        )
+        .unwrap(),
+        n,
+    )
+}
+
 // Dropping the state (closing the session, shutting down the runtime) is done in
 // teardown so that it is not attributed to the benchmark.
 fn teardown<T>(state: T) {
@@ -95,9 +113,20 @@ fn paged_select(state: State) -> State {
     state
 }
 
+// The request count is 16 x `benchmarks::TABLET_COUNT` (64): enough for every
+// tablet to be hit ~16 times, so that all of them get learned even though a
+// single request to an unlearned tablet does not always trigger feedback. See
+// `BenchContext::run_tablet_learning`.
+#[library_benchmark]
+#[benches::counts(args = [1024], setup = setup_tablet_learning, teardown = teardown)]
+fn tablet_learning(state: State) -> State {
+    state.0.run_tablet_learning(black_box(state.1));
+    state
+}
+
 library_benchmark_group!(
     name = requests;
-    benchmarks = insert, unpaged_select, paged_select, batch
+    benchmarks = insert, unpaged_select, paged_select, batch, tablet_learning
 );
 
 main!(
