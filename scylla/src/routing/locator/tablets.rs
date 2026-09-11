@@ -486,7 +486,10 @@ pub(crate) struct Tablet {
     tablet_version: Option<TabletVersion>,
     /// If any of the replicas failed to resolve to a Node,
     /// then this field will contain the original list of replicas.
-    failed: Option<RawTabletReplicas>,
+    ///
+    /// Boxed because it is rarely present and would otherwise take a `Vec`'s
+    /// worth of space in every tablet.
+    failed: Option<Box<RawTabletReplicas>>,
 }
 
 impl Tablet {
@@ -510,12 +513,6 @@ impl Tablet {
         Some((&leader.0, leader.1))
     }
 
-    // Ignore clippy lints here. Clippy suggests to
-    // Box<> `Err` variant, because it's too large. It does not
-    // make much sense to do so, looking at the caller of this function.
-    // Tablet returned in `Err` variant is used as if no error appeared.
-    // The only difference is that we use node ids to emit some debug logs.
-    #[expect(clippy::result_large_err)]
     pub(crate) fn from_raw_tablet(
         raw_tablet: RawTablet,
         replica_translator: impl Fn(Uuid) -> Option<Arc<Node>>,
@@ -536,7 +533,7 @@ impl Tablet {
                     last_token: raw_tablet.last_token,
                     replicas,
                     tablet_version: raw_tablet.tablet_version,
-                    failed: Some(raw_tablet.replicas),
+                    failed: Some(Box::new(raw_tablet.replicas)),
                 },
                 failed_replicas,
             )),
@@ -620,8 +617,10 @@ impl Tablet {
             last_token: Token::new(token),
             replicas: TabletReplicas::new_for_test(replicas),
             tablet_version: None,
-            failed: failed.map(|vec| RawTabletReplicas {
-                replicas: vec.into_iter().map(|id| (id, 0)).collect::<Vec<_>>(),
+            failed: failed.map(|vec| {
+                Box::new(RawTabletReplicas {
+                    replicas: vec.into_iter().map(|id| (id, 0)).collect::<Vec<_>>(),
+                })
             }),
         }
     }
