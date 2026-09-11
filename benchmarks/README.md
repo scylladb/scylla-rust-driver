@@ -28,6 +28,19 @@ the request loop is measured. The other scenarios also learn the table's
 tablets during `setup`, so that their loops measure only the request path;
 `tablet_learning` skips that on purpose.
 
+## Micro-benchmarks
+
+`benches/dc_replicas.rs` needs no cluster and is not run in CI. It compares two
+representations of a tablet's replica list for answering "which replicas are in
+datacenter X?" - a per-datacenter `HashMap` next to the list (what the driver
+does today) versus filtering the list on each query - in terms of build cost,
+clone cost, and the per-request lookup cost. It exists to back the decision
+between the two with numbers; run it with:
+
+```bash
+cargo bench -p benchmarks --bench dc_replicas
+```
+
 ## Requirements
 
 - [Valgrind](https://valgrind.org/) (provides Callgrind and DHAT).
