@@ -562,21 +562,35 @@ impl ClusterState {
     /// Access to replicas owning a given token
     ///
     /// Returns an empty `Vec` if `ClusterState` holds no metadata for `keyspace`: the
-    /// replica set is undefined without the keyspace's replication strategy.
+    /// replica set is undefined without the keyspace's replication strategy. Use
+    /// [`ClusterState::try_get_token_endpoints`] to tell that case apart from a keyspace
+    /// that genuinely has no replicas for the token.
     pub fn get_token_endpoints(
         &self,
         keyspace: &str,
         table: &str,
         token: Token,
     ) -> Vec<(Arc<Node>, Shard)> {
-        let table_spec = TableSpec::borrowed(keyspace, table);
-        self.get_token_endpoints_iter(&table_spec, token)
-            .map(|replicas| {
-                replicas
-                    .map(|(node, shard)| (node.clone(), shard))
-                    .collect()
-            })
+        self.try_get_token_endpoints(keyspace, table, token)
             .unwrap_or_default()
+    }
+
+    /// Access to replicas owning a given token
+    ///
+    /// Fails with [`ClusterStateTokenError::UnknownTable`] if `ClusterState` holds no
+    /// metadata for `keyspace`: the replica set is undefined without the keyspace's
+    /// replication strategy.
+    pub fn try_get_token_endpoints(
+        &self,
+        keyspace: &str,
+        table: &str,
+        token: Token,
+    ) -> Result<Vec<(Arc<Node>, Shard)>, ClusterStateTokenError> {
+        let table_spec = TableSpec::borrowed(keyspace, table);
+        Ok(self
+            .get_token_endpoints_iter(&table_spec, token)?
+            .map(|(node, shard)| (node.clone(), shard))
+            .collect())
     }
 
     pub(crate) fn get_token_endpoints_iter(
@@ -612,11 +626,7 @@ impl ClusterState {
         partition_key: &dyn SerializeRow,
     ) -> Result<Vec<(Arc<Node>, Shard)>, ClusterStateTokenError> {
         let token = self.compute_token(keyspace, table, partition_key)?;
-        let table_spec = TableSpec::borrowed(keyspace, table);
-        Ok(self
-            .get_token_endpoints_iter(&table_spec, token)?
-            .map(|(node, shard)| (node.clone(), shard))
-            .collect())
+        self.try_get_token_endpoints(keyspace, table, token)
     }
 
     /// Access replica location info
@@ -1085,6 +1095,13 @@ mod tests {
             .unwrap();
         assert_eq!(known.count(), 1);
         assert_eq!(state.get_token_endpoints(KS, "t", Token::new(1)).len(), 1);
+        assert_eq!(
+            state
+                .try_get_token_endpoints(KS, "t", Token::new(1))
+                .unwrap()
+                .len(),
+            1
+        );
 
         // An unknown keyspace is an error for the internal API...
         assert_matches!(
@@ -1094,7 +1111,13 @@ mod tests {
             Err(ClusterStateTokenError::UnknownTable { keyspace, table })
                 if keyspace == UNKNOWN_KS && table == "t"
         );
-        // ...and an empty replica set for the public one, which can't report errors.
+        // ...and for the fallible public API...
+        assert_matches!(
+            state.try_get_token_endpoints(UNKNOWN_KS, "t", Token::new(1)),
+            Err(ClusterStateTokenError::UnknownTable { keyspace, table })
+                if keyspace == UNKNOWN_KS && table == "t"
+        );
+        // ...but an empty replica set for the infallible one, which can't report errors.
         assert!(
             state
                 .get_token_endpoints(UNKNOWN_KS, "t", Token::new(1))
