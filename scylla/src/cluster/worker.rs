@@ -151,7 +151,7 @@ impl Cluster {
         let cluster_state = ClusterState::new(metadata, &node_config, host_filter.as_deref()).await;
         ClusterWorker::handle_topology_changes(
             &HashMap::new(),
-            &cluster_state.known_nodes,
+            &cluster_state.topology.known_nodes,
             host_listener.as_deref(),
             &mut node_status,
         );
@@ -381,6 +381,7 @@ impl ClusterWorker {
         keyspace_name: &VerifiedKeyspaceName,
     ) -> Result<(), UseKeyspaceError> {
         let use_keyspace_futures = cluster_state
+            .topology
             .known_nodes
             .values()
             .map(|node| node.use_keyspace(keyspace_name.clone()));
@@ -468,8 +469,8 @@ impl ClusterWorker {
         process_up_hints(&new_cluster_state);
 
         ClusterWorker::handle_topology_changes(
-            &cluster_state.known_nodes,
-            &new_cluster_state.known_nodes,
+            &cluster_state.topology.known_nodes,
+            &new_cluster_state.topology.known_nodes,
             self.host_listener.as_deref(),
             &mut self.node_status,
         );
@@ -729,7 +730,7 @@ impl ClusterWorker {
         let cluster_state = self.cluster_state.load();
 
         let (Some(node), Some(connectivity)) = (
-            cluster_state.known_nodes.get(&host_id),
+            cluster_state.topology.known_nodes.get(&host_id),
             self.node_status.get_mut(&host_id),
         ) else {
             trace!("Received connectivity change event for unknown host_id: {host_id}");

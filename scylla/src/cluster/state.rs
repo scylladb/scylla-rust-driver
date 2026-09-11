@@ -36,14 +36,13 @@ pub(crate) struct NodeConfig {
     pub(crate) metrics: Metrics,
 }
 
-/// Represents the state of the cluster, including known nodes, keyspaces, and replica locator.
+/// The nodes known to be part of the cluster. Often refered to as "topology metadata".
 ///
-/// It is immutable after creation, and is replaced atomically upon a metadata refresh.
-/// Can be accessed through [Session::get_cluster_state()](crate::client::session::Session::get_cluster_state).
+/// Both collections hold the same set of nodes and are rebuilt together on
+/// every topology change.
 #[derive(Clone)]
-pub struct ClusterState {
+pub(crate) struct Topology {
     /// All nodes known to be part of the cluster, accessible by their host ID.
-    /// Often refered to as "topology metadata".
     pub(crate) known_nodes: HashMap<Uuid, Arc<Node>>, // Invariant: nonempty after Cluster::new()
 
     /// Contains the same set of nodes as `known_nodes`.
@@ -54,6 +53,24 @@ pub struct ClusterState {
     // TODO: in 2.0, make `get_nodes_info()` return `Iterator` instead of a slice.
     // Then, remove this field.
     pub(crate) all_nodes: Vec<Arc<Node>>,
+}
+
+impl Topology {
+    pub(crate) fn new(known_nodes: HashMap<Uuid, Arc<Node>>) -> Self {
+        Self {
+            all_nodes: known_nodes.values().cloned().collect(),
+            known_nodes,
+        }
+    }
+}
+
+/// Represents the state of the cluster, including known nodes, keyspaces, and replica locator.
+///
+/// It is immutable after creation, and is replaced atomically upon a metadata refresh.
+/// Can be accessed through [Session::get_cluster_state()](crate::client::session::Session::get_cluster_state).
+#[derive(Clone)]
+pub struct ClusterState {
+    pub(crate) topology: Topology,
 
     /// All keyspaces in the cluster, accessible by their name.
     /// Often refered to as "schema metadata".
@@ -81,7 +98,7 @@ impl std::fmt::Debug for ClusterState {
         };
 
         f.debug_struct("ClusterState")
-            .field("known_nodes", &self.known_nodes)
+            .field("known_nodes", &self.topology.known_nodes)
             .field("ring", &ring_printer)
             .field("keyspaces", &self.keyspaces.keys())
             .finish_non_exhaustive()
@@ -105,7 +122,7 @@ impl ClusterState {
     /// Suitable, among others, for nodes whose client routes were added or updated.
     pub(super) fn trigger_pool_refills_for_hosts(&self, host_ids: impl Iterator<Item = Uuid>) {
         for host_id in host_ids {
-            if let Some(node) = self.known_nodes.get(&host_id) {
+            if let Some(node) = self.topology.known_nodes.get(&host_id) {
                 debug!(
                     host_id = %host_id,
                     "Triggering immediate pool refill for relevant Node"
@@ -122,7 +139,8 @@ impl ClusterState {
     /// ([`NodeAddr::Translatable`], i.e. before any address translation), so the
     /// comparison is right. In the current implementation, `Node` object always uses this variant.
     fn node_by_broadcast_address(&self, addr: SocketAddr) -> Option<&Arc<Node>> {
-        self.known_nodes
+        self.topology
+            .known_nodes
             .values()
             .find(|node| node.address.into_inner() == addr)
     }
@@ -192,8 +210,7 @@ impl ClusterState {
         let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
 
         ClusterState {
-            all_nodes: new_known_nodes.values().cloned().collect(),
-            known_nodes: new_known_nodes,
+            topology: Topology::new(new_known_nodes),
             keyspaces,
             locator,
             cluster_name: metadata.cluster_name,
@@ -212,7 +229,7 @@ impl ClusterState {
 
         let (new_known_nodes, ring) = Self::calculate_new_topology(
             metadata.peers,
-            &self.known_nodes,
+            &self.topology.known_nodes,
             node_config,
             host_filter,
         );
@@ -220,7 +237,7 @@ impl ClusterState {
         let mut tablets = self.locator.tablets.clone();
         Self::perform_tablets_maintenance(
             &mut tablets,
-            &self.known_nodes,
+            &self.topology.known_nodes,
             &new_known_nodes,
             &keyspaces,
         );
@@ -228,8 +245,7 @@ impl ClusterState {
         let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
 
         ClusterState {
-            all_nodes: new_known_nodes.values().cloned().collect(),
-            known_nodes: new_known_nodes,
+            topology: Topology::new(new_known_nodes),
             keyspaces,
             locator,
             cluster_name: metadata.cluster_name,
@@ -253,13 +269,16 @@ impl ClusterState {
         host_filter: Option<&dyn HostFilter>,
     ) -> Self {
         let (new_known_nodes, ring) = match peers {
-            Some(peers) => {
-                Self::calculate_new_topology(peers, &self.known_nodes, node_config, host_filter)
-            }
+            Some(peers) => Self::calculate_new_topology(
+                peers,
+                &self.topology.known_nodes,
+                node_config,
+                host_filter,
+            ),
             // The ring in place is exactly the (token, node) list that the
             // unchanged topology implies, so it is reused as is.
             None => (
-                self.known_nodes.clone(),
+                self.topology.known_nodes.clone(),
                 self.locator.ring().iter().cloned().collect(),
             ),
         };
@@ -272,7 +291,7 @@ impl ClusterState {
         let mut tablets = self.locator.tablets.clone();
         Self::perform_tablets_maintenance(
             &mut tablets,
-            &self.known_nodes,
+            &self.topology.known_nodes,
             &new_known_nodes,
             &keyspaces,
         );
@@ -280,8 +299,7 @@ impl ClusterState {
         let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
 
         ClusterState {
-            all_nodes: new_known_nodes.values().cloned().collect(),
-            known_nodes: new_known_nodes,
+            topology: Topology::new(new_known_nodes),
             keyspaces,
             locator,
             cluster_name: self.cluster_name.clone(),
@@ -498,12 +516,12 @@ impl ClusterState {
 
     /// Access details about nodes known to the driver
     pub fn get_nodes_info(&self) -> &[Arc<Node>] {
-        &self.all_nodes
+        &self.topology.all_nodes
     }
 
     /// Access details about specific node known to the driver, querying by host id.
     pub fn get_node_by_host_id(&self, host_id: Uuid) -> Option<NodeRef<'_>> {
-        self.known_nodes.get(&host_id)
+        self.topology.known_nodes.get(&host_id)
     }
 
     /// Compute token of a table partition key
@@ -620,9 +638,9 @@ impl ClusterState {
         impl Iterator<Item = (Uuid, impl Iterator<Item = Arc<Connection>> + use<>)> + use<'_>,
         ConnectionPoolError,
     > {
-        // The returned iterator is nonempty by nonemptiness invariant of `self.known_nodes`.
-        assert!(!self.known_nodes.is_empty());
-        let nodes_iter = self.known_nodes.values();
+        // The returned iterator is nonempty by nonemptiness invariant of `self.topology.known_nodes`.
+        assert!(!self.topology.known_nodes.is_empty());
+        let nodes_iter = self.topology.known_nodes.values();
         let mut connection_pool_per_node_iter = nodes_iter.map(|node| {
             node.get_working_connections()
                 .map(|pool| (node.host_id, pool))
@@ -653,7 +671,7 @@ impl ClusterState {
         Ok(std::iter::once(first_working_pool)
             .chain(remaining_working_pools_iter)
             .map(|(host_id, pool)| (host_id, IntoIterator::into_iter(pool))))
-        // By an invariant `self.known_nodes` is nonempty, so the returned iterator
+        // By an invariant `self.topology.known_nodes` is nonempty, so the returned iterator
         // is nonempty, too.
     }
 
@@ -669,9 +687,9 @@ impl ClusterState {
     pub(crate) fn iter_working_connections_to_nodes(
         &self,
     ) -> Result<impl Iterator<Item = Arc<Connection>> + use<'_>, ConnectionPoolError> {
-        // The returned iterator is nonempty by nonemptiness invariant of `self.known_nodes`.
-        assert!(!self.known_nodes.is_empty());
-        let nodes_iter = self.known_nodes.values();
+        // The returned iterator is nonempty by nonemptiness invariant of `self.topology.known_nodes`.
+        assert!(!self.topology.known_nodes.is_empty());
+        let nodes_iter = self.topology.known_nodes.values();
         let mut single_connection_per_node_iter =
             nodes_iter.map(|node| node.get_random_connection());
 
@@ -700,11 +718,11 @@ impl ClusterState {
 
     #[cfg(test)]
     fn known_nodes(&self) -> &HashMap<Uuid, Arc<Node>> {
-        &self.known_nodes
+        &self.topology.known_nodes
     }
 
     pub(crate) fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec<'static>, RawTablet)>) {
-        let replica_translator = |uuid: Uuid| self.known_nodes.get(&uuid).cloned();
+        let replica_translator = |uuid: Uuid| self.topology.known_nodes.get(&uuid).cloned();
 
         for (table, raw_tablet) in raw_tablets.into_iter() {
             // Should we skip tablets that belong to a keyspace not present in
