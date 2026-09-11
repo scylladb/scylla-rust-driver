@@ -25,6 +25,7 @@ pub struct ValueOverflow;
 pub struct Unset;
 
 /// Represents an counter value
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Counter(pub i64);
 
@@ -124,6 +125,7 @@ pub enum MaybeEmpty<T: Emptiable> {
 ///
 /// This type has custom comparison logic which follows ScyllaDB/Cassandra semantics.
 /// For details, see [`Ord` implementation](#impl-Ord-for-CqlTimeuuid).
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, Eq)]
 pub struct CqlTimeuuid(Uuid);
 
@@ -351,6 +353,7 @@ impl std::hash::Hash for CqlTimeuuid {
 ///
 /// The implementation of [`PartialEq`], however, normalizes the underlying bytes
 /// before comparison. For details, check [examples](#impl-PartialEq-for-CqlVarint).
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Eq, Debug)]
 pub struct CqlVarint(Vec<u8>);
 
@@ -358,6 +361,7 @@ pub struct CqlVarint(Vec<u8>);
 ///
 /// Refer to the documentation of [`CqlVarint`].
 /// Especially, see the disclaimer about [non-normalized values](CqlVarint#db-data-format).
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Eq, Debug)]
 pub struct CqlVarintBorrowed<'b>(&'b [u8]);
 
@@ -585,6 +589,7 @@ impl From<CqlVarintBorrowed<'_>> for num_bigint_04::BigInt {
 /// Notice that [constructors](CqlDecimal#impl-CqlDecimal)
 /// don't perform any normalization on the provided data.
 /// For more details, see [`CqlVarint`] documentation.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CqlDecimal {
     int_val: CqlVarint,
@@ -599,8 +604,10 @@ pub struct CqlDecimal {
 ///
 /// Refer to the documentation of [`CqlDecimal`].
 /// Especially, see the disclaimer about [non-normalized values](CqlDecimal#db-data-format).
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CqlDecimalBorrowed<'b> {
+    #[cfg_attr(feature = "serde", serde(borrow))]
     int_val: CqlVarintBorrowed<'b>,
     scale: i32,
 }
@@ -706,18 +713,21 @@ impl TryFrom<bigdecimal_04::BigDecimal> for CqlDecimal {
 /// Native CQL date representation that allows for a bigger range of dates (-262145-1-1 to 262143-12-31).
 ///
 /// Represented as number of days since -5877641-06-23 i.e. 2^31 days before unix epoch.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CqlDate(pub u32);
 
 /// Native CQL timestamp representation that allows full supported timestamp range.
 ///
 /// Represented as signed milliseconds since unix epoch.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct CqlTimestamp(pub i64);
 
 /// Native CQL time representation.
 ///
 /// Represented as nanoseconds since midnight.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CqlTime(pub i64);
 
@@ -1027,6 +1037,7 @@ impl TryInto<time_03::Time> for CqlTime {
 }
 
 /// Represents a CQL Duration value
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub struct CqlDuration {
     /// Number of months.
@@ -1727,5 +1738,118 @@ mod tests {
         // MAX - MIN = i64::MAX - i64::MIN = u64::MAX, which is the full
         // non-negative range and must not be truncated to i64::MAX.
         assert_eq!(diff, Duration::from_millis(u64::MAX));
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod serde_tests {
+    use std::str::FromStr as _;
+
+    use serde::{Deserialize, Serialize};
+
+    use super::*;
+
+    /// The point of the `serde` feature: a user can put CQL value types straight
+    /// into their own `serde` types instead of converting them to something else
+    /// first.
+    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+    struct Measurement {
+        id: CqlTimeuuid,
+        hits: Counter,
+        day: CqlDate,
+        at: CqlTimestamp,
+        time_of_day: CqlTime,
+        uptime: CqlDuration,
+        total: CqlVarint,
+        average: CqlDecimal,
+    }
+
+    fn example_measurement() -> Measurement {
+        Measurement {
+            id: CqlTimeuuid::from_str("8e14e760-7fa8-11eb-bc66-000000000001").unwrap(),
+            hits: Counter(42),
+            day: CqlDate(2_147_485_507),
+            at: CqlTimestamp(1_614_874_800_000),
+            time_of_day: CqlTime(50_400_000_000_000),
+            uptime: CqlDuration {
+                months: 1,
+                days: 2,
+                nanoseconds: 3,
+            },
+            total: CqlVarint::from_signed_bytes_be(vec![0x01, 0xE2, 0x40]),
+            // 123.456
+            average: CqlDecimal::from_signed_be_bytes_and_exponent(vec![0x01, 0xE2, 0x40], 3),
+        }
+    }
+
+    /// Pins the JSON representation of every type the feature covers. That
+    /// representation is not semver-stable, but changing it has to be a
+    /// deliberate act that gets announced in the release notes, not a silent
+    /// side effect of some other change.
+    #[test]
+    fn json_representation_is_stable() {
+        let json = serde_json::to_string(&example_measurement()).unwrap();
+
+        assert_eq!(
+            json,
+            r#"{"id":"8e14e760-7fa8-11eb-bc66-000000000001","hits":42,"day":2147485507,"at":1614874800000,"time_of_day":50400000000000,"uptime":{"months":1,"days":2,"nanoseconds":3},"total":[1,226,64],"average":{"int_val":[1,226,64],"scale":3}}"#
+        );
+    }
+
+    #[test]
+    fn json_roundtrip_preserves_values() {
+        let original = example_measurement();
+
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: Measurement = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(original, deserialized);
+    }
+
+    /// Borrowed values serialize exactly like their owned counterparts, so a
+    /// value borrowed from a response frame can be serialized and later read
+    /// back as an owned one.
+    #[test]
+    fn borrowed_values_serialize_like_owned_ones() {
+        let bytes = [0x01, 0xE2, 0x40];
+
+        let borrowed_varint = CqlVarintBorrowed::from_signed_bytes_be_slice(&bytes);
+        let owned_varint = CqlVarint::from_signed_bytes_be(bytes.to_vec());
+        assert_eq!(
+            serde_json::to_string(&borrowed_varint).unwrap(),
+            serde_json::to_string(&owned_varint).unwrap()
+        );
+
+        let borrowed_decimal =
+            CqlDecimalBorrowed::from_signed_be_bytes_slice_and_exponent(&bytes, 3);
+        let owned_decimal = CqlDecimal::from_signed_be_bytes_and_exponent(bytes.to_vec(), 3);
+        assert_eq!(
+            serde_json::to_string(&borrowed_decimal).unwrap(),
+            serde_json::to_string(&owned_decimal).unwrap()
+        );
+
+        let deserialized: CqlDecimal =
+            serde_json::from_str(&serde_json::to_string(&borrowed_decimal).unwrap()).unwrap();
+        assert_eq!(deserialized, owned_decimal);
+    }
+
+    /// The borrowed types stay borrowed after deserialization, provided that the
+    /// format can hand out slices of its input - `postcard` can, JSON cannot.
+    #[test]
+    fn borrowed_values_deserialize_without_copying() {
+        let bytes = [0x01, 0xE2, 0x40];
+        let original = CqlDecimalBorrowed::from_signed_be_bytes_slice_and_exponent(&bytes, 3);
+
+        let encoded = postcard::to_allocvec(&original).unwrap();
+        let deserialized: CqlDecimalBorrowed<'_> = postcard::from_bytes(&encoded).unwrap();
+
+        assert_eq!(deserialized, original);
+        let (deserialized_bytes, _) = deserialized.as_signed_be_bytes_slice_and_exponent();
+        assert!(
+            encoded
+                .as_ptr_range()
+                .contains(&deserialized_bytes.as_ptr()),
+            "deserialized value does not borrow from the input buffer"
+        );
     }
 }
