@@ -1062,8 +1062,8 @@ pub fn deserialize(
 
 // This is not #[cfg(test)], because it is used by scylla crate.
 // Unfortunately, this attribute does not apply recursively to
-// children item. Therefore, every `pub` item here must use have
-// the specifier, too.
+// child items. Therefore, every test-only `pub` item here must
+// have the specifier, too.
 #[doc(hidden)]
 mod test_utils {
     use std::num::TryFromIntError;
@@ -1196,7 +1196,10 @@ mod test_utils {
             }
         }
 
-        pub(crate) fn serialize(
+        /// Serializes the metadata in the CQL wire format.
+        ///
+        /// Lets test tooling, like `scylla-proxy`, forge `RESULT::Rows` responses.
+        pub fn serialize(
             &self,
             buf: &mut impl BufMut,
             no_metadata: bool,
