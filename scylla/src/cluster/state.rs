@@ -70,7 +70,9 @@ impl Topology {
 /// Can be accessed through [Session::get_cluster_state()](crate::client::session::Session::get_cluster_state).
 #[derive(Clone)]
 pub struct ClusterState {
-    pub(crate) topology: Topology,
+    /// Shared, not copied, when a new `ClusterState` is derived from this one
+    /// without a topology change (e.g. on a tablet update).
+    pub(crate) topology: Arc<Topology>,
 
     /// All keyspaces in the cluster, accessible by their name.
     /// Often refered to as "schema metadata".
@@ -210,7 +212,7 @@ impl ClusterState {
         let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
 
         ClusterState {
-            topology: Topology::new(new_known_nodes),
+            topology: Arc::new(Topology::new(new_known_nodes)),
             keyspaces,
             locator,
             cluster_name: metadata.cluster_name,
@@ -245,7 +247,7 @@ impl ClusterState {
         let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
 
         ClusterState {
-            topology: Topology::new(new_known_nodes),
+            topology: Arc::new(Topology::new(new_known_nodes)),
             keyspaces,
             locator,
             cluster_name: metadata.cluster_name,
@@ -268,17 +270,21 @@ impl ClusterState {
         node_config: &NodeConfig,
         host_filter: Option<&dyn HostFilter>,
     ) -> Self {
-        let (new_known_nodes, ring) = match peers {
-            Some(peers) => Self::calculate_new_topology(
-                peers,
-                &self.topology.known_nodes,
-                node_config,
-                host_filter,
-            ),
-            // The ring in place is exactly the (token, node) list that the
-            // unchanged topology implies, so it is reused as is.
+        let (topology, ring) = match peers {
+            Some(peers) => {
+                let (new_known_nodes, ring) = Self::calculate_new_topology(
+                    peers,
+                    &self.topology.known_nodes,
+                    node_config,
+                    host_filter,
+                );
+                (Arc::new(Topology::new(new_known_nodes)), ring)
+            }
+            // The topology is unchanged, so it is shared with `self`. The ring
+            // in place is exactly the (token, node) list that it implies, so it
+            // is reused as is.
             None => (
-                self.topology.known_nodes.clone(),
+                Arc::clone(&self.topology),
                 self.locator.ring().iter().cloned().collect(),
             ),
         };
@@ -292,14 +298,14 @@ impl ClusterState {
         Self::perform_tablets_maintenance(
             &mut tablets,
             &self.topology.known_nodes,
-            &new_known_nodes,
+            &topology.known_nodes,
             &keyspaces,
         );
 
         let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
 
         ClusterState {
-            topology: Topology::new(new_known_nodes),
+            topology,
             keyspaces,
             locator,
             cluster_name: self.cluster_name.clone(),
