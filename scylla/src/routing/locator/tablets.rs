@@ -768,7 +768,11 @@ pub(crate) struct TabletsInfo {
     // such `Borrow` impl for `TableSpec`.
     // HashBrown on the other hand requires only `Q: Hash + Equivalent<K> + ?Sized`,
     // and it is easy to create a wrapper type with required `Equivalent` impl.
-    tablets: hashbrown::HashMap<TableSpec<'static>, TableTablets>,
+    //
+    // Each table's tablets are behind an `Arc`, so that a tablet update - which
+    // clones the whole `TabletsInfo` and then changes one table - copies only
+    // that table's tablets and shares the rest.
+    tablets: hashbrown::HashMap<TableSpec<'static>, Arc<TableTablets>>,
     /// See `has_unknown_replicas` field in `TableTablets`.
     /// The field here will be true if it is true for any TableTablets.
     has_unknown_replicas: bool,
@@ -787,7 +791,7 @@ impl TabletsInfo {
         table_spec: &'b TableSpec<'b>,
     ) -> Option<&'a TableTablets> {
         let query_key = TableSpecQueryKey { table_spec };
-        self.tablets.get(&query_key)
+        self.tablets.get(&query_key).map(Arc::as_ref)
     }
 
     /// Whether the tablet `raw` describes is already present for `table_spec`
@@ -802,17 +806,15 @@ impl TabletsInfo {
         if tablet.failed.is_some() {
             self.has_unknown_replicas = true;
         }
-        self.tablets
-            .entry(table_spec)
-            .or_insert_with_key(|k| {
-                tracing::debug!(
-                    "Found new tablets table: {}.{}",
-                    k.ks_name(),
-                    k.table_name()
-                );
-                TableTablets::new(k.clone())
-            })
-            .add_tablet(tablet)
+        let table_tablets = self.tablets.entry(table_spec).or_insert_with_key(|k| {
+            tracing::debug!(
+                "Found new tablets table: {}.{}",
+                k.ks_name(),
+                k.table_name()
+            );
+            Arc::new(TableTablets::new(k.clone()))
+        });
+        Arc::make_mut(table_tablets).add_tablet(tablet)
     }
 
     #[expect(clippy::doc_overindented_list_items)]
@@ -919,7 +921,7 @@ impl TabletsInfo {
                             .or_insert_with(|| {
                                 (
                                     borrowed_spec.to_owned(),
-                                    TableTablets::new(borrowed_spec.to_owned()),
+                                    Arc::new(TableTablets::new(borrowed_spec.to_owned())),
                                 )
                             });
                     })
@@ -927,7 +929,7 @@ impl TabletsInfo {
 
         if !removed_nodes.is_empty() || !recreated_nodes.is_empty() || self.has_unknown_replicas {
             for (_, table_tablets) in self.tablets.iter_mut() {
-                table_tablets.perform_maintenance(
+                Arc::make_mut(table_tablets).perform_maintenance(
                     removed_nodes,
                     all_current_nodes,
                     recreated_nodes,
@@ -1986,18 +1988,36 @@ mod tests {
 
         let mut pre = TabletsInfo {
             tablets: hashbrown::HashMap::from([
-                (TABLE_1.clone(), TableTablets::new(TABLE_1.clone())),
-                (TABLE_DROP.clone(), TableTablets::new(TABLE_DROP.clone())),
-                (TABLE_2.clone(), TableTablets::new(TABLE_2.clone())),
+                (
+                    TABLE_1.clone(),
+                    Arc::new(TableTablets::new(TABLE_1.clone())),
+                ),
+                (
+                    TABLE_DROP.clone(),
+                    Arc::new(TableTablets::new(TABLE_DROP.clone())),
+                ),
+                (
+                    TABLE_2.clone(),
+                    Arc::new(TableTablets::new(TABLE_2.clone())),
+                ),
             ]),
             has_unknown_replicas: false,
         };
 
         let expected_after = TabletsInfo {
             tablets: hashbrown::HashMap::from([
-                (TABLE_1.clone(), TableTablets::new(TABLE_1.clone())),
-                (TABLE_2.clone(), TableTablets::new(TABLE_2.clone())),
-                (TABLE_3.clone(), TableTablets::new(TABLE_3.clone())),
+                (
+                    TABLE_1.clone(),
+                    Arc::new(TableTablets::new(TABLE_1.clone())),
+                ),
+                (
+                    TABLE_2.clone(),
+                    Arc::new(TableTablets::new(TABLE_2.clone())),
+                ),
+                (
+                    TABLE_3.clone(),
+                    Arc::new(TableTablets::new(TABLE_3.clone())),
+                ),
             ]),
             has_unknown_replicas: false,
         };
