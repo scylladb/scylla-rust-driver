@@ -325,7 +325,11 @@ struct TabletReplicas {
     /// The replicas in payload order. A datacenter-scoped query is answered
     /// with a mask of positions in this list (see `dc_masks` and
     /// `ReplicaSetInner::MaskedSharded`).
-    all: Vec<(Arc<Node>, Shard)>,
+    ///
+    /// Behind an `Arc` so that cloning a `Tablet` (which happens for every
+    /// tablet of a table whenever one of that table's tablets is updated) is a
+    /// single reference count increment rather than a copy of the list.
+    all: Arc<[(Arc<Node>, Shard)]>,
     /// One mask per datacenter among the replicas: the positions in `all` of
     /// the replicas in that datacenter. Which datacenter a mask stands for is
     /// told by its first replica, so no name is stored and a datacenter query
@@ -352,7 +356,7 @@ impl TabletReplicas {
         replica_translator: impl Fn(Uuid) -> Option<Arc<Node>>,
     ) -> Result<Self, (Self, Vec<Uuid>)> {
         let mut failed = Vec::new();
-        let all: Vec<_> = raw_replicas
+        let all: Arc<[(Arc<Node>, Shard)]> = raw_replicas
             .replicas
             .iter()
             .filter_map(|(replica, shard)| {
@@ -372,7 +376,7 @@ impl TabletReplicas {
         }
     }
 
-    fn new(all: Vec<(Arc<Node>, Shard)>) -> Self {
+    fn new(all: Arc<[(Arc<Node>, Shard)]>) -> Self {
         let dc_masks = Self::index(&all);
         Self { all, dc_masks }
     }
@@ -589,18 +593,24 @@ impl Tablet {
     }
 
     fn update_stale_nodes(&mut self, recreated_nodes: &HashMap<Uuid, Arc<Node>>) {
-        let mut any_updated = false;
-        for (node, _) in self.replicas.all.iter_mut() {
+        // The replica list is shared with the previous `ClusterState`, so it is
+        // only copied (by `make_mut`) if there is something to replace in it.
+        let any_stale = self
+            .replicas
+            .all
+            .iter()
+            .any(|(node, _)| recreated_nodes.contains_key(&node.host_id));
+        if !any_stale {
+            return;
+        }
+        for (node, _) in Arc::make_mut(&mut self.replicas.all).iter_mut() {
             if let Some(new_node) = recreated_nodes.get(&node.host_id) {
                 assert!(!Arc::ptr_eq(new_node, node));
-                any_updated = true;
                 *node = Arc::clone(new_node);
             }
         }
-        if any_updated {
-            // A recreated node may be in another datacenter now.
-            self.replicas.dc_masks = TabletReplicas::index(&self.replicas.all);
-        }
+        // A recreated node may be in another datacenter now.
+        self.replicas.dc_masks = TabletReplicas::index(&self.replicas.all);
     }
 
     #[cfg(test)]
@@ -726,7 +736,7 @@ impl TableTablets {
 
     pub(crate) fn replicas_for_token(&self, token: Token) -> Option<&[(Arc<Node>, Shard)]> {
         self.tablet_for_token(token)
-            .map(|tablet| tablet.replicas.all.as_ref())
+            .map(|tablet| &*tablet.replicas.all)
     }
 
     /// The replicas of the tablet owning `token` together with the mask of
@@ -737,7 +747,7 @@ impl TableTablets {
         dc: &str,
     ) -> Option<MaskedReplicas<'_>> {
         self.tablet_for_token(token)
-            .map(|tablet| (tablet.replicas.all.as_slice(), tablet.replicas.dc_mask(dc)))
+            .map(|tablet| (&*tablet.replicas.all, tablet.replicas.dc_mask(dc)))
     }
 
     /// Returns the tablet version for the tablet owning `token`, if known.
@@ -1492,7 +1502,7 @@ mod tests {
         let all: Vec<(Arc<Node>, Shard)> = (0..150u64)
             .map(|i| (node_in_dc(i, Some(dcs[i as usize % 3])), 0))
             .collect();
-        let replicas = TabletReplicas::new(all);
+        let replicas = TabletReplicas::new(all.into());
         assert_eq!(replicas.dc_masks.len(), 3 * 3);
         for (d, dc) in dcs.iter().enumerate() {
             let mask = replicas.dc_mask(dc);
