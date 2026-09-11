@@ -87,7 +87,7 @@ pub struct ClusterState {
     pub(crate) locator: ReplicaLocator,
 
     /// The name of the cluster, as reported by the `cluster_name` column in `system.local`.
-    pub(crate) cluster_name: Option<String>,
+    pub(crate) cluster_name: Option<Arc<str>>,
 }
 
 impl std::fmt::Debug for ClusterState {
@@ -221,7 +221,7 @@ impl ClusterState {
             topology: Arc::new(Topology::new(new_known_nodes)),
             keyspaces,
             locator,
-            cluster_name: metadata.cluster_name,
+            cluster_name: metadata.cluster_name.map(Arc::from),
         }
     }
 
@@ -259,7 +259,7 @@ impl ClusterState {
             topology: Arc::new(Topology::new(new_known_nodes)),
             keyspaces,
             locator,
-            cluster_name: metadata.cluster_name,
+            cluster_name: metadata.cluster_name.map(Arc::from),
         }
     }
 
