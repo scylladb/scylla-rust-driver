@@ -2131,8 +2131,8 @@ impl Session {
 
         if !span.span().is_disabled()
             && let (Some(table_spec), Some(token)) = (routing_info.table, token)
+            && let Ok(replicas) = cluster_state.get_token_endpoints_iter(table_spec, token)
         {
-            let replicas = cluster_state.get_token_endpoints_iter(table_spec, token);
             span.record_replicas(replicas)
         }
 
