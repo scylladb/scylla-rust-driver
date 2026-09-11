@@ -2,7 +2,7 @@
 name = "scylla-cql-core"
 version = "1.8.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 description = "CQL data types and primitives that form the stable public API of the ScyllaDB Rust driver."
 repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"
