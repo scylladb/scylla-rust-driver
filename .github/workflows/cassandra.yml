@@ -36,7 +36,7 @@ jobs:
         run: |
           RUSTFLAGS="${RUSTFLAGS} --cfg cassandra_tests" RUST_LOG=trace cargo nextest run --all-features
       - name: Check for stale test keyspaces
-        run: cargo run --bin find_stale_test_keyspaces
+        run: cargo run --bin find-stale-test-keyspaces
       - name: Stop the cluster
         if: ${{ always() }}
         run: docker compose -f test/cluster/cassandra/docker-compose.yml stop
