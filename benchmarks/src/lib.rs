@@ -12,6 +12,7 @@
 
 use std::env;
 use std::hint::black_box;
+use std::time::Duration;
 
 use anyhow::Result;
 use futures::StreamExt as _;
@@ -32,10 +33,15 @@ pub const TABLE: &str = "t";
 
 /// Number of distinct-partition requests issued during context construction to
 /// warm up tablet routing, so that the measured loops are not dominated by the
-/// driver relearning tablets (see the warmup loop in [`BenchContext::build`]).
+/// driver relearning tablets (see the warmup loop in `BenchContext::build`).
 /// Chosen comfortably above the table's tablet count so that every tablet is
 /// learned during the warmup.
 const TABLET_WARMUP_REQUESTS: usize = 512;
+
+/// Interval of the driver's periodic background work (keepalives, metadata
+/// refresh) in benchmark sessions. See the session construction in
+/// `BenchContext::build` for why it is pushed this far.
+const BACKGROUND_WORK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// Returns the contact point to connect to, taken from the `SCYLLA_URI`
 /// environment variable and falling back to [`DEFAULT_NODE`].
@@ -99,7 +105,17 @@ impl BenchContext {
         let (session, prepared_insert, prepared_select, prepared_select_all, batch, batch_values) =
             runtime.block_on(async {
                 // Use the driver defaults, in particular one connection per shard.
-                let builder = SessionBuilder::new().known_node(node);
+                //
+                // Except for the periodic background work: by default the driver
+                // sends a keepalive on every connection every 30 s and refreshes
+                // the cluster metadata every 60 s. Under Valgrind a scenario
+                // easily runs for that long, so a timer firing inside the
+                // measured loop would add a random burst of allocations and
+                // instructions. Push both far past any scenario's duration.
+                let builder = SessionBuilder::new()
+                    .known_node(node)
+                    .keepalive_interval(BACKGROUND_WORK_INTERVAL)
+                    .cluster_metadata_refresh_interval(BACKGROUND_WORK_INTERVAL);
                 let session: Session = builder.build().await?;
 
                 session
