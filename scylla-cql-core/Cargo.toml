@@ -35,10 +35,14 @@ num-bigint-03 = ["dep:num-bigint-03"]
 num-bigint-04 = ["dep:num-bigint-04"]
 # Enables support for CQL ser/de of arbitrary precision decimal types from bigdecimal 0.4 crate.
 bigdecimal-04 = ["dep:bigdecimal-04"]
-# Enables serde::Deserialize derives for Consistency and SerialConsistency.
-# This was used by unstable-cloud in `scylla` crate before it was removed.
-# TODO(2.0): Remove this feature
-serde = ["dep:serde"]
+# Enables serde::Serialize / serde::Deserialize derives for CQL value types
+# (Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid,
+# CqlVarint and their borrowed variants), as well as serde::Deserialize
+# for Consistency and SerialConsistency.
+# The resulting serde representations are not covered by our semver guarantees -
+# they may change between driver versions. Any such change is announced in the
+# release notes.
+serde = ["dep:serde", "uuid/serde"]
 # Enables support for CQL ser/de of all supported external types.
 full-serialization = [
     "chrono-04",
@@ -89,3 +93,8 @@ byteorder = "1.3.4"
 
 [dev-dependencies]
 assert_matches = "1.5.0"
+# Used to test serde impls of CQL value types against a real, self-describing format.
+serde_json = "1.0"
+# Used to test serde impls of the borrowed CQL value types: unlike JSON, postcard
+# is a binary format that can hand out borrowed byte slices to the deserializer.
+postcard = { version = "1.1", default-features = false, features = ["alloc"] }
