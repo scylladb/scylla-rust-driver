@@ -65,11 +65,37 @@ session.query_unpaged("USE my_keyspace", &[]).await?;
 This method has a slightly worse latency than `Session::use_keyspace` - there are two roundtrips needed instead of one.
 Therefore, `Session::use_keyspace` is the preferred method for setting keyspaces.
 
-### Multiple use keyspace requests at once
-Don't run multiple `use_keyspace` requests at once. 
-This could end up with a part of connections using one keyspace and another part using another.
+## Caveats
 
-### Case sensitivity
+When preparing statements, the driver receives an ID for the prepared statement.
+Rust Driver (and every other driver for that matter) assumes that this ID is immutable: if
+it changed during a reprepare, an error will be returned.
+
+This assumption is not strictly true. For statements that don't specify keyspace explicitly,
+like `SELECT col FROM table`, a current keyspace will be used, and it will be considered when
+calculating hash of prepared statement. This is true for both databases (ScyllaDB and Cassandra).
+
+That means if you prepare such statement, and then change the keyspace, and it gets reprepared (which
+can happen at any time) it will no longer be usable. In other words, you should not prepare a statement
+without keyspace, and then switch the keyspace, no matter which DB you are using.
+
+For ScyllaDB there is unfortunately one more problem: current keyspace is ALWAYS considered when calculating
+the id, even if the statement already specifies the keyspace (like `SELECT col FROM ks.table`).
+That means the problem described above can happen even if you specify the keyspace, so the recommendation
+is even stricter: Do not switch keyspace after preparing any statements, or more specifically, don't
+use statements that were prepared for other keyspace.
+
+:::{warning}
+Do not use unqualified (like `SELECT col FROM table`) prepared statements that were prepared for a different keyspace
+than your session currently uses.
+:::
+
+:::{warning}
+If you use ScyllaDB, do not use prepared statements that were prepared for a different keyspace than your session currently uses - no matter
+if the statements specify the keyspace explicitly or not. One way to do this is to set Session keyspace once, on creation, and never change it again.
+:::
+
+## Case sensitivity
 
 In CQL a keyspace name can be case insensitive (without `"`) or case sensitive (with `"`).
 
