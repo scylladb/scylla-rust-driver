@@ -46,7 +46,10 @@ use tracing::debug;
 #[derive(Debug, Clone)]
 pub struct ReplicaLocator {
     /// The data based on which `ReplicaLocator` computes replica sets.
-    replication_data: ReplicationInfo,
+    ///
+    /// Behind an `Arc` so that cloning the locator (which happens on every
+    /// tablet update) does not copy the token rings.
+    replication_data: Arc<ReplicationInfo>,
 
     precomputed_replicas: PrecomputedReplicas,
 
@@ -64,7 +67,7 @@ impl ReplicaLocator {
         precompute_replica_sets_for: impl Iterator<Item = &'a Strategy>,
         tablets: TabletsInfo,
     ) -> Self {
-        let replication_data = ReplicationInfo::new(ring_iter);
+        let replication_data = Arc::new(ReplicationInfo::new(ring_iter));
         let precomputed_replicas =
             PrecomputedReplicas::compute(&replication_data, precompute_replica_sets_for);
 
