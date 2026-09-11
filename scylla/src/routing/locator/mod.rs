@@ -56,7 +56,9 @@ pub struct ReplicaLocator {
     /// the locator to copy.
     precomputed_replicas: Arc<PrecomputedReplicas>,
 
-    datacenters: Vec<String>,
+    /// Names of all datacenters in the ring. Shared for the same reason as
+    /// the fields above.
+    datacenters: Arc<[String]>,
 
     pub(crate) tablets: TabletsInfo,
 }
@@ -246,7 +248,7 @@ impl ReplicaLocator {
 
     /// Gives a list of all known datacenters.
     pub fn datacenter_names(&self) -> &[String] {
-        self.datacenters.as_slice()
+        &self.datacenters
     }
 
     /// Gives a list of all nodes in a specified datacenter ring (which is created by filtering the
