@@ -307,6 +307,7 @@ async fn test_schema_await_with_transient_failure() {
 
 // Test that produces SchemaAgreementError::RequiredHostAbsent to prove that
 // such condition is possible, and handled correctly.
+// As in `run_ddl_with_unreachable_node`, the DDL and the schema versions are forged by the proxy.
 #[tokio::test]
 async fn test_schema_await_required_host_absent() {
     setup_tracing();
@@ -320,6 +321,12 @@ async fn test_schema_await_required_host_absent() {
                 .address_translator(Arc::new(translation_map.clone()))
                 // Needed to have pools filled immediately after session creation.
                 .pool_size(PoolSize::PerHost(1.try_into().unwrap()))
+                // Speeds up session creation. Schema metadata is not needed in this test.
+                .fetch_schema_metadata(false)
+                // Avoid unnecessary warning
+                .fetch_full_schema_metadata(false)
+                // Keep the forged DDL path isolated from real-cluster metadata.
+                .refresh_metadata_on_auto_schema_agreement(false)
                 // Schema agreement will only return error after timeout,
                 // so without this line the test would take over 60s.
                 .schema_agreement_timeout(Duration::from_secs(1))
@@ -330,9 +337,15 @@ async fn test_schema_await_required_host_absent() {
 
             let host_ids = calculate_proxy_host_ids(&proxy_uris, &translation_map, &session);
 
-            let coordinator = NodeIdentifier::HostId(host_ids[1]);
-
-            running_proxy.running_nodes[1].change_request_rules(Some(vec![
+            let (ks, request) = forged_create_keyspace(NodeIdentifier::HostId(host_ids[1]));
+            let agreed_version = Uuid::new_v4();
+            running_proxy.running_nodes.iter_mut().for_each(|node| {
+                node.change_request_rules(Some(vec![
+                    RequestRule(create_keyspace_query(), forge_keyspace_created(ks.clone())),
+                    RequestRule(schema_version_query(), forge_schema_version(agreed_version)),
+                ]))
+            });
+            running_proxy.running_nodes[1].prepend_request_rules(vec![
                 // This prevents opening new connections to the node
                 RequestRule(
                     Condition::RequestOpcode(RequestOpcode::Startup),
@@ -340,25 +353,8 @@ async fn test_schema_await_required_host_absent() {
                 ),
                 // This prevents schema agreement check on this node, and closes connection.
                 // After some attempts, no connections will be left.
-                RequestRule(
-                    Condition::not(Condition::ConnectionRegisteredAnyEvent)
-                        .and(Condition::RequestOpcode(RequestOpcode::Query))
-                        .and(Condition::BodyContainsCaseSensitive(Box::new(
-                            *b"system.local",
-                        ))),
-                    RequestReaction::drop_connection(),
-                ),
-            ]));
-
-            let ks = unique_keyspace_name();
-            let mut request = Statement::new(format!(
-                "CREATE KEYSPACE {ks}
-                    WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}"
-            ));
-            request.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
-                coordinator,
-                None,
-            )));
+                RequestRule(schema_version_query(), RequestReaction::drop_connection()),
+            ]);
 
             let result = session.query_unpaged(request, &[]).await;
             let Err(ExecutionError::SchemaAgreementError(
@@ -369,32 +365,6 @@ async fn test_schema_await_required_host_absent() {
             };
 
             assert_eq!(host, host_ids[1]);
-
-            // Cleanup
-            running_proxy.running_nodes[1].change_request_rules(Some(vec![]));
-            // Prepare a new session. The old one has a very small schema agreement timeout,
-            // so awaiting schema agreement may fail (especially on Cassandra). We do need to await
-            // because:
-            // 1. CREATE KEYSPACE may not have propagated yet, which would cause the DROP below to fail,
-            //    so we need to await before DROP
-            // 2. We have a tool that verifies all keyspaces are dropped after tests.
-            //    If we don't auto-await after DROP, it is theoretically possible for this
-            //    tool to see the undropped keyspace.
-            let session: Session = SessionBuilder::new()
-                .known_node(proxy_uris[0].as_str())
-                .address_translator(Arc::new(translation_map.clone()))
-                // Let's have small pool for quicker session creation.
-                .pool_size(PoolSize::PerHost(1.try_into().unwrap()))
-                // Let's try more often to speed up the test.
-                .schema_agreement_interval(Duration::from_millis(50))
-                .build()
-                .await
-                .unwrap();
-            session.await_schema_agreement().await.unwrap();
-            session
-                .query_unpaged(format!("DROP KEYSPACE {ks}"), &[])
-                .await
-                .unwrap();
 
             running_proxy
         },
