@@ -10,7 +10,7 @@ pub use actions::{
     Action, Condition, Reaction, RequestReaction, RequestRule, ResponseReaction, ResponseRule,
     example_db_errors,
 };
-pub use errors::{DoorkeeperError, ProxyError, WorkerError};
+pub use errors::{DoorkeeperError, ForgedRowsError, ProxyError, WorkerError};
 pub use frame::{RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode};
 pub use proxy::{Node, Proxy, RunningProxy, ShardAwareness, TransportFactory};
 
