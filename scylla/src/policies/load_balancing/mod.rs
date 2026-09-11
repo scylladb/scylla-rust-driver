@@ -27,6 +27,24 @@ pub use single_target::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
 #[non_exhaustive]
 pub struct RoutingInfo<'a> {
     /// Consistency level for the request.
+    ///
+    /// <div class="warning">
+    ///
+    /// This is the consistency level of the *first* attempt. The
+    /// [`RetryPolicy`](crate::policies::retry::RetryPolicy) may pick a different consistency
+    /// level for any retry (see
+    /// [`RetryDecision`](crate::policies::retry::RetryDecision)), and the load balancing plan
+    /// is **not** recomputed then - the plan built from this `RoutingInfo` is used for all
+    /// attempts of the request.
+    ///
+    /// Therefore, a policy that derives routing decisions from this field (e.g. confines the
+    /// plan to the local datacenter because the level is `LOCAL_QUORUM`) can have a later
+    /// attempt executed with a consistency level its plan was not built for. If that matters,
+    /// combine such a policy with a retry policy that never changes the consistency level
+    /// (e.g. [`DefaultRetryPolicy`](crate::policies::retry::DefaultRetryPolicy)), and document
+    /// that requirement for the users of your policy.
+    ///
+    /// </div>
     pub consistency: types::Consistency,
 
     /// Serial consistency level to be used for serial part of the request, if set.
