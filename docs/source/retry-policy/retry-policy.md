@@ -12,6 +12,26 @@ By default there are three retry policies:
 
 It's possible to implement a custom `Retry Policy` by implementing the traits `RetryPolicy` and `RetrySession`.
 
+### Changing the consistency level in a retry
+
+The `RetryDecision::RetrySameTarget` and `RetryDecision::RetryNextTarget` variants can
+request that the retry be executed with a different consistency level than the attempt
+that failed.
+
+:::{warning}
+The [load balancing](../load-balancing/load-balancing.md) plan is computed once per
+query, from the consistency level of the first attempt, and is **not** recomputed when
+a retry changes that level. A load balancing policy that routes based on the consistency
+level - for instance, one that keeps the plan within the local datacenter for
+`LOCAL_QUORUM` - will therefore hand out targets picked for the original level. Retrying
+on the next target with a changed consistency level may then send the query somewhere
+that does not satisfy it.
+
+Always choose RetryPolicy and LoadBalancingPolicy that don't conflict in their behaviors
+and assumptions regarding consistency. Our [Default Retry Policy](../retry-policy/default.md)
+never changes consistency, so it should be safe to use with any LBP.
+:::
+
 ### Idempotence and retry policies
 
 Retry policies and [speculative execution](../speculative-execution/speculative.md)

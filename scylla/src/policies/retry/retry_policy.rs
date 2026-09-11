@@ -17,7 +17,11 @@ pub struct RequestInfo<'a> {
     ///
     /// If set to `false` it is unknown whether it is idempotent.
     pub is_idempotent: bool,
-    /// Consistency with which the request failed
+    /// Consistency with which the request failed.
+    ///
+    /// This is the consistency level of the attempt that just failed, which is not necessarily
+    /// the one the statement was configured with: a previous [`RetryDecision`] may have already
+    /// changed it.
     pub consistency: Consistency,
 }
 
@@ -39,6 +43,18 @@ impl<'a> RequestInfo<'a> {
 
 /// Returned by implementations of RetryPolicy. Instructs the driver on what
 /// to do about the request after it failed.
+///
+/// <div class="warning">
+///
+/// The retrying variants can change the consistency level used for the retry. The load balancing
+/// plan, however, is computed once per request - from a
+/// [`RoutingInfo`](crate::policies::load_balancing::RoutingInfo) holding the consistency level of
+/// the *first* attempt - and is **not** recomputed when the level changes. A load balancing policy
+/// that routes based on the consistency level (e.g. keeps the plan within the local datacenter for
+/// `LOCAL_QUORUM`) will therefore hand out targets chosen for the original level, and the retry may
+/// be sent to a target that does not satisfy the new one.
+///
+/// </div>
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RetryDecision {
