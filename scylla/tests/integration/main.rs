@@ -2,6 +2,7 @@
 #![allow(missing_docs)]
 
 pub(crate) mod ccm;
+pub(crate) mod entry_point;
 mod load_balancing;
 mod macros;
 mod metadata;
