@@ -173,7 +173,7 @@ mod tests {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
     use crate::{
-        cluster::{Node, NodeAddr},
+        cluster::{Node, NodeAddr, Topology},
         routing::locator::test::{create_locator, mock_metadata_for_token_aware_tests},
         test_utils::setup_tracing,
     };
@@ -232,8 +232,7 @@ mod tests {
         };
         let locator = create_locator(&mock_metadata_for_token_aware_tests());
         let cluster_state = ClusterState {
-            known_nodes: Default::default(),
-            all_nodes: Default::default(),
+            topology: Topology::new(Default::default()),
             keyspaces: Default::default(),
             locator,
             cluster_name: Some("TestCluster".into()),
