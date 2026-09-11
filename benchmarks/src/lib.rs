@@ -31,12 +31,20 @@ pub const KEYSPACE: &str = "benchmarks_ks";
 /// Table used by all benchmark scenarios.
 pub const TABLE: &str = "t";
 
+/// Number of tablets of the benchmark table.
+///
+/// It is what ScyllaDB picks by default for the repository's docker-compose
+/// cluster (3 nodes, 2 shards each), but the table definition also pins it as
+/// the minimum, so that tablet merges on the tiny table cannot change it and
+/// the cost of learning the table's tablets stays the same across runs.
+pub const TABLET_COUNT: usize = 64;
+
 /// Number of distinct-partition requests issued during context construction to
 /// warm up tablet routing, so that the measured loops are not dominated by the
 /// driver relearning tablets (see the warmup loop in `BenchContext::build`).
-/// Chosen comfortably above the table's tablet count so that every tablet is
-/// learned during the warmup.
-const TABLET_WARMUP_REQUESTS: usize = 512;
+/// Chosen comfortably above [`TABLET_COUNT`] so that every tablet is learned
+/// during the warmup.
+const TABLET_WARMUP_REQUESTS: usize = 8 * TABLET_COUNT;
 
 /// Interval of the driver's periodic background work (keepalives, metadata
 /// refresh) in benchmark sessions. See the session construction in
@@ -132,7 +140,8 @@ impl BenchContext {
                     .query_unpaged(
                         format!(
                             "CREATE TABLE IF NOT EXISTS {KEYSPACE}.{TABLE} \
-                         (a int, b int, c text, primary key (a, b))"
+                         (a int, b int, c text, primary key (a, b)) \
+                         WITH tablets = {{'min_tablet_count': {TABLET_COUNT}}}"
                         ),
                         &[],
                     )
