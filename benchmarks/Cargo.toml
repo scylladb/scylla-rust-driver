@@ -30,3 +30,7 @@ harness = false
 [[bench]]
 name = "deserialization"
 harness = false
+
+[[bench]]
+name = "dc_replicas"
+harness = false
