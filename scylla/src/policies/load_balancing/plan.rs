@@ -232,7 +232,7 @@ mod tests {
         };
         let locator = create_locator(&mock_metadata_for_token_aware_tests());
         let cluster_state = ClusterState {
-            topology: Topology::new(Default::default()),
+            topology: Arc::new(Topology::new(Default::default())),
             keyspaces: Default::default(),
             locator,
             cluster_name: Some("TestCluster".into()),
