@@ -390,6 +390,9 @@ impl<'result> CustomTypeParser<'result> {
         // If we go the simple-type route, we want to treat any trailing characters as errors,
         // so we need to restore the parser to the state pre-blank-skip.
         let parser_before_params = self.parser;
+        // Skipping blank here doesn't seem to serve much purpose, but Scylla does that
+        // in their parser: https://github.com/scylladb/scylladb/blob/7a9546f46fd2d95c5abb08a33f44683ef7dc2c1c/db/marshal/type_parser.cc#L83
+        // We just do the same - there should be no harm done by this.
         self.skip_blank();
         let result = self.parser.accept("(");
         match result {
@@ -643,6 +646,20 @@ mod tests {
         assert_eq!(
             CustomTypeParser::parse(
                 "org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type) \t\n",
+            ),
+            Err(CustomTypeParseError::UnexpectedTrailingCharacters(
+                " \t\n".to_string()
+            ))
+        );
+    }
+
+    // Vefifies that whitespace between type name and opening comma of type params
+    // is accepted for complex type, in line with Scylla own parser.
+    #[test]
+    fn custom_cassandra_type_parser_accepts_middle_whitespace_for_complex() {
+        assert_eq!(
+            CustomTypeParser::parse(
+                "org.apache.cassandra.db.marshal.ListType  (org.apache.cassandra.db.marshal.Int32Type) \t\n",
             ),
             Err(CustomTypeParseError::UnexpectedTrailingCharacters(
                 " \t\n".to_string()
