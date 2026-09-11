@@ -562,9 +562,14 @@ impl ClusterState {
     /// Access to replicas owning a given token
     ///
     /// Returns an empty `Vec` if `ClusterState` holds no metadata for `keyspace`: the
-    /// replica set is undefined without the keyspace's replication strategy. Use
-    /// [`ClusterState::try_get_token_endpoints`] to tell that case apart from a keyspace
-    /// that genuinely has no replicas for the token.
+    /// replica set is undefined without the keyspace's replication strategy.
+    ///
+    /// Deprecated in favour of [`ClusterState::try_get_token_endpoints`].
+    #[deprecated(
+        since = "1.9.0",
+        note = "an empty replica set cannot be told apart from a keyspace whose metadata \
+                the driver does not have; use `try_get_token_endpoints` instead"
+    )]
     pub fn get_token_endpoints(
         &self,
         keyspace: &str,
@@ -1094,7 +1099,10 @@ mod tests {
             .get_token_endpoints_iter(&TableSpec::borrowed(KS, "t"), Token::new(1))
             .unwrap();
         assert_eq!(known.count(), 1);
-        assert_eq!(state.get_token_endpoints(KS, "t", Token::new(1)).len(), 1);
+        #[expect(deprecated)] // The deprecated API's fallback is what this test pins down.
+        {
+            assert_eq!(state.get_token_endpoints(KS, "t", Token::new(1)).len(), 1);
+        }
         assert_eq!(
             state
                 .try_get_token_endpoints(KS, "t", Token::new(1))
@@ -1117,11 +1125,14 @@ mod tests {
             Err(ClusterStateTokenError::UnknownTable { keyspace, table })
                 if keyspace == UNKNOWN_KS && table == "t"
         );
-        // ...but an empty replica set for the infallible one, which can't report errors.
-        assert!(
-            state
-                .get_token_endpoints(UNKNOWN_KS, "t", Token::new(1))
-                .is_empty()
-        );
+        // ...but an empty replica set for the deprecated one, which can't report errors.
+        #[expect(deprecated)]
+        {
+            assert!(
+                state
+                    .get_token_endpoints(UNKNOWN_KS, "t", Token::new(1))
+                    .is_empty()
+            );
+        }
     }
 }
