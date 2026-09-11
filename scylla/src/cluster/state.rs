@@ -76,7 +76,10 @@ pub struct ClusterState {
 
     /// All keyspaces in the cluster, accessible by their name.
     /// Often refered to as "schema metadata".
-    pub(crate) keyspaces: HashMap<String, Keyspace>,
+    ///
+    /// Shared, not copied, when a new `ClusterState` is derived from this one
+    /// without a schema change (e.g. on a tablet update).
+    pub(crate) keyspaces: Arc<HashMap<String, Keyspace>>,
 
     /// The entity which provides a way to find the set of owning nodes (+shards, in case of ScyllaDB)
     /// for a given (token, replication strategy, table) tuple.
@@ -198,7 +201,10 @@ impl ClusterState {
         let (new_known_nodes, ring) =
             Self::calculate_new_topology(metadata.peers, &HashMap::new(), node_config, host_filter);
 
-        let keyspaces = Self::resolve_metadata_keyspaces(metadata.keyspaces, &HashMap::new());
+        let keyspaces = Arc::new(Self::resolve_metadata_keyspaces(
+            metadata.keyspaces,
+            &HashMap::new(),
+        ));
 
         let mut tablets = TabletsInfo::new();
         // Perform maintenance to create empty entries for all tablets-based tables.
@@ -227,7 +233,10 @@ impl ClusterState {
         node_config: &NodeConfig,
         host_filter: Option<&dyn HostFilter>,
     ) -> Self {
-        let keyspaces = Self::resolve_metadata_keyspaces(metadata.keyspaces, &self.keyspaces);
+        let keyspaces = Arc::new(Self::resolve_metadata_keyspaces(
+            metadata.keyspaces,
+            &self.keyspaces,
+        ));
 
         let (new_known_nodes, ring) = Self::calculate_new_topology(
             metadata.peers,
@@ -290,8 +299,9 @@ impl ClusterState {
         };
 
         let keyspaces = match schema {
-            Some(schema) => self.updated_keyspaces(schema),
-            None => self.keyspaces.clone(),
+            Some(schema) => Arc::new(self.updated_keyspaces(schema)),
+            // The schema is unchanged, so it is shared with `self`.
+            None => Arc::clone(&self.keyspaces),
         };
 
         let mut tablets = self.locator.tablets.clone();
@@ -316,7 +326,7 @@ impl ClusterState {
     /// replaces the metadata of the re-read keyspaces and removes those that
     /// ceased to exist, keeping every keyspace the update does not mention.
     fn updated_keyspaces(&self, schema: SchemaUpdate) -> HashMap<String, Keyspace> {
-        let mut new_keyspaces = self.keyspaces.clone();
+        let mut new_keyspaces = HashMap::clone(&self.keyspaces);
 
         for (name, keyspace) in schema.keyspaces {
             // A keyspace whose fresh metadata turned out inconsistent keeps its
@@ -489,10 +499,10 @@ impl ClusterState {
     }
 
     async fn calculate_new_locator(
-        keyspaces: HashMap<String, Keyspace>,
+        keyspaces: Arc<HashMap<String, Keyspace>>,
         ring: Ring,
         tablets: TabletsInfo,
-    ) -> (ReplicaLocator, HashMap<String, Keyspace>) {
+    ) -> (ReplicaLocator, Arc<HashMap<String, Keyspace>>) {
         tokio::task::spawn_blocking(move || {
             let keyspace_strategies = keyspaces
                 .values()
