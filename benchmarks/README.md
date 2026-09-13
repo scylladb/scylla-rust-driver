@@ -76,7 +76,8 @@ cargo bench -p benchmarks --bench requests -- --baseline=base
 ## Finding what to optimize
 
 Each run writes a DHAT output file per scenario (e.g.
-`target/iai/benchmarks/requests/requests/insert/dhat.insert.out`). Open it in
+`target/gungraun/benchmarks/requests/requests/insert.counts_0/dhat.insert.counts_0.out`).
+Open it in
 DHAT's [`dh_view.html`](https://valgrind.org/docs/manual/dh-manual.html) viewer
 to browse the allocations by call stack and see exactly where they come from.
 Since the totals are whole-process, this lists every allocation site, including
