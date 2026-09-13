@@ -46,12 +46,12 @@ would drown out the deserialization path's own cost in the `requests` scenarios.
 
 ## Micro-benchmarks
 
-`benches/dc_replicas.rs` needs no cluster and is not run in CI. It compares two
+`benches/dc_replicas.rs` needs no cluster and is not run in CI. It compares three
 representations of a tablet's replica list for answering "which replicas are in
-datacenter X?" - a per-datacenter `HashMap` next to the list (what the driver
-does today) versus filtering the list on each query - in terms of build cost,
-clone cost, and the per-request lookup cost. It exists to back the decision
-between the two with numbers; run it with:
+datacenter X?" - a per-datacenter `HashMap` next to the list, filtering the list
+on each query, and a per-datacenter index of replica-position masks - in terms
+of build cost, clone cost, and the per-request lookup cost. It exists to back
+the decision between them with numbers; run it with:
 
 ```bash
 cargo bench -p benchmarks --bench dc_replicas
