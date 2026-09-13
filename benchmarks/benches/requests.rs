@@ -4,7 +4,7 @@
 //! - **Callgrind**, which yields the instruction count, and
 //! - **DHAT**, which yields the number of allocations (heap blocks), the bytes
 //!   allocated and the peak heap usage (max memory). The DHAT output file
-//!   written next to the results in `target/iai/` can be opened in `dh_view.html`
+//!   written next to the results in `target/gungraun/` can be opened in `dh_view.html`
 //!   to list the exact allocation sites, which is useful when deciding what to
 //!   optimize.
 //!
