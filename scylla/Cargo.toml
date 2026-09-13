@@ -186,4 +186,4 @@ tls-parser = "0.12.2"
 # cross-driver schema it must conform to. Default features are off: they pull in
 # reqwest and a TLS stack to resolve remote `$ref`s, and the schema's references
 # are all internal.
-jsonschema = { version = "0.52", default-features = false }
+jsonschema = { version = "0.56", default-features = false }
