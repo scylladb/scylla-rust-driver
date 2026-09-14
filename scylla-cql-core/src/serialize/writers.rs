@@ -89,9 +89,26 @@ impl<'buf> CellWriter<'buf> {
         }
     }
 
-    // Creates a new cell writer based on an existing Vec, without writing size.
+    /// Creates a new cell writer based on an existing Vec, without writing size.
     ///
     /// The newly created row writer will append data to the end of the vec.
+    ///
+    /// # Correctness
+    ///
+    /// A size-less cell carries no length header, so the reader recovers the
+    /// value boundaries from the CQL type alone. That makes null and unset
+    /// unrepresentable, and it makes a payload of the wrong length unreadable.
+    /// Neither condition can be reported through
+    /// [`set_null`](CellWriter::set_null) or
+    /// [`set_unset`](CellWriter::set_unset), which are infallible and consume
+    /// the writer.
+    ///
+    /// So that the caller can still detect both, a size-less writer writes
+    /// nothing at all for null and unset instead of the -1 and -2 sentinels a
+    /// normal writer would emit. A caller that knows how many bytes the element
+    /// type requires, and that number is never zero, can then reject null,
+    /// unset and a wrong-length payload with a single length comparison. See
+    /// `serialize_next_constant_length_elem` in the `value` module.
     #[inline]
     pub fn new_without_size(buf: &'buf mut Vec<u8>) -> Self {
         Self {
@@ -101,16 +118,26 @@ impl<'buf> CellWriter<'buf> {
     }
 
     /// Sets this value to be null, consuming this object.
+    ///
+    /// A size-less writer, see [`new_without_size`](CellWriter::new_without_size),
+    /// has no encoding for null and writes nothing instead of the -1 sentinel.
     #[inline]
     pub fn set_null(self) -> WrittenCellProof<'buf> {
-        self.buf.extend_from_slice(&(-1i32).to_be_bytes());
+        if self.write_size {
+            self.buf.extend_from_slice(&(-1i32).to_be_bytes());
+        }
         WrittenCellProof::new()
     }
 
     /// Sets this value to represent an unset value, consuming this object.
+    ///
+    /// A size-less writer, see [`new_without_size`](CellWriter::new_without_size),
+    /// has no encoding for unset and writes nothing instead of the -2 sentinel.
     #[inline]
     pub fn set_unset(self) -> WrittenCellProof<'buf> {
-        self.buf.extend_from_slice(&(-2i32).to_be_bytes());
+        if self.write_size {
+            self.buf.extend_from_slice(&(-2i32).to_be_bytes());
+        }
         WrittenCellProof::new()
     }
 
@@ -196,9 +223,24 @@ impl<'buf> CellValueBuilder<'buf> {
 
     /// Appends a sub-value to the end of the current contents of the cell
     /// and returns an object that allows to fill it in, without writing size.
+    ///
+    /// See [`CellWriter::new_without_size`] for the correctness obligations
+    /// that come with a size-less writer.
     #[inline]
     pub fn make_sub_writer_without_size(&mut self) -> CellWriter<'_> {
         CellWriter::new_without_size(self.buf)
+    }
+
+    /// Number of content bytes written into this cell so far, not counting the
+    /// length header of the cell itself.
+    ///
+    /// Bracketing a [`make_sub_writer_without_size`](CellValueBuilder::make_sub_writer_without_size)
+    /// call with this is how a caller recovers the length of a size-less
+    /// sub-value, which is the only thing that distinguishes a valid payload
+    /// from the null and unset that a size-less writer cannot encode.
+    #[inline]
+    pub(crate) fn content_len(&self) -> usize {
+        self.buf.len() - self.starting_pos - if self.write_size { 4 } else { 0 }
     }
 
     /// Finishes serializing the value.
@@ -252,6 +294,50 @@ impl WrittenCellProof<'_> {
     }
 }
 
+/// Why a cell written by a normal [`CellWriter`] has no size-less form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SizeLessCellError {
+    /// The value serialized to null, encoded as a length of -1.
+    Null,
+    /// The value serialized to unset, encoded as a length of -2.
+    Unset,
+    /// The header is neither a valid length nor a null/unset sentinel. In
+    /// practice this means a [`CellValueBuilder`] was leaked without calling
+    /// [`CellValueBuilder::finish`], leaving the -3 poison behind.
+    Malformed,
+}
+
+/// Splits a cell written by a normal [`CellWriter`] into header and payload,
+/// returning the payload only if the cell has a size-less form.
+///
+/// Used where a length comparison cannot decide the question on its own,
+/// namely for a variable-length vector element, whose payload may legitimately
+/// be of any length including zero. The header settles it: null and unset are
+/// visible as -1 and -2 rather than as an empty payload.
+#[inline]
+pub(crate) fn cell_payload(cell: &[u8]) -> Result<&[u8], SizeLessCellError> {
+    let (header, payload) = cell
+        .split_at_checked(4)
+        .ok_or(SizeLessCellError::Malformed)?;
+    let header = i32::from_be_bytes(
+        header
+            .try_into()
+            .expect("split_at_checked(4) yields 4 bytes"),
+    );
+    match header {
+        -1 => Err(SizeLessCellError::Null),
+        -2 => Err(SizeLessCellError::Unset),
+        len if len < 0 => Err(SizeLessCellError::Malformed),
+        // A successful write always leaves a header that matches the payload,
+        // both for `set_value` and for `CellValueBuilder::finish`. Checking it
+        // anyway keeps a malformed cell from being re-encoded as a valid one.
+        len if u64::from(len.cast_unsigned()) != payload.len() as u64 => {
+            Err(SizeLessCellError::Malformed)
+        }
+        _ => Ok(payload),
+    }
+}
+
 /// There was an attempt to produce a CQL value over the maximum size limit (i32::MAX)
 #[derive(Debug, Clone, Copy, Error)]
 #[error("CQL cell overflowed the maximum allowed size of 2^31 - 1")]
@@ -297,6 +383,82 @@ mod tests {
                 255, 255, 255, 253, // Invalid value
             ]
         );
+    }
+
+    #[test]
+    fn size_less_writer_does_not_emit_null_or_unset_sentinels() {
+        // Regression test for https://github.com/scylladb/scylla-rust-driver/issues/1669.
+        // A size-less cell has no length header, so the -1 and -2 sentinels
+        // would land in the buffer as payload. Writing nothing instead leaves
+        // a length that no fixed-size element type can match.
+        let mut data = Vec::new();
+        CellWriter::new_without_size(&mut data).set_null();
+        assert_eq!(data, [] as [u8; 0]);
+
+        let mut data = Vec::new();
+        CellWriter::new_without_size(&mut data).set_unset();
+        assert_eq!(data, [] as [u8; 0]);
+
+        // A normal writer is unchanged.
+        let mut data = Vec::new();
+        CellWriter::new(&mut data).set_null();
+        assert_eq!(data, [255, 255, 255, 255]);
+
+        let mut data = Vec::new();
+        CellWriter::new(&mut data).set_unset();
+        assert_eq!(data, [255, 255, 255, 254]);
+    }
+
+    #[test]
+    fn size_less_sub_writer_content_len_reports_what_was_written() {
+        let mut data = Vec::new();
+        let mut builder = CellWriter::new(&mut data).into_value_builder();
+
+        let before = builder.content_len();
+        builder
+            .make_sub_writer_without_size()
+            .set_value(&[1, 2, 3, 4])
+            .unwrap();
+        assert_eq!(builder.content_len() - before, 4);
+
+        let before = builder.content_len();
+        builder.make_sub_writer_without_size().set_null();
+        assert_eq!(builder.content_len() - before, 0);
+
+        let before = builder.content_len();
+        builder.make_sub_writer_without_size().set_unset();
+        assert_eq!(builder.content_len() - before, 0);
+
+        builder.finish().unwrap();
+        assert_eq!(data, [0, 0, 0, 4, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn cell_payload_classifies_written_cells() {
+        use super::{SizeLessCellError, cell_payload};
+
+        let mut data = Vec::new();
+        CellWriter::new(&mut data).set_value(&[7, 7, 7]).unwrap();
+        assert_eq!(cell_payload(&data), Ok(&[7, 7, 7][..]));
+
+        let mut data = Vec::new();
+        CellWriter::new(&mut data).set_value(&[]).unwrap();
+        assert_eq!(cell_payload(&data), Ok(&[][..]));
+
+        let mut data = Vec::new();
+        CellWriter::new(&mut data).set_null();
+        assert_eq!(cell_payload(&data), Err(SizeLessCellError::Null));
+
+        let mut data = Vec::new();
+        CellWriter::new(&mut data).set_unset();
+        assert_eq!(cell_payload(&data), Err(SizeLessCellError::Unset));
+
+        // Builder leaked without `finish`, leaving the -3 poison.
+        let mut data = Vec::new();
+        let _ = CellWriter::new(&mut data).into_value_builder();
+        assert_eq!(cell_payload(&data), Err(SizeLessCellError::Malformed));
+
+        assert_eq!(cell_payload(&[0, 0, 0]), Err(SizeLessCellError::Malformed));
     }
 
     #[test]
