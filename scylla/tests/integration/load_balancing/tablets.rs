@@ -32,60 +32,81 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tracing::info;
 use uuid::Uuid;
 
-/// RetryPolicy that works around Scylla LWT bug: https://scylladb.atlassian.net/browse/SCYLLADB-3194
-/// The symptom of the bug is the request failing with error message like below:
-///
-/// thread 'load_balancing::tablets::test_tablets' (3651327) panicked at scylla/tests/integration/load_balancing/tablets.rs:602:21:
-/// Test attempt failed despite no migration. Error: case QueryDescriptor { op: LwtUpdateIf, ks_presence: WithKs, data_form: RegularPrepared } failed: QueryDescriptor { op: LwtUpdateIf, ks_presence: WithKs, data_form: RegularPrepared }: execution failed: Database returned an error: A non-timeout error during a write request (consistency: LocalSerial, received: 1, required: 2, numfailures: 1, write_type: Cas, Error message: Failed to prepare ballot 2766fdcc-7b7f-11f1-abb6-46f4f195de97 for test_rust_675cf549299940bba12bd8786ceaad6d.t. Replica errors: host_id 826bb99e-6317-448c-a2f1-02b41fefbb1b -> seastar::rpc::remote_verb_error (stale topology exception, caller version 1470, callee fence version 1476);
+/// Retry policy for tests running LWTs. Retries the transient LWT failures
+/// of the shared test cluster on the same target, so that assertions about
+/// which node served a request still hold.
 #[derive(Debug)]
-struct LwtBallotBugRetryPolicy;
-struct LwtBallotBugRetryPolicySession {
+struct LwtRetryPolicy;
+struct LwtRetryPolicySession {
     retries_left: usize,
     inner: DefaultRetrySession,
 }
 
-impl RetryPolicy for LwtBallotBugRetryPolicy {
+impl LwtRetryPolicySession {
+    const MAX_RETRIES: usize = 20;
+}
+
+impl RetryPolicy for LwtRetryPolicy {
     fn new_session(&self) -> Box<dyn RetrySession> {
-        Box::new(LwtBallotBugRetryPolicySession {
-            retries_left: 20,
+        Box::new(LwtRetryPolicySession {
+            retries_left: LwtRetryPolicySession::MAX_RETRIES,
             inner: DefaultRetrySession::new(),
         })
     }
 }
-impl RetrySession for LwtBallotBugRetryPolicySession {
+
+impl RetrySession for LwtRetryPolicySession {
     fn decide_should_retry(
         &mut self,
         request_info: scylla::policies::retry::RequestInfo,
     ) -> scylla::policies::retry::RetryDecision {
-        if let RequestAttemptError::DbError(
-            DbError::WriteFailure {
-                write_type: WriteType::Cas,
-                consistency: Consistency::LocalSerial,
-                ..
-            },
-            message,
-        ) = request_info.error
-            && message.contains("Failed to prepare ballot")
-        {
-            if self.retries_left > 0 {
-                self.retries_left -= 1;
-            } else {
-                // Panic explicitly so that we know that retry policy worked, but
-                // error kept happening.
-                panic!(
-                    "LWT ballot error happened 20 times in a row! e: {}",
-                    request_info.error
-                );
+        let is_transient_lwt_error = match request_info.error {
+            // The first LWT on a table makes the server create its Paxos state
+            // table, a schema change that is slow while other tests run DDL.
+            // LWTs waiting for it time out.
+            RequestAttemptError::DbError(
+                DbError::WriteTimeout {
+                    write_type: WriteType::Cas,
+                    ..
+                },
+                _,
+            ) => true,
+            // That schema change goes through Raft group 0, whose read barrier
+            // can time out as well; the server reports it as an internal error.
+            RequestAttemptError::DbError(DbError::ServerError, message) => {
+                message.contains("raft operation") && message.contains("timed out")
             }
+            // Scylla bug: https://scylladb.atlassian.net/browse/SCYLLADB-3194
+            RequestAttemptError::DbError(
+                DbError::WriteFailure {
+                    write_type: WriteType::Cas,
+                    consistency: Consistency::LocalSerial,
+                    ..
+                },
+                message,
+            ) => message.contains("Failed to prepare ballot"),
+            _ => false,
+        };
 
-            return RetryDecision::RetrySameTarget(None);
+        if !is_transient_lwt_error {
+            return self.inner.decide_should_retry(request_info);
         }
 
-        self.inner.decide_should_retry(request_info)
+        if self.retries_left == 0 {
+            // Panic explicitly so that we know that retry policy worked, but
+            // error kept happening.
+            panic!(
+                "Transient LWT error happened {} times in a row! e: {}",
+                Self::MAX_RETRIES,
+                request_info.error
+            );
+        }
+        self.retries_left -= 1;
+        RetryDecision::RetrySameTarget(None)
     }
 
     fn reset(&mut self) {
-        self.retries_left = 20;
+        self.retries_left = Self::MAX_RETRIES;
         self.inner.reset();
     }
 }
@@ -1026,7 +1047,7 @@ where
                 .fetch_full_schema_metadata(fetch_full_schema)
                 .default_execution_profile_handle(
                     ExecutionProfile::builder()
-                        .retry_policy(Arc::new(LwtBallotBugRetryPolicy))
+                        .retry_policy(Arc::new(LwtRetryPolicy))
                         .build()
                         .into_handle(),
                 )
