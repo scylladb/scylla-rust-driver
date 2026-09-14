@@ -16,7 +16,9 @@ use scylla::policies::host_filter::AllowListHostFilter;
 use scylla::policies::load_balancing::{
     FallbackPlan, LoadBalancingPolicy, NodeIdentifier, RoutingInfo, SingleTargetLoadBalancingPolicy,
 };
-use scylla::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
+use scylla::policies::retry::{
+    FallthroughRetryPolicy, RequestInfo, RetryDecision, RetryPolicy, RetrySession,
+};
 use scylla::response::query_result::QueryResult;
 use scylla::routing::Shard;
 use scylla::serialize::row::SerializeRow;
@@ -204,34 +206,29 @@ where
     running_proxy.finish().await
 }
 
-/// # Warning
-/// This function **requires full schema metadata** to function correctly.
+/// Whether the server lists `feature` in `system.local.supported_features`.
+/// Always `false` on Cassandra.
 pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
-    // Cassandra doesn't have a concept of features, so first detect
-    // if there is the `supported_features` column in system.local
+    // Asked from the server rather than read from the cached schema, which
+    // has no columns under `fetch_full_schema_metadata(false)`.
+    let mut statement =
+        Statement::new("SELECT supported_features FROM system.local WHERE key='local'");
+    // Some tests use retry policies that turn errors into successes, which
+    // would hide the `Invalid` error below.
+    statement.set_retry_policy(Some(Arc::new(FallthroughRetryPolicy::new())));
 
-    let meta = session.get_cluster_state();
-    let system_local = meta
-        .get_keyspace("system")
-        .unwrap()
-        .tables
-        .get("local")
-        .unwrap();
+    let result = match session.query_unpaged(statement, ()).await {
+        Ok(result) => result,
+        // Cassandra has no such column.
+        Err(ExecutionError::LastAttemptError(RequestAttemptError::DbError(
+            DbError::Invalid,
+            _,
+        ))) => return false,
+        // Not `false`: that would silently disable the test gated on it.
+        Err(error) => panic!("failed to read system.local.supported_features: {error}"),
+    };
 
-    if !system_local.columns.contains_key("supported_features") {
-        return false;
-    }
-
-    let result = session
-        .query_unpaged(
-            "SELECT supported_features FROM system.local WHERE key='local'",
-            (),
-        )
-        .await
-        .unwrap()
-        .into_rows_result()
-        .unwrap();
-
+    let result = result.into_rows_result().unwrap();
     let (features,): (Option<&str>,) = result.single_row().unwrap();
 
     features
@@ -240,8 +237,7 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
         .any(|f| f == feature)
 }
 
-/// # Warning
-/// This function **requires full schema metadata** to function correctly.
+/// Whether the server advertises the `TABLETS` feature.
 pub(crate) async fn scylla_supports_tablets(session: &Session) -> bool {
     supports_feature(session, "TABLETS").await
 }
@@ -254,9 +250,6 @@ pub(crate) async fn scylla_supports_tablets(session: &Session) -> bool {
 /// `LWT_WITH_TABLETS`, `VIEWS_WITH_TABLETS`, `COUNTERS_WITH_TABLETS`). A test relying on
 /// such a functionality should run on the default, tablet-enabled setup wherever the
 /// server supports it, and fall back to vnodes on older servers that do not.
-///
-/// # Warning
-/// This function **requires full schema metadata** to function correctly.
 pub(crate) async fn disable_tablets_unless_supported(
     session: &Session,
     feature: &str,
