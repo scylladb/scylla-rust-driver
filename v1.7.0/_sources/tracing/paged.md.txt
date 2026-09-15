@@ -1,0 +1,69 @@
+# Tracing a paged query
+
+A paged query performs multiple simple/prepared queries to query subsequent pages.\
+If tracing is enabled the row iterator will contain a list of tracing ids for all performed queries.
+
+
+### Tracing `Session::query_iter`
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::observability::tracing::TracingInfo;
+use futures::StreamExt;
+use uuid::Uuid;
+
+// Create a Statement manually and enable tracing
+let mut query: Statement = Statement::new("SELECT * FROM ks.tab");
+query.set_tracing(true);
+
+// Create a paged query iterator and fetch pages
+let mut row_stream = session
+    .query_iter(query, &[])
+    .await?
+    .rows_stream::<(i32,)>()?;
+while let Some(_row) = row_stream.next().await {
+    // Receive rows
+}
+
+// Now there are tracing ids for each performed query
+let tracing_ids: &[Uuid] = row_stream.tracing_ids();
+
+for id in tracing_ids {
+    // Query tracing info from system_traces.sessions and system_traces.events
+    let tracing_info: TracingInfo = session.get_tracing_info(id).await?;
+    println!("tracing_info: {:#?}", tracing_info);
+}
+```
+
+### Tracing `Session::execute_iter`
+```rust
+use scylla::statement::prepared::PreparedStatement;
+use scylla::observability::tracing::TracingInfo;
+use futures::StreamExt;
+use uuid::Uuid;
+
+// Prepare the statement
+let mut prepared: PreparedStatement = session
+    .prepare("SELECT a FROM ks.tab")
+    .await?;
+
+// Enable tracing for the prepared statement
+prepared.set_tracing(true);
+
+// Create a paged query iterator and fetch pages
+let mut row_stream = session
+    .execute_iter(prepared, &[])
+    .await?
+    .rows_stream::<(i32,)>()?;
+while let Some(_row) = row_stream.next().await {
+    // Receive rows
+}
+
+// Now there are tracing ids for each performed query
+let tracing_ids: &[Uuid] = row_stream.tracing_ids();
+
+for id in tracing_ids {
+    // Query tracing info from system_traces.sessions and system_traces.events
+    let tracing_info: TracingInfo = session.get_tracing_info(id).await?;
+    println!("tracing_info: {:#?}", tracing_info);
+}
+```

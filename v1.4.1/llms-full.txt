@@ -1,0 +1,4697 @@
+# index.md
+
+# ScyllaDB Rust Driver
+
+This book contains documentation for [scylla-rust-driver](https://github.com/scylladb/scylla-rust-driver) - a driver
+for [ScyllaDB](https://scylladb.com) written in Rust.
+Although optimized for Scylla, the driver is also compatible with [Apache Cassandra®](https://cassandra.apache.org/).
+
+## Other documentation
+
+* [Examples](https://github.com/scylladb/scylla-rust-driver/tree/main/examples)
+* [Rust and ScyllaDB lesson](https://university.scylladb.com/courses/using-scylla-drivers/lessons/rust-and-scylla-2/) on Scylla University
+* [API documentation](https://docs.rs/scylla)
+* [ScyllaDB documentation](https://docs.scylladb.com)
+* [Cassandra® documentation](https://cassandra.apache.org/doc/latest/)
+
+## Contents
+
+* [Quick start](https://rust-driver.docs.scylladb.com/v1.4.1/quickstart/quickstart.md) - Setting up a Rust project using `scylla-rust-driver` and executing a few CQL statements
+* [Migration guides](https://rust-driver.docs.scylladb.com/v1.4.1/migration-guides/migration-guides.md) - How to update the code that used an older version of this driver
+* [Connecting to the cluster](https://rust-driver.docs.scylladb.com/v1.4.1/connecting/connecting.md) - Configuring a connection to scylla cluster
+* [CQL statement execution](https://rust-driver.docs.scylladb.com/v1.4.1/statements/statements.md) - Executing different types of CQL statement (simple, prepared, batch, paged)
+* [Execution profiles](https://rust-driver.docs.scylladb.com/v1.4.1/execution-profiles/execution-profiles.md) - Grouping statement execution configuration options together and switching them all at once
+* [Data Types](https://rust-driver.docs.scylladb.com/v1.4.1/data-types/data-types.md) - How to use various column data types
+* [Load balancing](https://rust-driver.docs.scylladb.com/v1.4.1/load-balancing/load-balancing.md) - Load balancing configuration
+* [Retry policy configuration](https://rust-driver.docs.scylladb.com/v1.4.1/retry-policy/retry-policy.md) - What to do when execution attempt fails, statement idempotence
+* [Driver metrics](https://rust-driver.docs.scylladb.com/v1.4.1/metrics/metrics.md) - Statistics about the driver - number of executed statements, latency etc.
+* [Logging](https://rust-driver.docs.scylladb.com/v1.4.1/logging/logging.md) - Viewing and integrating logs produced by the driver
+* [Request tracing](https://rust-driver.docs.scylladb.com/v1.4.1/tracing/tracing.md) - Tracing request execution
+* [Database schema](https://rust-driver.docs.scylladb.com/v1.4.1/schema/schema.md) - Fetching and inspecting database schema
+
+
+# 0.11-serialization.md
+
+# Adjusting code to changes in serialization API introduced in 0.11
+
+## Background
+
+When executing a statement through the CQL protocol, values for the bind markers are sent in a serialized, untyped form. In order to implement a safer and more robust interface, drivers can use the information returned after preparing a statement to check the type of data provided by the user against the actual types of the bind markers.
+
+Before 0.11, the driver couldn’t do this kind of type checking. For example, in the case of non-batch queries, the only information about the user data it has is that it implements `ValueList` - defined as follows:
+
+```rust,ignore
+
+pub trait ValueList {
+    fn serialized(&self) -> SerializedResult<'_>;
+    fn write_to_request(&self, buf: &mut impl BufMut) -> Result<(), SerializeValuesError>;
+}
+```
+
+The driver would naively serialize the data and hope that the user took care to send correct types of values. Failing to do so would, in the best case, fail on the DB-side validation; in the worst case, the data in its raw form may be reinterpreted as another type in an unintended manner.
+
+Another problem is that the information from the prepared statement response is required to robustly serialize user defined types, as UDTs require their fields to be serialized in the same order as they are defined in the database schema. The `IntoUserType` macro which implements Rust struct -> UDT serialization just expects that the order of the Rust struct fields matches the schema, but ensuring this can be very cumbersome for the users.
+
+In version 0.11, a new set of traits is introduced and the old ones are deprecated. The new traits receive more information during serialization such as names of the column/bind markers and their types, which allows to fix the issues mentioned in the previous section.
+
+## Old vs. new
+
+Both the old and the new APIs are based on three core traits:
+
+- `Value` - called `SerializeValue` in the new API. A type that can serialize itself to a single CQL value. For example, `i32` serializes itself into a representation that is compatible with the CQL `int` type.
+- `ValueList` - called `SerializeRow` in the new API. A type that can serialize itself as a list of values for a CQL statement. For example, a `(i32, &str)` produces a list of two values which can be used in a query with two bind markers, e.g. `SELECT * FROM table WHERE pk = ? AND ck = ?`. Optionally, values in the produced list may be associated with names which is useful when using it with a query with named bind markers, e.g. `SELECT * FROM table WHERE pk = :pk AND ck = :ck`.
+- `LegacyBatchValues`, previously named `BatchValues` - in new API replaced with new trait called (again) `BatchValues`.  Represents a source of data for a batch request. It is essentially equivalent to a list of `ValueList`, one for each statement in the batch. For example, `((1, 2), (3, 4, 5))` can be used for a batch with two statements, the first one having two bind markers and the second one having three.
+
+All methods which take one of the old traits were changed to take the new trait - notably, this includes `Session::query`, `(Caching)Session::execute`, `(Caching)Session::batch`.
+
+The driver comes a set of `impl`s of those traits which allow to represent any CQL type (for example, see [Data Types](https://rust-driver.docs.scylladb.com/v1.4.1/data-types/data-types.md) page for a list of for which `Value` and `SerializeValue` is implemented). If the driver implements an old trait for some type, then it also provides implements the new trait for the same type.
+
+## Migration scenarios
+
+### Different default behavior in `SerializeRow`/`SerializeValue` macros
+
+By default, the `SerializeRow` and `SerializeValue` **will match the fields in the Rust struct by name to bind marker names** (in case of `SerializeRow`) **or UDT field names** (in case of `SerializeValue`). This is different from the old `ValueList` and `IntoUserType` macros which did not look at the field names at all and would expect the user to order the fields correctly. While the new behavior is much more ergonomic, you might have reasons not to use it.
+
+In order to bring the old behavior to the new macros (the only difference being type checking which cannot be disabled right now) you can configure it using attributes, as shown in the snippet below:
+
+```rust
+use scylla::SerializeValue;
+
+// The exact same attributes apply to the `SerializeRow` macro and their
+// effect is completely analogous.
+#[derive(SerializeValue)]
+#[scylla(flavor = "enforce_order", skip_name_checks)]
+struct Person {
+    name: String,
+    surname: String,
+    age: i16,
+}
+```
+
+Refer to the API reference page for the `SerializeRow` and `SerializeValue` macros in the `scylla` crate to learn more about the supported attributes and their meaning.
+
+### Preparing is mandatory with a non-empty list of values
+
+> **NOTE:** The considerations in this section only concerns users of the `Session` API, `CachingSession` is not affected as it already does preparation before execute and caches the result.
+
+As explained in the [Background]() section, the driver uses data returned from the database after preparing a statement in order to implement type checking. As the new API makes type checking mandatory, **the driver must prepare the statement** so that the data for the bind markers can be type checked. It is done in case of the existing methods which used to send unprepared statements: `Session::query` and `Session::batch`.
+
+> **NOTE:** The driver will skip preparation if it detects that the list of values for the statement is empty, as there is nothing to be type checked.
+
+If you send simple statements along with non-empty lists of values, the slowdown will be as follows:
+
+- For `Session::query`, the driver will prepare the statement before sending it, incurring an additional round-trip.
+- For `Session::batch`, the driver will send a prepare request for each *unique* unprepared statement with a non-empty list of values. **This is done serially!**
+
+In both cases, if the additional roundtrips are unacceptable, you should prepare the statements beforehand and reuse them - which aligns with our general recommendation against use of simple statements in performance sensitive scenarios.
+
+### Migrating from old to new traits
+
+Up to 1.0 the driver offered a set of migration types and macros to allow adapting new API gradually.
+Since 1.0 this is no longer the case and the old API is fully removed. In order to use 1.0 you have to
+change your code to use new API.
+
+
+# 0.15-deserialization.md
+
+# Adjusting code to changes in deserialization API introduced in 0.15
+
+In 0.15, a new deserialization API has been introduced. The new API improves type safety and performance of the old one, so it is highly recommended to switch to it. However, deserialization is an area of the API that users frequently interact with: deserialization traits appear in generic code and custom implementations have been written.
+In order to make migration easier, the driver 0.15 still offered the old API. Since 1.0 the old API (and thus the migration utilities too) have been fully removed.
+
+## Introduction
+
+### Old traits
+
+The legacy API worked by deserializing rows in the query response to a sequence of `Row`s. The `Row` is just a `Vec<Option<CqlValue>>`, where `CqlValue` is an enum that is able to represent any CQL value.
+
+The user could request this type-erased representation to be converted into something useful. There were two traits that powered this:
+
+**`FromRow`**
+
+```rust,ignore
+pub trait FromRow: Sized {
+    fn from_row(row: Row) -> Result<Self, FromRowError>;
+}
+```
+
+**`FromCqlVal`**
+
+```rust,ignore
+// The `T` parameter is supposed to be either `CqlValue` or `Option<CqlValue>`
+pub trait FromCqlVal<T>: Sized {
+    fn from_cql(cql_val: T) -> Result<Self, FromCqlValError>;
+}
+```
+
+These traits were implemented for some common types:
+
+- `FromRow` was implemented for tuples up to 16 elements,
+- `FromCqlVal` was implemented for a bunch of types, and each CQL type could be converted to one of them.
+
+While it was possible to implement those manually, the driver provided procedural macros for automatic derivation in some cases:
+
+- `FromRow` - implemented `FromRow` for a struct.
+- `FromUserType` - generated an implementation of `FromCqlVal` for the struct, trying to parse the CQL value as a UDT.
+
+Note: the macros above had a default behavior that is different than what `FromRow` and `FromUserType` do.
+
+### New traits
+
+The new API introduces two analogous traits that, instead of consuming pre-parsed `Vec<Option<CqlValue>>`, are given raw, serialized data with full information about its type. This leads to better performance and allows for better type safety.
+
+The new traits are:
+
+**`DeserializeRow<'frame, 'metadata>`**
+
+```rust
+pub trait DeserializeRow<'frame, 'metadata>
+where
+    Self: Sized,
+{
+    fn type_check(specs: &[ColumnSpec]) -> Result<(), TypeCheckError>;
+    fn deserialize(row: ColumnIterator<'frame, 'metadata>) -> Result<Self, DeserializationError>;
+}
+```
+
+**`DeserializeValue<'frame, 'metadata>`**
+
+```rust
+pub trait DeserializeValue<'frame, 'metadata>
+where
+    Self: Sized,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError>;
+    fn deserialize(
+        typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError>;
+}
+```
+
+The above traits have been implemented for the same set of types as `FromRow` and `FromCqlVal`, respectively. Notably, `DeserializeRow` is implemented for `Row`, and `DeserializeValue` is implemented for `CqlValue`.
+
+There are also `DeserializeRow` and `DeserializeValue` derive macros, analogous to `FromRow` and `FromUserType`, respectively - but with slightly different defaults (explained later in this doc page).
+
+## Updating the code to use the new API
+
+Some of the core types have been updated to use the new traits. Updating the code to use the new API should be straightforward.
+
+### Basic queries
+
+Sending queries with the single page API should work similarly as before. The `Session::query_{unpaged,single_page}`, `Session::execute_{unpaged,single_page}` and `Session::batch` functions have the same interface as before, the only exception being that they return a new, updated `QueryResult`.
+
+Consuming rows from a result will require only minimal changes if you are using helper methods of the `QueryResult`. Now, there is no distinction between “typed” and “non-typed” methods; all methods that return rows need to have the type specified. For example, previously there used to be both `rows(self)` and `rows_typed<RowT: FromRow>(self)`, now there is only a single `rows<R: DeserializeRow<'frame, 'metadata>>(&self)`. Another thing worth mentioning is that the returned iterator now *borrows* from the `QueryResult` instead of consuming it.
+
+Note that the `QueryResult::rows` field is not available anymore. If you used to access it directly, you need to change your code to use the helper methods instead.
+
+Before:
+
+```rust,ignore
+let iter = session
+    .query_unpaged("SELECT name, age FROM my_keyspace.people", &[])
+    .await?
+    .rows_typed::<(String, i32)>()?;
+for row in iter {
+    let (name, age) = row?;
+    println!("{} has age {}", name, age);
+}
+```
+
+After:
+
+```rust
+// 1. Note that the result must be converted to a rows result, and only then
+// an iterator created.
+let result = session
+    .query_unpaged("SELECT name, age FROM my_keyspace.people", &[])
+    .await?
+    .into_rows_result()?;
+
+// 2. Note that `rows` is used here, not `rows_typed`.
+// 3. Note that the new deserialization framework support deserializing types
+//    that borrow directly from the result frame; let's use them to avoid
+//    needless allocations.
+for row in result.rows::<(&str, i32)>()? {
+    let (name, age) = row?;
+    println!("{} has age {}", name, age);
+}
+```
+
+### Iterator queries
+
+The `Session::query_iter` and `Session::execute_iter` have been adjusted, too. They now return a `QueryPager` - an intermediate object which needs to be converted into `TypedRowStream` first before being actually iterated over.
+
+Before:
+
+```rust,ignore
+let mut rows_stream = session
+    .query_iter("SELECT name, age FROM my_keyspace.people", &[])
+    .await?
+    .into_typed::<(String, i32)>();
+
+while let Some(next_row_res) = rows_stream.next().await {
+    let (a, b): (String, i32) = next_row_res?;
+    println!("a, b: {}, {}", a, b);
+}
+```
+
+After:
+
+```rust
+let mut rows_stream = session
+    .query_iter("SELECT name, age FROM my_keyspace.people", &[])
+    .await?
+    // The type of the TypedRowStream is inferred from further use of it.
+    // Alternatively, it can be specified using turbofish syntax:
+    // .rows_stream::<(String, i32)>()?;
+    .rows_stream()?;
+
+while let Some(next_row_res) = rows_stream.next().await {
+    let (a, b): (String, i32) = next_row_res?;
+    println!("a, b: {}, {}", a, b);
+}
+```
+
+Currently, `QueryPager`/`TypedRowStream` do not support deserialization of borrowed types due to limitations of Rust with regard to lending streams. If you want to deserialize borrowed types not to incur additional allocations, use manual paging (`{query/execute}_single_page`) API.
+
+### Procedural macros
+
+As mentioned in the Introduction section, the driver provides new procedural macros for the `DeserializeRow` and `DeserializeValue` traits that are meant to replace `FromRow` and `FromUserType`, respectively. The new macros are designed to be slightly more type-safe by matching column/UDT field names to rust field names dynamically. This is a different behavior to what the old macros used to do, but the new macros can be configured with `#[attributes]` to simulate the old behavior.
+
+**`FromRow` vs. `DeserializeRow`**
+
+The impl generated by `FromRow` expected columns to be in the same order as the struct fields. The `FromRow` trait did not have information about column names, so it could not match them with the struct field names. You can use `enforce_order` and `skip_name_checks` attributes to achieve such behavior via `DeserializeRow` trait.
+
+**`FromUserType` vs. `DeserializeValue`**
+
+The impl generated by `FromUserType` expected UDT fields to be in the same order as the struct fields. Field names should be the same both in the UDT and in the struct. You can use the `enforce_order` attribute to achieve such behavior via the `DeserializeValue` trait.
+
+### Adjusting custom impls of deserialization traits
+
+If you have a custom type with a hand-written `impl FromRow` or `impl FromCqlVal`, the best thing to do is to just write a new impl for `DeserializeRow` or `DeserializeValue` manually.
+
+## Accessing the old API
+
+In 0.15 version of the driver it was possible to access the old API, and to mix usages of the old and new APIs in order
+to allow gradual migration.
+Since 1.0 this is no longer the case. The application must migrate to the new API in order to use driver 1.0.
+
+
+# authentication.md
+
+# Authentication
+
+Driver supports both authentication by username and password and custom authentication defined by a user.
+
+## Important: The default authentication credentials are sent in plain text to the server. For this reason, it is highly recommended that this be used in conjunction with client-to-node encryption (SSL), or in a trusted network environment.
+
+To use the default authentication, specify credentials using the `user` method in `SessionBuilder`:
+
+```rust
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+
+let session: Session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .user("myusername", "mypassword")
+    .build()
+    .await?;
+
+```
+
+## Custom Authentication
+
+A custom authentication is defined by implementing the `AuthenticatorSession`.
+An `AuthenticatorSession` instance is created per session, so it is also necessary to define a `AuthenticatorProvider` for it.
+Finally, to make use of the custom authentication, use the `authenticator_provider` method in `SessionBuilder`:
+
+```rust
+use bytes::{BufMut, BytesMut};
+use async_trait::async_trait;
+use scylla::authentication::{AuthError, AuthenticatorProvider, AuthenticatorSession};
+
+struct CustomAuthenticator;
+
+#[async_trait]
+impl AuthenticatorSession for CustomAuthenticator {
+    // to handle an authentication challenge initiated by the server.
+    // The information contained in the token parameter is authentication protocol specific.
+    // It may be NULL or empty. 
+    async fn evaluate_challenge(
+        &mut self,
+        _token: Option<&[u8]>,
+    ) -> Result<Option<Vec<u8>>, AuthError> {
+        Err("Challenges are not expected".to_string())
+    }
+
+    // to handle the success phase of exchange. The token parameters contain information that may be used to finalize the request.
+    async fn success(&mut self, _token: Option<&[u8]>) -> Result<(), AuthError> {
+        Ok(())
+    }
+}
+
+struct CustomAuthenticatorProvider;
+
+#[async_trait]
+impl AuthenticatorProvider for CustomAuthenticatorProvider {
+    async fn start_authentication_session(
+        &self,
+        _name: &str,
+    ) -> Result<(Option<Vec<u8>>, Box<dyn AuthenticatorSession>), AuthError> {
+        let mut response = BytesMut::new();
+        let cred = "\0cassandra\0cassandra";
+        let cred_length = 20;
+
+        response.put_i32(cred_length);
+        response.put_slice(cred.as_bytes());
+
+        Ok((Some(response.to_vec()), Box::new(CustomAuthenticator)))
+    }
+}
+
+async fn authentication_example() -> Result<(), Box<dyn Error>> {
+    use scylla::client::session::Session;
+    use scylla::client::session_builder::SessionBuilder;
+
+    let _session: Session = SessionBuilder::new()
+        .known_node("127.0.0.1:9042")
+        .authenticator_provider(Arc::new(CustomAuthenticatorProvider))
+        .build()
+        .await?;
+
+    Ok(())
+}
+```
+
+
+# basic.md
+
+# Tracing a simple/prepared/batch query
+
+[Unprepared statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/unprepared.md), [prepared statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/prepared.md) and [batch statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/batch.md)
+execution return a `QueryResult` which contains a `tracing_id` if tracing was enabled.
+
+## Tracing an unprepared statement execution
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::response::query_result::QueryResult;
+use scylla::observability::tracing::TracingInfo;
+use uuid::Uuid;
+
+// Create a Statement manually and enable tracing
+let mut statement: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(4)");
+statement.set_tracing(true);
+
+let res: QueryResult = session.query_unpaged(statement, &[]).await?;
+let tracing_id: Option<Uuid> = res.tracing_id();
+
+if let Some(id) = tracing_id {
+    // Query tracing info from system_traces.sessions and system_traces.events
+    let tracing_info: TracingInfo = session.get_tracing_info(&id).await?;
+    println!("tracing_info: {:#?}", tracing_info);
+}
+```
+
+## Tracing a prepared statement
+
+```rust
+use scylla::statement::prepared::PreparedStatement;
+use scylla::response::query_result::QueryResult;
+use scylla::observability::tracing::TracingInfo;
+use uuid::Uuid;
+
+// Prepare the statement
+let mut prepared: PreparedStatement = session
+    .prepare("SELECT a FROM ks.tab")
+    .await?;
+
+// Enable tracing for the prepared statement
+prepared.set_tracing(true);
+
+let res: QueryResult = session.execute_unpaged(&prepared, &[]).await?;
+let tracing_id: Option<Uuid> = res.tracing_id();
+
+if let Some(id) = tracing_id {
+    // Query tracing info from system_traces.sessions and system_traces.events
+    let tracing_info: TracingInfo = session.get_tracing_info(&id).await?;
+    println!("tracing_info: {:#?}", tracing_info);
+}
+```
+
+## Tracing a batch statement
+
+```rust
+use scylla::statement::batch::Batch;
+use scylla::response::query_result::QueryResult;
+use scylla::observability::tracing::TracingInfo;
+use uuid::Uuid;
+
+// Create a batch statement
+let mut batch: Batch = Default::default();
+batch.append_statement("INSERT INTO ks.tab (a) VALUES(4)");
+
+// Enable tracing
+batch.set_tracing(true);
+
+let res: QueryResult = session.batch(&batch, ((),)).await?;
+let tracing_id: Option<Uuid> = res.tracing_id();
+
+if let Some(id) = tracing_id {
+    // Query tracing info from system_traces.sessions and system_traces.events
+    let tracing_info: TracingInfo = session.get_tracing_info(&id).await?;
+    println!("tracing_info: {:#?}", tracing_info);
+}
+```
+
+
+# batch.md
+
+# Batch statement
+
+A batch statement allows to execute many data-modifying statements at once.<br />
+\\\\
+These statements can be [unprepared](https://rust-driver.docs.scylladb.com/v1.4.1/statements/unprepared.md) or [prepared](https://rust-driver.docs.scylladb.com/v1.4.1/statements/prepared.md).<br />
+\\\\
+Only `INSERT`, `UPDATE` and `DELETE` statements are allowed.
+
+```rust
+use scylla::statement::batch::Batch;
+use scylla::statement::unprepared::Statement;
+use scylla::statement::prepared::PreparedStatement;
+
+// Create a batch statement
+let mut batch: Batch = Default::default();
+
+// Add an unprepared statement to the batch using its text
+batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(1, 2)");
+
+// Add an unprepared statement created manually to the batch
+let unprepared: Statement = Statement::new("INSERT INTO ks.tab (a, b) VALUES(3, 4)");
+batch.append_statement(unprepared);
+
+// Add a prepared statement to the batch
+let prepared: PreparedStatement = session
+    .prepare("INSERT INTO ks.tab (a, b) VALUES(?, 6)")
+    .await?;
+batch.append_statement(prepared);
+
+// Specify bound values to use with each statement
+let batch_values = ((),
+                    (),
+                    (5_i32,));
+
+// Run the batch
+session.batch(&batch, batch_values).await?;
+```
+
+>  ***Warning***<br />
+> \\\\
+> Using unprepared statements with bind markers in batches is strongly discouraged.
+> For each unprepared statement with a non-empty list of values in the batch,
+> the driver will send a prepare request, and it will be done **sequentially**.
+> Results of preparation are not cached between `Session::batch` calls.
+> Consider preparing the statements before putting them into the batch.
+
+## Preparing a batch
+
+Instead of preparing each statement individually, it’s possible to prepare a whole batch at once:
+
+```rust
+use scylla::statement::batch::Batch;
+
+// Create a batch statement with unprepared statements
+let mut batch: Batch = Default::default();
+batch.append_statement("INSERT INTO ks.simple_unprepared1 VALUES(?, ?)");
+batch.append_statement("INSERT INTO ks.simple_unprepared2 VALUES(?, ?)");
+
+// Prepare all statements in the batch at once
+let prepared_batch: Batch = session.prepare_batch(&batch).await?;
+
+// Specify bound values to use with each statement
+let batch_values = ((1_i32, 2_i32),
+                    (3_i32, 4_i32));
+
+// Run the prepared batch
+session.batch(&prepared_batch, batch_values).await?;
+```
+
+## Batch options
+
+You can set various options by operating on the `Batch` object.<br />
+\\\\
+For example to change consistency:
+
+```rust
+use scylla::statement::batch::Batch;
+use scylla::statement::Consistency;
+
+// Create a batch
+let mut batch: Batch = Default::default();
+batch.append_statement("INSERT INTO ks.tab(a) VALUES(16)");
+
+// Set batch consistency to One
+batch.set_consistency(Consistency::One);
+
+// Run the batch
+session.batch(&batch, ((), )).await?;
+```
+
+See [Batch API documentation](https://docs.rs/scylla/latest/scylla/statement/batch/struct.Batch.html)
+for more options
+
+## Batch values
+
+Batch takes a tuple of values specified just like in [unprepared](https://rust-driver.docs.scylladb.com/v1.4.1/statements/unprepared.md) or [prepared](https://rust-driver.docs.scylladb.com/v1.4.1/statements/prepared.md) statements.
+
+Length of batch values must be equal to the number of statements in a batch.<br />
+\\\\
+Each statement must have its values specified, even if they are empty.
+
+Values passed to `Session::batch` must implement the trait `BatchValues`.<br />
+\\\\
+By default this includes tuples `()` and slices `&[]` of tuples and slices which implement `SerializeRow`.
+
+Example:
+
+```rust
+use scylla::statement::batch::Batch;
+
+let mut batch: Batch = Default::default();
+
+// A statement with two bound values
+batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(?, ?)");
+
+// A statement with one bound value
+batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(3, ?)");
+
+// A statement with no bound values
+batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(5, 6)");
+
+// Batch values is a tuple of 3 tuples containing values for each statement
+let batch_values = ((1_i32, 2_i32), // Tuple with two values for the first statement
+                    (4_i32,),       // Tuple with one value for the second statement
+                    ());            // Empty tuple/unit for the third statement
+
+// Run the batch
+// Note that the driver will prepare the first two statements, due to them
+// not being prepared and having a non-empty list of values.
+session.batch(&batch, batch_values).await?;
+```
+
+For more information about sending values in a statement see [Statement values](https://rust-driver.docs.scylladb.com/v1.4.1/statements/values.md)
+
+## Performance
+
+Batch statements do not use token/shard aware load balancing, batches are sent to a random node.
+
+Use [prepared statements](https://rust-driver.docs.scylladb.com/v1.4.1/statements/prepared.md) for best performance
+
+
+# blob.md
+
+# Blob
+
+`Blob` is represented as one of:
+
+- `&[u8]`,
+- `Vec<u8>`,
+- `bytes::Bytes`,
+- `[u8; N]` (only serialization supported).
+
+```rust
+use futures::TryStreamExt;
+
+// Insert some blob into the table as a Vec<u8>
+// We can insert it by reference to not move the whole blob
+let to_insert: Vec<u8> = vec![1, 2, 3, 4, 5];
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&to_insert,))
+    .await?;
+
+// Read blobs from the table
+let mut stream = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(Vec<u8>,)>()?;
+while let Some((blob_value,)) = stream.try_next().await? {
+    println!("{:?}", blob_value);
+}
+```
+
+
+# collections.md
+
+# List, Set, Map
+
+## List
+
+`List` is represented as `Vec<T>`
+
+```rust
+use futures::TryStreamExt;
+
+// Insert a list of ints into the table
+let my_list: Vec<i32> = vec![1, 2, 3, 4, 5];
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&my_list,))
+    .await?;
+
+// Read a list of ints from the table
+let mut stream = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(Vec<i32>,)>()?;
+while let Some((list_value,)) = stream.try_next().await? {
+    println!("{:?}", list_value);
+}
+```
+
+## Set
+
+`Set` is represented as `Vec<T>`, `HashSet<T>` or `BTreeSet<T>`:
+
+```rust
+use futures::TryStreamExt;
+
+// Insert a set of ints into the table
+let my_set: Vec<i32> = vec![1, 2, 3, 4, 5];
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&my_set,))
+    .await?;
+
+// Read a set of ints from the table
+let mut stream = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(Vec<i32>,)>()?;
+while let Some((set_value,)) = stream.try_next().await? {
+    println!("{:?}", set_value);
+}
+```
+
+```rust
+use futures::TryStreamExt;
+use std::collections::HashSet;
+
+// Insert a set of ints into the table
+let my_set: HashSet<i32> = vec![1, 2, 3, 4, 5].into_iter().collect();
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&my_set,))
+    .await?;
+
+// Read a set of ints from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(HashSet<i32>,)>()?;
+while let Some((set_value,)) = iter.try_next().await? {
+    println!("{:?}", set_value);
+}
+```
+
+```rust
+use futures::TryStreamExt;
+use std::collections::BTreeSet;
+
+// Insert a set of ints into the table
+let my_set: BTreeSet<i32> = vec![1, 2, 3, 4, 5].into_iter().collect();
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&my_set,))
+    .await?;
+
+// Read a set of ints from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(BTreeSet<i32>,)>()?;
+while let Some((set_value,)) = iter.try_next().await? {
+    println!("{:?}", set_value);
+}
+```
+
+## Map
+
+`Map` is represented as `HashMap<K, V>` or `BTreeMap<K, V>`
+
+```rust
+use futures::TryStreamExt;
+use std::collections::HashMap;
+
+// Insert a map of text and int into the table
+let mut my_map: HashMap<String, i32> = HashMap::new();
+my_map.insert("abcd".to_string(), 16);
+
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&my_map,))
+    .await?;
+
+// Read a map from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(HashMap<String, i32>,)>()?;
+while let Some((map_value,)) = iter.try_next().await? {
+    println!("{:?}", map_value);
+}
+```
+
+```rust
+use futures::TryStreamExt;
+use std::collections::BTreeMap;
+
+// Insert a map of text and int into the table
+let mut my_map: BTreeMap<String, i32> = BTreeMap::new();
+my_map.insert("abcd".to_string(), 16);
+
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&my_map,))
+    .await?;
+
+// Read a map from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(BTreeMap<String, i32>,)>()?;
+while let Some((map_value,)) = iter.try_next().await? {
+    println!("{:?}", map_value);
+}
+```
+
+
+# compression.md
+
+# Compression
+
+By default the driver does not use any compression on connections.<br />
+\\\\
+It’s possible to specify a preferred compression algorithm. <br />
+\\\\
+The driver will try using it, but if the database doesn’t support it, it will fall back to no compression.
+
+Available compression algorithms:
+
+* Snappy
+* LZ4
+
+An example enabling `Snappy` compression algorithm:
+
+```rust
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::client::Compression;
+use std::error::Error;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let uri = std::env::var("SCYLLA_URI")
+        .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    let session: Session = SessionBuilder::new()
+        .known_node(uri)
+        .compression(Some(Compression::Snappy))
+        .build()
+        .await?;
+
+    Ok(())
+}
+```
+
+
+# connecting.md
+
+# Connecting to the cluster
+
+ScyllaDB is a distributed database, which means that it operates on multiple nodes running independently.
+When creating a `Session` you can specify a few known nodes to which the driver will try connecting:
+
+```rust
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use std::error::Error;
+use std::time::Duration;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let uri = std::env::var("SCYLLA_URI")
+        .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    let session: Session = SessionBuilder::new()
+        .known_node(uri)
+        .known_node("127.0.0.72:4321")
+        .known_node("localhost:8000")
+        .connection_timeout(Duration::from_secs(3))
+        .cluster_metadata_refresh_interval(Duration::from_secs(10))
+        .known_node_addr(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            9000,
+        ))
+        .build()
+        .await?;
+
+    Ok(())
+}
+```
+
+After successfully connecting to some specified node the driver will fetch topology information about
+other nodes in this cluster and connect to them as well.
+
+## Best practices for using Session
+
+#### WARNING
+Always try to use only a single Session object per apllication because creating them is very expensive!
+
+The driver maintains its own pool of connections to each node and each connection is capable of handling multiple requests in parallel. Driver will also route requests to nodes / shards that actually own the data (unless the load balancing policy that you use doesn’t support it).
+
+For those reasons, we recommend using one instance of `Session` per application.
+
+Creating short-lived `Session`’s (e.g. `Session` per request) is strongly discouraged because it will result in great performance penalties because creating a `Session` is a costly process - it requires estabilishing a lot of TCP connections.
+Creating many `Session`’s in one application (e.g. `Session` per thread / per Tokio task) is also discouraged, because it wastes resources - as mentioned before, `Session` maintains a connection pool itself and can handle parallel queries, so you would be holding a lot of connections unnecessarily.
+
+If you need to share `Session` with different threads / Tokio tasks etc. use `Arc<Session>` - all methods of `Session` take `&self`, so it doesn’t hinder the functionality in any way.
+
+## Metadata
+
+The driver refreshes the cluster metadata periodically, which contains information about cluster topology as well as the cluster schema. By default, the driver refreshes the cluster metadata every 60 seconds.
+However, you can set the `cluster_metadata_refresh_interval` to a non-negative value to periodically refresh the cluster metadata. This is useful when you do not have unexpected amount of traffic or when you have an extra traffic causing topology to change frequently.
+
+## ScyllaDB Cloud Serverless
+
+ScyllaDB Serverless is an elastic and dynamic deployment model. When creating a `Session` you need to
+specify the secure connection bundle as follows:
+
+```rust
+use std::path::Path;
+use std::error::Error;
+use scylla::client::session_builder::CloudSessionBuilder;
+use scylla::cloud::CloudTlsProvider;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let session =
+        CloudSessionBuilder::new(Path::new("config_data.yaml"), CloudTlsProvider::OpenSsl010)
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+
+    Ok(())
+}
+```
+
+It is also possible to load the secure connection bundle from anything
+which implements read:
+
+```rust
+use std::path::Path;
+use std::error::Error;
+use std::fs::File;
+use scylla::client::session_builder::CloudSessionBuilder;
+use scylla::cloud::{CloudConfig, CloudTlsProvider};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let mut file = File::open("config_data.yaml").unwrap();
+    let config = CloudConfig::from_reader(&mut file, CloudTlsProvider::OpenSsl010).unwrap();
+    let session = CloudSessionBuilder::from_config(config)
+        .build()
+        .await
+        .unwrap();
+
+    Ok(())
+}
+```
+
+>  ***Note***<br />
+> \\\\
+> `CloudSessionBuilder::new()` and `CloudConfig::from_reader()` accept
+> two parameters. The first is `Read` or path to the configuration
+> file. The second parameter is responsible for choosing the
+> underlying TLS provider library. For more information about
+> providers supported currently by the driver, see [TLS](https://rust-driver.docs.scylladb.com/v1.4.1/connecting/tls.md).
+
+Note that the bundle file will be provided after the serverless cluster is created. Here is an example of a
+configuration file for a serverless cluster:
+
+```yaml
+datacenters:
+  datacenter1:
+    certificateAuthorityData: CERTIFICATE_DATA
+    server: 127.0.1.1:9142
+    nodeDomain: cql.cluster-id.scylla.com
+    insecureSkipTlsVerify: false
+authInfos:
+  default:
+    clientCertificateData: CERTIFICATE_DATA
+    clientKeyData: KEY_DATA
+    username: scylladb
+    password: scylladb
+contexts:
+  default:
+    datacenterName: datacenter1
+    authInfoName: default
+currentContext: default
+```
+
+
+# contents.md
+
+
+
+# counter.md
+
+# Counter
+
+`Counter` is represented as `struct Counter(pub i64)`<br />
+\\\\
+`Counter` can’t be inserted, it can only be read or updated.
+
+```rust
+use futures::TryStreamExt;
+use scylla::value::Counter;
+
+// Add to counter value
+let to_add: Counter = Counter(100);
+session
+    .query_unpaged("UPDATE keyspace.table SET c = c + ? WHERE pk = 15", (to_add,))
+    .await?;
+
+// Read counter from the table
+let mut stream = session.query_iter("SELECT c FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(Counter,)>()?;
+while let Some((counter_value,)) = stream.try_next().await? {
+    let counter_int_value: i64 = counter_value.0;
+    println!("{}", counter_int_value);
+}
+```
+
+
+# create-and-use.md
+
+# Creating a profile and setting it
+
+## Example
+
+To create an `ExecutionProfile` and attach it as default for `Session`:
+
+```rust
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::statement::Consistency;
+use scylla::client::execution_profile::ExecutionProfile;
+
+let profile = ExecutionProfile::builder()
+    .consistency(Consistency::LocalOne)
+    .request_timeout(None) // no request timeout
+    .build();
+
+let handle = profile.into_handle();
+
+let session: Session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .default_execution_profile_handle(handle)
+    .build()
+    .await?;
+```
+
+## Example
+
+To create an `ExecutionProfile` and attach it to a `Statement`:
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::statement::Consistency;
+use scylla::client::execution_profile::ExecutionProfile;
+use std::time::Duration;
+
+let profile = ExecutionProfile::builder()
+    .consistency(Consistency::All)
+    .request_timeout(Some(Duration::from_secs(30)))
+    .build();
+
+let handle = profile.into_handle();
+
+let mut query1 = Statement::from("SELECT * FROM ks.table");
+query1.set_execution_profile_handle(Some(handle.clone()));
+
+let mut query2 = Statement::from("SELECT pk FROM ks.table WHERE pk = ?");
+query2.set_execution_profile_handle(Some(handle));
+```
+
+## Example
+
+To create an `ExecutionProfile` based on another profile:
+
+```rust
+use scylla::statement::Consistency;
+use scylla::client::execution_profile::ExecutionProfile;
+use std::time::Duration;
+
+let base_profile = ExecutionProfile::builder()
+    .request_timeout(Some(Duration::from_secs(30)))
+    .build();
+
+let profile = base_profile.to_builder()
+    .consistency(Consistency::All)
+    .build();
+
+```
+
+
+# create-project.md
+
+# Creating a project
+
+To create a new project run:
+
+```shell
+cargo new myproject
+```
+
+In `Cargo.toml` add useful dependencies:
+
+```toml
+[dependencies]
+scylla = "1.4"
+tokio = { version = "1.12", features = ["full"] }
+futures = "0.3.6"
+uuid = "1.0"
+bigdecimal = "0.4"
+num-bigint = "0.3"
+tracing = "0.1.36"
+tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
+```
+
+In `main.rs` put:
+
+```rust
+use scylla::client::session::Session;
+
+#[tokio::main]
+async fn main() {
+    println!("Hello scylla!");
+}
+```
+
+Now running `cargo run` should print:
+
+```shell
+Hello scylla!
+```
+
+
+# data-types.md
+
+# Data Types
+
+The driver maps database data types to matching Rust types
+to achieve seamless sending and receiving of CQL values.
+
+See the following chapters for examples on how to send and receive each data type.
+
+See [Statement values](https://rust-driver.docs.scylladb.com/v1.4.1/statements/values.md) for more information about sending values along with statements.<br />
+\\\\
+See [Query result](https://rust-driver.docs.scylladb.com/v1.4.1/statements/result.md) for more information about retrieving values from queries
+
+Database types and their Rust equivalents:
+
+* `Boolean` <—-> `bool`
+* `Tinyint`  <—->  `i8`
+* `Smallint` <—-> `i16`
+* `Int` <—-> `i32`
+* `BigInt` <—-> `i64`
+* `Float` <—-> `f32`
+* `Double` <—-> `f64`
+* `Ascii`, `Text`, `Varchar` <—-> `&str`, `String`, `Box<str>`, `Arc<str>`
+* `Counter` <—-> `value::Counter`
+* `Blob` <—-> `&[u8]`, `Vec<u8>`, `Bytes`, (and `[u8; N]` for serialization only)
+* `Inet` <—-> `std::net::IpAddr`
+* `Uuid` <—-> `uuid::Uuid`
+* `Timeuuid` <—-> `value::CqlTimeuuid`
+* `Date` <—-> `value::CqlDate`, `chrono::NaiveDate`, `time::Date`
+* `Time` <—-> `value::CqlTime`, `chrono::NaiveTime`, `time::Time`
+* `Timestamp` <—-> `value::CqlTimestamp`, `chrono::DateTime<Utc>`, `time::OffsetDateTime`
+* `Duration` <—-> `value::CqlDuration`
+* `Decimal` <—-> `value::CqlDecimal`, `bigdecimal::Decimal`
+* `Varint` <—-> `value::CqlVarint`, `num_bigint::BigInt` (v0.3 and v0.4)
+* `List` <—-> `Vec<T>`
+* `Set` <—-> `Vec<T>`
+* `Map` <—-> `std::collections::HashMap<K, V>`
+* `Tuple` <—-> Rust tuples
+* `UDT (User defined type)` <—-> Custom user structs with macros
+* `Vector` <—-> `Vec<T>`
+
+Additionally, `Box` and `Arc` serialization and deserialization is supported for all above types.
+
+
+# date.md
+
+# Date
+
+Depending on feature flags, three different types can be used to interact with date.
+
+Internally [date](https://docs.scylladb.com/stable/cql/types.html#dates) is represented as number of days since
+-5877641-06-23 i.e. 2^31 days before unix epoch.
+
+## CqlDate
+
+Without any extra features enabled, only `value::CqlDate` is available. It’s an
+[`u32`](https://doc.rust-lang.org/std/primitive.u32.html) wrapper and it matches the internal date representation.
+
+However, for most use cases other types are more practical. See following sections for `chrono` and `time`.
+
+```rust
+use scylla::value::CqlDate;
+use futures::TryStreamExt;
+
+// 1970-01-08
+let to_insert = CqlDate((1 << 31) + 7);
+
+// Insert date into the table
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read raw Date from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(CqlDate,)>()?;
+while let Some((date_value,)) = iter.try_next().await? {
+    // ...
+}
+```
+
+## chrono::NaiveDate
+
+If full range is not required and `chrono-04` feature is enabled,
+[`chrono::NaiveDate`](https://docs.rs/chrono/0.4/chrono/naive/struct.NaiveDate.html) can be used.
+[`chrono::NaiveDate`](https://docs.rs/chrono/0.4/chrono/naive/struct.NaiveDate.html) supports dates from
+-262145-01-01 to 262143-12-31.
+
+```rust
+use chrono::NaiveDate;
+use futures::TryStreamExt;
+
+// 2021-03-24
+let to_insert = NaiveDate::from_ymd_opt(2021, 3, 24).unwrap();
+
+// Insert date into the table
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read NaiveDate from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(NaiveDate,)>()?;
+while let Some((date_value,)) = iter.try_next().await? {
+    // ...
+}
+```
+
+## time::Date
+
+Alternatively, the `time-03` feature can be used to enable support of
+[`time::Date`](https://docs.rs/time/0.3/time/struct.Date.html).
+[`time::Date`](https://docs.rs/time/0.3/time/struct.Date.html)’s value range depends on feature flags, see its
+documentation to get more info.
+
+```rust
+use futures::TryStreamExt;
+use time::{Date, Month};
+
+// 2021-03-24
+let to_insert = Date::from_calendar_date(2021, Month::March, 24).unwrap();
+
+// Insert date into the table
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read Date from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(Date,)>()?;
+while let Some((date_value,)) = iter.try_next().await? {
+    // ...
+}
+```
+
+
+# decimal.md
+
+# Decimal
+
+`Decimal` is represented as `value::CqlDecimal` or [`bigdecimal::BigDecimal`](https://docs.rs/bigdecimal/latest/bigdecimal/struct.BigDecimal.html)
+
+## value::CqlDecimal
+
+Without any feature flags, the user can interact with `decimal` type by making use of `value::CqlDecimal` or `value::CqlDecimalBorrowed` which are very simple wrappers representing the value as signed binary number in big-endian order with a 32-bit scale.
+
+```rust
+use futures::TryStreamExt;
+use scylla::value::CqlDecimal;
+use std::str::FromStr;
+
+// Insert a decimal (123.456) into the table
+let to_insert: CqlDecimal =
+        CqlDecimal::from_signed_be_bytes_and_exponent(vec![0x01, 0xE2, 0x40], 3);
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read a decimal from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(CqlDecimal,)>()?;
+while let Some((decimal_value,)) = iter.try_next().await? {
+    println!("{:?}", decimal_value);
+}
+```
+
+## bigdecimal::BigDecimal
+
+To make use of `bigdecimal::Bigdecimal` type, user should enable `bigdecimal-04` crate feature.
+
+```rust
+use futures::TryStreamExt;
+use bigdecimal::BigDecimal;
+use std::str::FromStr;
+
+// Insert a decimal into the table
+let to_insert: BigDecimal = BigDecimal::from_str("12345.0")?;
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read a decimal from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(BigDecimal,)>()?;
+while let Some((decimal_value,)) = iter.try_next().await? {
+    println!("{:?}", decimal_value);
+}
+```
+
+
+# default-policy.md
+
+# DefaultPolicy
+
+`DefaultPolicy` is the default load balancing policy in ScyllaDB Rust Driver. It
+can be configured to be datacenter-aware and token-aware. Datacenter failover
+for queries with non-local consistency mode is also supported.
+
+## Creating a DefaultPolicy
+
+`DefaultPolicy` can be created only using `DefaultPolicyBuilder`. The
+`builder()` method of `DefaultPolicy` returns a new instance of
+`DefaultPolicyBuilder` with the following default values:
+
+- `preferences`: no particular datacenter/rack preference
+- `is_token_aware`: `true`
+- `permit_dc_failover`: `false`
+- `latency_awareness`: `None`
+
+You can use the builder methods to configure the desired settings and create a
+`DefaultPolicy` instance:
+
+```rust
+use scylla::policies::load_balancing::DefaultPolicy;
+
+let default_policy = DefaultPolicy::builder()
+        .prefer_datacenter_and_rack("dc1".to_string(), "rack1".to_string())
+        .token_aware(true)
+        .permit_dc_failover(true)
+        .build();
+```
+
+### Semantics of `DefaultPolicy`
+
+#### Preferences
+
+The `preferences` field in `DefaultPolicy` allows the load balancing
+policy to prioritize nodes based on their location. It has three modes:
+
+- no preference
+- preferred datacenter
+- preferred datacenter and rack
+
+When a datacenter `"my_dc"` is preferred, the policy will treat nodes in `"my_dc"`
+as “local” nodes, and nodes in other datacenters as “remote” nodes. This affects
+the order in which nodes are returned by the policy when selecting nodes for
+read or write operations. If no datacenter is preferred, the policy will treat
+all nodes as local nodes.
+
+`preferences` allow the load balancing policy to prioritize nodes based on their
+availability zones (racks) in the preferred datacenter, too. When a datacenter
+and a rack are preferred, the policy will first return replicas in the local rack
+in the preferred datacenter, and then the other replicas in the datacenter
+(followed by remote replicas). After replicas, the other node will be ordered
+similarly, too (local rack nodes, local datacenter nodes, remote nodes).
+
+When datacenter failover is disabled (`permit_dc_failover` is set to
+false), the default policy will only include local nodes in load balancing
+plans. Remote nodes will be excluded, even if they are alive and available to
+serve requests.
+
+#### Datacenter Failover
+
+In the event of a datacenter outage or network failure, the nodes in that
+datacenter may become unavailable, and clients may no longer be able to access
+the data stored on those nodes. To address this, the `DefaultPolicy` supports
+datacenter failover, which allows to route requests to nodes in other datacenters
+if the local nodes are unavailable.
+
+Datacenter failover can be enabled in `DefaultPolicy` by `permit_dc_failover`
+setting in the builder. When this flag is set, the policy will prefer to return
+alive remote replicas if datacenter failover is permitted and possible due to
+consistency constraints.
+
+#### Token awareness
+
+Token awareness refers to a mechanism by which the driver is aware of the token
+range assigned to each node in the cluster. Tokens are assigned to nodes to
+partition the data and distribute it across the cluster.
+
+When a user wants to read or write data, the driver can use token awareness to
+route the request to the correct node based on the token range of the data
+being accessed. This can help to minimize network traffic and improve
+performance by ensuring that the data is accessed locally as much as possible.
+
+In the case of `DefaultPolicy`, token awareness is enabled by default, meaning
+that the policy will prefer to return alive local replicas if the token is
+available. This means that if the client is requesting data that falls within
+the token range of a particular node, the policy will try to route the request
+to that node first, assuming it is alive and responsive.
+
+Token awareness can significantly improve the performance and scalability of
+applications built on Scylla. By using token awareness, users can ensure that
+data is accessed locally as much as possible, reducing network overhead and
+improving throughput.
+
+Please note that for token awareness to be applied, a statement must be
+prepared before being executed.
+
+### Latency awareness
+
+Latency awareness is a mechanism that penalises nodes whose measured recent
+average latency classifies it as falling behind the others.
+
+Every `update_rate` the global minimum average latency is computed,
+and all nodes whose average latency is worse than `exclusion_threshold`
+times the global minimum average latency become penalised for
+`retry_period`. Penalisation involves putting those nodes at the very end
+of the query plan. As it is often not truly beneficial to prefer
+faster non-replica than replicas lagging behind the non-replicas,
+this mechanism may as well worsen latencies and/or throughput.
+
+> **Warning**
+
+> Using latency awareness is **NOT** recommended, unless prior
+> benchmarks prove its beneficial impact on the specific workload’s
+> performance. Use with caution.
+
+### Creating a latency aware DefaultPolicy
+
+```rust
+use scylla::policies::load_balancing::{
+    LatencyAwarenessBuilder, DefaultPolicy
+};
+use std::time::Duration;
+
+let latency_awareness_builder = LatencyAwarenessBuilder::new()
+    .exclusion_threshold(3.)
+    .update_rate(Duration::from_secs(3))
+    .retry_period(Duration::from_secs(30))
+    .minimum_measurements(200);
+
+let policy = DefaultPolicy::builder()
+        // Here further customisation is, of course, possible.
+        // e.g.: .prefer_datacenter(...)
+        .latency_awareness(latency_awareness_builder)
+        .build();
+```
+
+```rust
+use scylla::policies::load_balancing::DefaultPolicy;
+
+let default_policy = DefaultPolicy::builder()
+        .prefer_datacenter("dc1".to_string())
+        .token_aware(true)
+        .permit_dc_failover(true)
+        .build();
+```
+
+### Node order in produced plans
+
+The DefaultPolicy prefers to return nodes in the following order:
+
+1. Alive local replicas (if token is available & token awareness is enabled)
+2. Alive remote replicas (if datacenter failover is permitted & possible due to consistency constraints)
+3. Alive local nodes
+4. Alive remote nodes (if datacenter failover is permitted & possible due to consistency constraints)
+5. Enabled down nodes
+   And only if latency awareness is enabled:
+6. Penalised: alive local replicas, alive remote replicas, … (in order as above).
+
+If no preferred datacenter is specified, all nodes are treated as local ones.
+
+Replicas in the same priority groups are shuffled<sup>[1](#id2)</sup>. Non-replicas are randomly
+rotated (similarly to a round robin with a random index).
+
+---
+* <a id='id2'>**[1]**</a> There is an optimisation implemented for LWT requests that routes them to the replicas in the ring order (as it prevents contention due to Paxos conflicts), so replicas in that case are not shuffled in groups at all. In order for the optimisation to be applied, LWT statements must be prepared before.
+
+
+# default.md
+
+# Default retry policy
+
+This is the retry policy used by default. It retries when there is a high chance that it might help.<br />
+\\\\
+This policy is based on the one in [DataStax Java Driver](https://docs.datastax.com/en/developer/java-driver/4.11/manual/core/retries/).
+The behaviour is the same.
+
+## Examples
+
+To use in `Session`:
+
+```rust
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::DefaultRetryPolicy;
+
+let handle = ExecutionProfile::builder()
+    .retry_policy(Arc::new(DefaultRetryPolicy::new()))
+    .build()
+    .into_handle();
+
+let session: Session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .default_execution_profile_handle(handle)
+    .build()
+    .await?;
+```
+
+To use in an [unprepared statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/unprepared.md):
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::DefaultRetryPolicy;
+
+// Create a Statement manually and set the retry policy
+let mut my_statement: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
+my_statement.set_retry_policy(Some(Arc::new(DefaultRetryPolicy::new())));
+
+// You can also set retry policy in an execution profile
+let handle = ExecutionProfile::builder()
+    .retry_policy(Arc::new(DefaultRetryPolicy::new()))
+    .build()
+    .into_handle();
+my_statement.set_execution_profile_handle(Some(handle));
+
+// Execute the statement using this retry policy
+let to_insert: i32 = 12345;
+session.query_unpaged(my_statement, (to_insert,)).await?;
+```
+
+To use in a [prepared statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/prepared.md):
+
+```rust
+use scylla::statement::prepared::PreparedStatement;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::DefaultRetryPolicy;
+
+// Create PreparedStatement manually and set the retry policy
+let mut prepared: PreparedStatement = session
+    .prepare("INSERT INTO ks.tab (a) VALUES(?)")
+    .await?;
+prepared.set_retry_policy(Some(Arc::new(DefaultRetryPolicy::new())));
+
+// You can also set retry policy in an execution profile
+let handle = ExecutionProfile::builder()
+    .retry_policy(Arc::new(DefaultRetryPolicy::new()))
+    .build()
+    .into_handle();
+prepared.set_execution_profile_handle(Some(handle));
+
+// Execute the statement using this retry policy
+let to_insert: i32 = 12345;
+session.execute_unpaged(&prepared, (to_insert,)).await?;
+```
+
+
+# downgrading-consistency.md
+
+# Downgrading consistency retry policy
+
+A retry policy that sometimes retries with a lower consistency level than the one initially
+requested.
+**BEWARE**: this policy may retry queries using a lower consistency level than the one
+initially requested. By doing so, it may break consistency guarantees. In other words, if you use
+this retry policy, there are cases (documented below) where a read at `Consistency::Quorum` **may
+not** see a preceding write at `Consistency::Quorum`. Do not use this policy unless you have
+understood the cases where this can happen and are ok with that. It is also highly recommended to
+always log the occurrences of such consistency breaks.
+This policy implements the same retries than the [DefaultRetryPolicy](https://rust-driver.docs.scylladb.com/v1.4.1/retry-policy/default.md) policy. But on top
+of that, it also retries in the following cases:
+
+- On a read timeout: if the number of replicas that responded is greater than one, but lower
+  than is required by the requested consistency level, the operation is retried at a lower
+  consistency level.
+- On a write timeout: if the operation is a `WriteType::UnloggedBatch` and at least one
+  replica acknowledged the write, the operation is retried at a lower consistency level.
+  Furthermore, for other operations, if at least one replica acknowledged the write, the
+  timeout is ignored.
+- On an unavailable exception: if at least one replica is alive, the operation is retried at
+  a lower consistency level.
+
+The lower consistency level to use for retries is determined by the following rules:
+
+- if more than 3 replicas responded, use `Consistency::Three`.
+- if 1, 2 or 3 replicas responded, use the corresponding level `Consistency::One`, `Consistency::Two` or
+  `Consistency::Three`.
+
+Note that if the initial consistency level was `Consistency::EachQuorum`, ScyllaDB returns the number
+of live replicas *in the datacenter that failed to reach consistency*, not the overall
+number in the cluster. Therefore if this number is 0, we still retry at `Consistency::One`, on the
+assumption that a host may still be up in another datacenter.
+The reasoning being this retry policy is the following one. If, based on the information the
+ScyllaDB coordinator node returns, retrying the operation with the initially requested
+consistency has a chance to succeed, do it. Otherwise, if based on this information we know
+**the initially requested consistency level cannot be achieved currently**, then:
+
+- For writes, ignore the exception (thus silently failing the consistency requirement) if we
+  know the write has been persisted on at least one replica.
+- For reads, try reading at a lower consistency level (thus silently failing the consistency
+  requirement).
+  In other words, this policy implements the idea that if the requested consistency level cannot be
+  achieved, the next best thing for writes is to make sure the data is persisted, and that reading
+  something is better than reading nothing, even if there is a risk of reading stale data.
+
+This policy is based on the one in [DataStax Java Driver](https://docs.datastax.com/en/drivers/java/3.11/com/datastax/driver/core/policies/DowngradingConsistencyRetryPolicy.html).
+The behaviour is the same.
+
+## Examples
+
+To use in `Session`:
+
+```rust
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::DowngradingConsistencyRetryPolicy;
+
+let handle = ExecutionProfile::builder()
+    .retry_policy(Arc::new(DowngradingConsistencyRetryPolicy::new()))
+    .build()
+    .into_handle();
+
+let session: Session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .default_execution_profile_handle(handle)
+    .build()
+    .await?;
+```
+
+To use in an [unprepared statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/unprepared.md):
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::DowngradingConsistencyRetryPolicy;
+
+let handle = ExecutionProfile::builder()
+    .retry_policy(Arc::new(DowngradingConsistencyRetryPolicy::new()))
+    .build()
+    .into_handle();
+
+// Create a Statement manually and set the retry policy
+let mut my_statement: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
+my_statement.set_execution_profile_handle(Some(handle));
+
+// Execute the statement using this retry policy
+let to_insert: i32 = 12345;
+session.query_unpaged(my_statement, (to_insert,)).await?;
+```
+
+To use in a [prepared statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/prepared.md):
+
+```rust
+use scylla::statement::prepared::PreparedStatement;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::DowngradingConsistencyRetryPolicy;
+
+let handle = ExecutionProfile::builder()
+    .retry_policy(Arc::new(DowngradingConsistencyRetryPolicy::new()))
+    .build()
+    .into_handle();
+
+// Create PreparedStatement manually and set the retry policy
+let mut prepared: PreparedStatement = session
+    .prepare("INSERT INTO ks.tab (a) VALUES(?)")
+    .await?;
+
+prepared.set_execution_profile_handle(Some(handle));
+
+
+// Execute the statement using this retry policy
+let to_insert: i32 = 12345;
+session.execute_unpaged(&prepared, (to_insert,)).await?;
+```
+
+
+# duration.md
+
+# Duration
+
+`Duration` is represented as [`CqlDuration`](https://docs.rs/scylla/latest/scylla/frame/value/struct.CqlDuration.html)\\
+
+```rust
+use futures::TryStreamExt;
+use scylla::value::CqlDuration;
+
+// Insert some duration into the table
+let to_insert: CqlDuration = CqlDuration { months: 1, days: 2, nanoseconds: 3 };
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read duration from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(CqlDuration,)>()?;
+while let Some((duration_value,)) = iter.try_next().await? {
+    println!("{:?}", duration_value);
+}
+```
+
+
+# example.md
+
+# Connecting and running a simple query
+
+Now everything is ready to use the driver.
+Here is a small example:
+
+```rust
+use futures::TryStreamExt;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use std::error::Error;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    // Create a new Session which connects to node at 127.0.0.1:9042
+    // (or SCYLLA_URI if specified)
+    let uri = std::env::var("SCYLLA_URI")
+        .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    let session: Session = SessionBuilder::new()
+        .known_node(uri)
+        .build()
+        .await?;
+
+    // Create an example keyspace and table
+    session
+        .query_unpaged(
+            "CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = \
+            {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}",
+            &[],
+        )
+        .await?;
+
+    session
+        .query_unpaged(
+            "CREATE TABLE IF NOT EXISTS ks.extab (a int primary key)",
+            &[],
+        )
+        .await?;
+
+    // Insert a value into the table
+    let to_insert: i32 = 12345;
+    session
+        .query_unpaged("INSERT INTO ks.extab (a) VALUES(?)", (to_insert,))
+        .await?;
+
+    // Query rows from the table and print them
+    let mut iter = session.query_iter("SELECT a FROM ks.extab", &[])
+        .await?
+        .rows_stream::<(i32,)>()?;
+    while let Some(read_row) = iter.try_next().await? {
+        println!("Read a value from row: {}", read_row.0);
+    }
+
+    Ok(())
+}
+```
+
+
+# execution-profiles.md
+
+# Execution profiles
+
+Execution profiles are a way to group various query execution configuration options together. Profiles can be created to represent different workloads, which can be run conveniently on a single session.
+
+The settings that an execution profile encapsulates are [as follows](https://rust-driver.docs.scylladb.com/v1.4.1/execution-profiles/maximal-example.md):
+
+* consistency
+* serial consistency
+* request timeout
+* load balancing policy
+* retry policy
+* speculative execution policy
+
+There are two classes of objects related to execution profiles: `ExecutionProfile` and `ExecutionProfileHandle`. The former is simply an immutable set of the settings. The latter is a handle that at particular moment points to some `ExecutionProfile` (but during its lifetime, it can change the profile it points at). Handles are assigned to `Sessions` and `Statements`.<br />
+\\\\
+<br />
+\\\\
+At any moment, handles [can be remapped](https://rust-driver.docs.scylladb.com/v1.4.1/execution-profiles/remap.md) to point to another `ExecutionProfile`. This allows convenient switching between workloads for all `Sessions` and/or `Statements` that, for instance, share common characteristics.
+
+
+# fallthrough.md
+
+# Fallthrough retry policy
+
+The `FalthroughRetryPolicy` never retries, returns errors straight to the user. Useful for debugging.
+
+## Examples
+
+To use in `Session`:
+
+```rust
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::FallthroughRetryPolicy;
+
+let handle = ExecutionProfile::builder()
+    .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
+    .build()
+    .into_handle();
+
+let session: Session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .default_execution_profile_handle(handle)
+    .build()
+    .await?;
+```
+
+To use in an [unprepared statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/unprepared.md):
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::FallthroughRetryPolicy;
+
+let handle = ExecutionProfile::builder()
+    .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
+    .build()
+    .into_handle();
+
+// Create a Statement manually and set the retry policy
+let mut my_statement: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
+my_statement.set_execution_profile_handle(Some(handle));
+
+// Execute the statement using this retry policy
+let to_insert: i32 = 12345;
+session.query_unpaged(my_statement, (to_insert,)).await?;
+```
+
+To use in a [prepared statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/prepared.md):
+
+```rust
+use scylla::statement::prepared::PreparedStatement;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::FallthroughRetryPolicy;
+
+let handle = ExecutionProfile::builder()
+    .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
+    .build()
+    .into_handle();
+
+// Create PreparedStatement manually and set the retry policy
+let mut prepared: PreparedStatement = session
+    .prepare("INSERT INTO ks.tab (a) VALUES(?)")
+    .await?;
+
+prepared.set_execution_profile_handle(Some(handle));
+
+// Run the query using this retry policy
+let to_insert: i32 = 12345;
+session.execute_unpaged(&prepared, (to_insert,)).await?;
+```
+
+
+# inet.md
+
+# Inet
+
+`Inet` is represented as `std::net::IpAddr`
+
+```rust
+use futures::TryStreamExt;
+use std::net::{IpAddr, Ipv4Addr};
+
+// Insert some ip address into the table
+let to_insert: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));;
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read inet from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(IpAddr,)>()?;
+while let Some((inet_value,)) = iter.try_next().await? {
+    println!("{:?}", inet_value);
+}
+```
+
+
+# load-balancing.md
+
+# Load balancing
+
+## Introduction
+
+The driver uses a load balancing policy to determine which node(s) and shard(s)
+to contact when executing a query. Load balancing policies implement the
+`LoadBalancingPolicy` trait, which contains methods to generate a load
+balancing plan based on the query information and the state of the cluster.
+
+Load balancing policies do not influence to which nodes connections are
+being opened. For a node connection blacklist configuration refer to
+`scylla::policies::host_filter::HostFilter`, which can be set session-wide
+using `SessionBuilder::host_filter` method.
+
+In this chapter, “target” will refer to a pair `<node, optional shard>`.
+
+## Plan
+
+When a query is prepared to be sent to the database, the load balancing policy
+constructs a load balancing plan. This plan is essentially a list of targets to
+which the driver will try to send the query. The first elements of the plan are
+the targets which are the best to contact (e.g. they might be replicas for the
+requested data or have the best latency).
+
+## Policy
+
+The Scylla/Cassandra driver provides a default load balancing policy (see
+[Default Policy](https://rust-driver.docs.scylladb.com/v1.4.1/load-balancing/default-policy.md) for details), but you can
+also implement your own custom policies that better suit your specific use
+case. To use a custom policy, you simply need to implement the
+`LoadBalancingPolicy` trait and pass an instance of your custom policy to the
+used execution profile.
+
+Our recommendation is to use [`Default Policy`](https://rust-driver.docs.scylladb.com/v1.4.1/load-balancing/default-policy.md) with token-
+awareness enabled and latency-awareness disabled.
+
+## Configuration
+
+Load balancing policies can be configured in three different ways (sorted by descending precedence):
+
+1. directly on the `Statement`, `PreparedStatement` or `Batch` (`Statement::set_load_balancing_policy()`)
+2. execution profile set on the statement (`Statement::set_execution_profile_handle()`)
+3. default execution profile set on the session (`SessionBuilder::default_execution_profile_handle()`)
+
+In the code sample provided, a new execution profile is created using
+`ExecutionProfile::builder()`, and the load balancing policy is set to the
+`DefaultPolicy` using `.load_balancing_policy(policy)`.
+
+The newly created execution profile is then converted to a handle using
+`.into_handle()`, and passed as the default execution profile to the
+`SessionBuilder` using `.default_execution_profile_handle(handle)`.
+
+```rust
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::policies::load_balancing::DefaultPolicy;
+use scylla::client::execution_profile::ExecutionProfile;
+use std::sync::Arc;
+
+let policy = Arc::new(DefaultPolicy::default());
+
+let profile = ExecutionProfile::builder()
+    .load_balancing_policy(policy)
+    .build();
+let handle = profile.into_handle();
+
+let session: Session = SessionBuilder::new()
+    .known_node(&uri)
+    .default_execution_profile_handle(handle)
+    .build()
+    .await?;
+```
+
+In addition to being able to configure load balancing policies through
+execution profiles at the session level, the driver also allow for setting
+execution profile handles on a per-query basis. This means that for each query,
+a specific execution profile can be selected with a customized load balancing
+settings.
+
+## `LoadBalancingPolicy` trait
+
+### `pick` and `fallback`:
+
+Most queries are sent successfully on the first try. In such cases, only the
+first element of the load balancing plan is needed, so it’s usually unnecessary
+to compute entire load balancing plan. To optimize this common case, the
+`LoadBalancingPolicy` trait provides two methods: `pick` and `fallback`.
+
+`pick` returns the first target to contact for a given query, which is usually
+the best based on a particular load balancing policy.
+
+`fallback`, returns an iterator that provides the rest of the targets in the
+load balancing plan. `fallback` is called when using the initial picked
+target fails (or when executing speculatively) or when `pick` returned `None`.
+
+It’s possible for the `fallback` method to include the same target that was
+returned by the `pick` method. In such cases, the query execution layer filters
+out the picked target from the iterator returned by `fallback`.
+
+### `on_query_success` and `on_query_failure`:
+
+The `on_query_success` and `on_query_failure` methods are useful for load
+balancing policies because they provide feedback on the performance and health
+of the nodes in the cluster.
+
+When a query is successfully executed, the `on_query_success` method is called
+and can be used by the load balancing policy to update its internal state. For
+example, a policy might use the latency of the successful query to update its
+latency statistics for each node in the cluster. This information can be used
+to make decisions about which nodes to contact in the future.
+
+On the other hand, when a query fails to execute, the `on_query_failure` method
+is called and provides information about the failure. The error message
+returned by Cassandra can help determine the cause of the failure, such as a
+node being down or overloaded. The load balancing policy can use this
+information to update its internal state and avoid contacting the same node
+again until it’s recovered.
+
+
+# logging.md
+
+# Logging
+
+The driver uses the [tracing](https://github.com/tokio-rs/tracing) crate for all logs.<br />
+\\\\
+There are two ways to view the logs:
+
+- Create a `tracing` subscriber to which all logs will be written (recommended).
+- Enable `log` feature on `tracing` crate and use some logger from `log` ecosystem. <br />
+  \\\\
+  Only do this if you can’t use `tracing` subscriber for some reason.
+
+## Using tracing subscriber
+
+To print the logs you can use the default subscriber:
+
+```rust
+use tracing::info;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    // Install global collector configured based on RUST_LOG env var
+    // This collector will receive logs from the driver
+    tracing_subscriber::fmt::init();
+
+    let uri = std::env::var("SCYLLA_URI")
+        .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    info!("Connecting to {}", uri);
+
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
+    session
+        .query_unpaged(
+            "CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = \
+            {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}",
+            &[],
+        )
+        .await?;
+
+    // This query should generate a warning message
+    session.query_unpaged("USE ks", &[]).await?;
+
+    Ok(())
+}
+```
+
+To start this example execute:
+
+```shell
+RUST_LOG=info cargo run
+```
+
+The full [example](https://github.com/scylladb/scylla-rust-driver/tree/main/examples/logging.rs) is available in the `examples` folder.
+You can run it from main folder of driver repository using `RUST_LOG=trace SCYLLA_URI=<scylla_ip>:9042 cargo run --example logging`.
+
+## Using log
+
+To collect tracing events using log collector you first need to enable `log` feature on `tracing` crate.
+You can use `cargo add tracing -F log` or edit `Cargo.toml`:
+
+```toml
+tracing = { version = "0.1.40" , features = ["log"] }
+```
+
+then you can setup `env_logger` os some other logger and it will output logs from the driver:
+
+```rust
+use tracing::info;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    // Setup `log` collector that uses RUST_LOG env variable to configure
+    // verbosity.
+    env_logger::init();
+
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    info!("Connecting to {}", uri);
+
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+
+    session.query_unpaged("USE examples_ks", &[]).await?;
+
+    Ok(())
+}
+```
+
+The full [example](https://github.com/scylladb/scylla-rust-driver/tree/main/examples/logging_log.rs) is available in the `examples` folder.
+You can run it from main folder of driver repository using `RUST_LOG=trace SCYLLA_URI=<scylla_ip>:9042 cargo run --example logging_log`.
+
+
+# lwt.md
+
+# Lightweight transaction (LWT) statement
+
+A lightweight transaction statement can be expressed just like any other statement, via `Session`, with the notable difference of having an additional consistency level parameter - the `serial_consistency_level`.
+
+## Format of the statement
+
+A lightweight transaction statement is not a separate type - it can be expressed just like any other statements: via `Statement`, `PreparedStatement`, batches, and so on. The difference lays in the statement string itself - when it contains a condition (e.g. `IF NOT EXISTS`), it becomes a lightweight transaction. It’s important to remember that CQL specification requires a separate, additional consistency level to be defined for LWT statements - `serial_consistency_level`. The serial consistency level can only be set to two values: `SerialConsistency::Serial` or `SerialConsistency::LocalSerial`. The “local” variant makes the transaction consistent only within the same datacenter. For convenience, ScyllaDB Rust Driver sets the default consistency level to `LocalSerial`, as it’s more commonly used. For cross-datacenter consistency, please remember to always override the default with `SerialConsistency::Serial`.
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::statement::{Consistency, SerialConsistency};
+
+// Create a Statement manually to change the Consistency to ONE
+let mut my_statement: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?) IF NOT EXISTS".to_string());
+my_statement.set_consistency(Consistency::One);
+// Use cross-datacenter serial consistency
+my_statement.set_serial_consistency(Some(SerialConsistency::Serial));
+
+// Insert a value into the table
+let to_insert: i32 = 12345;
+session.query_unpaged(my_statement, (to_insert,)).await?;
+```
+
+The rest of the API remains identical for LWT and non-LWT statements.
+
+See [Statement API documentation](https://docs.rs/scylla/latest/scylla/statement/struct.Statement.html) for more options
+
+
+# maximal-example.md
+
+# All options supported by a profile
+
+## Example
+
+`ExecutionProfile` supports all the following options:
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::policies::speculative_execution::SimpleSpeculativeExecutionPolicy;
+use scylla::statement::{Consistency, SerialConsistency};
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::load_balancing::DefaultPolicy;
+use scylla::policies::retry::FallthroughRetryPolicy;
+use std::{sync::Arc, time::Duration};
+
+let profile = ExecutionProfile::builder()
+    .consistency(Consistency::All)
+    .serial_consistency(Some(SerialConsistency::Serial))
+    .request_timeout(Some(Duration::from_secs(30)))
+    .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
+    .load_balancing_policy(Arc::new(DefaultPolicy::default()))
+    .speculative_execution_policy(
+        Some(
+            Arc::new(
+                SimpleSpeculativeExecutionPolicy {
+                    max_retry_count: 3,
+                    retry_interval: Duration::from_millis(100),
+                }
+            )
+        )
+    )
+    .build();
+
+let mut query = Statement::from("SELECT * FROM ks.table");
+query.set_execution_profile_handle(Some(profile.into_handle()));
+
+```
+
+
+# metrics.md
+
+# Driver metrics
+
+This feature is available only under the crate feature `metrics`.
+
+During operation the driver collects various metrics.
+
+They can be accessed at any moment using `Session::get_metrics()`
+
+## Collected metrics:
+
+* Query latencies
+* Total number of nonpaged queries
+* Number of errors during nonpaged queries
+* Total number of paged queries
+* Number of errors during paged queries
+* Number of retries
+* Latency histogram statistics (min, max, mean, standard deviation, percentiles)
+* Rates of queries per second in various time frames
+* Number of active connections, and connection and request timeouts
+
+## Example
+
+```rust
+let metrics = session.get_metrics();
+
+println!("Queries requested: {}", metrics.get_queries_num());
+println!("Iter queries requested: {}", metrics.get_queries_iter_num());
+println!("Errors occurred: {}", metrics.get_errors_num());
+println!("Iter errors occurred: {}", metrics.get_errors_iter_num());
+println!("Average latency: {}", metrics.get_latency_avg_ms()?);
+println!(
+    "99.9 latency percentile: {}",
+    metrics.get_latency_percentile_ms(99.9)?
+);
+
+let snapshot = metrics.get_snapshot()?;
+println!("Min: {}", snapshot.min);
+println!("Max: {}", snapshot.max);
+println!("Mean: {}", snapshot.mean);
+println!("Standard deviation: {}", snapshot.stddev);
+println!("Median: {}", snapshot.median);
+println!("75th percentile: {}", snapshot.percentile_75);
+println!("95th percentile: {}", snapshot.percentile_95);
+println!("98th percentile: {}", snapshot.percentile_98);
+println!("99th percentile: {}", snapshot.percentile_99);
+println!("99.9th percentile: {}", snapshot.percentile_99_9);
+
+println!("Mean rate: {}", metrics.get_mean_rate());
+println!("One minute rate: {}", metrics.get_one_minute_rate());
+println!("Five minute rate: {}", metrics.get_five_minute_rate());
+println!("Fifteen minute rate: {}", metrics.get_fifteen_minute_rate());
+
+println!("Total connections: {}", metrics.get_total_connections());
+println!("Connection timeouts: {}", metrics.get_connection_timeouts());
+println!("Requests timeouts: {}", metrics.get_request_timeouts());
+```
+
+
+# migration-guides.md
+
+# Migration guides
+
+- [Serialization changes in version 0.11](https://rust-driver.docs.scylladb.com/v1.4.1/migration-guides/0.11-serialization.md)
+- [Deserialization changes in version 0.15](https://rust-driver.docs.scylladb.com/v1.4.1/migration-guides/0.15-deserialization.md)
+
+
+# paged.md
+
+# Tracing a paged query
+
+A paged query performs multiple simple/prepared queries to query subsequent pages.<br />
+\\\\
+If tracing is enabled the row iterator will contain a list of tracing ids for all performed queries.
+
+## Tracing `Session::query_iter`
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::observability::tracing::TracingInfo;
+use futures::StreamExt;
+use uuid::Uuid;
+
+// Create a Statement manually and enable tracing
+let mut query: Statement = Statement::new("SELECT * FROM ks.tab");
+query.set_tracing(true);
+
+// Create a paged query iterator and fetch pages
+let mut row_stream = session
+    .query_iter(query, &[])
+    .await?
+    .rows_stream::<(i32,)>()?;
+while let Some(_row) = row_stream.next().await {
+    // Receive rows
+}
+
+// Now there are tracing ids for each performed query
+let tracing_ids: &[Uuid] = row_stream.tracing_ids();
+
+for id in tracing_ids {
+    // Query tracing info from system_traces.sessions and system_traces.events
+    let tracing_info: TracingInfo = session.get_tracing_info(id).await?;
+    println!("tracing_info: {:#?}", tracing_info);
+}
+```
+
+## Tracing `Session::execute_iter`
+
+```rust
+use scylla::statement::prepared::PreparedStatement;
+use scylla::observability::tracing::TracingInfo;
+use futures::StreamExt;
+use uuid::Uuid;
+
+// Prepare the statement
+let mut prepared: PreparedStatement = session
+    .prepare("SELECT a FROM ks.tab")
+    .await?;
+
+// Enable tracing for the prepared statement
+prepared.set_tracing(true);
+
+// Create a paged query iterator and fetch pages
+let mut row_stream = session
+    .execute_iter(prepared, &[])
+    .await?
+    .rows_stream::<(i32,)>()?;
+while let Some(_row) = row_stream.next().await {
+    // Receive rows
+}
+
+// Now there are tracing ids for each performed query
+let tracing_ids: &[Uuid] = row_stream.tracing_ids();
+
+for id in tracing_ids {
+    // Query tracing info from system_traces.sessions and system_traces.events
+    let tracing_info: TracingInfo = session.get_tracing_info(id).await?;
+    println!("tracing_info: {:#?}", tracing_info);
+}
+```
+
+
+# paged.md
+
+# Paged query
+
+Sometimes query results might be so big that one prefers not to fetch them all at once,
+e.g. to reduce latency and/or memory footprint.
+Paged queries allow to receive the whole result page by page, with a configurable page size.
+In fact, most SELECTs queries should be done with paging, to avoid big load on cluster and large memory footprint.
+
+>  ***Warning***<br />
+> \\\\
+> Issuing unpaged SELECTs (`Session::query_unpaged` or `Session::execute_unpaged`)
+> may have dramatic performance consequences! **BEWARE!**<br />
+> \\\\
+> If the result set is big (or, e.g., there are a lot of tombstones), those atrocities can happen:
+
+> - cluster may experience high load,
+> - queries may time out,
+> - the driver may devour a lot of RAM,
+> - latency will likely spike.
+
+> Stay safe. Page your SELECTs.
+
+## `QueryPager`
+
+The automated way to achieve that is `QueryPager`. It always fetches and enables access to one page,
+while prefetching the next one. This limits latency and is a convenient abstraction.
+
+>  ***Note***<br />
+> \\\\
+> `QueryPager` is quite heavy machinery, introducing considerable overhead. Therefore,
+> don’t use it for statements that do not benefit from paging. In particular, avoid using it
+> for non-SELECTs.
+
+On API level, `Session::query_iter` and `Session::execute_iter` take a [unprepared statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/unprepared.md)
+or a [prepared statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/prepared.md), respectively, and return a `QueryPager`. `QueryPager` needs
+to be converted into typed `Stream` (by calling `QueryPager::rows_stream::<RowT>`) in order to
+deserialize rows.
+
+>  ***Note***<br />
+> \\\\
+> Due to lending stream limitations of Rust, `QueryPager` currently only enables deserialization
+> of owned types (i.e., those with `'static` lifetime). If you want to deserialize borrowed types
+> (such as slices, `&str`, etc.) in order to save allocations, you should use the manual paging
+> method (described in a section **Manual Paging** below).
+>  ***Warning***<br />
+> \\\\
+> In case of unprepared variant (`Session::query_iter`) if the values are not empty
+> driver will first fully prepare a statement (which means issuing additional request to each
+> node in a cluster). This will have a performance penalty - how big it is depends on
+> the size of your cluster (more nodes - more requests) and the size of returned
+> result (more returned pages - more amortized penalty). In any case, it is preferable to
+> use `Session::execute_iter`.
+
+### Examples
+
+Use `query_iter` to perform an [unprepared query](https://rust-driver.docs.scylladb.com/v1.4.1/statements/unprepared.md) with paging:
+
+```rust
+use futures::stream::StreamExt;
+
+let mut rows_stream = session
+    .query_iter("SELECT a, b FROM ks.t", &[])
+    .await?
+    .rows_stream::<(i32, i32)>()?;
+
+while let Some(next_row_res) = rows_stream.next().await {
+    let (a, b): (i32, i32) = next_row_res?;
+    println!("a, b: {}, {}", a, b);
+}
+```
+
+Use `execute_iter` to perform a [prepared query](https://rust-driver.docs.scylladb.com/v1.4.1/statements/prepared.md) with paging:
+
+```rust
+use scylla::statement::prepared::PreparedStatement;
+use futures::stream::StreamExt;
+
+let prepared: PreparedStatement = session
+    .prepare("SELECT a, b FROM ks.t")
+    .await?;
+
+let mut rows_stream = session
+    .execute_iter(prepared, &[])
+    .await?
+    .rows_stream::<(i32, i32)>()?;
+
+while let Some(next_row_res) = rows_stream.next().await {
+    let (a, b): (i32, i32) = next_row_res?;
+    println!("a, b: {}, {}", a, b);
+}
+```
+
+Statement values can be passed to `query_iter` and `execute_iter` just like in an [unprepared statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/unprepared.md)
+
+### Configuring page size
+
+It’s possible to configure the size of a single page.
+
+On a `Statement`:
+
+```rust
+use scylla::statement::unprepared::Statement;
+
+let mut query: Statement = Statement::new("SELECT a, b FROM ks.t");
+query.set_page_size(16);
+
+let _ = session.query_iter(query, &[]).await?; // ...
+```
+
+On a `PreparedStatement`:
+
+```rust
+use scylla::statement::prepared::PreparedStatement;
+
+let mut prepared: PreparedStatement = session
+    .prepare("SELECT a, b FROM ks.t")
+    .await?;
+
+prepared.set_page_size(16);
+
+let _ = session.execute_iter(prepared, &[]).await?; // ...
+```
+
+## Manual paging
+
+It’s possible to fetch a single page from the table, and manually pass paging state
+to the next query. That way, the next query will start fetching the results
+from where the previous one left off.
+
+On a `Query`:
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::response::{PagingState, PagingStateResponse};
+use std::ops::ControlFlow;
+
+let paged_query = Statement::new("SELECT a, b, c FROM ks.t").with_page_size(6);
+
+let mut paging_state = PagingState::start();
+loop {
+    let (res, paging_state_response) = session
+        .query_single_page(paged_query.clone(), &[], paging_state)
+        .await?;
+
+    // Do something with `res`.
+    // ...
+
+    match paging_state_response.into_paging_control_flow() {
+        ControlFlow::Break(()) => {
+            // No more pages to be fetched.
+            break;
+        }
+        ControlFlow::Continue(new_paging_state) => {
+            // Update paging state from the response, so that query
+            // will be resumed from where it ended the last time.
+            paging_state = new_paging_state
+        }
+    }
+}
+
+```
+
+>  ***Warning***<br />
+> \\\\
+> If the values are not empty, driver first needs to send a `PREPARE` request
+> in order to fetch information required to serialize values. This will affect
+> performance because 2 round trips will be required instead of 1.
+
+On a `PreparedStatement`:
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::response::{PagingState, PagingStateResponse};
+use std::ops::ControlFlow;
+
+let paged_prepared = session
+    .prepare(Statement::new("SELECT a, b, c FROM ks.t").with_page_size(7))
+    .await?;
+
+let mut paging_state = PagingState::start();
+loop {
+    let (res, paging_state_response) = session
+        .execute_single_page(&paged_prepared, &[], paging_state)
+        .await?;
+
+    let rows_res = res.into_rows_result()?;
+
+    println!(
+        "Paging state response from the prepared statement execution: {:#?} ({} rows)",
+        paging_state_response,
+        rows_res.rows_num(),
+    );
+
+    match paging_state_response.into_paging_control_flow() {
+        ControlFlow::Break(()) => {
+            // No more pages to be fetched.
+            break;
+        }
+        ControlFlow::Continue(new_paging_state) => {
+            // Update paging state from the response, so that query
+            // will be resumed from where it ended the last time.
+            paging_state = new_paging_state
+        }
+    }
+}
+```
+
+### Performance
+
+For the best performance use [prepared statements](https://rust-driver.docs.scylladb.com/v1.4.1/statements/prepared.md).
+See [statement types overview](https://rust-driver.docs.scylladb.com/v1.4.1/statements/statements.md).
+
+## Best practices
+
+| Query result fetching   | Unpaged                                                                                                                 | Paged manually                                                                                | Paged automatically                                                                               |
+|-------------------------|-------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------|
+| Exposed Session API     | `{query,execute}_unpaged`                                                                                               | `{query,execute}_single_page`                                                                 | `{query,execute}_iter`                                                                            |
+| Working                 | get all results in a single CQL frame, into a single Rust struct                                                        | get one page of results in a single CQL frame, into a single Rust struct                      | upon high-level iteration, fetch consecutive CQL frames and transparently iterate over their rows |
+| Cluster load            | potentially **HIGH** for large results, beware!                                                                         | normal                                                                                        | normal                                                                                            |
+| Driver overhead         | low - simple frame fetch                                                                                                | low - simple frame fetch                                                                      | considerable - `PagerWorker` is a separate tokio task                                             |
+| Feature limitations     | none                                                                                                                    | none                                                                                          | speculative execution not supported                                                               |
+| Driver memory footprint | potentially **BIG** - all results have to be stored at once!                                                            | small - only one page stored at a time                                                        | small - at most constant number of pages stored at a time                                         |
+| Latency                 | potentially **BIG** - all results have to be generated at once!                                                         | considerable on page boundary - new page needs to be fetched                                  | small - next page is always pre-fetched in background                                             |
+| Suitable operations     | - in general: operations with empty result set (non-SELECTs)</br> - as possible optimisation: SELECTs with LIMIT clause | - for advanced users who prefer more control over paging, with less overhead of `PagerWorker` | - in general: all SELECTs                                                                         |
+
+
+# percentile.md
+
+# Percentile speculative execution
+
+This policy has access to `Metrics` shared with session, and triggers
+speculative execution when the request to the current host is above a
+given percentile.
+
+This policy requires enabling crate feature `"metrics"` to be available.
+
+## Example
+
+To use this policy in `Session`:
+
+```rust
+use std::{sync::Arc, time::Duration};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::{
+    policies::speculative_execution::PercentileSpeculativeExecutionPolicy,
+    client::execution_profile::ExecutionProfile,
+};
+
+let policy = PercentileSpeculativeExecutionPolicy  {
+    max_retry_count: 3,
+    percentile: 99.0,
+};
+
+let handle = ExecutionProfile::builder()
+    .speculative_execution_policy(Some(Arc::new(policy)))
+    .build()
+    .into_handle();
+
+let session: Session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .default_execution_profile_handle(handle)
+    .build()
+    .await?;
+```
+
+
+# prepare.md
+
+# Tracing `Session::prepare`
+
+`Session::prepare` prepares a query on all connections. If tracing is enabled for the `Query` to prepare, the resulting `PreparedStatement` will contain `prepare_tracing_ids`. `prepare_tracing_ids` is a list of tracing ids of prepare requests on all connections.
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::statement::prepared::PreparedStatement;
+use scylla::observability::tracing::TracingInfo;
+use uuid::Uuid;
+
+// Prepare the statement with tracing enabled
+let mut to_prepare: Statement = Statement::new("SELECT a FROM ks.tab");
+to_prepare.set_tracing(true);
+
+let mut prepared: PreparedStatement = session
+    .prepare(to_prepare)
+    .await?;
+
+// Now there are tracing ids for each prepare request
+let tracing_ids: &[Uuid] = &prepared.prepare_tracing_ids;
+
+for id in tracing_ids {
+    // Query tracing info from system_traces.sessions and system_traces.events
+    let tracing_info: TracingInfo = session.get_tracing_info(id).await?;
+    println!("tracing_info: {:#?}", tracing_info);
+}
+```
+
+
+# prepared.md
+
+# Prepared statement
+
+Prepared statements provide much better performance than unprepared statements,
+but they need to be prepared before use.
+
+Benefits that prepared statements have to offer:
+
+- Type safety - thanks to metadata provided by the server, the driver can verify bound values’ types before serialization. This way, we can be always sure that the Rust type provided by the user is compatible (and if not, the error is returned) with the destined native type. The same applies for deserialization.
+- Performance - when executing an unprepared statement with non-empty values list, the driver
+  prepares the statement before execution. The reason for this is to provide type safety for unprepared statements. However, this implies 2 round trips per unprepared statement execution. On the other hand, the cost of prepared statement’s execution is only 1 round trip.
+- Improved load-balancing - using the statement metadata, the driver can compute a set of destined replicas for current statement execution. These replicas will be preferred when choosing the node (and shard) to send the request to. For more insight on this, see [performance section]().
+
+```rust
+use scylla::statement::prepared::PreparedStatement;
+
+// Prepare the statement for later execution
+let prepared: PreparedStatement = session
+    .prepare("INSERT INTO ks.tab (a) VALUES(?)")
+    .await?;
+
+// Execute the prepared statement with some values, just like an unprepared statement.
+let to_insert: i32 = 12345;
+session.execute_unpaged(&prepared, (to_insert,)).await?;
+```
+
+>  ***Warning***<br />
+> \\\\
+> For token/shard aware load balancing to work properly, all partition key values
+> must be sent as bound values (see [performance section]())
+>  ***Warning***<br />
+> \\\\
+> Don’t use `execute` to receive large amounts of data.<br />
+> \\\\
+> By default the query is unpaged and might cause heavy load on the cluster.
+> In such cases set a page size and use a [paged query](https://rust-driver.docs.scylladb.com/v1.4.1/statements/paged.md) instead.
+
+> When page size is set, `execute` will return only the first page of results.
+
+## `Session::prepare`
+
+`Session::prepare` takes statement text and prepares the statement on all nodes and shards.
+If at least one succeeds returns success.
+
+## `Session::execute`
+
+`Session::execute` takes a prepared statement and bound values and executes the statement.
+Passing values and the result is the same as in [unprepared statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/unprepared.md).
+
+## Statement options
+
+To specify custom options, set them on the `PreparedStatement` before execution.
+For example to change the consistency:
+
+```rust
+use scylla::statement::prepared::PreparedStatement;
+use scylla::statement::Consistency;
+
+// Prepare the statement for later execution
+let mut prepared: PreparedStatement = session
+    .prepare("INSERT INTO ks.tab (a) VALUES(?)")
+    .await?;
+
+// Set prepared statement consistency to One
+// This is the consistency with which this statement will be executed
+prepared.set_consistency(Consistency::One);
+
+// Execute the prepared statement with some values, just like an unprepared statement.
+let to_insert: i32 = 12345;
+session.execute_unpaged(&prepared, (to_insert,)).await?;
+```
+
+See [PreparedStatement API documentation](https://docs.rs/scylla/latest/scylla/statement/prepared_statement/struct.PreparedStatement.html)
+for more options.
+
+>  ***Note***
+> Prepared statements can be created from `Statement` structs and will inherit from
+> the custom options that the `Statement` was created with.
+> This is especially useful when using `CachingSession::execute` for example.
+
+## Performance
+
+Prepared statement have good performance, much better than unprepared statements.
+By default they use shard/token aware load balancing.
+
+> **Always** pass partition key values as bound values.
+> Otherwise the driver can’t hash them to compute partition key
+> and they will be sent to the wrong node, which worsens performance.
+
+Let’s say we have a table like this:
+
+```sql
+TABLE ks.prepare_table (
+    a int,
+    b int,
+    c int,
+    PRIMARY KEY (a, b)
+)
+```
+
+```rust
+use scylla::statement::prepared::PreparedStatement;
+
+// WRONG - partition key value is passed in statement string
+// Load balancing will compute the wrong partition key
+let wrong_prepared: PreparedStatement = session
+    .prepare("INSERT INTO ks.prepare_table (a, b, c) VALUES(12345, ?, 16)")
+    .await?;
+
+session.execute_unpaged(&wrong_prepared, (54321,)).await?;
+
+// GOOD - partition key values are sent as bound values
+// Other values can be sent any way you like, it doesn't matter
+let good_prepared: PreparedStatement = session
+    .prepare("INSERT INTO ks.prepare_table (a, b, c) VALUES(?, ?, 16)")
+    .await?;
+
+session.execute_unpaged(&good_prepared, (12345, 54321)).await?;
+
+```
+
+
+# primitive.md
+
+# Bool, Tinyint, Smallint, Int, Bigint, Float, Double
+
+## Bool
+
+`Bool` is represented as rust `bool`
+
+```rust
+use futures::TryStreamExt;
+
+// Insert a bool into the table
+let to_insert: bool = true;
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read a bool from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(bool,)>()?;
+while let Some((bool_value,)) = iter.try_next().await? {
+    println!("{:?}", bool_value);
+}
+```
+
+## Tinyint
+
+`Tinyint` is represented as rust `i8`
+
+```rust
+use futures::TryStreamExt;
+
+// Insert a tinyint into the table
+let to_insert: i8 = 123;
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read a tinyint from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(i8,)>()?;
+while let Some((tinyint_value,)) = iter.try_next().await? {
+    println!("{:?}", tinyint_value);
+}
+```
+
+## Smallint
+
+`Smallint` is represented as rust `i16`
+
+```rust
+use futures::TryStreamExt;
+
+// Insert a smallint into the table
+let to_insert: i16 = 12345;
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read a smallint from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(i16,)>()?;
+while let Some((smallint_value,)) = iter.try_next().await? {
+    println!("{}", smallint_value);
+}
+```
+
+## Int
+
+`Int` is represented as rust `i32`
+
+```rust
+use futures::TryStreamExt;
+
+// Insert an int into the table
+let to_insert: i32 = 12345;
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read an int from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(i32,)>()?;
+while let Some((int_value,)) = iter.try_next().await? {
+    println!("{}", int_value);
+}
+```
+
+## Bigint
+
+`Bigint` is represented as rust `i64`
+
+```rust
+use futures::TryStreamExt;
+
+// Insert a bigint into the table
+let to_insert: i64 = 12345;
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read a bigint from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(i64,)>()?;
+while let Some((bigint_value,)) = iter.try_next().await? {
+    println!("{:?}", bigint_value);
+}
+```
+
+## Float
+
+`Float` is represented as rust `f32`
+
+```rust
+use futures::TryStreamExt;
+
+// Insert a float into the table
+let to_insert: f32 = 123.0;
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read a float from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(f32,)>()?;
+while let Some((float_value,)) = iter.try_next().await? {
+    println!("{:?}", float_value);
+}
+```
+
+## Double
+
+`Double` is represented as rust `f64`
+
+```rust
+use futures::TryStreamExt;
+
+// Insert a double into the table
+let to_insert: f64 = 12345.0;
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read a double from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(f64,)>()?;
+while let Some((double_value,)) = iter.try_next().await? {
+    println!("{:?}", double_value);
+}
+```
+
+
+# priority.md
+
+# Priorities of execution settings
+
+You always have a default execution profile set for the `Session`, either the default one or overridden upon `Session` creation. Moreover, you can set a profile for specific statements, in which case the statement’s profile has higher priority. Some options are also available for specific statements to be set directly on them, such as request timeout and consistency. In such case, the directly set options are preferred over those specified in execution profiles.
+
+> **Recap**<br />
+> \\\\
+> Priorities are as follows:<br />
+> \\\\
+> `Session`’s default profile < Statement’s profile < options set directly on a Statement
+
+## Example
+
+Priorities of execution profiles and directly set options:
+
+```rust
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::statement::unprepared::Statement;
+use scylla::statement::Consistency;
+use scylla::client::execution_profile::ExecutionProfile;
+
+let session_profile = ExecutionProfile::builder()
+    .consistency(Consistency::One)
+    .build();
+
+let query_profile = ExecutionProfile::builder()
+    .consistency(Consistency::Two)
+    .build();
+
+let session: Session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .default_execution_profile_handle(session_profile.into_handle())
+    .build()
+    .await?;
+
+let mut query = Statement::from("SELECT * FROM ks.table");
+
+// Statement is not assigned any specific profile, so session's profile is applied.
+// Therefore, the statement will be executed with Consistency::One.
+session.query_unpaged(query.clone(), ()).await?;
+
+query.set_execution_profile_handle(Some(query_profile.into_handle()));
+// Statement's profile is applied.
+// Therefore, the statement will be executed with Consistency::Two.
+session.query_unpaged(query.clone(), ()).await?;
+
+query.set_consistency(Consistency::Three);
+// An option is set directly on the Statement.
+// Therefore, the statement will be executed with Consistency::Three.
+session.query_unpaged(query, ()).await?;
+
+```
+
+
+# query-history.md
+
+# Query Execution History
+
+The driver allows to collect history of query execution.<br />
+\\\\
+This history includes all requests sent, decisions to retry and speculative execution fibers started.
+
+## Example code
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::observability::history::{HistoryCollector, StructuredHistory};
+use std::sync::Arc;
+
+// Create a query for which we would like to trace the history of its execution
+let mut query: Statement = Statement::new("SELECT * FROM ks.t");
+
+// Create a history collector and pass it to the query
+let history_listener = Arc::new(HistoryCollector::new());
+query.set_history_listener(history_listener.clone());
+
+// Run the query, doesn't matter if it failed, the history will still be saved
+let _ignore_error = session.query_unpaged(query.clone(), ()).await;
+
+// Access the collected history and print it
+let structured_history: StructuredHistory = history_listener.clone_structured_history();
+println!("Query history: {}", structured_history);
+```
+
+To see more check out the [example code](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/query_history.rs)
+
+## Output
+
+Sample output for a query that didn’t encounter any difficulties:
+
+```none
+=== Query #0 ===
+| start_time: 2022-08-25 11:21:50.445075147 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:9042
+|   request send time: 2022-08-25 11:21:50.445151628 UTC
+|   Success at 2022-08-25 11:21:50.447444362 UTC
+|
+| Query successful at 2022-08-25 11:21:50.447447970 UTC
+=================
+```
+
+Here’s output for a query that had some trouble - nodes didn’t respond and speculative execution decided to query others in parallel.
+Finally the third node provided a response.
+
+```none
+=== Query #0 ===
+| start_time: 2022-08-26 15:08:28.525367409 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.219:9042
+|   request send time: 2022-08-26 15:08:28.525409294 UTC
+|   No result yet
+|
+|
+| > Speculative fiber #0
+| fiber start time: 2022-08-26 15:08:28.537074167 UTC
+| - Attempt #0 sent to 127.0.0.217:9042
+|   request send time: 2022-08-26 15:08:28.537126083 UTC
+|   No result yet
+|
+|
+| > Speculative fiber #1
+| fiber start time: 2022-08-26 15:08:28.548050242 UTC
+| - Attempt #0 sent to 127.0.0.218:9042
+|   request send time: 2022-08-26 15:08:28.548089083 UTC
+|   Success at 2022-08-26 15:08:28.590052778 UTC
+|
+| Query successful at 2022-08-26 15:08:28.590078119 UTC
+=================
+```
+
+## How the driver executes queries
+
+To read the output it’s useful to understand more about how the driver executes queries.
+
+### No speculative execution
+
+Without speculative execution the driver performs many attempts sequentially until one of them succeeds.
+A single attempt consists of sending a request to some node and waiting for the answer.
+In case of an error the driver consults the retry policy to decide what to do next.
+The decision might be to fail the query, retry on the same node, another node, change query parameters, etc.
+Once the decision is made either the query fails or another attempt is started. This continues until the query ends.
+
+### Speculative execution
+
+When speculative execution is enabled at first the driver doesn’t care about it - it does the attempts sequentially and tries to get an answer.
+However once a specified amount of time has passed it will decide to try new attempts in parallel
+hoping that another node will be able to answer quicker.
+This is done by spawning a speculative fiber. Each spawned fiber performs sequential attempts just like in non-speculative execution.
+Many fibers can be spawned if the answer wasn’t acquired in time.
+
+### StructuredHistory
+
+[`StructuredHistory`](https://docs.rs/scylla/latest/scylla/history/struct.StructuredHistory.html)
+is a history representation that represents the history by listing attempts for each speculative fiber.
+
+## HistoryListener trait, custom history collecting
+
+History can be collected by any struct implementing the
+[`HistoryListener`](https://docs.rs/scylla/latest/scylla/history/trait.HistoryListener.html) trait.
+
+The implementation of `HistoryListener` provided by this crate is the
+[`HistoryCollector`](https://docs.rs/scylla/latest/scylla/history/struct.HistoryCollector.html).
+`HistoryCollector` simply collects all events along with their timestamps.
+
+Information collected by `HistoryCollector` is just a stream of events, in order to analyze it it’s possible
+to convert it to a structured representation.
+[`StructuredHistory`](https://docs.rs/scylla/latest/scylla/history/struct.StructuredHistory.html)
+can be created by calling `HistoryCollector::clone_structured_history()`.
+
+
+# quickstart.md
+
+# Quick Start
+
+In this chapter we will set up a Rust project and run a few simple queries.
+
+Topics Include:
+
+* [Create a Rust Project](https://rust-driver.docs.scylladb.com/v1.4.1/quickstart/create-project.md)
+* [Example](https://rust-driver.docs.scylladb.com/v1.4.1/quickstart/example.md)
+* [Install ScyllaDB with Docker](https://rust-driver.docs.scylladb.com/v1.4.1/quickstart/scylla-docker.md)
+
+
+# remap.md
+
+# Remapping execution profile handles
+
+`ExecutionProfileHandle`s can be remapped to another `ExecutionProfile`, and the change affects all sessions and statements that have been assigned that handle. This enables quick workload switches.
+
+Example mapping:
+
+* session1 -> handle1 -> profile1
+* statement1 -> handle1 -> profile1
+* statement2 -> handle2 -> profile2
+
+We can now remap handle2 to profile1, so that the mapping for statement2 becomes as follows:
+
+* statement2 -> handle2 -> profile1
+
+We can also change statement1’s handle to handle2, and remap handle1 to profile2, yielding:
+
+* session1 -> handle1 -> profile2
+* statement1 -> handle2 -> profile1
+* statement2 -> handle2 -> profile1
+
+As you can see, profiles are a powerful and convenient way to define and modify your workloads.
+
+## Example
+
+Below, the remaps described above are followed in code.
+
+```rust
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::statement::unprepared::Statement;
+use scylla::statement::Consistency;
+use scylla::client::execution_profile::ExecutionProfile;
+
+let profile1 = ExecutionProfile::builder()
+    .consistency(Consistency::One)
+    .build();
+
+let profile2 = ExecutionProfile::builder()
+    .consistency(Consistency::Two)
+    .build();
+
+let mut handle1 = profile1.clone().into_handle();
+let mut handle2 = profile2.clone().into_handle();
+
+let session: Session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .default_execution_profile_handle(handle1.clone())
+    .build()
+    .await?;
+
+let mut query1 = Statement::from("SELECT * FROM ks.table");
+let mut query2 = Statement::from("SELECT pk FROM ks.table WHERE pk = ?");
+
+query1.set_execution_profile_handle(Some(handle1.clone()));
+query2.set_execution_profile_handle(Some(handle2.clone()));
+
+// session1 -> handle1 -> profile1
+// query1 -> handle1 -> profile1
+// query2 -> handle2 -> profile2
+
+// We can now remap handle2 to profile1:
+handle2.map_to_another_profile(profile1);
+// ...so that the mapping for query2 becomes as follows:
+// query2 -> handle2 -> profile1
+
+// We can also change query1's handle to handle2:
+query1.set_execution_profile_handle(Some(handle2.clone()));
+// ...and remap handle1 to profile2:
+handle1.map_to_another_profile(profile2);
+// ...yielding:
+// session1 -> handle1 -> profile2
+// query1 -> handle2 -> profile1
+// query2 -> handle2 -> profile1
+
+```
+
+
+# result.md
+
+# Query result
+
+`Session::query_unpaged`, `Session::query_single_page`, `Session::execute_unpaged` and `Session::execute_single_page`
+return a `QueryResult` with rows represented as `Option<Vec<Row>>`.
+
+>  ***Note***<br />
+> \\\\
+> Using unpaged queries for SELECTs is discouraged in general.
+> Query results may be so big that it is not preferable to fetch them all at once.
+> Even with small results, if there are a lot of tombstones, then there can be similar bad consequences.
+> However, `query_unpaged` will return all results in one, possibly giant, piece
+> (unless a timeout occurs due to high load incurred by the cluster).
+> This:
+
+> - increases latency,
+> - has large memory footprint,
+> - puts high load on the cluster,
+> - is more likely to time out (because big work takes more time than little work,
+>   and returning one large piece of data is more work than returning one chunk of data).
+> To sum up, **for SELECTs** (especially those that may return a lot of data) **prefer paged queries**,
+> e.g. with `Session::query_iter()` (see [Paged queries](https://rust-driver.docs.scylladb.com/v1.4.1/statements/paged.md)).
+
+## Parsing using convenience methods
+
+By calling [`QueryResult::into_rows_result`](https://docs.rs/scylla/latest/scylla/response/query_result/struct.QueryResult.html#method.into_rows_result),
+one can obtain  [`QueryRowsResult`](https://docs.rs/scylla/latest/scylla/response/query_result/struct.QueryRowsResult.html).
+`QueryRowsResult` provides convenience methods for parsing rows.
+Here are a few of them:
+
+* `rows::<RowT>()` - returns the rows parsed as the given type
+* `maybe_first_row::<RowT>()` - returns the first received row or `None` if there are no rows
+* `first_row::<RowT>()` - returns the first received row; fails if there are no rows
+* `single_row::<RowT>()` - same as `first_row`, but fails when there is more than one row
+
+Additionally, [`QueryResult`](https://docs.rs/scylla/latest/scylla/response/query_result/struct.QueryResult.html) has a method `result_not_rows()`, which ensures that query response was not `rows` and thus helps avoid bugs.
+
+```rust
+// Parse row as a single column containing an int value
+let result = session
+    .query_unpaged("SELECT a from ks.tab", &[])
+    .await?
+    .into_rows_result()?;
+
+for row in result.rows::<(i32,)>()? {
+    let (int_value,): (i32,) = row?;
+}
+
+// first_row gets the first row and parses it as the given type
+let first_int_val: (i32,) = session
+    .query_unpaged("SELECT a from ks.tab", &[])
+    .await?
+    .into_rows_result()?
+    .first_row::<(i32,)>()?;
+
+// result_not_rows fails when the response is rows
+session.query_unpaged("INSERT INTO ks.tab (a) VALUES (0)", &[]).await?.result_not_rows()?;
+```
+
+For more see [`QueryResult`](https://docs.rs/scylla/latest/scylla/response/query_result/struct.QueryResult.html)
+and [`QueryRowsResult`](https://docs.rs/scylla/latest/scylla/response/query_result/struct.QueryRowsResult.html)
+
+### `NULL` values
+
+`NULL` values will return an error when parsed as a Rust type.
+To properly handle `NULL` values parse column as an `Option<>`:
+
+```rust
+
+// Parse row as two columns containing an int and text which might be null
+let rows_result = session
+    .query_unpaged("SELECT a, b from ks.tab", &[])
+    .await?
+    .into_rows_result()?;
+
+for row in rows_result.rows::<(i32, Option<&str>)>()? {
+    let (int_value, str_or_null): (i32, Option<&str>) = row?;
+}
+```
+
+### Parsing row as a custom struct
+
+It is possible to receive row as a struct with fields matching the columns.<br />
+\\\\
+The struct must:
+
+* have the same number of fields as the number of queried columns
+* have field types matching the columns being received
+* derive `DeserializeRow`
+
+Field names don’t need to match column names.
+
+```rust
+use scylla::DeserializeRow;
+use scylla::deserialize::row::DeserializeRow;
+
+#[derive(DeserializeRow)]
+struct MyRow {
+    age: i32,
+    name: Option<String>,
+}
+
+// Parse row as two columns containing an int and text which might be null
+let result_rows = session
+    .query_unpaged("SELECT a, b from ks.tab", &[])
+    .await?
+    .into_rows_result()?;
+
+for row in result_rows.rows::<MyRow>()? {
+    let my_row: MyRow = row?;
+}
+```
+
+### Other data types
+
+For parsing other data types see [Data Types](https://rust-driver.docs.scylladb.com/v1.4.1/data-types/data-types.md)
+
+
+# retry-policy.md
+
+# Retry policy configuration
+
+After a query fails the driver might decide to retry it based on its `Retry Policy` and the query itself.
+Retry policy can be configured for `Session` or just for a single query.
+
+## Retry policies
+
+By default there are three retry policies:
+
+* [Fallthrough Retry Policy](https://rust-driver.docs.scylladb.com/v1.4.1/retry-policy/fallthrough.md) - never retries, returns all errors straight to the user
+* [Default Retry Policy](https://rust-driver.docs.scylladb.com/v1.4.1/retry-policy/default.md) - used by default, might retry if there is a high chance of success
+* [Downgrading Consistency Retry Policy](https://rust-driver.docs.scylladb.com/v1.4.1/retry-policy/downgrading-consistency.md) - behaves as [Default Retry Policy](https://rust-driver.docs.scylladb.com/v1.4.1/retry-policy/default.md), but also,
+  in some more cases, it retries **with lower `Consistency`**.
+
+It’s possible to implement a custom `Retry Policy` by implementing the traits `RetryPolicy` and `RetrySession`.
+
+## Query idempotence
+
+A query is idempotent if it can be applied multiple times without changing the result of the initial application
+
+Specifying that a query is idempotent increases the chances that it will be retried in case of failure.
+Idempotent queries can be retried in situations where retrying non idempotent queries would be dangerous.
+
+Idempotence has to be specified manually, the driver is not able to figure it out by itself.
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::statement::prepared::PreparedStatement;
+
+// Specify that a Statement is idempotent
+let mut my_query: Statement = Statement::new("SELECT a FROM ks.tab");
+my_query.set_is_idempotent(true);
+
+
+// Specify that a PreparedStatement is idempotent
+let mut prepared: PreparedStatement = session
+    .prepare("SELECT a FROM ks.tab")
+    .await?;
+
+prepared.set_is_idempotent(true);
+```
+
+
+# schema-agreement.md
+
+# Schema agreement
+
+Sometimes after executing CQL statements some nodes have not been updated, so we need a mechanism that checks if every node have agreed on schema version.
+
+## Automated awaiting schema agreement
+
+The driver automatically awaits schema agreement after a schema-altering statement is executed.
+Waiting for schema agreement more than necessary is never a bug, but might slow down applications which do a lot of schema changes (e.g. a migration).
+For instance, in case where somebody wishes to create a keyspace and then a lot of tables in it, it makes sense only to wait after creating a keyspace
+and after creating all the tables rather than after every statement execution. Therefore, the said behaviour can be disabled:
+
+```rust
+let session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .auto_await_schema_agreement(false)
+    .build()
+    .await?;
+```
+
+## Manually awaiting schema agreement
+
+`Session::await_schema_agreement` returns a `Future` that can be `await`ed as long as schema is not in an agreement.
+However, it won’t wait forever; `SessionConfig` defines a timeout that limits the time of waiting. If the timeout elapses,
+the return value is `Err(SchemaAgreementError::Timeout)`, otherwise it is `Ok(schema_version)`.
+
+```rust
+session.await_schema_agreement().await?;
+```
+
+## Interval of checking for schema agreement
+
+If the schema is not agreed upon, the driver sleeps for a duration before checking it again. The default value is 200 milliseconds,
+but it can be changed with `SessionBuilder::schema_agreement_interval`.
+
+```rust
+SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .schema_agreement_interval(Duration::from_secs(1))
+    .build()
+    .await?;
+```
+
+## Checking if schema is in agreement now
+
+If you want to check if schema is in agreement now, without retrying after failure, you can use `Session::check_schema_agreement` function.
+
+```rust
+if session.check_schema_agreement().await?.is_some() {
+    println!("SCHEMA AGREED");
+} else {
+    println!("SCHEMA IS NOT IN AGREEMENT");
+}
+```
+
+
+# schema.md
+
+# Schema
+
+The driver is capable of fetching database schema and presenting it to its users.
+
+## Fetching schema
+
+Fetching database schema occurs periodically, but it can also be done on-demand. In order to fetch the newest database schema, one can call `refresh_metadata()` on a Session instance:
+
+```rust
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let uri = std::env::var("SCYLLA_URI")
+        .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
+    // Schema metadata will be fetched below
+    session.refresh_metadata().await?;
+    Ok(())
+}
+```
+
+## Inspecting schema
+
+Once fetched, a snapshot of cluster’s schema can be examined. The following information can be obtained:
+
+- keyspace
+  - tables belonging to the keyspace
+  - materialized views belonging to the keyspace
+  - replication strategy
+  - user-defined types
+- table/view
+  - primary key definition
+  - columns
+  - partitioner type
+
+Example showing how to print obtained schema information:
+
+```rust
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let uri = std::env::var("SCYLLA_URI")
+        .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
+    // Schema metadata will be fetched below
+    session.refresh_metadata().await?;
+
+    let cluster_state = &session.get_cluster_state();
+    let keyspaces_iter = cluster_state.keyspaces_iter();
+
+    for (keyspace_name, keyspace_info) in keyspaces_iter {
+        println!("Keyspace {}:", keyspace_name);
+        println!("\tTables: {:#?}", keyspace_info.tables);
+        println!("\tViews: {:#?}", keyspace_info.views);
+        println!("\tUDTs: {:#?}", keyspace_info.user_defined_types);
+    }
+
+    Ok(())
+}
+```
+
+
+# scylla-docker.md
+
+# Running ScyllaDB using Docker
+
+To make queries we will need a running ScyllaDB instance. The easiest way is to use a [Docker](https://www.docker.com/) image.<br />
+\\\\
+Please [install Docker](https://docs.docker.com/engine/install) if it’s not installed.
+
+## Running scylla
+
+To start ScyllaDB run:
+
+```bash
+# on Linux sudo might be required
+docker run --rm -it -p 9042:9042 scylladb/scylla --smp 2
+```
+
+Docker will download the image, then after minute or two there should be a message like:
+
+```shell
+Starting listening for CQL clients on 172.17.0.2:9042
+```
+
+This means that ScyllaDB is ready to receive queries
+
+To stop this instance press `Ctrl + C`
+
+## More information
+
+More information about this image can be found on [dockerhub](https://hub.docker.com/r/scylladb/scylla)
+
+
+# simple.md
+
+# Simple speculative execution
+
+The easiest speculative execution policy available.  It starts another
+execution of a query after constant delay of `retry_interval` and does at most
+`max_retry_count` speculative query executions (not counting the first,
+non-speculative one).
+
+## Example
+
+To use this policy in `Session`:
+
+```rust
+use std::{sync::Arc, time::Duration};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::{
+    policies::speculative_execution::SimpleSpeculativeExecutionPolicy,
+    client::execution_profile::ExecutionProfile,
+};
+
+let policy = SimpleSpeculativeExecutionPolicy {
+    max_retry_count: 3,
+    retry_interval: Duration::from_millis(100),
+};
+
+let handle = ExecutionProfile::builder()
+    .speculative_execution_policy(Some(Arc::new(policy)))
+    .build()
+    .into_handle();
+
+let session: Session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .default_execution_profile_handle(handle)
+    .build()
+    .await?;
+```
+
+
+# speculative.md
+
+# Speculative execution
+
+Speculative query execution is an optimization technique where a driver
+pre-emptively starts a second execution of a query against another node,
+before the first node has replied.
+
+There are multiple speculative execution strategies that the driver can use.
+Speculative execution can be configured for the whole whole `Session` during
+its creation.
+
+Available speculative execution strategies:
+
+* [Simple](https://rust-driver.docs.scylladb.com/v1.4.1/speculative-execution/simple.md)
+* [Latency Percentile](https://rust-driver.docs.scylladb.com/v1.4.1/speculative-execution/percentile.md)
+
+Speculative execution is not enabled by default, and currently only
+non-iter session methods use it.
+
+
+# statements.md
+
+# Executing CQL statements - best practices
+
+Driver supports all kinds of statements supported by ScyllaDB. The following tables aim to bridge between DB concepts and driver’s API.
+They include recommendations on which API to use in what cases.
+
+## Kinds of CQL statements (from the CQL protocol point of view)
+
+| Kind of CQL statement   | Single              | Batch                                    |
+|-------------------------|---------------------|------------------------------------------|
+| Prepared                | `PreparedStatement` | `Batch` filled with `PreparedStatement`s |
+| Unprepared              | `Statement`         | `Batch` filled with `Statement`s         |
+
+This is **NOT** strictly related to content of the CQL statement string.
+
+>  ***Interesting note***<br />
+> \\\\
+> In fact, any kind of CQL statement could contain any CQL statement string.
+> Yet, some of such combinations don’t make sense and will be rejected by the DB.
+> For example, SELECTs in a Batch are nonsense.
+
+### [Unprepared](https://rust-driver.docs.scylladb.com/v1.4.1/statements/unprepared.md) vs [Prepared](https://rust-driver.docs.scylladb.com/v1.4.1/statements/prepared.md)
+
+>  ***GOOD TO KNOW***<br />
+> \\\\
+> Each time a statement is executed by sending a statement string to the DB, it needs to be parsed. Driver does not parse CQL, therefore it sees statement strings as opaque.<br />
+> \\\\
+> There is an option to *prepare* a statement, i.e. parse it once by the DB and associate it with an ID. After preparation, it’s enough that driver sends the ID
+> and the DB already knows what operation to perform - no more expensive parsing necessary! Moreover, upon preparation driver receives valuable data for load balancing,
+> enabling advanced load balancing (so better performance!) of all further executions of that prepared statement.<br />
+> \\\\
+>  ***Key take-over:*** always prepare statements that you are going to execute multiple times.
+
+| Statement comparison   | Unprepared                                | Prepared                                                                                                        |
+|------------------------|-------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
+| Exposed Session API    | `query_*`                                 | `execute_*`                                                                                                     |
+| Usability              | execute CQL statement string directly     | need to be separately prepared before use, in-background repreparations if statement falls off the server cache |
+| Performance            | poor (statement parsed each time)         | good (statement parsed only upon preparation)                                                                   |
+| Load balancing         | primitive (random choice of a node/shard) | advanced (proper node/shard, optimisations for LWT statements)                                                  |
+| Suitable operations    | one-shot operations                       | repeated operations                                                                                             |
+>  ***Warning***<br />
+> \\\\
+> If a statement contains bind markers (`?`), then it needs some values to be passed along the statement string.
+> If a statement is prepared, the metadata received from the DB can be used to verify validity of passed bind values.
+> In case of unprepared statements, this metadata is missing and thus verification is not feasible.
+> This used to allow some silent bugs sneaking in in user applications.
+
+> To prevent that, the driver will silently prepare every unprepared statement prior to its execution.
+> This has an overhead, which further lessens advantages of unprepared statements over prepared statements.
+
+> That behaviour is especially important in batches:
+> For each simple statement with a non-empty list of values in the batch,
+> the driver will send a prepare request, and it will be done **sequentially**!
+> Results of preparation are not cached between `Session::batch` calls.
+> Therefore, consider preparing the statements before putting them into the batch.
+
+### Single vs [Batch](https://rust-driver.docs.scylladb.com/v1.4.1/statements/batch.md)
+
+| Statement comparison   | Single                                                | Batch                                                                                                                                                                                |
+|------------------------|-------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Exposed Session API    | `query_*`, `execute_*`                                | `batch`                                                                                                                                                                              |
+| Usability              | simple setup                                          | need to aggregate statements and binding values to each is more cumbersome                                                                                                           |
+| Performance            | good (DB is optimised for handling single statements) | good for small batches, may be worse for larger (also: higher risk of request timeout due to big portion of work)                                                                    |
+| Load balancing         | advanced if prepared, else primitive                  | advanced if prepared **and ALL** statements in the batch target the same partition, else primitive                                                                                   |
+| Suitable operations    | most of operations                                    | - a list of operations that needs to be executed atomically (batch LightWeight Transaction)</br> - a batch of operations targetting the same partition (as an advanced optimisation) |
+
+## CQL statements - operations (based on what the CQL string contains)
+
+| CQL data manipulation statement              | Recommended statement kind                                                                                                                   | Recommended Session operation                                                                             |
+|----------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| SELECT                                       | `PreparedStatement` if repeated, `Statement` if once                                                                                         | `{query,execute}_iter` (or `{query,execute}_single_page` in a manual loop for performance / more control) |
+| INSERT, UPDATE                               | `PreparedStatement` if repeated, `Statement` if once, `Batch` if multiple statements are to be executed atomically (LightWeight Transaction) | `{query,execute}_unpaged` (paging is irrelevant, because the result set of such operation is empty)       |
+| CREATE/DROP {KEYSPACE, TABLE, TYPE, INDEX,…} | `Statement`, `Batch` if multiple statements are to be executed atomically (LightWeight Transaction)                                          | `query_unpaged` (paging is irrelevant, because the result set of such operation is empty)                 |
+
+### [Paged](https://rust-driver.docs.scylladb.com/v1.4.1/statements/paged.md) vs Unpaged query
+
+>  ***GOOD TO KNOW***<br />
+> \\\\
+> SELECT statements return a [result set](https://rust-driver.docs.scylladb.com/v1.4.1/statements/result.md), possibly a large one. Therefore, paging is available to fetch it in chunks, relieving load on cluster and lowering latency.<br />
+> \\\\
+>  ***Key take-overs:***<br />
+> \\\\
+> For SELECTs you had better **avoid unpaged queries**.<br />
+> \\\\
+> For non-SELECTs, unpaged API is preferred.
+
+| Query result fetching   | Unpaged                                                                                                                                  | Paged                                                                                                                                                                |
+|-------------------------|------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Exposed Session API     | `{query,execute}_unpaged`                                                                                                                | `{query,execute}_single_page`, `{query,execute}_iter`                                                                                                                |
+| Usability               | get all results in a single CQL frame, so into a [single Rust struct](https://rust-driver.docs.scylladb.com/v1.4.1/statements/result.md) | need to fetch multiple CQL frames and iterate over them - using driver’s abstractions (`{query,execute}_iter`) or manually (`{query,execute}_single_page` in a loop) |
+| Performance             | - for large results, puts **high load on the cluster**</br> - for small results, the same as paged                                       | - for large results, relieves the cluster</br> - for small results, the same as unpaged                                                                              |
+| Memory footprint        | potentially big - all results have to be stored at once                                                                                  | small - at most constant number of pages are stored by the driver at the same time                                                                                   |
+| Latency                 | potentially big - all results have to be generated at once                                                                               | small - at most one chunk of data must be generated at once, so latency of each chunk is small                                                                       |
+| Suitable operations     | - in general: operations with empty result set (non-SELECTs)</br> - as possible optimisation: SELECTs with LIMIT clause                  | - in general: all SELECTs                                                                                                                                            |
+
+For more detailed comparison and more best practices, see [doc page about paging](https://rust-driver.docs.scylladb.com/v1.4.1/statements/paged.md).
+
+### Queries are fully asynchronous - you can run as many of them in parallel as you wish
+
+## `USE KEYSPACE`
+
+There is a special functionality to enable [USE keyspace](https://rust-driver.docs.scylladb.com/v1.4.1/statements/usekeyspace.md).
+
+
+# text.md
+
+# Ascii, Text, Varchar
+
+`Ascii`, `Text` and `Varchar` are represented as any of: `&str`, `String`, `Box<str>`, `Arc<str>`.
+
+```rust
+use futures::TryStreamExt;
+
+// Insert some text into the table as a &str
+let to_insert_str: &str = "abcdef";
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert_str,))
+    .await?;
+
+// Insert some text into the table as a String
+let to_insert_string: String = "abcdef".to_string();
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert_string,))
+    .await?;
+
+// Read ascii/text/varchar from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(String,)>()?;
+while let Some((text_value,)) = iter.try_next().await? {
+    println!("{}", text_value);
+}
+```
+
+
+# time.md
+
+# Time
+
+Depending on feature flags used, three different types can be used to interact with time.
+
+Internally [time](https://docs.scylladb.com/stable/cql/types.html#times) is represented as number of nanoseconds since
+midnight. It can’t be negative or exceed `86399999999999` (23:59:59.999999999).
+
+## CqlTime
+
+Without any extra features enabled, only `value::CqlTime` is available. It’s an
+[`i64`](https://doc.rust-lang.org/std/primitive.i64.html) wrapper and it matches the internal time representation.
+
+However, for most use cases other types are more practical. See following sections for `chrono` and `time`.
+
+```rust
+use scylla::value::CqlTime;
+use futures::TryStreamExt;
+
+// 64 seconds since midnight
+let to_insert = CqlTime(64 * 1_000_000_000);
+
+// Insert time into the table
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read time from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(CqlTime,)>()?;
+while let Some((value,)) = iter.try_next().await? {
+    // ...
+}
+```
+
+## chrono::NaiveTime
+
+If the `chrono-04` feature is enabled, [`chrono::NaiveTime`](https://docs.rs/chrono/0.4/chrono/naive/struct.NaiveDate.html)
+can be used to interact with the database. Although chrono can represent leap seconds, they are not supported.
+Attempts to convert [`chrono::NaiveTime`](https://docs.rs/chrono/0.4/chrono/naive/struct.NaiveDate.html) with leap
+second to `CqlTime` or write it to the database will return an error.
+
+```rust
+use chrono::NaiveTime;
+use futures::TryStreamExt;
+
+// 01:02:03.456,789,012
+let to_insert = NaiveTime::from_hms_nano_opt(1, 2, 3, 456_789_012);
+
+// Insert time into the table
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read time from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(NaiveTime,)>()?;
+while let Some((time_value,)) = iter.try_next().await? {
+    println!("{:?}", time_value);
+}
+```
+
+## time::Time
+
+If the `time-03` feature is enabled, [`time::Time`](https://docs.rs/time/0.3/time/struct.Time.html) can be used to interact
+with the database.
+
+```rust
+use futures::TryStreamExt;
+use time::Time;
+
+// 01:02:03.456,789,012
+let to_insert = Time::from_hms_nano(1, 2, 3, 456_789_012).unwrap();
+
+// Insert time into the table
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read time from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(Time,)>()?;
+while let Some((time_value,)) = iter.try_next().await? {
+    println!("{:?}", time_value);
+}
+```
+
+
+# timeouts.md
+
+# Request timeouts
+
+CQL statement execution time can be limited by setting a request timeout. If request does not complete
+in the given time, then `ExecutionError::RequestTimeout` is returned by the driver immediately,
+so that application logic can continue operating, but the request may still be in progress on the server.
+
+As a side note, if one wishes custom server-side timeouts (i.e. actual interruption of request processing),
+one can use a[`USING TIMEOUT <duration>` directive supported in ScyllaDB](https://github.com/scylladb/scylladb/blob/master/docs/cql/cql-extensions.md#using-timeout)
+(but not in Cassandra).
+
+Timeout can be set globally (per session) or locally (for given statement).
+The default per-session timeout is currently 30s.
+It is possible to turn off timeouts completely by providing `None` as timeout when building `Session`.
+However, setting per-statement timeout to `None` results in falling back to per-session timeout.
+
+```rust
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::statement::unprepared::Statement;
+use std::time::Duration;
+
+let uri = std::env::var("SCYLLA_URI")
+    .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+let no_timeout_profile_handle = ExecutionProfile::builder()
+    .request_timeout(None) // no timeout
+    .build()
+    .into_handle();
+
+let session: Session = SessionBuilder::new()
+    .known_node(uri)
+    .default_execution_profile_handle(no_timeout_profile_handle) // no per-session timeout
+    .build()
+    .await?;
+
+// This statement, having no timeout, could block indefinitely if a queried node hangs.
+session
+    .query_unpaged("TRUNCATE keyspace.table", ())
+    .await?;
+
+let three_sec_timeout_profile_handle = ExecutionProfile::builder()
+    .request_timeout(Some(Duration::from_secs(3))) // no timeout
+    .build()
+    .into_handle();
+
+// The below statement execution will last for no more than 3 seconds, yielding a RequestTimeout error
+// if no response arrives until then.
+let mut statement: Statement = "TRUNCATE keyspace.table".into();
+statement.set_execution_profile_handle(Some(three_sec_timeout_profile_handle));
+session
+    .query_unpaged(statement, ())
+    .await?;
+
+```
+
+
+# timestamp-generators.md
+
+# Timestamp generators
+
+If you want to generate timestamps on the client side you can provide
+a TimestampGenerator to a SessionBuilder when creating a Session. Then
+every executed statement will have attached a new timestamp generated
+by the provided TimestampGenerator.
+Timestamps are set according to precendence:
+
+1. `USING TIMESTAMP` in the statement string itself
+2. Manually using `set_timestamp` on the statement
+3. Timestamp generated by the generator
+
+## Simple Timestamp Generator
+
+Most basic client-side timestamp generator. Generates timestamp
+based on system clock. Provides no guarantees and panics when the system clock
+provides timestamp before the unix epoch.
+
+## Monotonic Timestamp Generator
+
+Client-side timestamp generator. Guarantees monotonic timestamps
+based on the system clock, with automatic timestamp incrementation
+if the system clock timestamp would not be monotonic. If the clock skew
+exceeds `warning_threshold` of the generator (can be changed with `with_warning_times`, 1s by default)
+user will be warned with timestamp generation with `warning_interval` cooldown period
+(can be changed with `with_warning_times`, 1s by default) to not spam the user. If user does not want to
+be warned about the clock skew, the warnings can be turned off with `without_warnings` function.
+
+```rust
+# extern crate scylla;
+# use std::error::Error;
+# async fn check_only_compiles() -> Result<(), Box<dyn std::error::Error>> {
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::policies::timestamp_generator::MonotonicTimestampGenerator;
+use scylla::statement::unprepared::Statement;
+use std::sync::Arc;
+
+let session: Session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .timestamp_generator(Arc::new(MonotonicTimestampGenerator::new()))
+    .build()
+    .await?;
+
+// This statement will have a timestamp generated 
+// by the monotonic timestamp generator
+let my_statement: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
+let to_insert: i32 = 12345;
+session.query_unpaged(my_statement, (to_insert,)).await?;
+# Ok(())
+# }
+```
+
+
+# timestamp.md
+
+# Timestamp
+
+Depending on feature flags, three different types can be used to interact with timestamps.
+
+Internally [timestamp](https://docs.scylladb.com/stable/cql/types.html#timestamps) is represented as
+[`i64`](https://doc.rust-lang.org/std/primitive.i64.html) describing number of milliseconds since unix epoch.
+
+## CqlTimestamp
+
+Without any extra features enabled, only `value::CqlTimestamp` is available. It’s an
+[`i64`](https://doc.rust-lang.org/std/primitive.i64.html) wrapper and it matches the internal time representation. It’s
+the only type that supports full range of values that database accepts.
+
+However, for most use cases other types are more practical. See following sections for `chrono` and `time`.
+
+```rust
+use scylla::value::CqlTimestamp;
+use futures::TryStreamExt;
+
+// 64 seconds since unix epoch, 1970-01-01 00:01:04
+let to_insert = CqlTimestamp(64 * 1000);
+
+// Write timestamp to the table
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read timestamp from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(CqlTimestamp,)>()?;
+while let Some((value,)) = iter.try_next().await? {
+    // ...
+}
+```
+
+## chrono::DateTime
+
+If the full value range is not required, the `chrono-04` feature can be used to enable support of
+[`chrono::DateTime`](https://docs.rs/chrono/0.4/chrono/struct.DateTime.html). All values are expected to be converted
+to UTC timezone explicitly, as [timestamp](https://docs.scylladb.com/stable/cql/types.html#timestamps) doesn’t store
+timezone information. Any precision finer than 1ms will be lost.
+
+```rust
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use futures::TryStreamExt;
+
+// 64.123 seconds since unix epoch, 1970-01-01 00:01:04.123
+let to_insert = NaiveDateTime::new(
+    NaiveDate::from_ymd_opt(1970, 1, 1).unwrap(),
+    NaiveTime::from_hms_milli_opt(0, 1, 4, 123).unwrap(),
+)
+.and_utc();
+
+// Write timestamp to the table
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read timestamp from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(DateTime<Utc>,)>()?;
+while let Some((timestamp_value,)) = iter.try_next().await? {
+    println!("{:?}", timestamp_value);
+}
+```
+
+## time::OffsetDateTime
+
+Alternatively, the `time-03` feature can be used to enable support of
+[`time::OffsetDateTime`](https://docs.rs/time/0.3/time/struct.OffsetDateTime.html). As
+[timestamp](https://docs.scylladb.com/stable/cql/types.html#timestamps) doesn’t support timezone information, time will
+be corrected to UTC and timezone info will be erased on write. On read, UTC timestamp is returned. Any precision finer
+than 1ms will also be lost.
+
+```rust
+use futures::TryStreamExt;
+use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time};
+
+// 64.123 seconds since unix epoch, 1970-01-01 00:01:04.123
+let to_insert = PrimitiveDateTime::new(
+    Date::from_calendar_date(1970, Month::January, 1).unwrap(),
+    Time::from_hms_milli(0, 1, 4, 123).unwrap(),
+)
+.assume_utc();
+
+// Write timestamp to the table
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read timestamp from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(OffsetDateTime,)>()?;
+while let Some((timestamp_value,)) = iter.try_next().await? {
+    println!("{:?}", timestamp_value);
+}
+```
+
+
+# timeuuid.md
+
+# Timeuuid
+
+The `Timeuuid` type is represented as `value::CqlTimeuuid`.
+
+Also, `value::CqlTimeuuid` is a wrapper for `uuid::Uuid` with custom ordering logic which follows Scylla/Cassandra semantics.
+
+```rust
+use futures::TryStreamExt;
+use scylla::value::CqlTimeuuid;
+
+// Insert some timeuuid into the table
+let to_insert: CqlTimeuuid = CqlTimeuuid::from_str("8e14e760-7fa8-11eb-bc66-000000000001")?;
+
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read Timeuuid from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(CqlTimeuuid, )>()?;
+
+while let Some((timeuuid,)) = iter.try_next().await? {
+    println!("Read a value from row: {}", timeuuid);
+}
+```
+
+## Creating your own Timeuuid
+
+To create your own `Timeuuid` objects from timestamp-based `uuid` v1, you need to enable the feature `v1` of `uuid` crate using:
+
+```shell
+cargo add uuid -F v1
+```
+
+and now you’re gonna be able to use the `uuid::v1` features:
+
+```rust
+use futures::TryStreamExt;
+use scylla::value::CqlTimeuuid;
+use uuid::Uuid;
+
+// Tip: you can use random stable numbers or your MAC Address
+let node_id = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
+
+// Build your Timeuuid with the current timestamp
+let to_insert = CqlTimeuuid::from(Uuid::now_v1(&node_id));
+
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))  
+    .await?;
+
+// Read Timeuuid from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(CqlTimeuuid, )>()?;
+
+while let Some((timeuuid,)) = iter.try_next().await? {
+    println!("Read a value from row: {}", timeuuid);
+}
+```
+
+Learn more about UUID::v1 [here](https://en.wikipedia.org/wiki/Universally_unique_identifier#Version_1_(date-time_and_MAC_address)).
+
+
+# tls.md
+
+# TLS
+
+Driver uses either the
+[`openssl`](https://github.com/sfackler/rust-openssl) crate or the
+[`rustls`](https://github.com/rustls/rustls) crate for TLS functionality.
+
+Both of this features are behind their respective feature flag.
+
+## Enabling feature
+
+***NOTE:*** `openssl` is not a pure Rust library, so you need to **both** enable a feature **and** install the proper package.
+
+To enable use of TLS using `openssl`, add in `Cargo.toml`:
+
+```toml
+scylla = { version = "0.4", features = ["openssl-010"] }
+openssl = "0.10.70"
+```
+
+Then install the package with `openssl`:
+
+* Debian/Ubuntu:
+  ```bash
+  apt install libssl-dev pkg-config
+  ```
+* Fedora:
+  ```bash
+  dnf install openssl-devel
+  ```
+
+<!--
+ scylla-rust-driver doesn't build on Alpine, some strange cc linker errors in proc-macro-hack 0_o
+ TODO: try building and add the section
+
+ \* Alpine:
+    \`\`\`bash
+    apk add openssl-dev
+    \`\`\`
+-->
+* Arch:
+  ```bash
+  pacman -S openssl pkg-config
+  ```
+
+## Using TLS
+
+To use TLS you will have to a `TlsContext`. For convenience, both an
+openssl
+[`SslContext`](https://docs.rs/openssl/0.10.33/openssl/ssl/struct.SslContext.html)
+and a rustls
+[`ClientConfig`](https://docs.rs/rustls/latest/rustls/client/struct.ClientConfig.html)
+can be automatically converted to a `TlsContext` when passing to
+`SessionBuilder`.
+
+For example, if database certificate is in the file `ca.crt`:
+
+```rust
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use openssl::ssl::{SslContextBuilder, SslMethod, SslVerifyMode};
+use std::path::PathBuf;
+
+let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
+context_builder.set_ca_file("ca.crt")?;
+context_builder.set_verify(SslVerifyMode::PEER);
+
+let session: Session = SessionBuilder::new()
+    .known_node("127.0.0.1:9142") // The the port is now 9142
+    .tls_context(Some(context_builder.build()))
+    .build()
+    .await?;
+
+```
+
+See the full [openssl example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/tls-openssl.rs) and [rustls example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/tls-rustls.rs) for more details.
+
+
+# tracing.md
+
+# Query tracing
+
+The driver has utilities for monitoring the execution of queries.
+There are two separate ways to get information about what happened with a query: `Tracing` and `Query Execution History`.
+
+## Tracing
+
+Tracing is a feature provided by Scylla. When sending a query we can set a flag that signifies that we would like it to be traced.
+After completing the query ScyllaDB provides a `tracing_id` which can be used to fetch information about it - which nodes it was sent to, what operations were performed etc.
+
+Queries that support tracing:
+
+* [`Session::query_unpaged()`](https://rust-driver.docs.scylladb.com/v1.4.1/tracing/basic.md)
+* [`Session::query_iter()`](https://rust-driver.docs.scylladb.com/v1.4.1/tracing/paged.md)
+* [`Session::execute_unpaged()`](https://rust-driver.docs.scylladb.com/v1.4.1/tracing/basic.md)
+* [`Session::execute_iter()`](https://rust-driver.docs.scylladb.com/v1.4.1/tracing/paged.md)
+* [`Session::batch()`](https://rust-driver.docs.scylladb.com/v1.4.1/tracing/basic.md)
+* [`Session::prepare()`](https://rust-driver.docs.scylladb.com/v1.4.1/tracing/prepare.md)
+
+After obtaining the tracing id you can use `Session::get_tracing_info()` to query tracing information.<br />
+\\\\
+`TracingInfo` contains values that are the same in ScyllaDB and Cassandra®, skipping any database-specific ones.<br />
+\\\\
+If `TracingInfo` does not contain some needed value it’s possible to query it manually from the tables
+`system_traces.sessions` and `system_traces.events`
+
+## Query Execution History
+
+Tracing provides information about how the query execution went on database nodes, but it doesn’t say anything about what was going on inside the driver.<br />
+\\\\
+This is what query execution history was made for.
+
+It allows to follow what the driver was thinking - all query attempts, retry decisions, speculative executions.
+More information is available in the [Query Execution History](https://rust-driver.docs.scylladb.com/v1.4.1/tracing/query-history.md) chapter.
+
+
+# tuple.md
+
+# Tuple
+
+`Tuple` is represented as rust tuples of max 16 elements.
+
+```rust
+use futures::TryStreamExt;
+
+// Insert a tuple of int and string into the table
+let to_insert: (i32, String) = (1, "abc".to_string());
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read a tuple of int and string from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<((i32, String),)>()?;
+while let Some((tuple_value,)) = iter.try_next().await? {
+    let int_value: i32 = tuple_value.0;
+    let string_value: String = tuple_value.1;
+    println!("({}, {})", int_value, string_value);
+}
+```
+
+
+# udt.md
+
+# User defined types
+
+ScyllaDB allows users to define their own data types with named fields (See [the official documentation](https://opensource.docs.scylladb.com/stable/cql/types.html#user-defined-types))<br />
+\\\\
+To use user defined types in the driver, you can create a corresponding struct in Rust, and use it to read and write UDT values.
+
+For example let’s say `my_type` was created using this query:
+
+```sql
+CREATE TYPE ks.my_type (int_val int, text_val text)
+```
+
+To use this type in the driver, create a matching struct and derive:
+
+- `SerializeValue`: in order to be able to use this struct in query parameters. \\
+- `DeserializeValue`: in order to be able to use this struct in query results. \\
+
+Both macros require fields of UDT and struct to have matching names, but the order
+of the fields is not required to be the same. <br />
+\\\\
+Note: you can use different name using `rename` attribute - see `SerializeValue`
+and `DeserializeValue` macros documentation.
+
+```rust
+use scylla::{DeserializeValue, SerializeValue};
+
+// Define a custom struct that matches the User Defined Type created earlier.
+// Fields don't have to be in the same order as they are in the database.
+// By default, they must have the same names, but this can be worked around
+// using `#[rename] field attribute.
+// Wrapping a field in Option will gracefully handle null field values.
+#[derive(Debug, DeserializeValue, SerializeValue)]
+struct MyType {
+    int_val: i32,
+    text_val: Option<String>,
+}
+```
+
+>  ***Important***<br />
+> \\\\
+> For (de)serialization, by default fields in the Rust struct must be defined with the same names as they are in the database.
+> The driver will (de)serialize the fields in the order defined by the UDT, matching Rust fields by name.
+> You can change this behaviour using macro attributes, see `SerializeValue`/`DeserializeValue` macro documentation for more information.
+
+Now it can be sent and received just like any other CQL value:
+
+```rust
+use futures::TryStreamExt;
+use scylla::{DeserializeValue, SerializeValue};
+
+#[derive(Debug, DeserializeValue, SerializeValue)]
+struct MyType {
+    int_val: i32,
+    text_val: Option<String>,
+}
+
+// Insert my_type into the table
+let to_insert = MyType {
+    int_val: 17,
+    text_val: Some("Some string".to_string()),
+};
+
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read MyType from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(MyType,)>()?;
+while let Some((my_type_value,)) = iter.try_next().await? {
+    println!("{:?}", my_type_value);
+}
+```
+
+
+# unprepared.md
+
+# Unprepared statement
+
+Unprepared statement takes CQL statement text and values and simply executes them on a `Session`:
+
+```rust
+// Insert a value into the table
+let to_insert: i32 = 12345;
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+```
+
+>  ***Warning***<br />
+> \\\\
+> Don’t use unprepared queries to receive large amounts of data.<br />
+> \\\\
+> By default the query is unpaged and might cause heavy load on the cluster.<br />
+> \\\\
+> In such cases use [paged query](https://rust-driver.docs.scylladb.com/v1.4.1/statements/paged.md) instead.\\
+
+> `query_unpaged` will return all results in one, possibly giant, piece
+> (unless a timeout occurs due to high load incurred by the cluster).
+>  ***Warning***<br />
+> \\\\
+> If the values are not empty, driver first needs to send a `PREPARE` request
+> in order to fetch information required to serialize values. This will affect
+> performance because 2 round trips will be required instead of 1.
+
+## First argument - the statement
+
+As the first argument `Session::query_unpaged` takes anything implementing `Into<Statement>`.<br />
+\\\\
+You can create a statement manually to set custom options. For example to change statement consistency:
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::statement::Consistency;
+
+// Create a Statement manually to change the Consistency to ONE
+let mut my_statement: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
+my_statement.set_consistency(Consistency::One);
+
+// Insert a value into the table
+let to_insert: i32 = 12345;
+session.query_unpaged(my_statement, (to_insert,)).await?;
+```
+
+See [Statement API documentation](https://docs.rs/scylla/latest/scylla/statement/struct.Statement.html) for more options
+
+## Second argument - the values
+
+Statement text is constant, but the values may change.
+You can pass changing values to a statement by specifying a list of variables as bound values.<br />
+\\\\
+Each `?` in statement text will be filled with the matching value.
+
+The easiest way is to pass values using a tuple:
+
+```rust
+// Sending an integer and a string using a tuple
+session
+    .query_unpaged("INSERT INTO ks.tab (a, b, c) VALUES(?, ?, 'text2')", (2_i32, "Some text"))
+    .await?;
+```
+
+Here the first `?` will be filled with `2` and the second with `"Some text"`.
+
+> **Never** pass values by adding strings, this could lead to [SQL Injection](https://en.wikipedia.org/wiki/SQL_injection)
+
+See [Query values](https://rust-driver.docs.scylladb.com/v1.4.1/statements/values.md) for more information about sending values in queries
+
+## Query result
+
+`Session::query_unpaged` returns `QueryResult`.
+The result can then be operated on via helper methods which verify that the result is of appropriate type.
+Here, we use the `rows` method to check that the response indeed contains rows with a single `int` column:
+
+```rust
+
+// NOTE: using unpaged queries (SELECTs) is discouraged in general.
+// Query results may be so big that it is not preferable to fetch them all at once.
+// Even with small results, if there are a lot of tombstones, then there can be similar bad consequences.
+// However, `query_unpaged` will return all results in one, possibly giant, piece
+// (unless a timeout occurs due to high load incurred by the cluster).
+// This:
+// - increases latency,
+// - has large memory footprint,
+// - puts high load on the cluster,
+// - is more likely to time out (because big work takes more time than little work,
+//   and returning one large piece of data is more work than returning one chunk of data).
+// To sum up, **for SELECTs** (especially those that may return a lot of data)
+// **prefer paged queries**, e.g. with `Session::query_iter()`.
+
+
+// Query rows from the table and print them
+let result = session.query_unpaged("SELECT a FROM ks.tab", &[])
+    .await?
+    .into_rows_result()?;
+
+let mut iter = result.rows::<(i32,)>()?;
+while let Some(read_row) = iter.next().transpose()? {
+    println!("Read a value from row: {}", read_row.0);
+}
+```
+
+See [Query result](https://rust-driver.docs.scylladb.com/v1.4.1/statements/result.md) for more information about handling query results
+
+## Performance
+
+Unprepared statements should not be used in places where performance matters.<br />
+\\\\
+If performance matters use a [Prepared statement](https://rust-driver.docs.scylladb.com/v1.4.1/statements/prepared.md) instead.
+
+With unprepared statement the database has to parse statement text each time it’s executed, which worsens performance.\\
+
+Additionally token and shard aware load balancing does not work with unprepared statements. They are sent to random nodes.
+
+
+# usekeyspace.md
+
+# USE keyspace
+
+Using a keyspace allows to omit keyspace name in statements.
+
+For example in `cqlsh` one could write:
+
+```sql
+cqlsh> SELECT * FROM my_keyspace.table;
+
+ a     | b     |
+-------+-------+
+ 12345 | 54321 |
+
+(1 rows)
+cqlsh> USE my_keyspace;
+cqlsh:my_keyspace> SELECT * FROM table;
+
+ a     | b     |
+-------+-------+
+ 12345 | 54321 |
+
+(1 rows)
+
+```
+
+Tables from other keyspaces can still easily be accessed by using their keyspace names.
+
+```sql
+cqlsh:my_keyspace> SELECT * FROM other_keyspace.other_table;
+```
+
+In the driver this can be achieved using `Session::use_keyspace`:
+
+```rust
+session
+    .query_unpaged("INSERT INTO my_keyspace.tab (a) VALUES ('test1')", &[])
+    .await?;
+
+session.use_keyspace("my_keyspace", false).await?;
+
+// Now we can omit keyspace name in the statement
+session
+    .query_unpaged("INSERT INTO tab (a) VALUES ('test2')", &[])
+    .await?;
+```
+
+The first argument is the keyspace name.<br />
+\\\\
+The second argument states whether this name is case sensitive.
+
+It is also possible to send raw use keyspace statement using `Session::query_*` instead of `Session::use_keyspace` such as:
+
+```rust
+session.query_unpaged("USE my_keyspace", &[]).await?;
+```
+
+This method has a slightly worse latency than `Session::use_keyspace` - there are two roundtrips needed instead of one.
+Therefore, `Session::use_keyspace` is the preferred method for setting keyspaces.
+
+## Multiple use keyspace requests at once
+
+Don’t run multiple `use_keyspace` requests at once.
+This could end up with a part of connections using one keyspace and another part using another.
+
+## Case sensitivity
+
+In CQL a keyspace name can be case insensitive (without `"`) or case sensitive (with `"`).<br />
+\\\\
+If the second argument to `use_keyspace` is set to `true` this keyspace name will be wrapped in `"`.<br />
+\\\\
+It is best to avoid the problem altogether and just not create two keyspaces with the same name but different cases.
+
+Let’s see what happens when there are two keyspaces with the same name but different cases: `my_keyspace` and `MY_KEYSPACE`:
+
+```rust
+// lowercase name without case sensitivity will use my_keyspace
+session.use_keyspace("my_keyspace", false).await?;
+
+// lowercase name with case sensitivity will use my_keyspace
+session.use_keyspace("my_keyspace", true).await?;
+
+// uppercase name without case sensitivity will use my_keyspace
+session.use_keyspace("MY_KEYSPACE", false).await?;
+
+// uppercase name with case sensitivity will use MY_KEYSPACE
+session.use_keyspace("MY_KEYSPACE", true).await?;
+```
+
+
+# uuid.md
+
+# Uuid
+
+`Uuid` is represented as `uuid::Uuid`.
+
+```rust
+use futures::TryStreamExt;
+use uuid::Uuid;
+
+// Insert some uuid into the table
+let to_insert: Uuid = Uuid::parse_str("8e14e760-7fa8-11eb-bc66-000000000001")?;
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read uuid from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(Uuid,)>()?;
+while let Some((uuid_value,)) = iter.try_next().await? {
+    println!("{:?}", uuid_value);
+}
+```
+
+
+# values.md
+
+# Statement values
+
+Statement text is constant, but the values may change.
+You can pass changing values to a statement by specifying a list of variables as bound values.<br />
+\\\\
+Each `?` in statement text will be filled with the matching value.
+
+> **Never** pass values by adding strings, this could lead to [SQL Injection](https://en.wikipedia.org/wiki/SQL_injection)
+
+Each list of values to send must implement the trait `SerializeRow`.<br />
+\\\\
+By default this can be a slice `&[]`, a tuple `()` (max 16 elements) of values to send,
+or a custom struct which derives from `SerializeRow`.
+
+A few examples:
+
+```rust
+// Empty slice means that there are no values to send
+session.query_unpaged("INSERT INTO ks.tab (a) VALUES(1)", &[]).await?;
+
+// Empty tuple/unit also means that there are no values to send
+session.query_unpaged("INSERT INTO ks.tab (a) VALUES(1)", ()).await?;
+
+// Sending three integers using a slice:
+session
+    .query_unpaged("INSERT INTO ks.tab (a, b, c) VALUES(?, ?, ?)", [1_i32, 2, 3].as_ref())
+    .await?;
+
+// Sending an integer and a string using a tuple
+session
+    .query_unpaged("INSERT INTO ks.tab (a, b) VALUES(?, ?)", (2_i32, "Some text"))
+    .await?;
+
+// Sending an integer and a string using a named struct.
+// Names of fields must match names of columns in request,
+// but having them in the same order is not required.
+// If the fields are in the same order, you can use attribute:
+// `#[scylla(flavor = "enforce_order")]`
+// in order to skip sorting the fields and just check if they
+// are in the same order. See documentation of this macro
+// for more information.
+#[derive(SerializeRow)]
+struct IntString {
+    a: i32,
+    b: String,
+}
+
+let int_string = IntString {
+    a: 42_i32,
+    b: "hello".to_owned(),
+};
+
+session
+    .query_unpaged("INSERT INTO ks.tab (a, b) VALUES(?, ?)", int_string)
+    .await?;
+
+// You can use named bind markers in statement if you want
+// your names in struct to be different than column names.
+#[derive(SerializeRow)]
+struct IntStringCustom {
+    first_value: i32,
+    second_value: String,
+}
+
+let int_string_custom = IntStringCustom {
+    first_value: 42_i32,
+    second_value: "hello".to_owned(),
+};
+
+session
+    .query_unpaged("INSERT INTO ks.tab (a, b) VALUES(:first_value, :second_value)", int_string_custom)
+    .await?;
+
+// Sending a single value as a tuple requires a trailing coma (Rust syntax):
+session.query_unpaged("INSERT INTO ks.tab (a) VALUES(?)", (2_i32,)).await?;
+
+// Each value can also be sent using a reference:
+session
+    .query_unpaged("INSERT INTO ks.tab (a, b) VALUES(?, ?)", &(&2_i32, &"Some text"))
+    .await?;
+
+// A map of named values can also be provided:
+let mut vals: HashMap<&str, CqlValue> = HashMap::new();
+vals.insert("avalue", CqlValue::Text("hello".to_string()));
+vals.insert("bvalue", CqlValue::Int(17));
+session
+    .query_unpaged("INSERT INTO ks.tab (a, b) VALUES(:avalue, :bvalue)", &vals)
+    .await?;
+
+```
+
+## `NULL` values
+
+Null values can be sent using `Option<>` - sending a `None` will make the value `NULL`:
+
+```rust
+let null_i32: Option<i32> = None;
+session
+    .query_unpaged("INSERT INTO ks.tab (a) VALUES(?)", (null_i32,))
+    .await?;
+```
+
+## `Unset` values
+
+When performing an insert with values which might be `NULL`, it’s better to use `Unset`.<br />
+\\\\
+Database treats inserting `NULL` as a delete operation and will generate a tombstone.
+Using `Unset` results in better performance:
+
+```rust
+use scylla::value::{MaybeUnset, Unset};
+
+// Inserting a null results in suboptimal performance
+let null_i32: Option<i32> = None;
+session
+    .query_unpaged("INSERT INTO ks.tab (a) VALUES(?)", (null_i32,))
+    .await?;
+
+// Using MaybeUnset enum is better
+let unset_i32: MaybeUnset<i32> = MaybeUnset::Unset;
+session
+    .query_unpaged("INSERT INTO ks.tab (a) VALUES(?)", (unset_i32,))
+    .await?;
+
+// If we are sure that a value should be unset we can simply use Unset
+session
+    .query_unpaged("INSERT INTO ks.tab (a) VALUES(?)", (Unset,))
+    .await?;
+```
+
+See the [issue](https://issues.apache.org/jira/browse/CASSANDRA-7304) for more information about `Unset`
+
+## Other data types
+
+See [Data Types](https://rust-driver.docs.scylladb.com/v1.4.1/data-types/data-types.md) for instructions on sending other data types
+
+
+# varint.md
+
+# Varint
+
+`Varint` is represented as `value::CqlVarint` or [`num_bigint::BigInt`](https://docs.rs/num-bigint/0.4.0/num_bigint/struct.BigInt.html).
+
+## num_bigint::BigInt
+
+To make use of `num_bigint::BigInt` type, user should enable one of the available feature flags (`num-bigint-03` or `num-bigint-04`). They enable support for `num_bigint::BigInt` v0.3 and v0.4 accordingly.
+
+## value::CqlVarint
+
+Without any feature flags, the user can interact with `Varint` type by making use of `value::CqlVarint` or `value::CqlVarintBorrowed` which are very simple wrappers representing the value as signed binary number in big-endian order.
+
+## Example
+
+```rust
+use futures::TryStreamExt;
+use num_bigint::BigInt;
+use std::str::FromStr;
+
+// Insert a varint into the table
+let to_insert: BigInt = BigInt::from_str("12345")?;
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read a varint from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(BigInt,)>()?;
+while let Some((varint_value,)) = iter.try_next().await? {
+    println!("{:?}", varint_value);
+}
+```
+
+
+# vector.md
+
+# Vector
+
+`Vector` is represented as `Vec<T>`
+
+```rust
+use futures::TryStreamExt;
+
+// Insert a vector of ints into the table
+let my_vector: Vec<i32> = vec![1, 2, 3, 4, 5];
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&my_vector,))
+    .await?;
+
+// Read a list of ints from the table
+let mut stream = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(Vec<i32>,)>()?;
+while let Some((vector_value,)) = stream.try_next().await? {
+    println!("{:?}", vector);
+}
+```
+
+
