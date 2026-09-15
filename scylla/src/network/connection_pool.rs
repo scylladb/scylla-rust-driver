@@ -1054,9 +1054,11 @@ impl PoolRefiller {
         };
         let expected_host_id = match &*self.endpoint.read().unwrap() {
             UntranslatedEndpoint::Peer(PeerEndpoint { host_id, .. }) => *host_id,
-            // Pools are always created for a known peer (`Node::new`); a contact point endpoint
-            // only occurs in unit tests, and then there is no host ID to expect.
-            UntranslatedEndpoint::ContactPoint(_) => return,
+            // Neither endpoint carries an authoritative identity to check against:
+            // a contact point is user-provided (and only reaches a pool in unit
+            // tests), and a maintenance mode endpoint describes a node whose peer
+            // entry was never read from the cluster.
+            UntranslatedEndpoint::ContactPoint(_) | UntranslatedEndpoint::Maintenance(_) => return,
         };
 
         if expected_host_id != reported_host_id {
