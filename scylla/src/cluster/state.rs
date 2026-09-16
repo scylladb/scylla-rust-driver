@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use super::metadata::{Keyspace, Metadata, Strategy, Table};
+use super::metadata::{Keyspace, Metadata, Table};
 use super::node::{Node, NodeRef};
 
 /// Helper struct to group parameters that are only needed to
@@ -560,32 +560,61 @@ impl ClusterState {
     }
 
     /// Access to replicas owning a given token
+    ///
+    /// Returns an empty `Vec` if `ClusterState` holds no metadata for `keyspace`: the
+    /// replica set is undefined without the keyspace's replication strategy.
+    ///
+    /// Deprecated in favour of [`ClusterState::try_get_token_endpoints`].
+    #[deprecated(
+        since = "1.9.0",
+        note = "an empty replica set cannot be told apart from a keyspace whose metadata \
+                the driver does not have; use `try_get_token_endpoints` instead"
+    )]
     pub fn get_token_endpoints(
         &self,
         keyspace: &str,
         table: &str,
         token: Token,
     ) -> Vec<(Arc<Node>, Shard)> {
+        self.try_get_token_endpoints(keyspace, table, token)
+            .unwrap_or_default()
+    }
+
+    /// Access to replicas owning a given token
+    ///
+    /// Fails with [`ClusterStateTokenError::UnknownTable`] if `ClusterState` holds no
+    /// metadata for `keyspace`: the replica set is undefined without the keyspace's
+    /// replication strategy.
+    pub fn try_get_token_endpoints(
+        &self,
+        keyspace: &str,
+        table: &str,
+        token: Token,
+    ) -> Result<Vec<(Arc<Node>, Shard)>, ClusterStateTokenError> {
         let table_spec = TableSpec::borrowed(keyspace, table);
-        self.get_token_endpoints_iter(&table_spec, token)
+        Ok(self
+            .get_token_endpoints_iter(&table_spec, token)?
             .map(|(node, shard)| (node.clone(), shard))
-            .collect()
+            .collect())
     }
 
     pub(crate) fn get_token_endpoints_iter(
         &self,
         table_spec: &TableSpec,
         token: Token,
-    ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> + Clone + use<'_> {
-        let keyspace = self.keyspaces.get(table_spec.ks_name());
-        let strategy = keyspace
-            .map(|k| &k.strategy)
-            .unwrap_or(&Strategy::LocalStrategy);
-        let replica_set = self
-            .replica_locator()
-            .replicas_for_token(token, strategy, None, table_spec);
+    ) -> Result<impl Iterator<Item = (NodeRef<'_>, Shard)> + Clone + use<'_>, ClusterStateTokenError>
+    {
+        let keyspace = self.keyspaces.get(table_spec.ks_name()).ok_or_else(|| {
+            ClusterStateTokenError::UnknownTable {
+                keyspace: table_spec.ks_name().to_owned(),
+                table: table_spec.table_name().to_owned(),
+            }
+        })?;
+        let replica_set =
+            self.replica_locator()
+                .replicas_for_token(token, &keyspace.strategy, None, table_spec);
 
-        replica_set.into_iter()
+        Ok(replica_set.into_iter())
     }
 
     /// Access to replicas owning a given partition key (similar to `nodetool getendpoints`)
@@ -602,7 +631,7 @@ impl ClusterState {
         partition_key: &dyn SerializeRow,
     ) -> Result<Vec<(Arc<Node>, Shard)>, ClusterStateTokenError> {
         let token = self.compute_token(keyspace, table, partition_key)?;
-        Ok(self.get_token_endpoints(keyspace, table, token))
+        self.try_get_token_endpoints(keyspace, table, token)
     }
 
     /// Access replica location info
@@ -817,10 +846,11 @@ impl ClusterState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cluster::metadata::{Metadata, Peer};
+    use crate::cluster::metadata::{ConsistencyMode, Metadata, Peer, Strategy};
     use crate::cluster::node::NodeAddr;
     use crate::policies::host_filter::HostFilter;
     use crate::test_utils::setup_tracing;
+    use assert_matches::assert_matches;
 
     use std::collections::{HashMap, HashSet};
     use std::net::SocketAddr;
@@ -846,11 +876,30 @@ mod tests {
     }
 
     fn make_metadata(peers: Vec<Peer>) -> Metadata {
+        make_metadata_with_keyspaces(peers, HashMap::new())
+    }
+
+    fn make_metadata_with_keyspaces(
+        peers: Vec<Peer>,
+        keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
+    ) -> Metadata {
         Metadata {
             peers,
-            keyspaces: HashMap::new(),
+            keyspaces,
             client_routes: None,
             cluster_name: Some("Test Cluster".into()),
+        }
+    }
+
+    fn make_keyspace(strategy: Strategy) -> Keyspace {
+        Keyspace {
+            strategy,
+            durable_writes: true,
+            tablet_based: false,
+            consistency_mode: ConsistencyMode::Eventual,
+            tables: HashMap::new(),
+            views: HashMap::new(),
+            user_defined_types: HashMap::new(),
         }
     }
 
@@ -1023,5 +1072,67 @@ mod tests {
             Arc::ptr_eq(&old_node, new_node),
             "Node object should be reused when disabled node's attributes haven't changed"
         );
+    }
+
+    // A keyspace that `ClusterState` has no metadata for has no known replication
+    // strategy, so its replica set is undefined and must not be guessed - guessing
+    // SimpleStrategy with RF=1 yields an arbitrary node that is not a replica.
+    #[tokio::test]
+    async fn unknown_keyspace_has_no_replicas() {
+        setup_tracing();
+
+        const KS: &str = "ks";
+        const UNKNOWN_KS: &str = "unknown_ks";
+
+        let peer = make_peer(Uuid::new_v4(), make_addr(1), Some("dc1"), Some("r1"));
+        let keyspaces = HashMap::from([(
+            KS.to_owned(),
+            Ok(make_keyspace(Strategy::SimpleStrategy {
+                replication_factor: 1,
+            })),
+        )]);
+        let state =
+            new_cluster_state(make_metadata_with_keyspaces(vec![peer], keyspaces), None).await;
+
+        // Sanity check: a known keyspace does have replicas.
+        let known = state
+            .get_token_endpoints_iter(&TableSpec::borrowed(KS, "t"), Token::new(1))
+            .unwrap();
+        assert_eq!(known.count(), 1);
+        #[expect(deprecated)] // The deprecated API's fallback is what this test pins down.
+        {
+            assert_eq!(state.get_token_endpoints(KS, "t", Token::new(1)).len(), 1);
+        }
+        assert_eq!(
+            state
+                .try_get_token_endpoints(KS, "t", Token::new(1))
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // An unknown keyspace is an error for the internal API...
+        assert_matches!(
+            state
+                .get_token_endpoints_iter(&TableSpec::borrowed(UNKNOWN_KS, "t"), Token::new(1))
+                .map(|_| ()),
+            Err(ClusterStateTokenError::UnknownTable { keyspace, table })
+                if keyspace == UNKNOWN_KS && table == "t"
+        );
+        // ...and for the fallible public API...
+        assert_matches!(
+            state.try_get_token_endpoints(UNKNOWN_KS, "t", Token::new(1)),
+            Err(ClusterStateTokenError::UnknownTable { keyspace, table })
+                if keyspace == UNKNOWN_KS && table == "t"
+        );
+        // ...but an empty replica set for the deprecated one, which can't report errors.
+        #[expect(deprecated)]
+        {
+            assert!(
+                state
+                    .get_token_endpoints(UNKNOWN_KS, "t", Token::new(1))
+                    .is_empty()
+            );
+        }
     }
 }

@@ -941,7 +941,7 @@ If you are using this API, you are probably doing something wrong."
             serialized_values_size: usize,
             cluster_state: &ClusterState,
             table_spec: Option<&TableSpec<'_>>,
-            replicas: &OnceCell<Replicas>,
+            replicas: &OnceCell<Option<Replicas>>,
         ) -> RequestSpan {
             let span = RequestSpan::new_prepared(
                 partition_key.as_ref().map(|pk| pk.iter()),
@@ -957,10 +957,16 @@ If you are using this API, you are probably doing something wrong."
                 let replicas = replicas.get_or_init(|| {
                     cluster_state
                         .get_token_endpoints_iter(table_spec, token)
-                        .map(|(node, shard)| (node.clone(), shard))
-                        .collect()
+                        .ok()
+                        .map(|replicas| {
+                            replicas
+                                .map(|(node, shard)| (node.clone(), shard))
+                                .collect()
+                        })
                 });
-                span.record_replicas(replicas.iter().map(|(node, shard)| (node, *shard)));
+                if let Some(replicas) = replicas {
+                    span.record_replicas(replicas.iter().map(|(node, shard)| (node, *shard)));
+                }
             }
             span
         }
@@ -1012,7 +1018,7 @@ If you are using this API, you are probably doing something wrong."
 
         // Shared by the first page and every remaining page, so that the replica set is
         // computed at most once - and only if at least one of those spans is enabled.
-        let replicas: OnceCell<Replicas> = OnceCell::new();
+        let replicas: OnceCell<Option<Replicas>> = OnceCell::new();
 
         let request_span = create_span(
             &partition_key,

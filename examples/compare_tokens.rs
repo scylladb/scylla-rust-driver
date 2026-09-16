@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
             "Token endpoints for query: {:?}",
             session
                 .get_cluster_state()
-                .get_token_endpoints("examples_ks", "compare_tokens", Token::new(t))
+                .try_get_token_endpoints("examples_ks", "compare_tokens", Token::new(t))?
                 .iter()
                 .map(|(node, _shard)| node.address)
                 .collect::<Vec<NodeAddr>>()
