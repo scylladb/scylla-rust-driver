@@ -10,9 +10,13 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
 use scylla::cluster::metadata::PeriodicFetchMode;
+use scylla::errors::DbError;
+use scylla_cql::frame::protocol_features::ProtocolFeatures;
+use scylla_cql::frame::response::Error as ErrorResponse;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
-    ResponseOpcode, ResponseReaction, ResponseRule, RunningProxy, ShardAwareness, WorkerError,
+    ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule, RunningProxy, ShardAwareness,
+    TargetShard, WorkerError,
 };
 use tokio::sync::mpsc;
 use tracing::info;
@@ -46,8 +50,12 @@ const FETCH_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// changes to come quickly, so that the tests need not wait a minute for it.
 const SCHEMA_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 
-/// The proxy's feedback channel for the counted metadata requests.
-type MetadataRequestFeedback = mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>;
+/// The proxy's feedback channels for counting the metadata requests of the
+/// control connection. See [`count_metadata_requests`] and [`drain_count`].
+struct MetadataRequestFeedback {
+    executes: mpsc::UnboundedReceiver<(RequestFrame, Option<TargetShard>)>,
+    errors: mpsc::UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>,
+}
 
 /// A TOPOLOGY_CHANGE event can only have changed the peer list, so the driver
 /// must react with a partial topology fetch: re-read `system.peers` and
@@ -103,7 +111,7 @@ async fn assert_event_triggers_only_a_topology_fetch(
 
             let state_before_event = session.get_cluster_state();
 
-            let mut metadata_request_rx = count_metadata_requests(&mut running_proxy);
+            let mut metadata_requests = count_metadata_requests(&mut running_proxy);
 
             // The address named by the event does not matter for the fetch: the
             // driver reacts by re-reading the whole peer list anyway. An address
@@ -116,7 +124,7 @@ async fn assert_event_triggers_only_a_topology_fetch(
             let state_after_event =
                 wait_for_state(&session, |state| !Arc::ptr_eq(state, &state_before_event)).await;
 
-            let requests = drain_count(&mut metadata_request_rx);
+            let requests = drain_count(&mut metadata_requests);
             assert_eq!(
                 requests, TOPOLOGY_FETCH_REQUESTS,
                 "the control connection issued {requests} metadata requests, so the event \
@@ -156,7 +164,7 @@ async fn schema_change_event_triggers_only_a_schema_fetch() {
 
             info!("Part 1: Creating keyspace");
 
-            let mut metadata_request_rx = count_metadata_requests(&mut running_proxy);
+            let mut metadata_requests = count_metadata_requests(&mut running_proxy);
 
             let state_before_event = session.get_cluster_state();
             assert!(state_before_event.get_keyspace(&keyspace).is_none());
@@ -167,7 +175,7 @@ async fn schema_change_event_triggers_only_a_schema_fetch() {
             let _state_after_event_1 =
                 wait_for_state(&session, |state| state.get_keyspace(&keyspace).is_some()).await;
 
-            let requests = drain_count(&mut metadata_request_rx);
+            let requests = drain_count(&mut metadata_requests);
             assert_eq!(
                 requests, SCHEMA_FETCH_REQUESTS,
                 "the control connection issued {requests} metadata requests, so the event \
@@ -191,7 +199,7 @@ async fn schema_change_event_triggers_only_a_schema_fetch() {
             })
             .await;
 
-            let requests = drain_count(&mut metadata_request_rx);
+            let requests = drain_count(&mut metadata_requests);
             assert_eq!(
                 requests, SCHEMA_FETCH_REQUESTS,
                 "the control connection issued {requests} metadata requests, so the event \
@@ -209,7 +217,7 @@ async fn schema_change_event_triggers_only_a_schema_fetch() {
             //     2026-08-21T16:12:16.255279Z DEBUG scylla::cluster::metadata::worker: Received server event: SchemaChange(TableChange { change_type: Dropped, keyspace_name: "test_rust_4cf8c3ab7e0940cc8970ef8c2397c1fe", object_name: "tbl" })
             //
 
-            // let requests = drain_count(&mut metadata_request_rx).await;
+            // let requests = drain_count(&mut metadata_requests).await;
             // assert_eq!(
             //     requests, 0,
             //     "No queries should be needed to drop a keyspace"
@@ -222,7 +230,7 @@ async fn schema_change_event_triggers_only_a_schema_fetch() {
             let _state_after_event_3 =
                 wait_for_state(&session, |state| state.get_keyspace(&keyspace).is_none()).await;
 
-            let requests = drain_count(&mut metadata_request_rx);
+            let requests = drain_count(&mut metadata_requests);
             assert_eq!(
                 requests, 0,
                 "No requests should be needed for drop of a keyspace"
@@ -350,16 +358,25 @@ async fn create_keyspace(session: &Session, keyspace: &str) {
 /// condition. The driver prepares its metadata statements, so what identifies a
 /// fetch is the number of EXECUTEs, not any query text. Installed on demand, so
 /// that the requests preceding the behaviour under test are not counted.
+///
+/// The error responses are captured too, for [`drain_count`] to tell
+/// repreparations apart from metadata requests.
 fn count_metadata_requests(running_proxy: &mut RunningProxy) -> MetadataRequestFeedback {
-    let (metadata_request_tx, metadata_request_rx) = mpsc::unbounded_channel();
+    let (execute_tx, executes) = mpsc::unbounded_channel();
+    let (error_tx, errors) = mpsc::unbounded_channel();
     for node in running_proxy.running_nodes.iter_mut() {
         node.prepend_request_rules(vec![RequestRule(
             Condition::ConnectionRegisteredAnyEvent
                 .and(Condition::RequestOpcode(RequestOpcode::Execute)),
-            RequestReaction::noop().with_feedback_when_performed(metadata_request_tx.clone()),
+            RequestReaction::noop().with_feedback_when_performed(execute_tx.clone()),
+        )]);
+        node.prepend_response_rules(vec![ResponseRule(
+            Condition::ConnectionRegisteredAnyEvent
+                .and(Condition::ResponseOpcode(ResponseOpcode::Error)),
+            ResponseReaction::noop().with_feedback_when_performed(error_tx.clone()),
         )]);
     }
-    metadata_request_rx
+    MetadataRequestFeedback { executes, errors }
 }
 
 /// Waits until the published `ClusterState` satisfies `is_expected`.
@@ -376,13 +393,27 @@ async fn wait_for_state(
     }
 }
 
-/// Counts everything the feedback channel holds.
-fn drain_count(metadata_request_rx: &mut MetadataRequestFeedback) -> usize {
-    let mut requests = 0;
-    while metadata_request_rx.try_recv().is_ok() {
-        requests += 1;
+/// Counts the metadata requests the feedback channels hold. Repreparing a
+/// statement the server evicted from its cache is not a request.
+fn drain_count(feedback: &mut MetadataRequestFeedback) -> usize {
+    let mut executes = 0;
+    while feedback.executes.try_recv().is_ok() {
+        executes += 1;
     }
-    requests
+
+    // An evicted statement costs an UNPREPARED error plus a second EXECUTE.
+    // Other errors do not come with an EXECUTE: Cassandra, for example,
+    // rejects preparing the Scylla-only schema tables.
+    let mut unprepared = 0;
+    while let Ok((frame, _shard)) = feedback.errors.try_recv() {
+        let error =
+            ErrorResponse::deserialize(&ProtocolFeatures::default(), &mut &frame.body[..]).unwrap();
+        if matches!(error.error, DbError::Unprepared { .. }) {
+            unprepared += 1;
+        }
+    }
+
+    executes - unprepared
 }
 
 /// Makes the cluster look mute to the driver: every EVENT frame the server
