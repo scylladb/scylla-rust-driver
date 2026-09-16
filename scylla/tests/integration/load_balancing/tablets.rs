@@ -26,7 +26,9 @@ use scylla_proxy::{
     RunningProxy, ShardAwareness, TargetShard, WorkerError,
 };
 
+use std::collections::HashSet;
 use std::future::Future;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tracing::info;
@@ -320,11 +322,21 @@ async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: 
 /// That extension relies on randomization and so the driver may not receive any
 /// feedback from any server. However, the probability of this happening rapidly
 /// decreases with the number of requests sent for a given token.
+///
+/// Finally, waits until the driver routes every key to the replicas of its
+/// tablet (as given by `tablets`), because the driver applies the feedback
+/// asynchronously.
 async fn learn_tablet_info(
     session: &Session,
+    ks: &str,
+    table: &str,
+    tablets: &[Tablet],
     per_key: &[PreparedForKey],
     feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
 ) -> Result<(), String> {
+    const TABLETS_APPLIED_DEADLINE: Duration = Duration::from_secs(2);
+    const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
     drain_feedbacks(feedback_rxs);
     let mut keys_with_feedback = 0;
     for (prepared, values) in per_key {
@@ -342,14 +354,46 @@ async fn learn_tablet_info(
         }
     }
 
-    if keys_with_feedback == per_key.len() {
-        Ok(())
-    } else {
-        Err(format!(
+    if keys_with_feedback != per_key.len() {
+        return Err(format!(
             "Expected tablet feedback for all {} keys, got it for {}",
             per_key.len(),
             keys_with_feedback
-        ))
+        ));
+    }
+
+    let start = Instant::now();
+    loop {
+        let state = session.get_cluster_state();
+        let all_applied = per_key.iter().all(|(prepared, values)| {
+            let token = prepared.calculate_token(values).unwrap().unwrap();
+            let tablet = tablets
+                .iter()
+                .find(|tablet| {
+                    tablet.first_token <= token.value() && token.value() <= tablet.last_token
+                })
+                .unwrap();
+            let expected: HashSet<(Uuid, Shard)> = tablet
+                .replicas
+                .iter()
+                .map(|(node, shard)| (node.host_id, *shard as Shard))
+                .collect();
+            let routed: HashSet<(Uuid, Shard)> = state
+                .get_token_endpoints(ks, table, token)
+                .into_iter()
+                .map(|(node, shard)| (node.host_id, shard))
+                .collect();
+            expected == routed
+        });
+        if all_applied {
+            return Ok(());
+        }
+        if start.elapsed() > TABLETS_APPLIED_DEADLINE {
+            return Err(format!(
+                "the driver did not apply the learned tablet info within {TABLETS_APPLIED_DEADLINE:?}"
+            ));
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
     }
 }
 
@@ -823,7 +867,7 @@ async fn run_tablet_cases(
         let value_per_tablet = calculate_key_per_tablet(tablets, populate_prepared, |i| (i, 1));
 
         let per_key = prepared_for_keys(populate_prepared, value_per_tablet.iter().copied());
-        learn_tablet_info(session, &per_key, feedback_rxs).await?;
+        learn_tablet_info(session, ks, "t", tablets, &per_key, feedback_rxs).await?;
 
         // Refresh the whole metadata to make sure that the tablet info the
         // driver learned above survives a metadata refresh (which happens
@@ -907,7 +951,7 @@ async fn verify_materialized_view_tablet_routing(
             .collect();
         let per_key = prepared_for_keys(&mv_select, mv_keys);
 
-        learn_tablet_info(session, &per_key, feedback_rxs).await?;
+        learn_tablet_info(session, &ks, "mv", tablets, &per_key, feedback_rxs).await?;
 
         // The cached tablet info must survive a metadata refresh: the tablet
         // maintenance step consults the keyspace's `views` map as well as its
@@ -985,7 +1029,15 @@ async fn verify_cdc_log_tablet_routing(
                 .map(|key| (key,)),
         );
 
-        learn_tablet_info(session, &per_key, feedback_rxs).await?;
+        learn_tablet_info(
+            session,
+            &ks,
+            "t_scylla_cdc_log",
+            tablets,
+            &per_key,
+            feedback_rxs,
+        )
+        .await?;
 
         // The cached tablet info must survive a metadata refresh (CDC log
         // tables are regular tables, so unlike views they are not dropped by
