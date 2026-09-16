@@ -610,6 +610,7 @@ pub(crate) async fn with_migration_retry<Snapshot, TakeSnapshot, Attempt>(
                     panic!("Test attempt failed despite no migration. Error: {error}");
                 }
                 // There was a migration, let's try again.
+                tracing::info!("Tablet migration detected, retrying the attempt. Error: {error}");
                 last_error = Some(error);
             }
         }

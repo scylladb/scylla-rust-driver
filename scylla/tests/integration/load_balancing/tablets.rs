@@ -39,7 +39,7 @@ struct SelectedTablet {
     replicas: Vec<(Uuid, i32)>,
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 struct Tablet {
     first_token: i64,
     last_token: i64,
@@ -772,10 +772,13 @@ async fn verify_case(
         .map_err(|e| format!("{descriptor:?}: {e}"))
 }
 
-/// Runs the whole set of query-variant subtests against a freshly populated
-/// driver tablet cache. Tablet migrations can invalidate the cache mid-run, so
-/// [`with_migration_retry`] re-checks whether a migration happened on failure
-/// and, if so, retries the whole attempt.
+/// Runs the query-variant subtests against a populated driver tablet cache.
+///
+/// A tablet migration invalidates the cache mid-run, and the shared cluster
+/// migrates tablets often enough that a run of all cases rarely completes
+/// without one. Every case is therefore retried on its own by
+/// [`with_migration_retry`], and the cache is populated again only when the
+/// layout changed since the driver last learned it.
 async fn run_tablet_cases(
     session: &Session,
     ks: &str,
@@ -783,30 +786,34 @@ async fn run_tablet_cases(
     cases: &[QueryDescriptor],
     feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
 ) {
-    with_migration_retry(session, ks, "t", async |tablets| {
-        let value_per_tablet = calculate_key_per_tablet(tablets, populate_prepared, |i| (i, 1));
+    let mut learned: Option<Vec<Tablet>> = None;
+    let mut value_per_tablet = Vec::new();
+    for case in cases {
+        with_migration_retry(session, ks, "t", async |tablets| {
+            if learned.as_deref() != Some(tablets) {
+                value_per_tablet = calculate_key_per_tablet(tablets, populate_prepared, |i| (i, 1));
+                let per_key =
+                    prepared_for_keys(populate_prepared, value_per_tablet.iter().copied());
+                learn_tablet_info(session, ks, "t", tablets, &per_key, feedback_rxs).await?;
 
-        let per_key = prepared_for_keys(populate_prepared, value_per_tablet.iter().copied());
-        learn_tablet_info(session, ks, "t", tablets, &per_key, feedback_rxs).await?;
+                // Refresh the whole metadata to make sure that the tablet info
+                // the driver learned above survives a metadata refresh (which
+                // happens periodically and during tablet maintenance). If the
+                // refresh dropped the tablet mapping, the token-aware cases
+                // would start receiving feedback again.
+                session
+                    .refresh_metadata()
+                    .await
+                    .map_err(|e| format!("refresh_metadata failed: {e}"))?;
+                learned = Some(tablets.to_vec());
+            }
 
-        // Refresh the whole metadata to make sure that the tablet info the
-        // driver learned above survives a metadata refresh (which happens
-        // periodically and during tablet maintenance). If the refresh dropped
-        // the tablet mapping, the token-aware cases below would start
-        // receiving feedback again.
-        session
-            .refresh_metadata()
-            .await
-            .map_err(|e| format!("refresh_metadata failed: {e}"))?;
-
-        for case in cases {
             verify_case(session, *case, ks, &value_per_tablet, feedback_rxs)
                 .await
-                .map_err(|e| format!("case {case:?} failed: {e}"))?;
-        }
-        Ok(())
-    })
-    .await;
+                .map_err(|e| format!("case {case:?} failed: {e}"))
+        })
+        .await;
+    }
 }
 
 /// Exercises tablet routing for a materialized view.
