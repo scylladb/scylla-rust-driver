@@ -33,10 +33,18 @@ Once fetched, a snapshot of cluster's schema can be examined. The following info
    - materialized views belonging to the keyspace
    - replication strategy
    - user-defined types
+   - user-defined functions
+   - user-defined aggregates
  - table/view
    - primary key definition
    - columns
    - partitioner type
+   - indexes defined on the table
+
+A function or an aggregate is identified by its signature, not by its name alone,
+because CQL allows overloading them. See `FunctionSignature`, and the
+`Keyspace::functions_named` / `Keyspace::aggregates_named` methods that iterate
+over all overloads of one name.
 
 Example showing how to print obtained schema information:
 
@@ -65,6 +73,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("\tTables: {:#?}", keyspace_info.tables);
         println!("\tViews: {:#?}", keyspace_info.views);
         println!("\tUDTs: {:#?}", keyspace_info.user_defined_types);
+        println!("\tUDFs: {:#?}", keyspace_info.user_defined_functions);
+        println!("\tUDAs: {:#?}", keyspace_info.user_defined_aggregates);
+
+        for (table_name, table_info) in &keyspace_info.tables {
+            println!("\tIndexes on {}: {:#?}", table_name, table_info.indexes);
+        }
     }
 
     Ok(())
