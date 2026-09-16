@@ -128,6 +128,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
+                user_defined_functions: HashMap::new(),
             }),
         ),
         (
@@ -144,6 +145,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
+                user_defined_functions: HashMap::new(),
             }),
         ),
         (
@@ -160,6 +162,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
+                user_defined_functions: HashMap::new(),
             }),
         ),
     ]

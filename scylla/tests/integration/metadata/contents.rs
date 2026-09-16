@@ -5,7 +5,8 @@ use std::sync::Arc;
 use itertools::Itertools as _;
 use scylla::{
     cluster::metadata::{
-        CollectionType, ColumnKind, ColumnType, IndexKind, NativeType, UserDefinedType,
+        CollectionType, ColumnKind, ColumnType, FunctionSignature, IndexKind, NativeType,
+        UserDefinedType,
     },
     value::Row,
 };
@@ -530,6 +531,78 @@ async fn test_indexes_in_metadata() {
 
     // A table with no index has empty index metadata, rather than missing from it.
     assert!(keyspace.tables["not_indexed"].indexes.is_empty());
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+// Requires a server with user defined functions enabled, which the ScyllaDB test
+// cluster of this repository is started with. UDFs cannot be enabled through the
+// environment of the Cassandra test cluster, so the test is skipped there.
+#[tokio::test]
+#[cfg_attr(cassandra_tests, ignore)]
+async fn test_user_defined_functions_in_metadata() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session
+        .ddl(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"))
+        .await
+        .unwrap();
+    session.use_keyspace(ks.clone(), false).await.unwrap();
+
+    // Two overloads of one name, which only a signature tells apart.
+    session
+        .ddl(
+            "CREATE FUNCTION twice(val int) RETURNS NULL ON NULL INPUT RETURNS int \
+             LANGUAGE lua AS 'return 2 * val;'",
+        )
+        .await
+        .unwrap();
+    session
+        .ddl(
+            "CREATE FUNCTION twice(val text) CALLED ON NULL INPUT RETURNS text \
+             LANGUAGE lua AS 'return val .. val;'",
+        )
+        .await
+        .unwrap();
+
+    let cluster_state = session.get_cluster_state();
+    let keyspace = cluster_state.get_keyspace(&ks).unwrap();
+
+    let functions = &keyspace.user_defined_functions;
+
+    assert_eq!(
+        functions
+            .keys()
+            .map(|signature| (signature.name.as_str(), signature.argument_types.clone()))
+            .sorted()
+            .collect::<Vec<_>>(),
+        vec![
+            ("twice", vec!["int".to_owned()]),
+            ("twice", vec!["text".to_owned()]),
+        ]
+    );
+    assert_eq!(keyspace.functions_named("twice").count(), 2);
+
+    let twice_int = &functions[&FunctionSignature::new("twice".to_owned(), vec!["int".to_owned()])];
+    assert_eq!(twice_int.keyspace, ks);
+    assert_eq!(twice_int.name, "twice");
+    assert_eq!(twice_int.argument_names, vec!["val"]);
+    assert_eq!(
+        twice_int.argument_types,
+        vec![ColumnType::Native(NativeType::Int)]
+    );
+    assert_eq!(twice_int.return_type, ColumnType::Native(NativeType::Int));
+    assert_eq!(twice_int.language, "lua");
+    assert_eq!(twice_int.body, "return 2 * val;");
+    assert!(!twice_int.called_on_null_input);
+
+    let twice_text =
+        &functions[&FunctionSignature::new("twice".to_owned(), vec!["text".to_owned()])];
+    assert_eq!(twice_text.return_type, ColumnType::Native(NativeType::Text));
+    assert_eq!(twice_text.body, "return val .. val;");
+    assert!(twice_text.called_on_null_input);
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
