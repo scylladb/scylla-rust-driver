@@ -12,7 +12,8 @@
 //!   - [Index],
 //!   - [IndexKind],
 //!   - [UserDefinedFunction],
-//!   - [FunctionSignature] - identifies one overload of a function,
+//!   - [UserDefinedAggregate],
+//!   - [FunctionSignature] - identifies one overload of a function or an aggregate,
 //!   - CQL types (re-exported from scylla-cql):
 //!     - [ColumnType],
 //!     - [NativeType],
@@ -263,6 +264,10 @@ pub struct Keyspace {
     ///
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
     pub user_defined_functions: HashMap<FunctionSignature, UserDefinedFunction>,
+    /// User defined aggregates in the keyspace, keyed by their signature.
+    ///
+    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
+    pub user_defined_aggregates: HashMap<FunctionSignature, UserDefinedAggregate>,
 }
 
 impl Keyspace {
@@ -274,6 +279,16 @@ impl Keyspace {
         self.user_defined_functions
             .iter()
             .filter_map(move |(signature, function)| (signature.name == name).then_some(function))
+    }
+
+    /// Iterates over all overloads of the user defined aggregate with the given name.
+    pub fn aggregates_named<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> impl Iterator<Item = &'a UserDefinedAggregate> {
+        self.user_defined_aggregates
+            .iter()
+            .filter_map(move |(signature, aggregate)| (signature.name == name).then_some(aggregate))
     }
 }
 
@@ -408,6 +423,35 @@ pub struct UserDefinedFunction {
     /// Whether the function is called when any of its arguments is null,
     /// as opposed to returning null right away.
     pub called_on_null_input: bool,
+}
+
+/// Describes a user defined aggregate, as fetched from `system_schema.aggregates`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UserDefinedAggregate {
+    /// Name of the keyspace the aggregate belongs to.
+    pub keyspace: String,
+    /// Name of the aggregate. Does not identify it on its own - see [`Self::signature`].
+    pub name: String,
+    /// Signature of the aggregate, i.e. the key under which
+    /// [`Keyspace::user_defined_aggregates`] holds it.
+    pub signature: FunctionSignature,
+    /// Types of the arguments, in order.
+    pub argument_types: Vec<ColumnType<'static>>,
+    /// Type that the aggregate returns.
+    pub return_type: ColumnType<'static>,
+    /// Type of the accumulated state.
+    pub state_type: ColumnType<'static>,
+    /// The state function (`SFUNC`), which folds each row into the state, as a
+    /// signature ready to be looked up in [`Keyspace::user_defined_functions`].
+    pub state_function: FunctionSignature,
+    /// The final function (`FINALFUNC`), which turns the accumulated state into
+    /// the result, if the aggregate declares one, as a signature ready to be
+    /// looked up in [`Keyspace::user_defined_functions`].
+    pub final_function: Option<FunctionSignature>,
+    /// The initial state (`INITCOND`), as the CQL literal that the server
+    /// stores, verbatim, or `None` if the aggregate has no initial condition.
+    pub initial_condition: Option<String>,
 }
 
 /// Represents a user defined type whose definition is missing from the metadata.
