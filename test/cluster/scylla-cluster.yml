@@ -1,3 +1,9 @@
+# The 3-node ScyllaDB cluster that the integration tests run against.
+#
+# User defined functions are enabled on every node (which takes both
+# `--enable-user-defined-functions` and the `udf` experimental feature - the node
+# refuses to start with only one of them), so that the tests covering user defined
+# function and aggregate metadata have a server that accepts their DDL.
 networks:
   public:
     name: scylla_rust_driver_public
@@ -32,6 +38,8 @@ services:
       --logger-log-level=migration_manager=warn
       --shutdown-announce-in-ms=0
       --cluster-name TestCluster
+      --enable-user-defined-functions=1
+      --experimental-features=udf
     healthcheck:
       test:
         [
@@ -69,6 +77,8 @@ services:
       --logger-log-level=migration_manager=warn
       --shutdown-announce-in-ms=0
       --cluster-name TestCluster
+      --enable-user-defined-functions=1
+      --experimental-features=udf
     healthcheck:
       test:
         [
@@ -109,6 +119,8 @@ services:
       --logger-log-level=migration_manager=warn
       --shutdown-announce-in-ms=0
       --cluster-name TestCluster
+      --enable-user-defined-functions=1
+      --experimental-features=udf
     healthcheck:
       test:
         [
