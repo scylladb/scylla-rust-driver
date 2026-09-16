@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use crate::utils::{
-    PerformDDL, execute_prepared_statement_everywhere, execute_unprepared_statement_everywhere,
-    scylla_supports_tablets, setup_tracing, supports_feature, test_with_3_node_cluster,
-    unique_keyspace_name,
+    LwtRetryPolicy, PerformDDL, execute_prepared_statement_everywhere,
+    execute_unprepared_statement_everywhere, scylla_supports_tablets, setup_tracing,
+    supports_feature, test_with_3_node_cluster, unique_keyspace_name,
+    wait_until_all_shards_are_connected,
 };
 
 use futures::TryStreamExt;
@@ -12,8 +13,6 @@ use itertools::Itertools;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::cluster::Node;
-use scylla::errors::{DbError, RequestAttemptError, WriteType};
-use scylla::policies::retry::{DefaultRetrySession, RetryDecision, RetryPolicy, RetrySession};
 use scylla::routing::Shard;
 use scylla::routing::partitioner::PartitionerName;
 use scylla::serialize::row::SerializeRow;
@@ -26,69 +25,13 @@ use scylla_proxy::{
     RunningProxy, ShardAwareness, TargetShard, WorkerError,
 };
 
+use std::collections::HashSet;
 use std::future::Future;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tracing::info;
 use uuid::Uuid;
-
-/// RetryPolicy that works around Scylla LWT bug: https://scylladb.atlassian.net/browse/SCYLLADB-3194
-/// The symptom of the bug is the request failing with error message like below:
-///
-/// thread 'load_balancing::tablets::test_tablets' (3651327) panicked at scylla/tests/integration/load_balancing/tablets.rs:602:21:
-/// Test attempt failed despite no migration. Error: case QueryDescriptor { op: LwtUpdateIf, ks_presence: WithKs, data_form: RegularPrepared } failed: QueryDescriptor { op: LwtUpdateIf, ks_presence: WithKs, data_form: RegularPrepared }: execution failed: Database returned an error: A non-timeout error during a write request (consistency: LocalSerial, received: 1, required: 2, numfailures: 1, write_type: Cas, Error message: Failed to prepare ballot 2766fdcc-7b7f-11f1-abb6-46f4f195de97 for test_rust_675cf549299940bba12bd8786ceaad6d.t. Replica errors: host_id 826bb99e-6317-448c-a2f1-02b41fefbb1b -> seastar::rpc::remote_verb_error (stale topology exception, caller version 1470, callee fence version 1476);
-#[derive(Debug)]
-struct LwtBallotBugRetryPolicy;
-struct LwtBallotBugRetryPolicySession {
-    retries_left: usize,
-    inner: DefaultRetrySession,
-}
-
-impl RetryPolicy for LwtBallotBugRetryPolicy {
-    fn new_session(&self) -> Box<dyn RetrySession> {
-        Box::new(LwtBallotBugRetryPolicySession {
-            retries_left: 20,
-            inner: DefaultRetrySession::new(),
-        })
-    }
-}
-impl RetrySession for LwtBallotBugRetryPolicySession {
-    fn decide_should_retry(
-        &mut self,
-        request_info: scylla::policies::retry::RequestInfo,
-    ) -> scylla::policies::retry::RetryDecision {
-        if let RequestAttemptError::DbError(
-            DbError::WriteFailure {
-                write_type: WriteType::Cas,
-                consistency: Consistency::LocalSerial,
-                ..
-            },
-            message,
-        ) = request_info.error
-            && message.contains("Failed to prepare ballot")
-        {
-            if self.retries_left > 0 {
-                self.retries_left -= 1;
-            } else {
-                // Panic explicitly so that we know that retry policy worked, but
-                // error kept happening.
-                panic!(
-                    "LWT ballot error happened 20 times in a row! e: {}",
-                    request_info.error
-                );
-            }
-
-            return RetryDecision::RetrySameTarget(None);
-        }
-
-        self.inner.decide_should_retry(request_info)
-    }
-
-    fn reset(&mut self) {
-        self.retries_left = 20;
-        self.inner.reset();
-    }
-}
 
 #[derive(scylla::DeserializeRow)]
 struct SelectedTablet {
@@ -96,7 +39,7 @@ struct SelectedTablet {
     replicas: Vec<(Uuid, i32)>,
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 struct Tablet {
     first_token: i64,
     last_token: i64,
@@ -299,11 +242,21 @@ async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: 
 /// That extension relies on randomization and so the driver may not receive any
 /// feedback from any server. However, the probability of this happening rapidly
 /// decreases with the number of requests sent for a given token.
+///
+/// Finally, waits until the driver routes every key to the replicas of its
+/// tablet (as given by `tablets`), because the driver applies the feedback
+/// asynchronously.
 async fn learn_tablet_info(
     session: &Session,
+    ks: &str,
+    table: &str,
+    tablets: &[Tablet],
     per_key: &[PreparedForKey],
     feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
 ) -> Result<(), String> {
+    const TABLETS_APPLIED_DEADLINE: Duration = Duration::from_secs(2);
+    const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
     drain_feedbacks(feedback_rxs);
     let mut keys_with_feedback = 0;
     for (prepared, values) in per_key {
@@ -321,14 +274,46 @@ async fn learn_tablet_info(
         }
     }
 
-    if keys_with_feedback == per_key.len() {
-        Ok(())
-    } else {
-        Err(format!(
+    if keys_with_feedback != per_key.len() {
+        return Err(format!(
             "Expected tablet feedback for all {} keys, got it for {}",
             per_key.len(),
             keys_with_feedback
-        ))
+        ));
+    }
+
+    let start = Instant::now();
+    loop {
+        let state = session.get_cluster_state();
+        let all_applied = per_key.iter().all(|(prepared, values)| {
+            let token = prepared.calculate_token(values).unwrap().unwrap();
+            let tablet = tablets
+                .iter()
+                .find(|tablet| {
+                    tablet.first_token <= token.value() && token.value() <= tablet.last_token
+                })
+                .unwrap();
+            let expected: HashSet<(Uuid, Shard)> = tablet
+                .replicas
+                .iter()
+                .map(|(node, shard)| (node.host_id, *shard as Shard))
+                .collect();
+            let routed: HashSet<(Uuid, Shard)> = state
+                .get_token_endpoints(ks, table, token)
+                .into_iter()
+                .map(|(node, shard)| (node.host_id, shard))
+                .collect();
+            expected == routed
+        });
+        if all_applied {
+            return Ok(());
+        }
+        if start.elapsed() > TABLETS_APPLIED_DEADLINE {
+            return Err(format!(
+                "the driver did not apply the learned tablet info within {TABLETS_APPLIED_DEADLINE:?}"
+            ));
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
     }
 }
 
@@ -787,10 +772,13 @@ async fn verify_case(
         .map_err(|e| format!("{descriptor:?}: {e}"))
 }
 
-/// Runs the whole set of query-variant subtests against a freshly populated
-/// driver tablet cache. Tablet migrations can invalidate the cache mid-run, so
-/// [`with_migration_retry`] re-checks whether a migration happened on failure
-/// and, if so, retries the whole attempt.
+/// Runs the query-variant subtests against a populated driver tablet cache.
+///
+/// A tablet migration invalidates the cache mid-run, and the shared cluster
+/// migrates tablets often enough that a run of all cases rarely completes
+/// without one. Every case is therefore retried on its own by
+/// [`with_migration_retry`], and the cache is populated again only when the
+/// layout changed since the driver last learned it.
 async fn run_tablet_cases(
     session: &Session,
     ks: &str,
@@ -798,30 +786,34 @@ async fn run_tablet_cases(
     cases: &[QueryDescriptor],
     feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
 ) {
-    with_migration_retry(session, ks, "t", async |tablets| {
-        let value_per_tablet = calculate_key_per_tablet(tablets, populate_prepared, |i| (i, 1));
+    let mut learned: Option<Vec<Tablet>> = None;
+    let mut value_per_tablet = Vec::new();
+    for case in cases {
+        with_migration_retry(session, ks, "t", async |tablets| {
+            if learned.as_deref() != Some(tablets) {
+                value_per_tablet = calculate_key_per_tablet(tablets, populate_prepared, |i| (i, 1));
+                let per_key =
+                    prepared_for_keys(populate_prepared, value_per_tablet.iter().copied());
+                learn_tablet_info(session, ks, "t", tablets, &per_key, feedback_rxs).await?;
 
-        let per_key = prepared_for_keys(populate_prepared, value_per_tablet.iter().copied());
-        learn_tablet_info(session, &per_key, feedback_rxs).await?;
+                // Refresh the whole metadata to make sure that the tablet info
+                // the driver learned above survives a metadata refresh (which
+                // happens periodically and during tablet maintenance). If the
+                // refresh dropped the tablet mapping, the token-aware cases
+                // would start receiving feedback again.
+                session
+                    .refresh_metadata()
+                    .await
+                    .map_err(|e| format!("refresh_metadata failed: {e}"))?;
+                learned = Some(tablets.to_vec());
+            }
 
-        // Refresh the whole metadata to make sure that the tablet info the
-        // driver learned above survives a metadata refresh (which happens
-        // periodically and during tablet maintenance). If the refresh dropped
-        // the tablet mapping, the token-aware cases below would start
-        // receiving feedback again.
-        session
-            .refresh_metadata()
-            .await
-            .map_err(|e| format!("refresh_metadata failed: {e}"))?;
-
-        for case in cases {
             verify_case(session, *case, ks, &value_per_tablet, feedback_rxs)
                 .await
-                .map_err(|e| format!("case {case:?} failed: {e}"))?;
-        }
-        Ok(())
-    })
-    .await;
+                .map_err(|e| format!("case {case:?} failed: {e}"))
+        })
+        .await;
+    }
 }
 
 /// Exercises tablet routing for a materialized view.
@@ -886,7 +878,7 @@ async fn verify_materialized_view_tablet_routing(
             .collect();
         let per_key = prepared_for_keys(&mv_select, mv_keys);
 
-        learn_tablet_info(session, &per_key, feedback_rxs).await?;
+        learn_tablet_info(session, &ks, "mv", tablets, &per_key, feedback_rxs).await?;
 
         // The cached tablet info must survive a metadata refresh: the tablet
         // maintenance step consults the keyspace's `views` map as well as its
@@ -964,7 +956,15 @@ async fn verify_cdc_log_tablet_routing(
                 .map(|key| (key,)),
         );
 
-        learn_tablet_info(session, &per_key, feedback_rxs).await?;
+        learn_tablet_info(
+            session,
+            &ks,
+            "t_scylla_cdc_log",
+            tablets,
+            &per_key,
+            feedback_rxs,
+        )
+        .await?;
 
         // The cached tablet info must survive a metadata refresh (CDC log
         // tables are regular tables, so unlike views they are not dropped by
@@ -1026,7 +1026,7 @@ where
                 .fetch_full_schema_metadata(fetch_full_schema)
                 .default_execution_profile_handle(
                     ExecutionProfile::builder()
-                        .retry_policy(Arc::new(LwtBallotBugRetryPolicy))
+                        .retry_policy(Arc::new(LwtRetryPolicy))
                         .build()
                         .into_handle(),
                 )
@@ -1038,6 +1038,10 @@ where
                 tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
                 return running_proxy;
             }
+
+            // The subtests assert that requests reach the replica shard, which
+            // requires a connection to every shard.
+            wait_until_all_shards_are_connected(&session).await;
 
             let feedback_rxs = install_feedback_channels(&mut running_proxy);
 
