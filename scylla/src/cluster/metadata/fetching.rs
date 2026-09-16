@@ -1436,6 +1436,16 @@ struct UdaRow {
     initcond: Option<String>,
 }
 
+/// A row of the ScyllaDB-specific `system_schema.scylla_aggregates`.
+#[derive(DeserializeRow, Debug)]
+#[scylla(crate = "crate")]
+struct ScyllaUdaRow {
+    keyspace_name: String,
+    aggregate_name: String,
+    argument_types: Vec<String>,
+    reduce_func: Option<String>,
+}
+
 impl ControlConnection {
     /// Fetches the (possibly filtered) user defined aggregates from
     /// `system_schema.aggregates`, grouped by keyspace.
@@ -1450,7 +1460,7 @@ impl ControlConnection {
         keyspaces_to_fetch: &[String],
         udts: &PerKeyspaceResult<PerTable<Arc<UserDefinedType<'static>>>, MissingUserDefinedType>,
     ) -> Result<PerKeyspace<PerFunction<UserDefinedAggregate>>, MetadataError> {
-        let rows = self
+        let rows_query = self
             .query_filter_keyspace_name::<UdaRow>(
                 "SELECT keyspace_name, aggregate_name, argument_types, return_type, state_type, \
                  state_func, final_func, initcond FROM system_schema.aggregates",
@@ -1459,12 +1469,21 @@ impl ControlConnection {
             .map_err(|error| MetadataFetchError {
                 error,
                 table: "system_schema.aggregates",
-            });
+            })
+            .map_err(MetadataError::from)
+            .try_collect::<Vec<_>>();
+
+        let reduce_funcs_query = async {
+            self.query_aggregate_reduce_functions(keyspaces_to_fetch)
+                .await
+                .map_err(MetadataError::from)
+        };
+        let (rows, mut reduce_funcs) = tokio::try_join!(rows_query, reduce_funcs_query)?;
 
         let empty_ok_map = Ok(HashMap::new());
         let mut result: PerKeyspace<PerFunction<UserDefinedAggregate>> = HashMap::new();
 
-        rows.map(|row_result| {
+        for row in rows {
             let UdaRow {
                 keyspace_name,
                 aggregate_name,
@@ -1474,10 +1493,10 @@ impl ControlConnection {
                 state_func,
                 final_func,
                 initcond,
-            } = row_result?;
+            } = row;
 
             let Ok(keyspace_udts) = udts.get(&keyspace_name).unwrap_or(&empty_ok_map) else {
-                return Ok::<_, MetadataError>(());
+                continue;
             };
 
             let signature = FunctionSignature::new(aggregate_name.clone(), argument_types);
@@ -1501,14 +1520,22 @@ impl ControlConnection {
                     warn!(
                         "Skipping metadata of aggregate {keyspace_name}.{aggregate_name}: {reason}"
                     );
-                    return Ok(());
+                    continue;
                 }
             };
 
+            let reduce_func = reduce_funcs.remove(&(keyspace_name.clone(), signature.clone()));
             let AggregateHelperSignatures {
                 state_function,
                 final_function,
-            } = derive_aggregate_helper_signatures(&signature, &state_type, state_func, final_func);
+                reduce_function,
+            } = derive_aggregate_helper_signatures(
+                &signature,
+                &state_type,
+                state_func,
+                final_func,
+                reduce_func,
+            );
 
             let aggregate = UserDefinedAggregate {
                 keyspace: keyspace_name.clone(),
@@ -1519,6 +1546,7 @@ impl ControlConnection {
                 state_type: resolved_state_type,
                 state_function,
                 final_function,
+                reduce_function,
                 initial_condition: initcond,
             };
 
@@ -1526,13 +1554,65 @@ impl ControlConnection {
                 .entry(keyspace_name)
                 .or_default()
                 .insert(signature, aggregate);
-
-            Ok(())
-        })
-        .try_for_each(|_| future::ok(()))
-        .await?;
+        }
 
         Ok(result)
+    }
+
+    /// Fetches the (possibly filtered) reduce functions of user defined aggregates from
+    /// the ScyllaDB-specific `system_schema.scylla_aggregates`, keyed by the keyspace
+    /// name and the signature of the aggregate that declares them.
+    ///
+    /// For Cassandra and ScyllaDB versions predating distributed aggregates there is no
+    /// `system_schema.scylla_aggregates` table and empty metadata is returned (every
+    /// aggregate ends up with no reduce function).
+    async fn query_aggregate_reduce_functions(
+        &self,
+        keyspaces_to_fetch: &[String],
+    ) -> Result<HashMap<(String, FunctionSignature), String>, MetadataFetchError> {
+        let rows = self
+            .query_filter_keyspace_name::<ScyllaUdaRow>(
+                "SELECT keyspace_name, aggregate_name, argument_types, reduce_func \
+                 FROM system_schema.scylla_aggregates",
+                keyspaces_to_fetch,
+            )
+            .map_err(|error| MetadataFetchError {
+                error,
+                table: "system_schema.scylla_aggregates",
+            });
+
+        let result = rows
+            .try_filter_map(|row| {
+                let ScyllaUdaRow {
+                    keyspace_name,
+                    aggregate_name,
+                    argument_types,
+                    reduce_func,
+                } = row;
+
+                future::ok(
+                    reduce_func
+                        .filter(|name| !name.is_empty())
+                        .map(|reduce_func| {
+                            (
+                                (
+                                    keyspace_name,
+                                    FunctionSignature::new(aggregate_name, argument_types),
+                                ),
+                                reduce_func,
+                            )
+                        }),
+                )
+            })
+            .try_collect::<HashMap<_, _>>()
+            .await;
+
+        match result {
+            // `system_schema.scylla_aggregates` does not exist on Cassandra, nor on
+            // ScyllaDB versions that predate distributed aggregates.
+            Err(error) if is_missing_table_or_column(&error) => Ok(HashMap::new()),
+            result => result,
+        }
     }
 }
 
@@ -1897,6 +1977,7 @@ fn map_string_to_cql_type(typ: &str) -> Result<PreColumnType, InvalidCqlType> {
 struct AggregateHelperSignatures {
     state_function: FunctionSignature,
     final_function: Option<FunctionSignature>,
+    reduce_function: Option<FunctionSignature>,
 }
 
 /// Derives the signatures of an aggregate's helper functions from the aggregate itself,
@@ -1908,7 +1989,9 @@ struct AggregateHelperSignatures {
 /// - the state function (`SFUNC`) folds one row into the state, so it takes the state
 ///   followed by the aggregate's own arguments,
 /// - the final function (`FINALFUNC`) turns the accumulated state into the result, so
-///   it takes the state alone.
+///   it takes the state alone,
+/// - the reduce function (`REDUCEFUNC`, ScyllaDB-only) merges the states accumulated by
+///   two nodes, so it takes the state twice.
 ///
 /// A name that the server reported as an empty string is treated as no function at all.
 fn derive_aggregate_helper_signatures(
@@ -1916,6 +1999,7 @@ fn derive_aggregate_helper_signatures(
     state_type: &str,
     state_func: String,
     final_func: Option<String>,
+    reduce_func: Option<String>,
 ) -> AggregateHelperSignatures {
     let state_function = FunctionSignature::new(
         state_func,
@@ -1928,9 +2012,14 @@ fn derive_aggregate_helper_signatures(
         .filter(|name| !name.is_empty())
         .map(|name| FunctionSignature::new(name, vec![state_type.to_owned()]));
 
+    let reduce_function = reduce_func
+        .filter(|name| !name.is_empty())
+        .map(|name| FunctionSignature::new(name, vec![state_type.to_owned(); 2]));
+
     AggregateHelperSignatures {
         state_function,
         final_function,
+        reduce_function,
     }
 }
 
@@ -2422,6 +2511,7 @@ mod tests {
             "acc_state",
             "fold".to_owned(),
             Some("finish".to_owned()),
+            Some("merge".to_owned()),
         );
 
         // The state function takes the state, then the aggregate's own arguments.
@@ -2432,7 +2522,7 @@ mod tests {
                 vec!["acc_state".to_owned(), "int".to_owned(), "text".to_owned()]
             )
         );
-        // The final function takes the state alone.
+        // The final function takes the state alone, the reduce function takes it twice.
         assert_eq!(
             derived.final_function,
             Some(FunctionSignature::new(
@@ -2440,17 +2530,27 @@ mod tests {
                 vec!["acc_state".to_owned()]
             ))
         );
+        assert_eq!(
+            derived.reduce_function,
+            Some(FunctionSignature::new(
+                "merge".to_owned(),
+                vec!["acc_state".to_owned(), "acc_state".to_owned()]
+            ))
+        );
 
-        // An aggregate without a final function. A name reported as an empty string
-        // means no function, just like a null does.
-        for final_func in [None, Some(String::new())] {
+        // An aggregate without a final function, on a server without reduce functions.
+        // A name reported as an empty string means no function, just like a null does.
+        for (final_func, reduce_func) in [(None, None), (Some(String::new()), Some(String::new()))]
+        {
             let derived = derive_aggregate_helper_signatures(
                 &signature,
                 "acc_state",
                 "fold".to_owned(),
                 final_func,
+                reduce_func,
             );
             assert_eq!(derived.final_function, None);
+            assert_eq!(derived.reduce_function, None);
         }
     }
 

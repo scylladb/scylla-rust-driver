@@ -590,6 +590,21 @@ async fn test_user_defined_functions_and_aggregates_in_metadata() {
         .await
         .unwrap();
 
+    // A second aggregate, declaring a reduce function - a ScyllaDB extension, which
+    // lets the server compute the aggregate in a distributed manner - and leaving out
+    // the final function and the initial condition.
+    session
+        .ddl(
+            "CREATE FUNCTION merge_states(a bigint, b bigint) CALLED ON NULL INPUT \
+             RETURNS bigint LANGUAGE lua AS 'return a + b;'",
+        )
+        .await
+        .unwrap();
+    session
+        .ddl("CREATE AGGREGATE total(int) SFUNC accumulate STYPE bigint REDUCEFUNC merge_states")
+        .await
+        .unwrap();
+
     let cluster_state = session.get_cluster_state();
     let keyspace = cluster_state.get_keyspace(&ks).unwrap();
 
@@ -604,6 +619,10 @@ async fn test_user_defined_functions_and_aggregates_in_metadata() {
         vec![
             ("accumulate", vec!["bigint".to_owned(), "int".to_owned()]),
             ("as_text", vec!["bigint".to_owned()]),
+            (
+                "merge_states",
+                vec!["bigint".to_owned(), "bigint".to_owned()]
+            ),
             ("twice", vec!["int".to_owned()]),
             ("twice", vec!["text".to_owned()]),
         ]
@@ -644,6 +663,8 @@ async fn test_user_defined_functions_and_aggregates_in_metadata() {
         Some("0"),
         "the initial condition is kept as the CQL literal the server stores"
     );
+    // No REDUCEFUNC was declared, so there is no reduce function even on ScyllaDB.
+    assert_eq!(aggregate.reduce_function, None);
 
     assert_eq!(functions[&aggregate.state_function].name, "accumulate");
     let final_function = aggregate
@@ -651,6 +672,18 @@ async fn test_user_defined_functions_and_aggregates_in_metadata() {
         .as_ref()
         .expect("the aggregate declares a final function");
     assert_eq!(functions[final_function].name, "as_text");
+
+    let with_reduce = &keyspace.user_defined_aggregates
+        [&FunctionSignature::new("total".to_owned(), vec!["int".to_owned()])];
+    // A final function and an initial condition the aggregate does not declare are
+    // reported as null by the server, and as `None` here.
+    assert_eq!(with_reduce.final_function, None);
+    assert_eq!(with_reduce.initial_condition, None);
+    let reduce_function = with_reduce
+        .reduce_function
+        .as_ref()
+        .expect("the aggregate declares a reduce function");
+    assert_eq!(functions[reduce_function].name, "merge_states");
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }

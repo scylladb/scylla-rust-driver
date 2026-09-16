@@ -449,6 +449,14 @@ pub struct UserDefinedAggregate {
     /// the result, if the aggregate declares one, as a signature ready to be
     /// looked up in [`Keyspace::user_defined_functions`].
     pub final_function: Option<FunctionSignature>,
+    /// The reduce function (`REDUCEFUNC`), which merges the states accumulated
+    /// by separate nodes, as a signature ready to be looked up in
+    /// [`Keyspace::user_defined_functions`].
+    ///
+    /// Reduce functions are a ScyllaDB extension, stored in
+    /// `system_schema.scylla_aggregates`. This is always `None` on Cassandra and
+    /// on ScyllaDB versions that predate the table.
+    pub reduce_function: Option<FunctionSignature>,
     /// The initial state (`INITCOND`), as the CQL literal that the server
     /// stores, verbatim, or `None` if the aggregate has no initial condition.
     pub initial_condition: Option<String>,
