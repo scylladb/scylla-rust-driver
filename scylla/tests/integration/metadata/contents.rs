@@ -540,7 +540,7 @@ async fn test_indexes_in_metadata() {
 // environment of the Cassandra test cluster, so the test is skipped there.
 #[tokio::test]
 #[cfg_attr(cassandra_tests, ignore)]
-async fn test_user_defined_functions_in_metadata() {
+async fn test_user_defined_functions_and_aggregates_in_metadata() {
     setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
@@ -567,6 +567,29 @@ async fn test_user_defined_functions_in_metadata() {
         .await
         .unwrap();
 
+    // An aggregate built out of a state function and a final function.
+    session
+        .ddl(
+            "CREATE FUNCTION accumulate(acc bigint, val int) CALLED ON NULL INPUT \
+             RETURNS bigint LANGUAGE lua AS 'return acc + val;'",
+        )
+        .await
+        .unwrap();
+    session
+        .ddl(
+            "CREATE FUNCTION as_text(acc bigint) CALLED ON NULL INPUT RETURNS text \
+             LANGUAGE lua AS 'return tostring(acc);'",
+        )
+        .await
+        .unwrap();
+    session
+        .ddl(
+            "CREATE AGGREGATE sum_as_text(int) SFUNC accumulate STYPE bigint \
+             FINALFUNC as_text INITCOND 0",
+        )
+        .await
+        .unwrap();
+
     let cluster_state = session.get_cluster_state();
     let keyspace = cluster_state.get_keyspace(&ks).unwrap();
 
@@ -579,6 +602,8 @@ async fn test_user_defined_functions_in_metadata() {
             .sorted()
             .collect::<Vec<_>>(),
         vec![
+            ("accumulate", vec!["bigint".to_owned(), "int".to_owned()]),
+            ("as_text", vec!["bigint".to_owned()]),
             ("twice", vec!["int".to_owned()]),
             ("twice", vec!["text".to_owned()]),
         ]
@@ -603,6 +628,29 @@ async fn test_user_defined_functions_in_metadata() {
     assert_eq!(twice_text.return_type, ColumnType::Native(NativeType::Text));
     assert_eq!(twice_text.body, "return val .. val;");
     assert!(twice_text.called_on_null_input);
+
+    let aggregate = &keyspace.user_defined_aggregates
+        [&FunctionSignature::new("sum_as_text".to_owned(), vec!["int".to_owned()])];
+    assert_eq!(aggregate.keyspace, ks);
+    assert_eq!(aggregate.name, "sum_as_text");
+    assert_eq!(
+        aggregate.argument_types,
+        vec![ColumnType::Native(NativeType::Int)]
+    );
+    assert_eq!(aggregate.return_type, ColumnType::Native(NativeType::Text));
+    assert_eq!(aggregate.state_type, ColumnType::Native(NativeType::BigInt));
+    assert_eq!(
+        aggregate.initial_condition.as_deref(),
+        Some("0"),
+        "the initial condition is kept as the CQL literal the server stores"
+    );
+
+    assert_eq!(functions[&aggregate.state_function].name, "accumulate");
+    let final_function = aggregate
+        .final_function
+        .as_ref()
+        .expect("the aggregate declares a final function");
+    assert_eq!(functions[final_function].name, "as_text");
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }

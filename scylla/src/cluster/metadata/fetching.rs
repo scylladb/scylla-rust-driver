@@ -2,7 +2,7 @@
 //!
 //! This module is responsible for querying cluster metadata from the control connection,
 //! including information about peers (nodes in the cluster), keyspaces, tables, views,
-//! indexes, user-defined types (UDTs) and user-defined functions (UDFs).
+//! indexes, user-defined types (UDTs), functions (UDFs) and aggregates (UDAs).
 //!
 //! The main entry point is [`ControlConnection::query_metadata`], which fetches all
 //! metadata needed to maintain an up-to-date view of the cluster topology and schema.
@@ -12,7 +12,8 @@
 //! - Fetching keyspace metadata including replication strategies
 //! - Loading table and materialized view schemas from `system_schema` tables
 //! - Loading the indexes defined on the tables
-//! - Loading user-defined functions, whose signatures resolve against the UDTs
+//! - Loading user-defined functions and aggregates, whose signatures resolve
+//!   against the UDTs
 //! - Processing user-defined types with proper dependency resolution via topological sort
 //! - Parsing CQL type strings into structured type representations
 
@@ -37,7 +38,7 @@ use super::{
     CollectionType, Column, ColumnKind, ColumnType, ConsistencyMode, FunctionSignature, Index,
     IndexKind, Keyspace, MaterializedView, Metadata, MissingUserDefinedType, NativeType, Peer,
     SchemaMetadataFetchLevel, SchemaMetadataFetchMode, SingleKeyspaceMetadataError, Strategy,
-    Table, UserDefinedFunction, UserDefinedType,
+    Table, UserDefinedAggregate, UserDefinedFunction, UserDefinedType,
 };
 
 use crate::DeserializeRow;
@@ -787,11 +788,12 @@ impl ControlConnection {
         let schema_query = async {
             match schema_metadata_fetch_level {
                 SchemaMetadataFetchLevel::Full => {
-                    // Fetch full schema: columns, keys, UDTs, UDFs
+                    // Fetch full schema: columns, keys, UDTs, UDFs, UDAs
                     let udts = self.query_user_defined_types(keyspaces_to_fetch).await?;
-                    let (mut tables_schema, functions) = tokio::try_join!(
+                    let (mut tables_schema, functions, aggregates) = tokio::try_join!(
                         self.query_tables_schema(keyspaces_to_fetch, &udts),
                         self.query_user_defined_functions(keyspaces_to_fetch, &udts),
+                        self.query_user_defined_aggregates(keyspaces_to_fetch, &udts),
                     )?;
                     Ok((
                         // We pass the mutable reference to the same map to the both functions.
@@ -807,6 +809,7 @@ impl ControlConnection {
                             .await?,
                         udts,
                         functions,
+                        aggregates,
                     ))
                 }
                 SchemaMetadataFetchLevel::Minimal => {
@@ -838,6 +841,7 @@ impl ControlConnection {
                             .await?,
                         HashMap::new(),
                         HashMap::new(),
+                        HashMap::new(),
                     ))
                 }
             }
@@ -854,6 +858,7 @@ impl ControlConnection {
                 mut all_views,
                 mut all_user_defined_types,
                 mut all_user_defined_functions,
+                mut all_user_defined_aggregates,
             ),
             scylladb_specific,
         ) = tokio::try_join!(schema_query, scylladb_specific_query)?;
@@ -876,10 +881,13 @@ impl ControlConnection {
             let user_defined_types = all_user_defined_types
                 .remove(&keyspace_name)
                 .unwrap_or_else(|| Ok(HashMap::new()));
-            // Unlike the above, functions carry no per-keyspace error: one that cannot
-            // be processed is dropped on its own, with a warning, rather than
-            // invalidating the keyspace it belongs to.
+            // Unlike the above, functions and aggregates carry no per-keyspace error:
+            // one that cannot be processed is dropped on its own, with a warning, rather
+            // than invalidating the keyspace it belongs to.
             let user_defined_functions = all_user_defined_functions
+                .remove(&keyspace_name)
+                .unwrap_or_default();
+            let user_defined_aggregates = all_user_defined_aggregates
                 .remove(&keyspace_name)
                 .unwrap_or_default();
 
@@ -914,6 +922,7 @@ impl ControlConnection {
                 views,
                 user_defined_types,
                 user_defined_functions,
+                user_defined_aggregates,
             };
 
             Ok((keyspace_name, Ok(keyspace)))
@@ -1413,6 +1422,120 @@ impl ControlConnection {
     }
 }
 
+/// A row of `system_schema.aggregates`.
+#[derive(DeserializeRow, Debug)]
+#[scylla(crate = "crate")]
+struct UdaRow {
+    keyspace_name: String,
+    aggregate_name: String,
+    argument_types: Vec<String>,
+    return_type: String,
+    state_type: String,
+    state_func: String,
+    final_func: Option<String>,
+    initcond: Option<String>,
+}
+
+impl ControlConnection {
+    /// Fetches the (possibly filtered) user defined aggregates from
+    /// `system_schema.aggregates`, grouped by keyspace.
+    ///
+    /// The argument and return types are resolved against `udts`, so this has to run
+    /// after. A aggregate of a keyspace whose UDTs could not be processed is not even
+    /// considered: the caller discards such a keyspace as a whole.
+    ///
+    /// A single aggregate whose types cannot be resolved is skipped with a warning.
+    async fn query_user_defined_aggregates(
+        &self,
+        keyspaces_to_fetch: &[String],
+        udts: &PerKeyspaceResult<PerTable<Arc<UserDefinedType<'static>>>, MissingUserDefinedType>,
+    ) -> Result<PerKeyspace<PerFunction<UserDefinedAggregate>>, MetadataError> {
+        let rows = self
+            .query_filter_keyspace_name::<UdaRow>(
+                "SELECT keyspace_name, aggregate_name, argument_types, return_type, state_type, \
+                 state_func, final_func, initcond FROM system_schema.aggregates",
+                keyspaces_to_fetch,
+            )
+            .map_err(|error| MetadataFetchError {
+                error,
+                table: "system_schema.aggregates",
+            });
+
+        let empty_ok_map = Ok(HashMap::new());
+        let mut result: PerKeyspace<PerFunction<UserDefinedAggregate>> = HashMap::new();
+
+        rows.map(|row_result| {
+            let UdaRow {
+                keyspace_name,
+                aggregate_name,
+                argument_types,
+                return_type,
+                state_type,
+                state_func,
+                final_func,
+                initcond,
+            } = row_result?;
+
+            let Ok(keyspace_udts) = udts.get(&keyspace_name).unwrap_or(&empty_ok_map) else {
+                return Ok::<_, MetadataError>(());
+            };
+
+            let signature = FunctionSignature::new(aggregate_name.clone(), argument_types);
+
+            let resolved = (|| {
+                let argument_types = signature
+                    .argument_types
+                    .iter()
+                    .map(|typ| resolve_signature_type(typ, &keyspace_name, keyspace_udts))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let return_type =
+                    resolve_signature_type(&return_type, &keyspace_name, keyspace_udts)?;
+                let resolved_state_type =
+                    resolve_signature_type(&state_type, &keyspace_name, keyspace_udts)?;
+                Ok::<_, String>((argument_types, return_type, resolved_state_type))
+            })();
+
+            let (argument_types, return_type, resolved_state_type) = match resolved {
+                Ok(types) => types,
+                Err(reason) => {
+                    warn!(
+                        "Skipping metadata of aggregate {keyspace_name}.{aggregate_name}: {reason}"
+                    );
+                    return Ok(());
+                }
+            };
+
+            let AggregateHelperSignatures {
+                state_function,
+                final_function,
+            } = derive_aggregate_helper_signatures(&signature, &state_type, state_func, final_func);
+
+            let aggregate = UserDefinedAggregate {
+                keyspace: keyspace_name.clone(),
+                name: aggregate_name,
+                signature: signature.clone(),
+                argument_types,
+                return_type,
+                state_type: resolved_state_type,
+                state_function,
+                final_function,
+                initial_condition: initcond,
+            };
+
+            result
+                .entry(keyspace_name)
+                .or_default()
+                .insert(signature, aggregate);
+
+            Ok(())
+        })
+        .try_for_each(|_| future::ok(()))
+        .await?;
+
+        Ok(result)
+    }
+}
+
 impl ControlConnection {
     async fn query_tables(
         &self,
@@ -1767,6 +1890,47 @@ fn map_string_to_cql_type(typ: &str) -> Result<PreColumnType, InvalidCqlType> {
             reason: "leftover characters".to_string(),
         }),
         Ok((typ, _)) => Ok(typ),
+    }
+}
+
+/// The signatures of the functions that a user defined aggregate is built out of.
+struct AggregateHelperSignatures {
+    state_function: FunctionSignature,
+    final_function: Option<FunctionSignature>,
+}
+
+/// Derives the signatures of an aggregate's helper functions from the aggregate itself,
+/// so that they can be looked up in
+/// [`Keyspace::user_defined_functions`](super::Keyspace::user_defined_functions):
+/// `system_schema.aggregates` names those functions, but the argument types that
+/// complete their signatures follow from the aggregate's own signature and state type.
+///
+/// - the state function (`SFUNC`) folds one row into the state, so it takes the state
+///   followed by the aggregate's own arguments,
+/// - the final function (`FINALFUNC`) turns the accumulated state into the result, so
+///   it takes the state alone.
+///
+/// A name that the server reported as an empty string is treated as no function at all.
+fn derive_aggregate_helper_signatures(
+    signature: &FunctionSignature,
+    state_type: &str,
+    state_func: String,
+    final_func: Option<String>,
+) -> AggregateHelperSignatures {
+    let state_function = FunctionSignature::new(
+        state_func,
+        std::iter::once(state_type.to_owned())
+            .chain(signature.argument_types.iter().cloned())
+            .collect(),
+    );
+
+    let final_function = final_func
+        .filter(|name| !name.is_empty())
+        .map(|name| FunctionSignature::new(name, vec![state_type.to_owned()]));
+
+    AggregateHelperSignatures {
+        state_function,
+        final_function,
     }
 }
 
@@ -2241,6 +2405,52 @@ mod tests {
                 ConsistencyMode::Eventual,
                 "unrecognised consistency {unrecognised:?} must mean eventual consistency"
             );
+        }
+    }
+
+    #[test]
+    fn test_aggregate_helper_signatures() {
+        setup_tracing();
+        // An aggregate over (int, text) accumulating in a UDT-typed state.
+        let signature = FunctionSignature::new(
+            "avg_of".to_owned(),
+            vec!["int".to_owned(), "text".to_owned()],
+        );
+
+        let derived = derive_aggregate_helper_signatures(
+            &signature,
+            "acc_state",
+            "fold".to_owned(),
+            Some("finish".to_owned()),
+        );
+
+        // The state function takes the state, then the aggregate's own arguments.
+        assert_eq!(
+            derived.state_function,
+            FunctionSignature::new(
+                "fold".to_owned(),
+                vec!["acc_state".to_owned(), "int".to_owned(), "text".to_owned()]
+            )
+        );
+        // The final function takes the state alone.
+        assert_eq!(
+            derived.final_function,
+            Some(FunctionSignature::new(
+                "finish".to_owned(),
+                vec!["acc_state".to_owned()]
+            ))
+        );
+
+        // An aggregate without a final function. A name reported as an empty string
+        // means no function, just like a null does.
+        for final_func in [None, Some(String::new())] {
+            let derived = derive_aggregate_helper_signatures(
+                &signature,
+                "acc_state",
+                "fold".to_owned(),
+                final_func,
+            );
+            assert_eq!(derived.final_function, None);
         }
     }
 
