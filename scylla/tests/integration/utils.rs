@@ -10,14 +10,15 @@ use scylla::cluster::ClusterState;
 use scylla::cluster::NodeRef;
 use scylla::cluster::metadata::ColumnType;
 use scylla::deserialize::value::DeserializeValue;
-use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
+use scylla::errors::{DbError, ExecutionError, RequestAttemptError, WriteType};
 use scylla::frame::types::Consistency;
 use scylla::policies::host_filter::AllowListHostFilter;
 use scylla::policies::load_balancing::{
     FallbackPlan, LoadBalancingPolicy, NodeIdentifier, RoutingInfo, SingleTargetLoadBalancingPolicy,
 };
 use scylla::policies::retry::{
-    FallthroughRetryPolicy, RequestInfo, RetryDecision, RetryPolicy, RetrySession,
+    DefaultRetrySession, FallthroughRetryPolicy, RequestInfo, RetryDecision, RetryPolicy,
+    RetrySession,
 };
 use scylla::response::query_result::QueryResult;
 use scylla::routing::Shard;
@@ -204,6 +205,82 @@ where
     .await;
 
     running_proxy.finish().await
+}
+
+/// Retry policy for tests running LWTs. Retries the transient LWT failures
+/// of the shared test cluster on the same target, so that assertions about
+/// which node served a request still hold.
+#[derive(Debug)]
+pub(crate) struct LwtRetryPolicy;
+pub(crate) struct LwtRetryPolicySession {
+    retries_left: usize,
+    inner: DefaultRetrySession,
+}
+
+impl LwtRetryPolicySession {
+    const MAX_RETRIES: usize = 20;
+}
+
+impl RetryPolicy for LwtRetryPolicy {
+    fn new_session(&self) -> Box<dyn RetrySession> {
+        Box::new(LwtRetryPolicySession {
+            retries_left: LwtRetryPolicySession::MAX_RETRIES,
+            inner: DefaultRetrySession::new(),
+        })
+    }
+}
+
+impl RetrySession for LwtRetryPolicySession {
+    fn decide_should_retry(&mut self, request_info: RequestInfo) -> RetryDecision {
+        let is_transient_lwt_error = match request_info.error {
+            // The first LWT on a table makes the server create its Paxos state
+            // table, a schema change that is slow while other tests run DDL.
+            // LWTs waiting for it time out.
+            RequestAttemptError::DbError(
+                DbError::WriteTimeout {
+                    write_type: WriteType::Cas,
+                    ..
+                },
+                _,
+            ) => true,
+            // That schema change goes through Raft group 0, whose read barrier
+            // can time out as well; the server reports it as an internal error.
+            RequestAttemptError::DbError(DbError::ServerError, message) => {
+                message.contains("raft operation") && message.contains("timed out")
+            }
+            // Scylla bug: https://scylladb.atlassian.net/browse/SCYLLADB-3194
+            RequestAttemptError::DbError(
+                DbError::WriteFailure {
+                    write_type: WriteType::Cas,
+                    consistency: Consistency::LocalSerial,
+                    ..
+                },
+                message,
+            ) => message.contains("Failed to prepare ballot"),
+            _ => false,
+        };
+
+        if !is_transient_lwt_error {
+            return self.inner.decide_should_retry(request_info);
+        }
+
+        if self.retries_left == 0 {
+            // Panic explicitly so that we know that retry policy worked, but
+            // error kept happening.
+            panic!(
+                "Transient LWT error happened {} times in a row! e: {}",
+                Self::MAX_RETRIES,
+                request_info.error
+            );
+        }
+        self.retries_left -= 1;
+        RetryDecision::RetrySameTarget(None)
+    }
+
+    fn reset(&mut self) {
+        self.retries_left = Self::MAX_RETRIES;
+        self.inner.reset();
+    }
 }
 
 /// Whether the server lists `feature` in `system.local.supported_features`.

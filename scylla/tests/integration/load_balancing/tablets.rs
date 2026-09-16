@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use crate::utils::{
-    PerformDDL, execute_prepared_statement_everywhere, execute_unprepared_statement_everywhere,
-    scylla_supports_tablets, setup_tracing, supports_feature, test_with_3_node_cluster,
-    unique_keyspace_name, wait_until_all_shards_are_connected,
+    LwtRetryPolicy, PerformDDL, execute_prepared_statement_everywhere,
+    execute_unprepared_statement_everywhere, scylla_supports_tablets, setup_tracing,
+    supports_feature, test_with_3_node_cluster, unique_keyspace_name,
+    wait_until_all_shards_are_connected,
 };
 
 use futures::TryStreamExt;
@@ -12,8 +13,6 @@ use itertools::Itertools;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::cluster::Node;
-use scylla::errors::{DbError, RequestAttemptError, WriteType};
-use scylla::policies::retry::{DefaultRetrySession, RetryDecision, RetryPolicy, RetrySession};
 use scylla::routing::Shard;
 use scylla::routing::partitioner::PartitionerName;
 use scylla::serialize::row::SerializeRow;
@@ -33,85 +32,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tracing::info;
 use uuid::Uuid;
-
-/// Retry policy for tests running LWTs. Retries the transient LWT failures
-/// of the shared test cluster on the same target, so that assertions about
-/// which node served a request still hold.
-#[derive(Debug)]
-struct LwtRetryPolicy;
-struct LwtRetryPolicySession {
-    retries_left: usize,
-    inner: DefaultRetrySession,
-}
-
-impl LwtRetryPolicySession {
-    const MAX_RETRIES: usize = 20;
-}
-
-impl RetryPolicy for LwtRetryPolicy {
-    fn new_session(&self) -> Box<dyn RetrySession> {
-        Box::new(LwtRetryPolicySession {
-            retries_left: LwtRetryPolicySession::MAX_RETRIES,
-            inner: DefaultRetrySession::new(),
-        })
-    }
-}
-
-impl RetrySession for LwtRetryPolicySession {
-    fn decide_should_retry(
-        &mut self,
-        request_info: scylla::policies::retry::RequestInfo,
-    ) -> scylla::policies::retry::RetryDecision {
-        let is_transient_lwt_error = match request_info.error {
-            // The first LWT on a table makes the server create its Paxos state
-            // table, a schema change that is slow while other tests run DDL.
-            // LWTs waiting for it time out.
-            RequestAttemptError::DbError(
-                DbError::WriteTimeout {
-                    write_type: WriteType::Cas,
-                    ..
-                },
-                _,
-            ) => true,
-            // That schema change goes through Raft group 0, whose read barrier
-            // can time out as well; the server reports it as an internal error.
-            RequestAttemptError::DbError(DbError::ServerError, message) => {
-                message.contains("raft operation") && message.contains("timed out")
-            }
-            // Scylla bug: https://scylladb.atlassian.net/browse/SCYLLADB-3194
-            RequestAttemptError::DbError(
-                DbError::WriteFailure {
-                    write_type: WriteType::Cas,
-                    consistency: Consistency::LocalSerial,
-                    ..
-                },
-                message,
-            ) => message.contains("Failed to prepare ballot"),
-            _ => false,
-        };
-
-        if !is_transient_lwt_error {
-            return self.inner.decide_should_retry(request_info);
-        }
-
-        if self.retries_left == 0 {
-            // Panic explicitly so that we know that retry policy worked, but
-            // error kept happening.
-            panic!(
-                "Transient LWT error happened {} times in a row! e: {}",
-                Self::MAX_RETRIES,
-                request_info.error
-            );
-        }
-        self.retries_left -= 1;
-        RetryDecision::RetrySameTarget(None)
-    }
-
-    fn reset(&mut self) {
-        self.retries_left = Self::MAX_RETRIES;
-        self.inner.reset();
-    }
-}
 
 #[derive(scylla::DeserializeRow)]
 struct SelectedTablet {
