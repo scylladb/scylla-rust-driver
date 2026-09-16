@@ -463,13 +463,13 @@ pub(crate) fn calculate_proxy_host_ids(
     host_ids
 }
 
-async fn for_each_target_execute<ExecuteFn, ExecuteFut>(
+async fn for_each_target_execute<T, ExecuteFn, ExecuteFut>(
     cluster: &ClusterState,
     execute: ExecuteFn,
-) -> Result<Vec<QueryResult>, ExecutionError>
+) -> Result<Vec<T>, ExecutionError>
 where
     ExecuteFn: Fn(Arc<scylla::cluster::Node>, Option<Shard>) -> ExecuteFut,
-    ExecuteFut: Future<Output = Result<QueryResult, ExecutionError>>,
+    ExecuteFut: Future<Output = Result<T, ExecutionError>>,
 {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
         let maybe_shard_count: Option<u16> = node.sharder().map(|sharder| sharder.nr_shards.into());
@@ -681,6 +681,59 @@ pub(crate) async fn wait_until_all_nodes_are_connected(expected_nodes: usize, se
             panic!(
                 "Timed out after {ALL_NODES_CONNECTED_TIMEOUT:?} waiting for {expected_nodes} \
                  connected nodes; driver sees (host_id, address, connected): {seen:?}"
+            )
+        });
+}
+
+/// Upper bound for [`wait_until_all_shards_are_connected`].
+const ALL_SHARDS_CONNECTED_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Waits until the driver holds a connection to every shard of every node.
+///
+/// Pool filling is asynchronous and, through the proxy, needs retries to reach
+/// every shard. Meanwhile a request meant for a shard without a connection is
+/// sent to another shard of the node, which a test asserting on shard-level
+/// routing would see as a misroute. The driver exposes no per-shard pool
+/// state, so each shard is probed with a request pinned to it.
+///
+/// # Panics
+///
+/// Panics if the pools are not full within [`ALL_SHARDS_CONNECTED_TIMEOUT`].
+pub(crate) async fn wait_until_all_shards_are_connected(session: &Session) {
+    let statement = Statement::new(HEALTHCHECK_QUERY);
+    let wait = async {
+        loop {
+            let state = session.get_cluster_state();
+            let probes = for_each_target_execute(&state, |node, shard| {
+                let mut statement = statement.clone();
+                statement.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
+                    NodeIdentifier::Node(node.clone()),
+                    shard,
+                )));
+                async move {
+                    let result = session.query_unpaged(statement, ()).await?;
+                    let coordinator = result.request_coordinator();
+                    Ok(coordinator.node().host_id == node.host_id && coordinator.shard() == shard)
+                }
+            })
+            .await;
+            let all_reached = match probes {
+                Ok(reached) => reached.into_iter().all(|reached| reached),
+                // A node without any usable connection yet fails the probe.
+                Err(_) => false,
+            };
+            if all_reached {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+
+    tokio::time::timeout(ALL_SHARDS_CONNECTED_TIMEOUT, wait)
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "Timed out after {ALL_SHARDS_CONNECTED_TIMEOUT:?} waiting for connections to all shards"
             )
         });
 }

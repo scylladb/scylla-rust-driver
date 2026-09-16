@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::utils::{
     PerformDDL, execute_prepared_statement_everywhere, execute_unprepared_statement_everywhere,
     scylla_supports_tablets, setup_tracing, supports_feature, test_with_3_node_cluster,
-    unique_keyspace_name,
+    unique_keyspace_name, wait_until_all_shards_are_connected,
 };
 
 use futures::TryStreamExt;
@@ -1059,6 +1059,10 @@ where
                 tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
                 return running_proxy;
             }
+
+            // The subtests assert that requests reach the replica shard, which
+            // requires a connection to every shard.
+            wait_until_all_shards_are_connected(&session).await;
 
             let feedback_rxs = install_feedback_channels(&mut running_proxy);
 
