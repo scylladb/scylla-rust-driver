@@ -11,6 +11,8 @@
 //!   - [MaterializedView],
 //!   - [Index],
 //!   - [IndexKind],
+//!   - [UserDefinedFunction],
+//!   - [FunctionSignature] - identifies one overload of a function,
 //!   - CQL types (re-exported from scylla-cql):
 //!     - [ColumnType],
 //!     - [NativeType],
@@ -257,6 +259,22 @@ pub struct Keyspace {
     ///
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
     pub user_defined_types: HashMap<String, Arc<UserDefinedType<'static>>>,
+    /// User defined functions in the keyspace, keyed by their signature.
+    ///
+    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
+    pub user_defined_functions: HashMap<FunctionSignature, UserDefinedFunction>,
+}
+
+impl Keyspace {
+    /// Iterates over all overloads of the user defined function with the given name.
+    pub fn functions_named<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> impl Iterator<Item = &'a UserDefinedFunction> {
+        self.user_defined_functions
+            .iter()
+            .filter_map(move |(signature, function)| (signature.name == name).then_some(function))
+    }
 }
 
 /// Describes a table in the cluster.
@@ -336,6 +354,60 @@ impl IndexKind {
             _ => Self::Other(kind),
         }
     }
+}
+
+/// Identifies one overload of a user defined function or aggregate.
+///
+/// A name alone does not identify a function: CQL permits overloading, and
+/// accordingly `system_schema.functions` and `system_schema.aggregates` are
+/// keyed by `(keyspace_name, function_name, argument_types)`.
+///
+/// The argument types are held as the raw CQL type names, exactly as the server
+/// stores them in those tables, rather than as parsed [`ColumnType`]s.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct FunctionSignature {
+    /// Name of the function or aggregate.
+    pub name: String,
+    /// CQL type names of the arguments, in order, as the server stores them.
+    pub argument_types: Vec<String>,
+}
+
+impl FunctionSignature {
+    /// Creates a signature of the function with the given name and argument types.
+    pub fn new(name: String, argument_types: Vec<String>) -> Self {
+        Self {
+            name,
+            argument_types,
+        }
+    }
+}
+
+/// Describes a user defined function, as fetched from `system_schema.functions`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UserDefinedFunction {
+    /// Name of the keyspace the function belongs to.
+    pub keyspace: String,
+    /// Name of the function. Does not identify it on its own.
+    pub name: String,
+    /// Signature of the function, i.e. the key under which
+    /// [`Keyspace::user_defined_functions`] holds it.
+    pub signature: FunctionSignature,
+    /// Names of the arguments, in order.
+    pub argument_names: Vec<String>,
+    /// Types of the arguments, in order.
+    pub argument_types: Vec<ColumnType<'static>>,
+    /// Type that the function returns.
+    pub return_type: ColumnType<'static>,
+    /// Language the function is implemented in, e.g. `lua` or `wasm` on
+    /// ScyllaDB, `java` or `javascript` on Cassandra.
+    pub language: String,
+    /// Source of the function, in [`Self::language`], as the server stores it.
+    pub body: String,
+    /// Whether the function is called when any of its arguments is null,
+    /// as opposed to returning null right away.
+    pub called_on_null_input: bool,
 }
 
 /// Represents a user defined type whose definition is missing from the metadata.

@@ -2,7 +2,7 @@
 //!
 //! This module is responsible for querying cluster metadata from the control connection,
 //! including information about peers (nodes in the cluster), keyspaces, tables, views,
-//! indexes and user-defined types (UDTs).
+//! indexes, user-defined types (UDTs) and user-defined functions (UDFs).
 //!
 //! The main entry point is [`ControlConnection::query_metadata`], which fetches all
 //! metadata needed to maintain an up-to-date view of the cluster topology and schema.
@@ -12,6 +12,7 @@
 //! - Fetching keyspace metadata including replication strategies
 //! - Loading table and materialized view schemas from `system_schema` tables
 //! - Loading the indexes defined on the tables
+//! - Loading user-defined functions, whose signatures resolve against the UDTs
 //! - Processing user-defined types with proper dependency resolution via topological sort
 //! - Parsing CQL type strings into structured type representations
 
@@ -33,9 +34,10 @@ use tracing::{debug, trace, warn};
 use uuid::Uuid;
 
 use super::{
-    CollectionType, Column, ColumnKind, ColumnType, ConsistencyMode, Index, IndexKind, Keyspace,
-    MaterializedView, Metadata, MissingUserDefinedType, NativeType, Peer, SchemaMetadataFetchLevel,
-    SchemaMetadataFetchMode, SingleKeyspaceMetadataError, Strategy, Table, UserDefinedType,
+    CollectionType, Column, ColumnKind, ColumnType, ConsistencyMode, FunctionSignature, Index,
+    IndexKind, Keyspace, MaterializedView, Metadata, MissingUserDefinedType, NativeType, Peer,
+    SchemaMetadataFetchLevel, SchemaMetadataFetchMode, SingleKeyspaceMetadataError, Strategy,
+    Table, UserDefinedFunction, UserDefinedType,
 };
 
 use crate::DeserializeRow;
@@ -57,6 +59,8 @@ use super::cc_establisher::TopologyUpdateGuard;
 type PerKeyspace<T> = HashMap<String, T>;
 type PerKeyspaceResult<T, E> = PerKeyspace<Result<T, E>>;
 type PerTable<T> = HashMap<String, T>;
+/// Keyed by the signature of the function or aggregate
+type PerFunction<T> = HashMap<FunctionSignature, T>;
 type PerKsTable<T> = HashMap<(String, String), T>;
 type PerKsTableResult<T, E> = PerKsTable<Result<T, E>>;
 
@@ -783,10 +787,12 @@ impl ControlConnection {
         let schema_query = async {
             match schema_metadata_fetch_level {
                 SchemaMetadataFetchLevel::Full => {
-                    // Fetch full schema: columns, keys, UDTs
+                    // Fetch full schema: columns, keys, UDTs, UDFs
                     let udts = self.query_user_defined_types(keyspaces_to_fetch).await?;
-                    let mut tables_schema =
-                        self.query_tables_schema(keyspaces_to_fetch, &udts).await?;
+                    let (mut tables_schema, functions) = tokio::try_join!(
+                        self.query_tables_schema(keyspaces_to_fetch, &udts),
+                        self.query_user_defined_functions(keyspaces_to_fetch, &udts),
+                    )?;
                     Ok((
                         // We pass the mutable reference to the same map to the both functions.
                         // First function fetches `system_schema.tables`, and removes found
@@ -800,6 +806,7 @@ impl ControlConnection {
                         self.query_views(keyspaces_to_fetch, &mut tables_schema)
                             .await?,
                         udts,
+                        functions,
                     ))
                 }
                 SchemaMetadataFetchLevel::Minimal => {
@@ -830,6 +837,7 @@ impl ControlConnection {
                         self.query_views(keyspaces_to_fetch, &mut tables_schema)
                             .await?,
                         HashMap::new(),
+                        HashMap::new(),
                     ))
                 }
             }
@@ -840,8 +848,15 @@ impl ControlConnection {
                 .map_err(MetadataError::from)
         };
 
-        let ((mut all_tables, mut all_views, mut all_user_defined_types), scylladb_specific) =
-            tokio::try_join!(schema_query, scylladb_specific_query)?;
+        let (
+            (
+                mut all_tables,
+                mut all_views,
+                mut all_user_defined_types,
+                mut all_user_defined_functions,
+            ),
+            scylladb_specific,
+        ) = tokio::try_join!(schema_query, scylladb_specific_query)?;
 
         rows.map(|row_result| {
             let (keyspace_name, strategy_map, durable_writes) = row_result?;
@@ -861,6 +876,12 @@ impl ControlConnection {
             let user_defined_types = all_user_defined_types
                 .remove(&keyspace_name)
                 .unwrap_or_else(|| Ok(HashMap::new()));
+            // Unlike the above, functions carry no per-keyspace error: one that cannot
+            // be processed is dropped on its own, with a warning, rather than
+            // invalidating the keyspace it belongs to.
+            let user_defined_functions = all_user_defined_functions
+                .remove(&keyspace_name)
+                .unwrap_or_default();
 
             // As you can notice, in this file we generally operate on two layers of errors:
             // - Outer (MetadataError) if something went wrong with querying the cluster.
@@ -892,6 +913,7 @@ impl ControlConnection {
                 tables,
                 views,
                 user_defined_types,
+                user_defined_functions,
             };
 
             Ok((keyspace_name, Ok(keyspace)))
@@ -1283,6 +1305,114 @@ mod toposort_tests {
     }
 }
 
+/// A row of `system_schema.functions`.
+#[derive(DeserializeRow, Debug)]
+#[scylla(crate = "crate")]
+struct UdfRow {
+    keyspace_name: String,
+    function_name: String,
+    argument_names: Vec<String>,
+    argument_types: Vec<String>,
+    return_type: String,
+    language: String,
+    body: String,
+    called_on_null_input: bool,
+}
+
+impl ControlConnection {
+    /// Fetches the (possibly filtered) user defined functions from
+    /// `system_schema.functions`, grouped by keyspace.
+    ///
+    /// The argument and return types are resolved against `udts`, so this has to run
+    /// after. A function of a keyspace whose UDTs could not be processed is not even
+    /// considered: the caller discards such a keyspace as a whole.
+    ///
+    /// A single function whose types cannot be resolved is skipped with a warning.
+    async fn query_user_defined_functions(
+        &self,
+        keyspaces_to_fetch: &[String],
+        udts: &PerKeyspaceResult<PerTable<Arc<UserDefinedType<'static>>>, MissingUserDefinedType>,
+    ) -> Result<PerKeyspace<PerFunction<UserDefinedFunction>>, MetadataError> {
+        let rows = self
+            .query_filter_keyspace_name::<UdfRow>(
+                "SELECT keyspace_name, function_name, argument_names, argument_types, \
+                 return_type, language, body, called_on_null_input \
+                 FROM system_schema.functions",
+                keyspaces_to_fetch,
+            )
+            .map_err(|error| MetadataFetchError {
+                error,
+                table: "system_schema.functions",
+            });
+
+        let empty_ok_map = Ok(HashMap::new());
+        let mut result: PerKeyspace<PerFunction<UserDefinedFunction>> = HashMap::new();
+
+        rows.map(|row_result| {
+            let UdfRow {
+                keyspace_name,
+                function_name,
+                argument_names,
+                argument_types,
+                return_type,
+                language,
+                body,
+                called_on_null_input,
+            } = row_result?;
+
+            let Ok(keyspace_udts) = udts.get(&keyspace_name).unwrap_or(&empty_ok_map) else {
+                return Ok::<_, MetadataError>(());
+            };
+
+            let signature = FunctionSignature::new(function_name.clone(), argument_types);
+
+            let resolved = (|| {
+                let argument_types = signature
+                    .argument_types
+                    .iter()
+                    .map(|typ| resolve_signature_type(typ, &keyspace_name, keyspace_udts))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let return_type =
+                    resolve_signature_type(&return_type, &keyspace_name, keyspace_udts)?;
+                Ok::<_, String>((argument_types, return_type))
+            })();
+
+            let (argument_types, return_type) = match resolved {
+                Ok(types) => types,
+                Err(reason) => {
+                    warn!(
+                        "Skipping metadata of function {keyspace_name}.{function_name}: {reason}"
+                    );
+                    return Ok(());
+                }
+            };
+
+            let function = UserDefinedFunction {
+                keyspace: keyspace_name.clone(),
+                name: function_name,
+                signature: signature.clone(),
+                argument_names,
+                argument_types,
+                return_type,
+                language,
+                body,
+                called_on_null_input,
+            };
+
+            result
+                .entry(keyspace_name)
+                .or_default()
+                .insert(signature, function);
+
+            Ok(())
+        })
+        .try_for_each(|_| future::ok(()))
+        .await?;
+
+        Ok(result)
+    }
+}
+
 impl ControlConnection {
     async fn query_tables(
         &self,
@@ -1638,6 +1768,32 @@ fn map_string_to_cql_type(typ: &str) -> Result<PreColumnType, InvalidCqlType> {
         }),
         Ok((typ, _)) => Ok(typ),
     }
+}
+
+/// Resolves a CQL type name taken from the signature of a function or an aggregate
+/// into a [`ColumnType`], using the UDTs of the keyspace that owns it.
+///
+/// The error is a human-readable reason, not a variant of [`MetadataError`], because
+/// the caller does not propagate it.
+///
+/// Note that the UDTs of a single keyspace are all that a signature type can be
+/// resolved against, so a function whose signature names a UDT from another keyspace
+/// cannot be represented and is dropped.
+fn resolve_signature_type(
+    typ: &str,
+    keyspace_name: &str,
+    keyspace_udts: &PerTable<Arc<UserDefinedType<'static>>>,
+) -> Result<ColumnType<'static>, String> {
+    let pre_cql_type = map_string_to_cql_type(typ).map_err(|err: InvalidCqlType| {
+        format!(
+            "failed to parse the CQL type '{}' at position {}: {}",
+            err.typ, err.position, err.reason
+        )
+    })?;
+
+    pre_cql_type
+        .into_cql_type(keyspace_name, keyspace_udts)
+        .map_err(|err: MissingUserDefinedType| err.to_string())
 }
 
 fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreColumnType, ParserState<'_>)> {
@@ -2086,6 +2242,36 @@ mod tests {
                 "unrecognised consistency {unrecognised:?} must mean eventual consistency"
             );
         }
+    }
+
+    #[test]
+    fn test_signature_type_resolution() {
+        setup_tracing();
+        let udt = Arc::new(UserDefinedType {
+            name: "acc_state".into(),
+            keyspace: "ks".into(),
+            field_types: vec![("sum".into(), ColumnType::Native(NativeType::BigInt))],
+        });
+        let udts: PerTable<Arc<UserDefinedType<'static>>> =
+            HashMap::from([("acc_state".to_owned(), Arc::clone(&udt))]);
+
+        assert_eq!(
+            resolve_signature_type("frozen<list<int>>", "ks", &udts).unwrap(),
+            ColumnType::Collection {
+                frozen: true,
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+            }
+        );
+        assert_eq!(
+            resolve_signature_type("acc_state", "ks", &udts).unwrap(),
+            ColumnType::UserDefinedType {
+                frozen: false,
+                definition: udt,
+            }
+        );
+
+        resolve_signature_type("list<>", "ks", &udts).unwrap_err();
+        resolve_signature_type("other_udt", "ks", &udts).unwrap_err();
     }
 
     #[test]
