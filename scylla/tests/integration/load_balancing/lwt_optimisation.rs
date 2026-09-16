@@ -1,6 +1,6 @@
 use crate::utils::{
-    PerformDDL, disable_tablets_unless_supported, setup_tracing, test_with_3_node_cluster,
-    unique_keyspace_name,
+    LwtRetryPolicy, PerformDDL, disable_tablets_unless_supported, setup_tracing,
+    test_with_3_node_cluster, unique_keyspace_name,
 };
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
@@ -122,7 +122,10 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
 
         // We will check which nodes were queried, for both LWT and non-LWT prepared statements.
         let prepared_non_lwt = session.prepare("INSERT INTO t (a, b) VALUES (?, 1)").await.unwrap();
-        let prepared_lwt = session.prepare("UPDATE t SET b=3 WHERE a=? IF b=2").await.unwrap();
+        let mut prepared_lwt = session.prepare("UPDATE t SET b=3 WHERE a=? IF b=2").await.unwrap();
+        // The first LWT on a fresh table can time out on the shared cluster (see
+        // `LwtRetryPolicy`). Retrying on the same target keeps the node count below intact.
+        prepared_lwt.set_retry_policy(Some(Arc::new(LwtRetryPolicy)));
 
         if supports_optimisation_mark {
             // We make sure that the driver properly marked prepared statements wrt being LWT.
