@@ -322,8 +322,7 @@ impl ClusterWorker {
                     // I decided to stick with the approach that fits with the driver.
                     // Apart from the reasons above, it is much easier to reason about concurrency etc
                     // when reading the code in other parts of the driver.
-                    let mut new_cluster_state: ClusterState = self.cluster_state.load().as_ref().clone();
-                    new_cluster_state.update_tablets(tablets);
+                    let new_cluster_state = self.cluster_state.load().with_updated_tablets(tablets);
                     self.update_cluster_state(Arc::new(new_cluster_state));
                 }
 
