@@ -2,7 +2,7 @@
 //!
 //! This module is responsible for querying cluster metadata from the control connection,
 //! including information about peers (nodes in the cluster), keyspaces, tables, views,
-//! and user-defined types (UDTs).
+//! indexes and user-defined types (UDTs).
 //!
 //! The main entry point is [`ControlConnection::query_metadata`], which fetches all
 //! metadata needed to maintain an up-to-date view of the cluster topology and schema.
@@ -11,6 +11,7 @@
 //! - Querying peer information from `system.peers` and `system.local` tables
 //! - Fetching keyspace metadata including replication strategies
 //! - Loading table and materialized view schemas from `system_schema` tables
+//! - Loading the indexes defined on the tables
 //! - Processing user-defined types with proper dependency resolution via topological sort
 //! - Parsing CQL type strings into structured type representations
 
@@ -32,8 +33,8 @@ use tracing::{debug, trace, warn};
 use uuid::Uuid;
 
 use super::{
-    CollectionType, Column, ColumnKind, ColumnType, ConsistencyMode, Keyspace, MaterializedView,
-    Metadata, MissingUserDefinedType, NativeType, Peer, SchemaMetadataFetchLevel,
+    CollectionType, Column, ColumnKind, ColumnType, ConsistencyMode, Index, IndexKind, Keyspace,
+    MaterializedView, Metadata, MissingUserDefinedType, NativeType, Peer, SchemaMetadataFetchLevel,
     SchemaMetadataFetchMode, SingleKeyspaceMetadataError, Strategy, Table, UserDefinedType,
 };
 
@@ -816,6 +817,7 @@ impl ControlConnection {
                                     partition_key: vec![],
                                     clustering_key: vec![],
                                     partitioner,
+                                    indexes: HashMap::new(),
                                     pk_column_specs: vec![],
                                 }),
                             )
@@ -1307,6 +1309,7 @@ impl ControlConnection {
                 partition_key: vec![],
                 clustering_key: vec![],
                 partitioner: None,
+                indexes: HashMap::new(),
                 pk_column_specs: vec![],
             }));
 
@@ -1361,6 +1364,7 @@ impl ControlConnection {
                     partition_key: vec![],
                     clustering_key: vec![],
                     partitioner: None,
+                    indexes: HashMap::new(),
                     pk_column_specs: vec![],
                 }))
                 .map(|table| MaterializedView {
@@ -1512,7 +1516,10 @@ impl ControlConnection {
         .try_for_each(|_| future::ok(()))
         .await?;
 
-        let mut all_partitioners = self.query_table_partitioners(keyspaces_to_fetch).await?;
+        let (mut all_partitioners, mut all_indexes) = tokio::try_join!(
+            self.query_table_partitioners(keyspaces_to_fetch),
+            self.query_indexes(keyspaces_to_fetch),
+        )?;
         let mut result = HashMap::new();
 
         'tables_loop: for ((keyspace_name, table_name), table_result) in tables_schema {
@@ -1582,6 +1589,10 @@ impl ControlConnection {
                 .remove(&keyspace_and_table_name)
                 .unwrap_or_default();
 
+            let indexes = all_indexes
+                .remove(&keyspace_and_table_name)
+                .unwrap_or_default();
+
             // unwrap of get() result: all column names in `partition_key` are at this
             // point guaranteed to be present in `columns`. See the construction of `partition_key`
             let pk_column_specs = partition_key
@@ -1603,6 +1614,7 @@ impl ControlConnection {
                     partition_key,
                     clustering_key,
                     partitioner,
+                    indexes,
                     pk_column_specs,
                 }),
             );
@@ -1763,6 +1775,52 @@ fn freeze_type(typ: PreColumnType) -> PreColumnType {
             PreColumnType::UserDefinedType { frozen: true, name }
         }
         other => other,
+    }
+}
+
+impl ControlConnection {
+    /// Fetches the (possibly filtered) indexes from `system_schema.indexes`, grouped by
+    /// the keyspace and the table they are defined on, and keyed by the index name.
+    async fn query_indexes(
+        &self,
+        keyspaces_to_fetch: &[String],
+    ) -> Result<PerKsTable<HashMap<String, Index>>, MetadataFetchError> {
+        let rows = self
+            .query_filter_keyspace_name::<(
+                String,
+                String,
+                String,
+                String,
+                Option<HashMap<String, String>>,
+            )>(
+                "SELECT keyspace_name, table_name, index_name, kind, options \
+                 FROM system_schema.indexes",
+                keyspaces_to_fetch,
+            )
+            .map_err(|error| MetadataFetchError {
+                error,
+                table: "system_schema.indexes",
+            });
+
+        let mut result: PerKsTable<HashMap<String, Index>> = HashMap::new();
+
+        rows.try_for_each(|(keyspace_name, table_name, index_name, kind, options)| {
+            let index = Index {
+                name: index_name.clone(),
+                kind: IndexKind::from_column_value(kind),
+                options: options.unwrap_or_default(),
+            };
+
+            result
+                .entry((keyspace_name, table_name))
+                .or_default()
+                .insert(index_name, index);
+
+            future::ok(())
+        })
+        .await?;
+
+        Ok(result)
     }
 }
 
@@ -2026,6 +2084,27 @@ mod tests {
                 consistency_mode_from_str(unrecognised),
                 ConsistencyMode::Eventual,
                 "unrecognised consistency {unrecognised:?} must mean eventual consistency"
+            );
+        }
+    }
+
+    #[test]
+    fn test_index_kind_parsing() {
+        setup_tracing();
+        assert_eq!(
+            IndexKind::from_column_value("COMPOSITES".to_owned()),
+            IndexKind::Composites
+        );
+        assert_eq!(
+            IndexKind::from_column_value("CUSTOM".to_owned()),
+            IndexKind::Custom
+        );
+        // An unrecognised kind must be kept verbatim rather than rejected.
+        for unrecognised in ["", "custom", "something"] {
+            assert_eq!(
+                IndexKind::from_column_value(unrecognised.to_owned()),
+                IndexKind::Other(unrecognised.to_owned()),
+                "unrecognised index kind {unrecognised:?} must be kept verbatim"
             );
         }
     }
