@@ -12,9 +12,11 @@ use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancing
 use scylla::response::PagingState;
 use scylla::response::query_result::QueryResult;
 use scylla::statement::Statement;
+use scylla_cql::frame::response::event::{SchemaChangeEvent, SchemaChangeType};
+use scylla_cql::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
 use scylla_proxy::{
-    Condition, ProxyError, Reaction, RequestOpcode, RequestReaction, RequestRule, RunningProxy,
-    ShardAwareness, WorkerError,
+    Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
+    ResponseFrame, RunningProxy, ShardAwareness, WorkerError,
 };
 use tracing::info;
 use uuid::Uuid;
@@ -24,48 +26,51 @@ use crate::utils::{
     unique_keyspace_name,
 };
 
-async fn run_some_ddl_with_unreachable_node(
-    coordinator: NodeIdentifier,
-    paused: usize,
-    session: &Session,
-    running_proxy: &mut RunningProxy,
-    util_session: &Session,
-) -> Result<QueryResult, ExecutionError> {
-    running_proxy.running_nodes.iter_mut().for_each(|node| {
-        node.change_request_rules(Some(vec![
-            // First check goes without trouble
-            RequestRule(
-                Condition::not(Condition::ConnectionRegisteredAnyEvent)
-                    .and(Condition::RequestOpcode(RequestOpcode::Query))
-                    .and(Condition::BodyContainsCaseSensitive(Box::new(
-                        *b"system.local",
-                    )))
-                    .and(Condition::TrueForLimitedTimes(1)),
-                RequestReaction::noop(),
-            ),
-            // Second check stalls on non-paused nodes, to time it out and
-            // return the error stored from first attempt.
-            RequestRule(
-                Condition::not(Condition::ConnectionRegisteredAnyEvent)
-                    .and(Condition::RequestOpcode(RequestOpcode::Query))
-                    .and(Condition::BodyContainsCaseSensitive(Box::new(
-                        *b"system.local",
-                    ))),
-                RequestReaction::delay(Duration::from_secs(10)),
-            ),
-        ]))
-    });
+/// Matches the schema version query issued by agreement checks.
+fn schema_version_query() -> Condition {
+    Condition::not(Condition::ConnectionRegisteredAnyEvent)
+        .and(Condition::RequestOpcode(RequestOpcode::Query))
+        .and(Condition::BodyContainsCaseSensitive(Box::new(
+            *b"system.local",
+        )))
+}
 
-    running_proxy.running_nodes[paused].prepend_request_rules(vec![RequestRule(
-        Condition::not(Condition::ConnectionRegisteredAnyEvent)
-            .and(Condition::RequestOpcode(RequestOpcode::Query))
-            .and(Condition::BodyContainsCaseSensitive(Box::new(
-                *b"system.local",
-            ))),
-        // Simulates driver discovering that node is unreachable.
-        RequestReaction::drop_connection(),
-    )]);
+/// Matches the `CREATE KEYSPACE` statements executed by tests in this module.
+fn create_keyspace_query() -> Condition {
+    Condition::not(Condition::ConnectionRegisteredAnyEvent)
+        .and(Condition::RequestOpcode(RequestOpcode::Query))
+        .and(Condition::BodyContainsCaseSensitive(Box::new(
+            *b"CREATE KEYSPACE",
+        )))
+}
 
+/// Forges the `RESULT::SchemaChange` response a server sends after `CREATE KEYSPACE`.
+fn forge_keyspace_created(ks: String) -> RequestReaction {
+    RequestReaction::forge_response(Arc::new(move |request: RequestFrame| {
+        let event = SchemaChangeEvent::KeyspaceChange {
+            change_type: SchemaChangeType::Created,
+            keyspace_name: ks.clone(),
+        };
+        ResponseFrame::forged_schema_change(request.params, &event).unwrap()
+    }))
+}
+
+/// Forges the `RESULT::Rows` response to the schema version query,
+/// with a single row holding `version`.
+fn forge_schema_version(version: Uuid) -> RequestReaction {
+    RequestReaction::forge_response(Arc::new(move |request: RequestFrame| {
+        let col_specs = [ColumnSpec::owned(
+            "schema_version".to_owned(),
+            ColumnType::Native(NativeType::Uuid),
+            TableSpec::owned("system".to_owned(), "local".to_owned()),
+        )];
+        ResponseFrame::forged_rows(request.params, &col_specs, [(version,)]).unwrap()
+    }))
+}
+
+/// Builds the `CREATE KEYSPACE` statement whose response the proxy forges.
+/// The name is unique, so that a DDL leaking to the cluster is caught as a stale test keyspace.
+fn forged_create_keyspace(coordinator: NodeIdentifier) -> (String, Statement) {
     let ks = unique_keyspace_name();
     let mut request = Statement::new(format!(
         "CREATE KEYSPACE {ks}
@@ -75,20 +80,49 @@ async fn run_some_ddl_with_unreachable_node(
         coordinator,
         None,
     )));
+    (ks, request)
+}
+
+/// Executes `CREATE KEYSPACE` on `coordinator` while `paused` node is unreachable
+/// for schema agreement checks, and returns the result of the DDL.
+///
+/// Nothing reaches the cluster: proxy forges the DDL response and the schema versions.
+/// Real schema propagation is slow and, with other tests running DDLs concurrently,
+/// unpredictable, which made this test time out on Cassandra.
+async fn run_ddl_with_unreachable_node(
+    session: &Session,
+    coordinator: NodeIdentifier,
+    paused: usize,
+    running_proxy: &mut RunningProxy,
+) -> Result<QueryResult, ExecutionError> {
+    let (ks, request) = forged_create_keyspace(coordinator);
+    let agreed_version = Uuid::new_v4();
+    running_proxy.running_nodes.iter_mut().for_each(|node| {
+        node.change_request_rules(Some(vec![
+            RequestRule(create_keyspace_query(), forge_keyspace_created(ks.clone())),
+            // First check goes without trouble: all nodes agree on the version.
+            RequestRule(
+                schema_version_query().and(Condition::TrueForLimitedTimes(1)),
+                forge_schema_version(agreed_version),
+            ),
+            // Second check never completes on non-paused nodes, to time it out and
+            // return the error stored from the first attempt.
+            RequestRule(schema_version_query(), RequestReaction::drop_frame()),
+        ]))
+    });
+
+    running_proxy.running_nodes[paused].prepend_request_rules(vec![RequestRule(
+        schema_version_query(),
+        // Simulates driver discovering that node is unreachable.
+        RequestReaction::drop_connection(),
+    )]);
 
     let result = session.query_unpaged(request, &[]).await;
 
-    // Cleanup
     running_proxy
         .running_nodes
         .iter_mut()
         .for_each(|node| node.change_request_rules(Some(vec![])));
-    // Schema may have not propagated from the coordinator of CREATE KEYSPACE
-    util_session.await_schema_agreement().await.unwrap();
-    util_session
-        .query_unpaged(format!("DROP KEYSPACE {ks}"), &[])
-        .await
-        .unwrap();
 
     result
 }
@@ -104,7 +138,7 @@ async fn run_some_ddl_with_unreachable_node(
 // Node is simulated as paused by dropping connection on schema request.
 // Normally, for coordinator this would cause `RequiredHostAbsent` error because
 // all connections to required host would be dropped. We prevent that by not allowing more
-// than one agreement check: during second check, other nodes will delay the reponse, triggering
+// than one agreement check: during second check, other nodes never respond, triggering
 // schema agreement timeout, which will return the error stored during the first check (broken connection).
 #[tokio::test]
 async fn test_schema_await_with_unreachable_node() {
@@ -113,10 +147,6 @@ async fn test_schema_await_with_unreachable_node() {
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, mut running_proxy| async move {
-            let normal_timeout = Duration::from_millis(60000);
-            let short_timeout = Duration::from_millis(300);
-
-            // DB preparation phase
             let builder = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map.clone()))
@@ -124,132 +154,67 @@ async fn test_schema_await_with_unreachable_node() {
                 // Shard connections are created asynchronously, so it's hard to predict how many will be opened
                 // already when we check schema agreement.
                 .pool_size(PoolSize::PerHost(1.try_into().unwrap()))
-                // This speeds up the test significantly on my machine.
-                // From ~11s to ~4s when executed individually
-                // From ~18s to ~9s when running all tests.
-                // I doubt Scylla needs this much time to perform the requests,
-                // so we probably have some inefficiency in Driver or Proxy.
+                // Speeds up session creation. Schema metadata is not needed in this test.
                 .fetch_schema_metadata(false)
+                // Avoid unnecessary warning
+                .fetch_full_schema_metadata(false)
+                // Keep the forged DDL path isolated from real-cluster metadata.
+                .refresh_metadata_on_auto_schema_agreement(false)
                 // Let's try more often to prevent timeouts.
                 .schema_agreement_interval(Duration::from_millis(5));
 
-            // Session used for cleanups (DROP TABLE) and some other actions needed in test.
-            let normal_session = builder
-                .clone()
-                .schema_agreement_timeout(normal_timeout)
-                .build()
-                .await
-                .unwrap();
+            // Sub-cases: (coordinator of the DDL, paused node, should the DDL succeed).
+            // Node 0 hosts the control connection, which must not affect the results.
+            let cases = [
+                // Paused node is the coordinator, so the agreement must fail.
+                (1, 1, false),
+                // Paused node is not the coordinator. Agreement only needs available nodes to agree.
+                (2, 1, true),
+                // The same two cases, but the paused node also hosts the control connection.
+                (0, 0, false),
+                (1, 0, true),
+            ];
 
-            let host_ids = calculate_proxy_host_ids(&proxy_uris, &translation_map, &normal_session);
+            for (coordinator, paused, should_succeed) in cases {
+                info!(
+                    "================= Sub test: coordinator={coordinator}, paused={paused} ================="
+                );
 
-            {
-                tracing::info!("================= Sub test 1 =================");
-
+                // A failing agreement ends only by timing out, so keep that short.
+                // A successful one ends at the first check, so the timeout only bounds a broken test.
+                let timeout = if should_succeed {
+                    Duration::from_secs(60)
+                } else {
+                    Duration::from_millis(300)
+                };
                 let session: Session = builder
                     .clone()
-                    .schema_agreement_timeout(short_timeout)
+                    .schema_agreement_timeout(timeout)
                     .build()
                     .await
                     .unwrap();
+                let host_ids = calculate_proxy_host_ids(&proxy_uris, &translation_map, &session);
 
-                // Case 1: Paused node is a coordinator for DDL.
-                // DDL needs to fail.
-                let result = run_some_ddl_with_unreachable_node(
-                    NodeIdentifier::HostId(host_ids[1]),
-                    1,
+                let result = run_ddl_with_unreachable_node(
                     &session,
+                    NodeIdentifier::HostId(host_ids[coordinator]),
+                    paused,
                     &mut running_proxy,
-                    &normal_session,
                 )
                 .await;
-                assert_matches!(
-                    result,
-                    Err(ExecutionError::SchemaAgreementError(
-                        SchemaAgreementError::RequestError(
-                            RequestAttemptError::BrokenConnectionError(_)
-                        )
-                    ))
-                )
-            }
 
-            {
-                tracing::info!("================= Sub test 2 =================");
-
-                let session: Session = builder
-                    .clone()
-                    .schema_agreement_timeout(normal_timeout)
-                    .build()
-                    .await
-                    .unwrap();
-
-                // Case 2: Paused node is NOT a coordinator for DDL.
-                // DDL should succeed, because auto schema agreement only needs available nodes to agree.
-                let result = run_some_ddl_with_unreachable_node(
-                    NodeIdentifier::HostId(host_ids[2]),
-                    1,
-                    &session,
-                    &mut running_proxy,
-                    &normal_session,
-                )
-                .await;
-                assert_matches!(result, Ok(_))
-            }
-
-            {
-                tracing::info!("================= Sub test 3 =================");
-
-                let session: Session = builder
-                    .clone()
-                    .schema_agreement_timeout(short_timeout)
-                    .build()
-                    .await
-                    .unwrap();
-
-                // Case 3: Paused node is a coordinator for DDL, and is used by control connection.
-                // It is the same as case 1, but paused node is also control connection.
-                // DDL needs to fail.
-                let result = run_some_ddl_with_unreachable_node(
-                    NodeIdentifier::HostId(host_ids[0]),
-                    0,
-                    &session,
-                    &mut running_proxy,
-                    &normal_session,
-                )
-                .await;
-                assert_matches!(
-                    result,
-                    Err(ExecutionError::SchemaAgreementError(
-                        SchemaAgreementError::RequestError(
-                            RequestAttemptError::BrokenConnectionError(_)
-                        )
-                    ))
-                )
-            }
-
-            {
-                tracing::info!("================= Sub test 4 =================");
-
-                let session: Session = builder
-                    .clone()
-                    .schema_agreement_timeout(normal_timeout)
-                    .build()
-                    .await
-                    .unwrap();
-
-                // Case 4: Paused node is NOT a coordinator for DDL, but is used by control connection.
-                // It is the same as case 2, but paused node is also control connection.
-                // DDL should succeed, because auto schema agreement only needs available nodes to agree,
-                // and control connection is not used for that at all.
-                let result = run_some_ddl_with_unreachable_node(
-                    NodeIdentifier::HostId(host_ids[1]),
-                    0,
-                    &session,
-                    &mut running_proxy,
-                    &normal_session,
-                )
-                .await;
-                assert_matches!(result, Ok(_))
+                if should_succeed {
+                    assert_matches!(result, Ok(_));
+                } else {
+                    assert_matches!(
+                        result,
+                        Err(ExecutionError::SchemaAgreementError(
+                            SchemaAgreementError::RequestError(
+                                RequestAttemptError::BrokenConnectionError(_)
+                            )
+                        ))
+                    );
+                }
             }
 
             running_proxy
@@ -342,6 +307,7 @@ async fn test_schema_await_with_transient_failure() {
 
 // Test that produces SchemaAgreementError::RequiredHostAbsent to prove that
 // such condition is possible, and handled correctly.
+// As in `run_ddl_with_unreachable_node`, the DDL and the schema versions are forged by the proxy.
 #[tokio::test]
 async fn test_schema_await_required_host_absent() {
     setup_tracing();
@@ -355,6 +321,12 @@ async fn test_schema_await_required_host_absent() {
                 .address_translator(Arc::new(translation_map.clone()))
                 // Needed to have pools filled immediately after session creation.
                 .pool_size(PoolSize::PerHost(1.try_into().unwrap()))
+                // Speeds up session creation. Schema metadata is not needed in this test.
+                .fetch_schema_metadata(false)
+                // Avoid unnecessary warning
+                .fetch_full_schema_metadata(false)
+                // Keep the forged DDL path isolated from real-cluster metadata.
+                .refresh_metadata_on_auto_schema_agreement(false)
                 // Schema agreement will only return error after timeout,
                 // so without this line the test would take over 60s.
                 .schema_agreement_timeout(Duration::from_secs(1))
@@ -365,9 +337,15 @@ async fn test_schema_await_required_host_absent() {
 
             let host_ids = calculate_proxy_host_ids(&proxy_uris, &translation_map, &session);
 
-            let coordinator = NodeIdentifier::HostId(host_ids[1]);
-
-            running_proxy.running_nodes[1].change_request_rules(Some(vec![
+            let (ks, request) = forged_create_keyspace(NodeIdentifier::HostId(host_ids[1]));
+            let agreed_version = Uuid::new_v4();
+            running_proxy.running_nodes.iter_mut().for_each(|node| {
+                node.change_request_rules(Some(vec![
+                    RequestRule(create_keyspace_query(), forge_keyspace_created(ks.clone())),
+                    RequestRule(schema_version_query(), forge_schema_version(agreed_version)),
+                ]))
+            });
+            running_proxy.running_nodes[1].prepend_request_rules(vec![
                 // This prevents opening new connections to the node
                 RequestRule(
                     Condition::RequestOpcode(RequestOpcode::Startup),
@@ -375,25 +353,8 @@ async fn test_schema_await_required_host_absent() {
                 ),
                 // This prevents schema agreement check on this node, and closes connection.
                 // After some attempts, no connections will be left.
-                RequestRule(
-                    Condition::not(Condition::ConnectionRegisteredAnyEvent)
-                        .and(Condition::RequestOpcode(RequestOpcode::Query))
-                        .and(Condition::BodyContainsCaseSensitive(Box::new(
-                            *b"system.local",
-                        ))),
-                    RequestReaction::drop_connection(),
-                ),
-            ]));
-
-            let ks = unique_keyspace_name();
-            let mut request = Statement::new(format!(
-                "CREATE KEYSPACE {ks}
-                    WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}"
-            ));
-            request.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
-                coordinator,
-                None,
-            )));
+                RequestRule(schema_version_query(), RequestReaction::drop_connection()),
+            ]);
 
             let result = session.query_unpaged(request, &[]).await;
             let Err(ExecutionError::SchemaAgreementError(
@@ -404,32 +365,6 @@ async fn test_schema_await_required_host_absent() {
             };
 
             assert_eq!(host, host_ids[1]);
-
-            // Cleanup
-            running_proxy.running_nodes[1].change_request_rules(Some(vec![]));
-            // Prepare a new session. The old one has a very small schema agreement timeout,
-            // so awaiting schema agreement may fail (especially on Cassandra). We do need to await
-            // because:
-            // 1. CREATE KEYSPACE may not have propagated yet, which would cause the DROP below to fail,
-            //    so we need to await before DROP
-            // 2. We have a tool that verifies all keyspaces are dropped after tests.
-            //    If we don't auto-await after DROP, it is theoretically possible for this
-            //    tool to see the undropped keyspace.
-            let session: Session = SessionBuilder::new()
-                .known_node(proxy_uris[0].as_str())
-                .address_translator(Arc::new(translation_map.clone()))
-                // Let's have small pool for quicker session creation.
-                .pool_size(PoolSize::PerHost(1.try_into().unwrap()))
-                // Let's try more often to speed up the test.
-                .schema_agreement_interval(Duration::from_millis(50))
-                .build()
-                .await
-                .unwrap();
-            session.await_schema_agreement().await.unwrap();
-            session
-                .query_unpaged(format!("DROP KEYSPACE {ks}"), &[])
-                .await
-                .unwrap();
 
             running_proxy
         },

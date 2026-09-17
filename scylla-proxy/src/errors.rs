@@ -3,7 +3,17 @@ use std::net::SocketAddr;
 use scylla_cql::frame::frame_errors::{
     FrameBodyExtensionsParseError, FrameHeaderParseError, LowLevelDeserializationError,
 };
+use scylla_cql::serialize::SerializationError;
 use thiserror::Error;
+
+/// Error of [`ResponseFrame::forged_rows`](crate::ResponseFrame::forged_rows).
+#[derive(Debug, Error)]
+pub enum ForgedRowsError {
+    #[error("Result metadata does not fit in the frame: {0}")]
+    Metadata(#[from] std::num::TryFromIntError),
+    #[error("Failed to serialize a row: {0}")]
+    Row(#[from] SerializationError),
+}
 
 #[derive(Debug, Error)]
 pub enum ReadFrameError {

@@ -1,5 +1,6 @@
 //! CQL protocol-level representation of an `EVENT` response.
 
+use bytes::BufMut;
 use uuid::Uuid;
 
 use crate::frame::frame_errors::{
@@ -191,7 +192,80 @@ impl EventV2 {
     }
 }
 
+impl SchemaChangeType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Created => "CREATED",
+            Self::Updated => "UPDATED",
+            Self::Dropped => "DROPPED",
+            Self::Invalid => "INVALID",
+        }
+    }
+}
+
 impl SchemaChangeEvent {
+    /// Serializes the event in the wire format read by [`Self::deserialize`].
+    ///
+    /// Lets test tooling, like `scylla-proxy`, forge `RESULT::SchemaChange` responses.
+    pub fn serialize(&self, buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
+        let (change_type, target, keyspace_name) = match self {
+            Self::KeyspaceChange {
+                change_type,
+                keyspace_name,
+            } => (change_type, "KEYSPACE", keyspace_name),
+            Self::TableChange {
+                change_type,
+                keyspace_name,
+                ..
+            } => (change_type, "TABLE", keyspace_name),
+            Self::TypeChange {
+                change_type,
+                keyspace_name,
+                ..
+            } => (change_type, "TYPE", keyspace_name),
+            Self::FunctionChange {
+                change_type,
+                keyspace_name,
+                ..
+            } => (change_type, "FUNCTION", keyspace_name),
+            Self::AggregateChange {
+                change_type,
+                keyspace_name,
+                ..
+            } => (change_type, "AGGREGATE", keyspace_name),
+        };
+        types::write_string(change_type.as_str(), buf)?;
+        types::write_string(target, buf)?;
+        types::write_string(keyspace_name, buf)?;
+
+        match self {
+            Self::KeyspaceChange { .. } => (),
+            Self::TableChange {
+                object_name: name, ..
+            }
+            | Self::TypeChange {
+                type_name: name, ..
+            } => types::write_string(name, buf)?,
+            Self::FunctionChange {
+                function_name: name,
+                arguments,
+                ..
+            }
+            | Self::AggregateChange {
+                aggregate_name: name,
+                arguments,
+                ..
+            } => {
+                types::write_string(name, buf)?;
+                types::write_short_length(arguments.len(), buf)?;
+                for argument in arguments {
+                    types::write_string(argument, buf)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Deserialize a schema change event from the provided buffer.
     pub fn deserialize(buf: &mut &[u8]) -> Result<Self, SchemaChangeEventParseError> {
         let type_of_change_string =

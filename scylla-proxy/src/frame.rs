@@ -8,12 +8,16 @@ pub use scylla_cql::frame::request::RequestOpcode;
 use scylla_cql::frame::request::{RequestDeserializationError, RequestV2};
 pub use scylla_cql::frame::response::ResponseOpcode;
 use scylla_cql::frame::response::error::DbError;
+use scylla_cql::frame::response::event::SchemaChangeEvent;
+use scylla_cql::frame::response::result::{ColumnSpec, ResultMetadata};
 use scylla_cql::frame::types;
+use scylla_cql::serialize::RowWriter;
+use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use tracing::warn;
 
-use crate::errors::ReadFrameError;
+use crate::errors::{ForgedRowsError, ReadFrameError};
 use crate::proxy::CompressionReader;
 
 const HEADER_SIZE: usize = 9;
@@ -189,6 +193,55 @@ impl ResponseFrame {
         Ok(ResponseFrame::new(
             request_params.for_response(),
             ResponseOpcode::Supported,
+            buf.freeze(),
+        ))
+    }
+
+    /// Creates a `RESULT::Rows` response frame with the given columns and rows.
+    ///
+    /// Rows are serialized with the same machinery as bound values, so anything
+    /// implementing [`SerializeRow`] (e.g. a tuple) is a valid row, and it is
+    /// type checked against `col_specs`.
+    pub fn forged_rows<R: SerializeRow>(
+        request_params: FrameParams,
+        col_specs: &[ColumnSpec<'_>],
+        rows: impl IntoIterator<Item = R>,
+    ) -> Result<Self, ForgedRowsError> {
+        let ctx = RowSerializationContext::from_specs(col_specs);
+        let mut rows_buf = Vec::new();
+        let mut rows_count: usize = 0;
+        for row in rows {
+            row.serialize(&ctx, &mut RowWriter::new(&mut rows_buf))?;
+            rows_count += 1;
+        }
+
+        let mut buf = BytesMut::new();
+        types::write_int(0x0002, &mut buf); // Kind: Rows.
+        // Every column carries its own table spec, so columns of different tables are allowed.
+        ResultMetadata::new_for_test(col_specs.len(), col_specs.to_vec())
+            .serialize(&mut buf, false, false)?;
+        types::write_int(i32::try_from(rows_count)?, &mut buf);
+        buf.extend_from_slice(&rows_buf);
+
+        Ok(ResponseFrame::new(
+            request_params.for_response(),
+            ResponseOpcode::Result,
+            buf.freeze(),
+        ))
+    }
+
+    /// Creates a `RESULT::SchemaChange` response frame, as sent by a server after a DDL statement.
+    pub fn forged_schema_change(
+        request_params: FrameParams,
+        event: &SchemaChangeEvent,
+    ) -> Result<Self, std::num::TryFromIntError> {
+        let mut buf = BytesMut::new();
+        types::write_int(0x0005, &mut buf); // Kind: SchemaChange.
+        event.serialize(&mut buf)?;
+
+        Ok(ResponseFrame::new(
+            request_params.for_response(),
+            ResponseOpcode::Result,
             buf.freeze(),
         ))
     }
