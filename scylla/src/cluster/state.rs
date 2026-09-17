@@ -737,15 +737,32 @@ impl ClusterState {
         &self.topology.known_nodes
     }
 
-    /// Returns a copy of `self` with `raw_tablets` recorded.
+    /// Returns a copy of `self` with `raw_tablets` recorded, or `None` if every
+    /// one of them is already recorded exactly as given, so that there is nothing
+    /// new to publish.
+    ///
+    /// The `None` case is common: every in-flight request to a not yet learned
+    /// tablet triggers feedback for it, so the same tablet tends to arrive many
+    /// times in a row. A repeat is detected on the raw payload, before its
+    /// replicas are resolved and before `self` is cloned, so it costs neither
+    /// allocation nor a new `ClusterState`.
     pub(crate) fn with_updated_tablets(
         &self,
         raw_tablets: Vec<(TableSpec<'static>, RawTablet)>,
-    ) -> ClusterState {
+    ) -> Option<ClusterState> {
         let replica_translator = |uuid: Uuid| self.topology.known_nodes.get(&uuid).cloned();
-        let mut new_state = self.clone();
+
+        // Cloned lazily, by the first tablet that turns out to change anything.
+        let mut new_state: Option<ClusterState> = None;
 
         for (table, raw_tablet) in raw_tablets {
+            // Compared with the state as updated by the batch so far, not with
+            // `self`: an earlier tablet of the batch may have replaced this one.
+            let current = new_state.as_ref().unwrap_or(self);
+            if current.locator.tablets.contains(&table, &raw_tablet) {
+                continue;
+            }
+
             // Should we skip tablets that belong to a keyspace not present in
             // self.keyspaces? The keyspace could have been, without driver's knowledge:
             // 1. Dropped - in which case we'll remove its info soon (when refreshing
@@ -768,8 +785,14 @@ impl ClusterState {
                     t
                 }
             };
-            new_state.locator.tablets.add_tablet(table, tablet);
+
+            new_state
+                .get_or_insert_with(|| self.clone())
+                .locator
+                .tablets
+                .add_tablet(table, tablet);
         }
+
         new_state
     }
 }
@@ -860,6 +883,7 @@ mod tests {
     use crate::cluster::metadata::{Metadata, Peer};
     use crate::cluster::node::NodeAddr;
     use crate::policies::host_filter::HostFilter;
+    use crate::routing::locator::tablets::RawTablet;
     use crate::test_utils::setup_tracing;
 
     use std::collections::{HashMap, HashSet};
@@ -1062,6 +1086,91 @@ mod tests {
         assert!(
             Arc::ptr_eq(&old_node, new_node),
             "Node object should be reused when disabled node's attributes haven't changed"
+        );
+    }
+
+    // Tablet feedback that repeats what the state already holds must not
+    // produce a new state; feedback that changes anything must.
+    #[tokio::test]
+    async fn tablet_update_is_skipped_when_nothing_changes() {
+        setup_tracing();
+
+        let host_id = Uuid::new_v4();
+        let metadata = make_metadata(vec![make_peer(
+            host_id,
+            make_addr(1),
+            Some("dc1"),
+            Some("r1"),
+        )]);
+        let state = new_cluster_state(metadata, None).await;
+
+        let table = TableSpec::borrowed("ks", "t").into_owned();
+        let tablet = |first, last, shard, version| {
+            (
+                table.clone(),
+                RawTablet::new_for_test(first, last, vec![(host_id, shard)], version),
+            )
+        };
+
+        let state = state
+            .with_updated_tablets(vec![tablet(0, 100, 0, Some(1))])
+            .expect("a new tablet changes the state");
+
+        assert!(
+            state
+                .with_updated_tablets(vec![tablet(0, 100, 0, Some(1))])
+                .is_none(),
+            "the same tablet again changes nothing"
+        );
+        assert!(
+            state
+                .with_updated_tablets(vec![tablet(0, 100, 0, Some(1)), tablet(0, 100, 0, Some(1))])
+                .is_none(),
+            "nor does a whole batch of it"
+        );
+
+        // Within one batch, a tablet is compared with the state as updated by
+        // the batch so far: the overlapping tablet replaces the known one, and
+        // the known one, arriving again, must replace it back.
+        let reordered = state
+            .with_updated_tablets(vec![
+                tablet(50, 150, 0, Some(9)),
+                tablet(0, 100, 0, Some(1)),
+            ])
+            .expect("the overlapping tablet changes the state");
+        assert!(
+            reordered
+                .with_updated_tablets(vec![tablet(0, 100, 0, Some(1))])
+                .is_none(),
+            "the known tablet was applied last and is present"
+        );
+        assert!(
+            reordered
+                .with_updated_tablets(vec![tablet(50, 150, 0, Some(9))])
+                .is_some(),
+            "the overlapping tablet was replaced back"
+        );
+
+        // Any difference does change the state: version, shard, or range.
+        for changed in [
+            tablet(0, 100, 0, Some(2)),
+            tablet(0, 100, 1, Some(1)),
+            tablet(0, 50, 0, Some(1)),
+        ] {
+            assert!(state.with_updated_tablets(vec![changed]).is_some());
+        }
+
+        // A batch mixing a known tablet with a new one is applied.
+        let state = state
+            .with_updated_tablets(vec![
+                tablet(0, 100, 0, Some(1)),
+                tablet(101, 200, 0, Some(3)),
+            ])
+            .expect("the new tablet changes the state");
+        assert!(
+            state
+                .with_updated_tablets(vec![tablet(101, 200, 0, Some(3))])
+                .is_none()
         );
     }
 }
