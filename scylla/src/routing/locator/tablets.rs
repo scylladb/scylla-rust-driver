@@ -1915,6 +1915,7 @@ mod tests {
                             partition_key: vec![],
                             clustering_key: vec![],
                             partitioner: None,
+                            indexes: HashMap::new(),
                             pk_column_specs: vec![],
                         },
                     )]),
