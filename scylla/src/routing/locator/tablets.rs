@@ -501,6 +501,29 @@ impl Tablet {
         (self.first_token, self.last_token)
     }
 
+    /// Whether `raw` carries exactly the routing information `self` does: the
+    /// same token range and version, the same replicas (by host id and shard)
+    /// in the same order, and all of `self`'s replicas resolved.
+    ///
+    /// Comparing host ids is exact because a state's tablets only ever hold the
+    /// `Node` objects of its `known_nodes` (maintenance replaces recreated ones),
+    /// which is also what `raw` would resolve to.
+    fn is_same_as(&self, raw: &RawTablet) -> bool {
+        self.first_token == raw.first_token
+            && self.last_token == raw.last_token
+            && self.tablet_version == raw.tablet_version
+            && self.failed.is_none()
+            && self.replicas.all.len() == raw.replicas.replicas.len()
+            && self
+                .replicas
+                .all
+                .iter()
+                .zip(raw.replicas.replicas.iter())
+                .all(|((node, shard), (host_id, raw_shard))| {
+                    node.host_id == *host_id && shard == raw_shard
+                })
+    }
+
     // Returns `Ok(())` if after the operation Tablet replicas are fully resolved.
     // Return `Err(replicas)` if some replicas failed to resolve. `replicas` is a
     // list of Uuids that failed to resolve.
@@ -634,6 +657,13 @@ impl TableTablets {
         self.tablet_for_token(token)?.known_leader()
     }
 
+    /// Whether the tablet `raw` describes is already present exactly so (see
+    /// [`Tablet::is_same_as`]), so that adding it would change nothing.
+    fn contains(&self, raw: &RawTablet) -> bool {
+        self.tablet_for_token(raw.first_token)
+            .is_some_and(|present| present.is_same_as(raw))
+    }
+
     /// This method:
     /// - first removes all tablets that overlap with `tablet` from `self`
     /// - adds `tablet` to `self`
@@ -758,6 +788,14 @@ impl TabletsInfo {
     ) -> Option<&'a TableTablets> {
         let query_key = TableSpecQueryKey { table_spec };
         self.tablets.get(&query_key)
+    }
+
+    /// Whether the tablet `raw` describes is already present for `table_spec`
+    /// exactly so, so that adding it would change nothing. See
+    /// [`TableTablets::contains`].
+    pub(crate) fn contains(&self, table_spec: &TableSpec<'_>, raw: &RawTablet) -> bool {
+        self.tablets_for_table(table_spec)
+            .is_some_and(|tablets| tablets.contains(raw))
     }
 
     pub(crate) fn add_tablet(&mut self, table_spec: TableSpec<'static>, tablet: Tablet) {
@@ -1378,6 +1416,70 @@ mod tests {
             Some(&tablets.tablet_list[0])
         );
         assert_eq!(tablets.tablet_for_token(Token::new(1001)), None);
+    }
+
+    // `TableTablets::contains` must report a tablet as present only when the
+    // payload matches it exactly, so that no genuine change is ever skipped.
+    #[test]
+    fn contains_requires_exact_match() {
+        let node = Arc::new(Node::new_for_test(
+            Some(Uuid::from_u64_pair(1, 1)),
+            None,
+            None,
+            None,
+        ));
+        let other = Arc::new(Node::new_for_test(
+            Some(Uuid::from_u64_pair(1, 2)),
+            None,
+            None,
+            None,
+        ));
+        let unknown = Uuid::from_u64_pair(9, 9);
+        let translator = |id: Uuid| {
+            [&node, &other]
+                .into_iter()
+                .find(|n| n.host_id == id)
+                .cloned()
+        };
+        let resolve = |raw: RawTablet| match Tablet::from_raw_tablet(raw, translator) {
+            Ok(t) | Err((t, _)) => t,
+        };
+        let raw = |first, last, replicas, version| {
+            RawTablet::new_for_test(first, last, replicas, version)
+        };
+        let replicas = || vec![(node.host_id, 0), (other.host_id, 1)];
+
+        let mut tablets = TableTablets::new_for_test();
+        tablets.add_tablet(resolve(raw(0, 100, replicas(), Some(7))));
+
+        assert!(tablets.contains(&raw(0, 100, replicas(), Some(7))));
+
+        let differing = [
+            // Range.
+            raw(0, 99, replicas(), Some(7)),
+            raw(1, 100, replicas(), Some(7)),
+            // Version.
+            raw(0, 100, replicas(), Some(8)),
+            raw(0, 100, replicas(), None),
+            // Shard.
+            raw(0, 100, vec![(node.host_id, 1), (other.host_id, 1)], Some(7)),
+            // Replica order (the first replica is the leader).
+            raw(0, 100, vec![(other.host_id, 1), (node.host_id, 0)], Some(7)),
+            // Replica count.
+            raw(0, 100, vec![(node.host_id, 0)], Some(7)),
+            // Another host.
+            raw(0, 100, vec![(node.host_id, 0), (unknown, 1)], Some(7)),
+        ];
+        for tablet in differing {
+            assert!(!tablets.contains(&tablet), "{tablet:?}");
+        }
+
+        // A present tablet with unresolved replicas never counts as already
+        // there: the next feedback may resolve them.
+        let with_unknown = || raw(0, 100, vec![(node.host_id, 0), (unknown, 1)], Some(7));
+        let mut tablets = TableTablets::new_for_test();
+        tablets.add_tablet(resolve(with_unknown()));
+        assert!(!tablets.contains(&with_unknown()));
     }
 
     #[test]
