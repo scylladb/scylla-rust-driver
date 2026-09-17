@@ -36,14 +36,13 @@ pub(crate) struct NodeConfig {
     pub(crate) metrics: Metrics,
 }
 
-/// Represents the state of the cluster, including known nodes, keyspaces, and replica locator.
+/// The nodes known to be part of the cluster. Often refered to as "topology metadata".
 ///
-/// It is immutable after creation, and is replaced atomically upon a metadata refresh.
-/// Can be accessed through [Session::get_cluster_state()](crate::client::session::Session::get_cluster_state).
+/// Both collections hold the same set of nodes and are rebuilt together on
+/// every topology change.
 #[derive(Clone)]
-pub struct ClusterState {
+pub(crate) struct Topology {
     /// All nodes known to be part of the cluster, accessible by their host ID.
-    /// Often refered to as "topology metadata".
     pub(crate) known_nodes: HashMap<Uuid, Arc<Node>>, // Invariant: nonempty after Cluster::new()
 
     /// Contains the same set of nodes as `known_nodes`.
@@ -54,10 +53,33 @@ pub struct ClusterState {
     // TODO: in 2.0, make `get_nodes_info()` return `Iterator` instead of a slice.
     // Then, remove this field.
     pub(crate) all_nodes: Vec<Arc<Node>>,
+}
+
+impl Topology {
+    pub(crate) fn new(known_nodes: HashMap<Uuid, Arc<Node>>) -> Self {
+        Self {
+            all_nodes: known_nodes.values().cloned().collect(),
+            known_nodes,
+        }
+    }
+}
+
+/// Represents the state of the cluster, including known nodes, keyspaces, and replica locator.
+///
+/// It is immutable after creation, and is replaced atomically upon a metadata refresh.
+/// Can be accessed through [Session::get_cluster_state()](crate::client::session::Session::get_cluster_state).
+#[derive(Clone)]
+pub struct ClusterState {
+    /// Shared, not copied, when a new `ClusterState` is derived from this one
+    /// without a topology change (e.g. on a tablet update).
+    pub(crate) topology: Arc<Topology>,
 
     /// All keyspaces in the cluster, accessible by their name.
     /// Often refered to as "schema metadata".
-    pub(crate) keyspaces: HashMap<String, Keyspace>,
+    ///
+    /// Shared, not copied, when a new `ClusterState` is derived from this one
+    /// without a schema change (e.g. on a tablet update).
+    pub(crate) keyspaces: Arc<HashMap<String, Keyspace>>,
 
     /// The entity which provides a way to find the set of owning nodes (+shards, in case of ScyllaDB)
     /// for a given (token, replication strategy, table) tuple.
@@ -65,7 +87,7 @@ pub struct ClusterState {
     pub(crate) locator: ReplicaLocator,
 
     /// The name of the cluster, as reported by the `cluster_name` column in `system.local`.
-    pub(crate) cluster_name: Option<String>,
+    pub(crate) cluster_name: Option<Arc<str>>,
 }
 
 impl std::fmt::Debug for ClusterState {
@@ -81,7 +103,7 @@ impl std::fmt::Debug for ClusterState {
         };
 
         f.debug_struct("ClusterState")
-            .field("known_nodes", &self.known_nodes)
+            .field("known_nodes", &self.topology.known_nodes)
             .field("ring", &ring_printer)
             .field("keyspaces", &self.keyspaces.keys())
             .finish_non_exhaustive()
@@ -105,7 +127,7 @@ impl ClusterState {
     /// Suitable, among others, for nodes whose client routes were added or updated.
     pub(super) fn trigger_pool_refills_for_hosts(&self, host_ids: impl Iterator<Item = Uuid>) {
         for host_id in host_ids {
-            if let Some(node) = self.known_nodes.get(&host_id) {
+            if let Some(node) = self.topology.known_nodes.get(&host_id) {
                 debug!(
                     host_id = %host_id,
                     "Triggering immediate pool refill for relevant Node"
@@ -122,7 +144,8 @@ impl ClusterState {
     /// ([`NodeAddr::Translatable`], i.e. before any address translation), so the
     /// comparison is right. In the current implementation, `Node` object always uses this variant.
     fn node_by_broadcast_address(&self, addr: SocketAddr) -> Option<&Arc<Node>> {
-        self.known_nodes
+        self.topology
+            .known_nodes
             .values()
             .find(|node| node.address.into_inner() == addr)
     }
@@ -178,7 +201,10 @@ impl ClusterState {
         let (new_known_nodes, ring) =
             Self::calculate_new_topology(metadata.peers, &HashMap::new(), node_config, host_filter);
 
-        let keyspaces = Self::resolve_metadata_keyspaces(metadata.keyspaces, &HashMap::new());
+        let keyspaces = Arc::new(Self::resolve_metadata_keyspaces(
+            metadata.keyspaces,
+            &HashMap::new(),
+        ));
 
         let mut tablets = TabletsInfo::new();
         // Perform maintenance to create empty entries for all tablets-based tables.
@@ -192,11 +218,10 @@ impl ClusterState {
         let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
 
         ClusterState {
-            all_nodes: new_known_nodes.values().cloned().collect(),
-            known_nodes: new_known_nodes,
+            topology: Arc::new(Topology::new(new_known_nodes)),
             keyspaces,
             locator,
-            cluster_name: metadata.cluster_name,
+            cluster_name: metadata.cluster_name.map(Arc::from),
         }
     }
 
@@ -208,11 +233,14 @@ impl ClusterState {
         node_config: &NodeConfig,
         host_filter: Option<&dyn HostFilter>,
     ) -> Self {
-        let keyspaces = Self::resolve_metadata_keyspaces(metadata.keyspaces, &self.keyspaces);
+        let keyspaces = Arc::new(Self::resolve_metadata_keyspaces(
+            metadata.keyspaces,
+            &self.keyspaces,
+        ));
 
         let (new_known_nodes, ring) = Self::calculate_new_topology(
             metadata.peers,
-            &self.known_nodes,
+            &self.topology.known_nodes,
             node_config,
             host_filter,
         );
@@ -220,7 +248,7 @@ impl ClusterState {
         let mut tablets = self.locator.tablets.clone();
         Self::perform_tablets_maintenance(
             &mut tablets,
-            &self.known_nodes,
+            &self.topology.known_nodes,
             &new_known_nodes,
             &keyspaces,
         );
@@ -228,11 +256,10 @@ impl ClusterState {
         let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
 
         ClusterState {
-            all_nodes: new_known_nodes.values().cloned().collect(),
-            known_nodes: new_known_nodes,
+            topology: Arc::new(Topology::new(new_known_nodes)),
             keyspaces,
             locator,
-            cluster_name: metadata.cluster_name,
+            cluster_name: metadata.cluster_name.map(Arc::from),
         }
     }
 
@@ -252,36 +279,43 @@ impl ClusterState {
         node_config: &NodeConfig,
         host_filter: Option<&dyn HostFilter>,
     ) -> Self {
-        let (new_known_nodes, ring) = match peers {
+        let (topology, ring) = match peers {
             Some(peers) => {
-                Self::calculate_new_topology(peers, &self.known_nodes, node_config, host_filter)
+                let (new_known_nodes, ring) = Self::calculate_new_topology(
+                    peers,
+                    &self.topology.known_nodes,
+                    node_config,
+                    host_filter,
+                );
+                (Arc::new(Topology::new(new_known_nodes)), ring)
             }
-            // The ring in place is exactly the (token, node) list that the
-            // unchanged topology implies, so it is reused as is.
+            // The topology is unchanged, so it is shared with `self`. The ring
+            // in place is exactly the (token, node) list that it implies, so it
+            // is reused as is.
             None => (
-                self.known_nodes.clone(),
+                Arc::clone(&self.topology),
                 self.locator.ring().iter().cloned().collect(),
             ),
         };
 
         let keyspaces = match schema {
-            Some(schema) => self.updated_keyspaces(schema),
-            None => self.keyspaces.clone(),
+            Some(schema) => Arc::new(self.updated_keyspaces(schema)),
+            // The schema is unchanged, so it is shared with `self`.
+            None => Arc::clone(&self.keyspaces),
         };
 
         let mut tablets = self.locator.tablets.clone();
         Self::perform_tablets_maintenance(
             &mut tablets,
-            &self.known_nodes,
-            &new_known_nodes,
+            &self.topology.known_nodes,
+            &topology.known_nodes,
             &keyspaces,
         );
 
         let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
 
         ClusterState {
-            all_nodes: new_known_nodes.values().cloned().collect(),
-            known_nodes: new_known_nodes,
+            topology,
             keyspaces,
             locator,
             cluster_name: self.cluster_name.clone(),
@@ -292,7 +326,7 @@ impl ClusterState {
     /// replaces the metadata of the re-read keyspaces and removes those that
     /// ceased to exist, keeping every keyspace the update does not mention.
     fn updated_keyspaces(&self, schema: SchemaUpdate) -> HashMap<String, Keyspace> {
-        let mut new_keyspaces = self.keyspaces.clone();
+        let mut new_keyspaces = HashMap::clone(&self.keyspaces);
 
         for (name, keyspace) in schema.keyspaces {
             // A keyspace whose fresh metadata turned out inconsistent keeps its
@@ -465,10 +499,10 @@ impl ClusterState {
     }
 
     async fn calculate_new_locator(
-        keyspaces: HashMap<String, Keyspace>,
+        keyspaces: Arc<HashMap<String, Keyspace>>,
         ring: Ring,
         tablets: TabletsInfo,
-    ) -> (ReplicaLocator, HashMap<String, Keyspace>) {
+    ) -> (ReplicaLocator, Arc<HashMap<String, Keyspace>>) {
         tokio::task::spawn_blocking(move || {
             let keyspace_strategies = keyspaces
                 .values()
@@ -498,12 +532,12 @@ impl ClusterState {
 
     /// Access details about nodes known to the driver
     pub fn get_nodes_info(&self) -> &[Arc<Node>] {
-        &self.all_nodes
+        &self.topology.all_nodes
     }
 
     /// Access details about specific node known to the driver, querying by host id.
     pub fn get_node_by_host_id(&self, host_id: Uuid) -> Option<NodeRef<'_>> {
-        self.known_nodes.get(&host_id)
+        self.topology.known_nodes.get(&host_id)
     }
 
     /// Compute token of a table partition key
@@ -620,9 +654,9 @@ impl ClusterState {
         impl Iterator<Item = (Uuid, impl Iterator<Item = Arc<Connection>> + use<>)> + use<'_>,
         ConnectionPoolError,
     > {
-        // The returned iterator is nonempty by nonemptiness invariant of `self.known_nodes`.
-        assert!(!self.known_nodes.is_empty());
-        let nodes_iter = self.known_nodes.values();
+        // The returned iterator is nonempty by nonemptiness invariant of `self.topology.known_nodes`.
+        assert!(!self.topology.known_nodes.is_empty());
+        let nodes_iter = self.topology.known_nodes.values();
         let mut connection_pool_per_node_iter = nodes_iter.map(|node| {
             node.get_working_connections()
                 .map(|pool| (node.host_id, pool))
@@ -653,7 +687,7 @@ impl ClusterState {
         Ok(std::iter::once(first_working_pool)
             .chain(remaining_working_pools_iter)
             .map(|(host_id, pool)| (host_id, IntoIterator::into_iter(pool))))
-        // By an invariant `self.known_nodes` is nonempty, so the returned iterator
+        // By an invariant `self.topology.known_nodes` is nonempty, so the returned iterator
         // is nonempty, too.
     }
 
@@ -669,9 +703,9 @@ impl ClusterState {
     pub(crate) fn iter_working_connections_to_nodes(
         &self,
     ) -> Result<impl Iterator<Item = Arc<Connection>> + use<'_>, ConnectionPoolError> {
-        // The returned iterator is nonempty by nonemptiness invariant of `self.known_nodes`.
-        assert!(!self.known_nodes.is_empty());
-        let nodes_iter = self.known_nodes.values();
+        // The returned iterator is nonempty by nonemptiness invariant of `self.topology.known_nodes`.
+        assert!(!self.topology.known_nodes.is_empty());
+        let nodes_iter = self.topology.known_nodes.values();
         let mut single_connection_per_node_iter =
             nodes_iter.map(|node| node.get_random_connection());
 
@@ -700,13 +734,35 @@ impl ClusterState {
 
     #[cfg(test)]
     fn known_nodes(&self) -> &HashMap<Uuid, Arc<Node>> {
-        &self.known_nodes
+        &self.topology.known_nodes
     }
 
-    pub(crate) fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec<'static>, RawTablet)>) {
-        let replica_translator = |uuid: Uuid| self.known_nodes.get(&uuid).cloned();
+    /// Returns a copy of `self` with `raw_tablets` recorded, or `None` if every
+    /// one of them is already recorded exactly as given, so that there is nothing
+    /// new to publish.
+    ///
+    /// The `None` case is common: every in-flight request to a not yet learned
+    /// tablet triggers feedback for it, so the same tablet tends to arrive many
+    /// times in a row. A repeat is detected on the raw payload, before its
+    /// replicas are resolved and before `self` is cloned, so it costs neither
+    /// allocation nor a new `ClusterState`.
+    pub(crate) fn with_updated_tablets(
+        &self,
+        raw_tablets: Vec<(TableSpec<'static>, RawTablet)>,
+    ) -> Option<ClusterState> {
+        let replica_translator = |uuid: Uuid| self.topology.known_nodes.get(&uuid).cloned();
 
-        for (table, raw_tablet) in raw_tablets.into_iter() {
+        // Cloned lazily, by the first tablet that turns out to change anything.
+        let mut new_state: Option<ClusterState> = None;
+
+        for (table, raw_tablet) in raw_tablets {
+            // Compared with the state as updated by the batch so far, not with
+            // `self`: an earlier tablet of the batch may have replaced this one.
+            let current = new_state.as_ref().unwrap_or(self);
+            if current.locator.tablets.contains(&table, &raw_tablet) {
+                continue;
+            }
+
             // Should we skip tablets that belong to a keyspace not present in
             // self.keyspaces? The keyspace could have been, without driver's knowledge:
             // 1. Dropped - in which case we'll remove its info soon (when refreshing
@@ -729,8 +785,15 @@ impl ClusterState {
                     t
                 }
             };
-            self.locator.tablets.add_tablet(table, tablet);
+
+            new_state
+                .get_or_insert_with(|| self.clone())
+                .locator
+                .tablets
+                .add_tablet(table, tablet);
         }
+
+        new_state
     }
 }
 
@@ -820,6 +883,7 @@ mod tests {
     use crate::cluster::metadata::{Metadata, Peer};
     use crate::cluster::node::NodeAddr;
     use crate::policies::host_filter::HostFilter;
+    use crate::routing::locator::tablets::RawTablet;
     use crate::test_utils::setup_tracing;
 
     use std::collections::{HashMap, HashSet};
@@ -1022,6 +1086,91 @@ mod tests {
         assert!(
             Arc::ptr_eq(&old_node, new_node),
             "Node object should be reused when disabled node's attributes haven't changed"
+        );
+    }
+
+    // Tablet feedback that repeats what the state already holds must not
+    // produce a new state; feedback that changes anything must.
+    #[tokio::test]
+    async fn tablet_update_is_skipped_when_nothing_changes() {
+        setup_tracing();
+
+        let host_id = Uuid::new_v4();
+        let metadata = make_metadata(vec![make_peer(
+            host_id,
+            make_addr(1),
+            Some("dc1"),
+            Some("r1"),
+        )]);
+        let state = new_cluster_state(metadata, None).await;
+
+        let table = TableSpec::borrowed("ks", "t").into_owned();
+        let tablet = |first, last, shard, version| {
+            (
+                table.clone(),
+                RawTablet::new_for_test(first, last, vec![(host_id, shard)], version),
+            )
+        };
+
+        let state = state
+            .with_updated_tablets(vec![tablet(0, 100, 0, Some(1))])
+            .expect("a new tablet changes the state");
+
+        assert!(
+            state
+                .with_updated_tablets(vec![tablet(0, 100, 0, Some(1))])
+                .is_none(),
+            "the same tablet again changes nothing"
+        );
+        assert!(
+            state
+                .with_updated_tablets(vec![tablet(0, 100, 0, Some(1)), tablet(0, 100, 0, Some(1))])
+                .is_none(),
+            "nor does a whole batch of it"
+        );
+
+        // Within one batch, a tablet is compared with the state as updated by
+        // the batch so far: the overlapping tablet replaces the known one, and
+        // the known one, arriving again, must replace it back.
+        let reordered = state
+            .with_updated_tablets(vec![
+                tablet(50, 150, 0, Some(9)),
+                tablet(0, 100, 0, Some(1)),
+            ])
+            .expect("the overlapping tablet changes the state");
+        assert!(
+            reordered
+                .with_updated_tablets(vec![tablet(0, 100, 0, Some(1))])
+                .is_none(),
+            "the known tablet was applied last and is present"
+        );
+        assert!(
+            reordered
+                .with_updated_tablets(vec![tablet(50, 150, 0, Some(9))])
+                .is_some(),
+            "the overlapping tablet was replaced back"
+        );
+
+        // Any difference does change the state: version, shard, or range.
+        for changed in [
+            tablet(0, 100, 0, Some(2)),
+            tablet(0, 100, 1, Some(1)),
+            tablet(0, 50, 0, Some(1)),
+        ] {
+            assert!(state.with_updated_tablets(vec![changed]).is_some());
+        }
+
+        // A batch mixing a known tablet with a new one is applied.
+        let state = state
+            .with_updated_tablets(vec![
+                tablet(0, 100, 0, Some(1)),
+                tablet(101, 200, 0, Some(3)),
+            ])
+            .expect("the new tablet changes the state");
+        assert!(
+            state
+                .with_updated_tablets(vec![tablet(101, 200, 0, Some(3))])
+                .is_none()
         );
     }
 }
