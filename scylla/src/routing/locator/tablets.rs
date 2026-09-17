@@ -76,6 +76,7 @@ use crate::cluster::Node;
 use crate::routing::{Shard, Token};
 use crate::utils::safe_format::IteratorSafeFormatExt;
 use rand::Rng as _;
+use smallvec::SmallVec;
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
@@ -321,13 +322,29 @@ impl RawTablet {
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(test, derive(Eq))]
 struct TabletReplicas {
+    /// The replicas in payload order. A datacenter-scoped query is answered
+    /// with a mask of positions in this list (see `dc_masks` and
+    /// `ReplicaSetInner::MaskedSharded`).
     all: Vec<(Arc<Node>, Shard)>,
-    per_dc: HashMap<String, Vec<(Arc<Node>, Shard)>>,
+    /// One mask per datacenter among the replicas: the positions in `all` of
+    /// the replicas in that datacenter. Which datacenter a mask stands for is
+    /// told by its first replica, so no name is stored and a datacenter query
+    /// costs one comparison per datacenter of the tablet instead of one per
+    /// replica - and does not depend on where in the list the datacenter's
+    /// replicas are.
+    ///
+    /// A mask is `Self::mask_words(all.len())` words long (see [`MaskBits`]),
+    /// and the masks are stored back to back. A tablet has up to 64 replicas in
+    /// practice, so a mask is one word and this holds three datacenters inline.
+    ///
+    /// Replicas whose node has no datacenter are in no mask: they match no
+    /// datacenter query.
+    dc_masks: SmallVec<[u64; 3]>,
 }
 
 impl TabletReplicas {
-    /// Gets raw replica list (which is an array of (Uuid, Shard)), retrieves
-    /// `Node` objects and groups node replicas by DC to make life easier for LBP.
+    /// Gets raw replica list (which is an array of (Uuid, Shard)) and retrieves
+    /// `Node` objects.
     /// In case of failure this function returns Self, but with the problematic nodes skipped,
     /// and a list of skipped uuids - so that the caller can e.g. do some logging.
     pub(crate) fn from_raw_replicas(
@@ -348,39 +365,80 @@ impl TabletReplicas {
             })
             .collect();
 
-        let mut per_dc: HashMap<String, Vec<(Arc<Node>, Shard)>> = HashMap::new();
-        all.iter().for_each(|(replica, shard)| {
-            if let Some(dc) = replica.datacenter.as_ref() {
-                if let Some(replicas) = per_dc.get_mut(dc) {
-                    replicas.push((Arc::clone(replica), *shard));
-                } else {
-                    per_dc.insert(dc.to_string(), vec![(Arc::clone(replica), *shard)]);
+        if failed.is_empty() {
+            Ok(Self::new(all))
+        } else {
+            Err((Self::new(all), failed))
+        }
+    }
+
+    fn new(all: Vec<(Arc<Node>, Shard)>) -> Self {
+        let dc_masks = Self::index(&all);
+        Self { all, dc_masks }
+    }
+
+    /// Builds the `dc_masks` of `all`.
+    fn index(all: &[(Arc<Node>, Shard)]) -> SmallVec<[u64; 3]> {
+        let words = Self::mask_words(all.len());
+        let mut dc_masks: SmallVec<[u64; 3]> = SmallVec::new();
+        for (i, (node, _)) in all.iter().enumerate() {
+            let Some(dc) = node.datacenter.as_deref() else {
+                continue;
+            };
+            let (word, bit) = (i / u64::BITS as usize, 1u64 << (i % u64::BITS as usize));
+            match dc_masks
+                .chunks_exact_mut(words)
+                .find(|mask| Self::datacenter_of_mask(all, mask) == Some(dc))
+            {
+                Some(mask) => mask[word] |= bit,
+                None => {
+                    let start = dc_masks.len();
+                    dc_masks.resize(start + words, 0);
+                    dc_masks[start + word] = bit;
                 }
             }
-        });
-
-        if failed.is_empty() {
-            Ok(Self { all, per_dc })
-        } else {
-            Err((Self { all, per_dc }, failed))
         }
+        dc_masks
+    }
+
+    /// Number of words in a mask over a replica list of `len` entries.
+    ///
+    /// At least one, so that an empty list still has a well-defined (and
+    /// non-zero) stride for `chunks_exact`.
+    fn mask_words(len: usize) -> usize {
+        len.div_ceil(u64::BITS as usize).max(1)
+    }
+
+    /// The datacenter a mask of `dc_masks` stands for: that of its first replica.
+    fn datacenter_of_mask<'a>(all: &'a [(Arc<Node>, Shard)], mask: &[u64]) -> Option<&'a str> {
+        // Spelled out rather than `MaskBits::new(mask).next()`: this runs for
+        // every datacenter of the tablet on every datacenter-scoped lookup.
+        let (word_idx, word) = mask.iter().enumerate().find(|(_, word)| **word != 0)?;
+        let first = word_idx * u64::BITS as usize + word.trailing_zeros() as usize;
+        all.get(first)?.0.datacenter.as_deref()
+    }
+
+    /// Mask of the positions in `all` of the replicas in datacenter `dc`; empty
+    /// if there are none.
+    // A plain stepping loop instead of `chunks_exact`, which divides by the
+    // chunk size up front; measurably cheaper on this hot path.
+    #[inline]
+    fn dc_mask(&self, dc: &str) -> &[u64] {
+        let words = Self::mask_words(self.all.len());
+        let masks: &[u64] = &self.dc_masks;
+        let mut start = 0;
+        while let Some(mask) = masks.get(start..start + words) {
+            if Self::datacenter_of_mask(&self.all, mask) == Some(dc) {
+                return mask;
+            }
+            start += words;
+        }
+        &[]
     }
 
     #[cfg(test)]
     fn new_for_test(replicas: Vec<Arc<Node>>) -> Self {
-        let all = replicas.into_iter().map(|r| (r, 0)).collect::<Vec<_>>();
-        let mut per_dc: HashMap<String, Vec<(Arc<Node>, Shard)>> = HashMap::new();
-        all.iter().for_each(|(replica, shard)| {
-            if let Some(dc) = replica.datacenter.as_ref() {
-                if let Some(replicas) = per_dc.get_mut(dc) {
-                    replicas.push((Arc::clone(replica), *shard));
-                } else {
-                    per_dc.insert(dc.to_string(), vec![(Arc::clone(replica), *shard)]);
-                }
-            }
-        });
-
-        Self { all, per_dc }
+        Self::new(replicas.into_iter().map(|r| (r, 0)).collect())
     }
 }
 
@@ -404,22 +462,6 @@ impl PartialEq for TabletReplicas {
             }
             if !Arc::ptr_eq(self_node, other_node) {
                 return false;
-            }
-        }
-
-        // Implementations of `TableTablets`, `Tablet` and `TabletReplicas`
-        // guarantee that if `all` is the same then `per_dc` must be too.
-        // If it isn't then it is a bug.
-        // Comparing `TabletReplicas` happens only in tests so we can sacrifice
-        // a small bit of performance to verify this assumption.
-        assert_eq!(self.per_dc.len(), other.per_dc.len());
-        for (self_k, self_v) in self.per_dc.iter() {
-            let other_v = other.per_dc.get(self_k).unwrap();
-            for ((self_node, self_shard), (other_node, other_shard)) in
-                self_v.iter().zip(other_v.iter())
-            {
-                assert_eq!(self_shard, other_shard);
-                assert!(Arc::ptr_eq(self_node, other_node));
             }
         }
 
@@ -555,17 +597,9 @@ impl Tablet {
                 *node = Arc::clone(new_node);
             }
         }
-
         if any_updated {
-            // Now that we know we have some nodes to update we need to go over
-            // per-dc nodes and update them too.
-            for dc_nodes in self.replicas.per_dc.values_mut() {
-                for (node, _) in dc_nodes.iter_mut() {
-                    if let Some(new_node) = recreated_nodes.get(&node.host_id) {
-                        *node = Arc::clone(new_node);
-                    }
-                }
-            }
+            // A recreated node may be in another datacenter now.
+            self.replicas.dc_masks = TabletReplicas::index(&self.replicas.all);
         }
     }
 
@@ -582,6 +616,75 @@ impl Tablet {
         }
     }
 }
+
+/// A tablet's replicas together with a mask of the positions of a subset of
+/// them, see [`TabletReplicas::dc_mask`].
+pub(crate) type MaskedReplicas<'a> = (&'a [(Arc<Node>, Shard)], &'a [u64]);
+
+/// The positions of the set bits of a mask, ascending. Bit `i` of the mask is
+/// bit `i % 64` of word `i / 64`.
+///
+/// `size_hint` is exact, so a replica set backed by a mask has an O(1) `len()`.
+/// `nth` is the default loop of `next`: it is only ever asked to skip fewer
+/// bits than are set, and a popcount-based skip would cost more than the few
+/// steps it saves (the default target has no `popcnt`, so `count_ones` is a
+/// dozen instructions).
+#[derive(Clone, Debug)]
+pub(crate) struct MaskBits<'a> {
+    /// The bits of the current word not yielded yet.
+    word: u64,
+    /// Position of bit 0 of `word`.
+    base: usize,
+    /// The words after the current one.
+    rest: &'a [u64],
+}
+
+impl<'a> MaskBits<'a> {
+    pub(crate) fn new(mask: &'a [u64]) -> Self {
+        let (word, rest) = mask
+            .split_first()
+            .map_or((0, &[][..]), |(w, rest)| (*w, rest));
+        Self {
+            word,
+            base: 0,
+            rest,
+        }
+    }
+
+    /// Moves to the next word; `false` if there is none (the iterator is then exhausted).
+    fn advance_word(&mut self) -> bool {
+        let Some((word, rest)) = self.rest.split_first() else {
+            return false;
+        };
+        self.word = *word;
+        self.rest = rest;
+        self.base += u64::BITS as usize;
+        true
+    }
+}
+
+impl Iterator for MaskBits<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        while self.word == 0 {
+            if !self.advance_word() {
+                return None;
+            }
+        }
+        let pos = self.base + self.word.trailing_zeros() as usize;
+        self.word &= self.word - 1;
+        Some(pos)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let ones = |word: &u64| word.count_ones() as usize;
+        let n = ones(&self.word) + self.rest.iter().map(ones).sum::<usize>();
+        (n, Some(n))
+    }
+}
+
+impl ExactSizeIterator for MaskBits<'_> {}
 
 /// Container for tablets of a single table.
 ///
@@ -626,19 +729,15 @@ impl TableTablets {
             .map(|tablet| tablet.replicas.all.as_ref())
     }
 
+    /// The replicas of the tablet owning `token` together with the mask of
+    /// those of them that are in datacenter `dc`.
     pub(crate) fn dc_replicas_for_token(
         &self,
         token: Token,
         dc: &str,
-    ) -> Option<&[(Arc<Node>, Shard)]> {
-        self.tablet_for_token(token).map(|tablet| {
-            tablet
-                .replicas
-                .per_dc
-                .get(dc)
-                .map(|x| x.as_slice())
-                .unwrap_or(&[])
-        })
+    ) -> Option<MaskedReplicas<'_>> {
+        self.tablet_for_token(token)
+            .map(|tablet| (tablet.replicas.all.as_slice(), tablet.replicas.dc_mask(dc)))
     }
 
     /// Returns the tablet version for the tablet owning `token`, if known.
@@ -956,11 +1055,12 @@ mod tests {
     use uuid::Uuid;
 
     use crate::cluster::Node;
-    use crate::routing::Token;
     use crate::routing::locator::tablets::{
-        CUSTOM_PAYLOAD_TABLETS_V1_KEY, CUSTOM_PAYLOAD_TABLETS_V2_KEY, RAW_TABLETS_V1_CQL_TYPE,
-        RAW_TABLETS_V2_CQL_TYPE, RawTablet, RawTabletReplicas, TabletParsingError, TabletVersion,
+        CUSTOM_PAYLOAD_TABLETS_V1_KEY, CUSTOM_PAYLOAD_TABLETS_V2_KEY, MaskBits,
+        RAW_TABLETS_V1_CQL_TYPE, RAW_TABLETS_V2_CQL_TYPE, RawTablet, RawTabletReplicas,
+        TabletParsingError, TabletVersion,
     };
+    use crate::routing::{Shard, Token};
     use crate::test_utils::setup_tracing;
     use crate::value::CqlValue;
 
@@ -1267,7 +1367,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_replicas_to_replicas_groups_correctly() {
+    fn raw_replicas_resolve_in_order() {
         let nodes: HashMap<Uuid, Arc<Node>> = [
             Node::new_for_test(
                 Some(Uuid::from_u64_pair(1, 1)),
@@ -1327,38 +1427,112 @@ mod tests {
 
         let replicas = TabletReplicas::from_raw_replicas(&raw_replicas, translator);
 
-        let mut per_dc = HashMap::new();
-        per_dc.insert(
-            "dc1".to_string(),
-            vec![
-                (translator(Uuid::from_u64_pair(1, 1)).unwrap(), 1),
-                (translator(Uuid::from_u64_pair(1, 6)).unwrap(), 1),
-            ],
-        );
-        per_dc.insert(
-            "dc2".to_string(),
-            vec![
-                (translator(Uuid::from_u64_pair(1, 2)).unwrap(), 1),
-                (translator(Uuid::from_u64_pair(1, 4)).unwrap(), 1),
-                (translator(Uuid::from_u64_pair(1, 5)).unwrap(), 1),
-            ],
-        );
-        per_dc.insert(
-            "dc3".to_string(),
-            vec![(translator(Uuid::from_u64_pair(1, 3)).unwrap(), 1)],
-        );
-
         assert_eq!(
             replicas,
-            Ok(TabletReplicas {
-                all: replicas_uids
+            Ok(TabletReplicas::new(
+                replicas_uids
                     .iter()
                     .cloned()
                     .map(|replica| (translator(replica).unwrap(), 1))
                     .collect(),
-                per_dc
-            })
+            ))
         );
+    }
+
+    fn node_in_dc(id: u64, dc: Option<&str>) -> Arc<Node> {
+        Arc::new(Node::new_for_test(
+            Some(Uuid::from_u64_pair(1, id)),
+            None,
+            dc.map(str::to_owned),
+            None,
+        ))
+    }
+
+    // The per-datacenter masks must cover exactly the replicas in each
+    // datacenter, leave nodes without a datacenter out, and follow a node
+    // that is recreated in another datacenter.
+    #[test]
+    fn dc_masks_index_replicas_by_datacenter() {
+        let node = node_in_dc;
+        let replicas = TabletReplicas::new(
+            [
+                (node(1, Some(DC1)), 0),
+                (node(2, Some(DC2)), 0),
+                (node(3, None), 0),
+                (node(4, Some(DC1)), 0),
+                (node(5, Some(DC2)), 0),
+            ]
+            .into(),
+        );
+        assert_eq!(replicas.dc_mask(DC1), [0b01001]);
+        assert_eq!(replicas.dc_mask(DC2), [0b10010]);
+        assert_eq!(replicas.dc_mask(DC3), [0u64; 0]);
+        assert_eq!(replicas.dc_masks.len(), 2);
+
+        // Node 4 moves to DC3 (a recreated `Node` object with the same host id).
+        let mut tablet = Tablet {
+            first_token: Token::new(0),
+            last_token: Token::new(1),
+            replicas,
+            tablet_version: None,
+            failed: None,
+        };
+        let moved = node(4, Some(DC3));
+        tablet.update_stale_nodes(&HashMap::from([(moved.host_id, moved)]));
+        assert_eq!(tablet.replicas.dc_mask(DC1), [0b00001]);
+        assert_eq!(tablet.replicas.dc_mask(DC2), [0b10010]);
+        assert_eq!(tablet.replicas.dc_mask(DC3), [0b01000]);
+    }
+
+    // A tablet with more than 64 replicas gets multi-word masks, which must
+    // name exactly the same positions a filter would.
+    #[test]
+    fn dc_masks_span_words_for_large_tablets() {
+        let dcs = [DC1, DC2, DC3];
+        let all: Vec<(Arc<Node>, Shard)> = (0..150u64)
+            .map(|i| (node_in_dc(i, Some(dcs[i as usize % 3])), 0))
+            .collect();
+        let replicas = TabletReplicas::new(all);
+        assert_eq!(replicas.dc_masks.len(), 3 * 3);
+        for (d, dc) in dcs.iter().enumerate() {
+            let mask = replicas.dc_mask(dc);
+            assert_eq!(mask.len(), 3);
+            let expected: Vec<usize> = (d..150).step_by(3).collect();
+            assert_eq!(MaskBits::new(mask).collect::<Vec<_>>(), expected);
+        }
+        assert_eq!(replicas.dc_mask("dc4"), [0u64; 0]);
+    }
+
+    // `MaskBits` must yield positions across word boundaries, keep an exact
+    // size, and skip with `nth` the same way repeated `next` would.
+    #[test]
+    fn mask_bits_iterate_across_words() {
+        let mask = [1u64 << 63 | 1, 0, 1 << 5 | 1 << 7];
+        let positions = [0, 63, 128 + 5, 128 + 7];
+
+        let mut bits = MaskBits::new(&mask);
+        assert_eq!(bits.len(), 4);
+        assert_eq!(bits.next(), Some(0));
+        assert_eq!(bits.len(), 3);
+        assert_eq!(bits.collect::<Vec<_>>(), positions[1..]);
+
+        for n in 0..positions.len() {
+            let mut bits = MaskBits::new(&mask);
+            assert_eq!(bits.nth(n), Some(positions[n]));
+            assert_eq!(bits.len(), positions.len() - n - 1);
+            assert_eq!(bits.collect::<Vec<_>>(), positions[n + 1..]);
+        }
+        let mut bits = MaskBits::new(&mask);
+        assert_eq!(bits.nth(positions.len()), None);
+        assert_eq!(bits.len(), 0);
+        let mut bits = MaskBits::new(&mask);
+        assert_eq!(bits.nth(usize::MAX), None);
+        assert_eq!(bits.len(), 0);
+        assert_eq!(bits.next(), None);
+
+        assert_eq!(MaskBits::new(&[]).next(), None);
+        assert_eq!(MaskBits::new(&[0, 0]).len(), 0);
+        assert_eq!(MaskBits::new(&[0, 0]).next(), None);
     }
 
     #[test]
