@@ -737,10 +737,15 @@ impl ClusterState {
         &self.topology.known_nodes
     }
 
-    pub(crate) fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec<'static>, RawTablet)>) {
+    /// Returns a copy of `self` with `raw_tablets` recorded.
+    pub(crate) fn with_updated_tablets(
+        &self,
+        raw_tablets: Vec<(TableSpec<'static>, RawTablet)>,
+    ) -> ClusterState {
         let replica_translator = |uuid: Uuid| self.topology.known_nodes.get(&uuid).cloned();
+        let mut new_state = self.clone();
 
-        for (table, raw_tablet) in raw_tablets.into_iter() {
+        for (table, raw_tablet) in raw_tablets {
             // Should we skip tablets that belong to a keyspace not present in
             // self.keyspaces? The keyspace could have been, without driver's knowledge:
             // 1. Dropped - in which case we'll remove its info soon (when refreshing
@@ -763,8 +768,9 @@ impl ClusterState {
                     t
                 }
             };
-            self.locator.tablets.add_tablet(table, tablet);
+            new_state.locator.tablets.add_tablet(table, tablet);
         }
+        new_state
     }
 }
 

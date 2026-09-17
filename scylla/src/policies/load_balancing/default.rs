@@ -3120,7 +3120,7 @@ mod tests {
             connectivity_events_sender,
             metrics: Default::default(),
         };
-        let mut state = ClusterState::new(metadata, &node_config, None).await;
+        let state = ClusterState::new(metadata, &node_config, None).await;
 
         let down_addrs: Vec<_> = down.iter().map(|&id| id_to_invalid_addr(id)).collect();
         for node in state.get_nodes_info() {
@@ -3137,7 +3137,7 @@ mod tests {
         let replica = |id: u16| (addr_to_host_id[&id_to_invalid_addr(id)], 0);
 
         // Tablets cover the whole test token range [1, 1000] (in particular Token(160)).
-        state.update_tablets(vec![
+        state.with_updated_tablets(vec![
             // Strongly consistent, versioned -> leader-first routing. Leader = C.
             (
                 TABLE_NTS_RF_3.clone(),
@@ -3165,9 +3165,7 @@ mod tests {
                     Some(11),
                 ),
             ),
-        ]);
-
-        state
+        ])
     }
 
     #[tokio::test]
