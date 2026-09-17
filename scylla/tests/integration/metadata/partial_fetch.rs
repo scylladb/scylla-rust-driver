@@ -31,10 +31,10 @@ const TOPOLOGY_FETCH_REQUESTS: usize = 2;
 /// The requests a partial schema fetch issues at the full schema detail level:
 /// one per schema table read for the affected keyspaces -
 /// `system_schema.keyspaces`, `.types`, `.columns`, `.tables`, `.views`,
-/// `.scylla_tables` (partitioners) and `.scylla_keyspaces` (tablet
+/// `.indexes`, `.scylla_tables` (partitioners) and `.scylla_keyspaces` (tablet
 /// information). A full fetch would add `system.peers` and `system.local`.
 /// Last 2 tables are not present on Cassandra, so they won't be queried.
-const SCHEMA_FETCH_REQUESTS: usize = if cfg!(cassandra_tests) { 5 } else { 7 };
+const SCHEMA_FETCH_REQUESTS: usize = if cfg!(cassandra_tests) { 6 } else { 8 };
 
 /// How long [`full_metadata_mode_picks_up_schema_changes_without_events`] waits
 /// for the periodic full fetch to publish the new keyspace: many
