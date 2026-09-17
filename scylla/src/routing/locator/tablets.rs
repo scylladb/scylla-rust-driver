@@ -356,18 +356,17 @@ impl TabletReplicas {
         replica_translator: impl Fn(Uuid) -> Option<Arc<Node>>,
     ) -> Result<Self, (Self, Vec<Uuid>)> {
         let mut failed = Vec::new();
-        let all: Arc<[(Arc<Node>, Shard)]> = raw_replicas
-            .replicas
-            .iter()
-            .filter_map(|(replica, shard)| {
-                if let Some(r) = replica_translator(*replica) {
-                    Some((r, *shard as Shard))
-                } else {
-                    failed.push(*replica);
-                    None
-                }
-            })
-            .collect();
+        // Sized up front: collecting straight into the `Arc` would go through a
+        // `Vec` anyway (the filtered iterator's length is not trusted), growing
+        // it by doubling and paying an allocation per step.
+        let mut all = Vec::with_capacity(raw_replicas.replicas.len());
+        for (replica, shard) in raw_replicas.replicas.iter() {
+            match replica_translator(*replica) {
+                Some(node) => all.push((node, *shard as Shard)),
+                None => failed.push(*replica),
+            }
+        }
+        let all: Arc<[(Arc<Node>, Shard)]> = all.into();
 
         if failed.is_empty() {
             Ok(Self::new(all))
