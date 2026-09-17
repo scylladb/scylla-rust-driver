@@ -322,8 +322,14 @@ impl ClusterWorker {
                     // I decided to stick with the approach that fits with the driver.
                     // Apart from the reasons above, it is much easier to reason about concurrency etc
                     // when reading the code in other parts of the driver.
-                    let new_cluster_state = self.cluster_state.load().with_updated_tablets(tablets);
-                    self.update_cluster_state(Arc::new(new_cluster_state));
+                    //
+                    // Feedback that repeats what the current state already holds is
+                    // detected before cloning, so it produces no new state at all.
+                    if let Some(new_cluster_state) = self.cluster_state.load().with_updated_tablets(tablets) {
+                        self.update_cluster_state(Arc::new(new_cluster_state));
+                    } else {
+                        tracing::trace!("All received tablets were already known, not publishing a new ClusterState");
+                    }
                 }
 
                 maybe_metadata_update = self.metadata_updates.recv() => {

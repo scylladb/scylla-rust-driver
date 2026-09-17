@@ -3137,7 +3137,7 @@ mod tests {
         let replica = |id: u16| (addr_to_host_id[&id_to_invalid_addr(id)], 0);
 
         // Tablets cover the whole test token range [1, 1000] (in particular Token(160)).
-        state.with_updated_tablets(vec![
+        let state = state.with_updated_tablets(vec![
             // Strongly consistent, versioned -> leader-first routing. Leader = C.
             (
                 TABLE_NTS_RF_3.clone(),
@@ -3165,7 +3165,9 @@ mod tests {
                     Some(11),
                 ),
             ),
-        ])
+        ]);
+
+        state.expect("the tablets are new to the state")
     }
 
     #[tokio::test]
