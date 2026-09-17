@@ -9,6 +9,8 @@
 //!   - [Column],
 //!   - [ColumnKind],
 //!   - [MaterializedView],
+//!   - [Index],
+//!   - [IndexKind],
 //!   - CQL types (re-exported from scylla-cql):
 //!     - [ColumnType],
 //!     - [NativeType],
@@ -271,6 +273,10 @@ pub struct Table {
     pub clustering_key: Vec<String>,
     /// Name of the partitioner used by the table.
     pub partitioner: Option<String>,
+    /// Indexes defined on the table, keyed by the index name.
+    ///
+    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
+    pub indexes: HashMap<String, Index>,
     /// Column specs for the partition key columns.
     pub(crate) pk_column_specs: Vec<ColumnSpec<'static>>,
 }
@@ -294,6 +300,42 @@ pub struct Column {
     pub typ: ColumnType<'static>,
     /// Describes role of the column in the table.
     pub kind: ColumnKind,
+}
+
+/// Describes an index defined on a table, as fetched from `system_schema.indexes`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Index {
+    /// Name of the index. Unique within a keyspace.
+    pub name: String,
+    /// Kind of the index.
+    pub kind: IndexKind,
+    /// Options of the index, as stored by the server.
+    pub options: HashMap<String, String>,
+}
+
+/// Kind of an index, as reported by the `kind` column of `system_schema.indexes`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IndexKind {
+    /// A regular secondary index.
+    Composites,
+    /// An index provided by a custom, server-side implementation, created with
+    /// `CREATE CUSTOM INDEX`.
+    Custom,
+    /// A kind that this driver version does not know about.
+    Other(String),
+}
+
+impl IndexKind {
+    /// Maps the raw `kind` column value from `system_schema.indexes` to an [`IndexKind`].
+    fn from_column_value(kind: String) -> Self {
+        match kind.as_str() {
+            "COMPOSITES" => Self::Composites,
+            "CUSTOM" => Self::Custom,
+            _ => Self::Other(kind),
+        }
+    }
 }
 
 /// Represents a user defined type whose definition is missing from the metadata.
