@@ -101,6 +101,24 @@ It's possible for the `fallback` method to include the same target that was
 returned by the `pick` method. In such cases, the query execution layer filters
 out the picked target from the iterator returned by `fallback`.
 
+### Consistency level and retries
+
+`RoutingInfo`, the query information passed to `pick` and `fallback`, contains the
+consistency level of the query. A policy may route based on it - for example,
+keep the plan within the local datacenter for `LOCAL_QUORUM`.
+
+:::{warning}
+The consistency level in `RoutingInfo` is that of the **first** attempt. A
+[retry policy](../retry-policy/retry-policy.md) is free to retry with a different
+consistency level, and the load balancing plan is **not** recomputed then - the plan
+built for the original level is used for all attempts of the query. A retry can thus
+be sent to a target that was chosen for a different consistency level than the one it
+is executed with. You need to use RetryPolicy and LoadBalancingPolicy which don't
+have conflicting behaviors and requirements regarding the consistency.
+Our [Default Retry Policy](../retry-policy/default.md) never changes consistency, so it
+should be safe to use with any LBP.
+:::
+
 ### `on_query_success` and `on_query_failure`:
 
 The `on_query_success` and `on_query_failure` methods are useful for load

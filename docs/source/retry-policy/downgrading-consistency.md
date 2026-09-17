@@ -44,6 +44,14 @@ something is better than reading nothing, even if there is a risk of reading sta
 This policy is based on the one in [DataStax Java Driver](https://docs.datastax.com/en/drivers/java/3.11/com/datastax/driver/core/policies/DowngradingConsistencyRetryPolicy.html).
 The behaviour is the same.
 
+:::{warning}
+Because this policy lowers the consistency level mid-query, it also invalidates the
+assumptions a consistency-aware [load balancing policy](../load-balancing/load-balancing.md)
+made when it built the query's plan - that plan is not recomputed for retries. Use this
+policy only with a load balancing policy whose routing is not impacted by the consistency changes
+this policy can make.
+:::
+
 ### Examples
 To use in `Session`:
 ```rust

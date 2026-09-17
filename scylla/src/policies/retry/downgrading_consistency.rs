@@ -10,6 +10,16 @@ use crate::errors::{DbError, RequestAttemptError, WriteType};
 /// when it believes that the initial CL is reachable.
 /// Behaviour based on [DataStax Java Driver]\
 ///(<https://docs.datastax.com/en/drivers/java/3.11/com/datastax/driver/core/policies/DowngradingConsistencyRetryPolicy.html>)
+///
+/// <div class="warning">
+///
+/// Apart from breaking the consistency guarantees the user asked for, lowering the consistency
+/// level mid-request also invalidates the assumptions a consistency-aware load balancing policy
+/// made when it built the request's plan - see [`RetryDecision`]. Use this policy only with a
+/// load balancing policy whose routing does not depend on the consistency level, or if you
+/// know that downgrades made by this policy won't violate load balancing consictency assumptions.
+///
+/// </div>
 #[derive(Debug)]
 pub struct DowngradingConsistencyRetryPolicy;
 
