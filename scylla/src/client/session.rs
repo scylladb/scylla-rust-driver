@@ -2275,13 +2275,21 @@ impl Session {
     ///
     /// This allows to write `SELECT * FROM table` instead of `SELECT * FROM keyspace.table`.
     ///
-    /// Note that even failed `use_keyspace` can change currently used keyspace - the request is sent on all connections and
-    /// can overwrite previously used keyspace.
+    /// Once this returns successfully, all connections of the session use the new keyspace.
+    /// Requests executed while it is still running may go to connections that use either
+    /// the new or the previous one.
     ///
-    /// Call only one `use_keyspace` at a time.
+    /// Calls are serialized: a switch does not start before the previous one finished on all
+    /// connections. Which of two racing calls ends up as the session's keyspace is unspecified.
     ///
-    /// Trying to do two `use_keyspace` requests simultaneously with different names
-    /// can end with some connections using one keyspace and the rest using the other.
+    /// A connection that fails to switch is closed, rather than left serving requests against
+    /// the keyspace used before. A `use_keyspace` that fails on every connection therefore
+    /// leaves the session unable to execute requests: if the keyspace does not exist, the
+    /// connections opened to replace the closed ones cannot switch to it either. Setting a
+    /// keyspace that exists makes the session recover.
+    ///
+    /// Note that even a failed `use_keyspace` can change the currently used keyspace - the
+    /// request is sent on all connections and can overwrite the previously used keyspace.
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/statements/usekeyspace.html) for more information
     ///

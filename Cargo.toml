@@ -8,9 +8,9 @@ members = [
     "scylla-cql-core",
     "scylla-proxy",
     "scylla-ccm-bridge",
-    "utils/analyze_errors_size",
-    "utils/find_stale_test_keyspaces",
-    "utils/generate_book_tests",
+    "utils/analyze-errors-size",
+    "utils/find-stale-test-keyspaces",
+    "utils/generate-book-tests",
 ]
 resolver = "3"
 

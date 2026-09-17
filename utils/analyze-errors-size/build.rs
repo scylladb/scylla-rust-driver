@@ -1,4 +1,4 @@
-//! Build script for the `analyze_errors_size` utility.
+//! Build script for the `analyze-errors-size` utility.
 //!
 //! Parses `scylla/src/errors.rs` with `syn`, collects the names of every
 //! top-level `pub` (but NOT `pub(crate)` / `pub(super)` / etc.) `struct` and
@@ -53,14 +53,14 @@ impl<'ast> Visit<'ast> for PubTypeCollector {
 
 /// Locate `scylla/src/errors.rs` relative to the workspace root.
 ///
-/// `CARGO_MANIFEST_DIR` is the `utils/analyze_errors_size/` directory;
+/// `CARGO_MANIFEST_DIR` is the `utils/analyze-errors-size/` directory;
 /// the workspace root is two levels up.
 fn errors_rs_path() -> PathBuf {
     let manifest_dir =
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set by Cargo");
     Path::new(&manifest_dir)
         .parent()
-        .expect("analyze_errors_size/ must have a parent directory (utils/)")
+        .expect("analyze-errors-size/ must have a parent directory (utils/)")
         .parent()
         .expect("utils/ must have a parent directory (workspace root)")
         .join("scylla")
