@@ -54,7 +54,14 @@ impl<'result> CustomTypeParser<'result> {
 
     pub(crate) fn parse(input: &'result str) -> Result<ColumnType<'result>, CustomTypeParseError> {
         let mut parser = CustomTypeParser::new(input);
-        parser.do_parse()
+        let typ = parser.do_parse()?;
+        if parser.parser.is_at_eof() {
+            Ok(typ)
+        } else {
+            Err(CustomTypeParseError::UnexpectedTrailingCharacters(
+                parser.parser.s.to_owned(),
+            ))
+        }
     }
 
     fn is_identifier_char(c: char) -> bool {
@@ -379,12 +386,22 @@ impl<'result> CustomTypeParser<'result> {
                 .map_err(|_| CustomTypeParseError::BadHexString(name.to_owned()))?;
             name = self.read_next_identifier();
         }
+
+        // If we go the simple-type route, we want to treat any trailing characters as errors,
+        // so we need to restore the parser to the state pre-blank-skip.
+        let parser_before_params = self.parser;
+        // Skipping blank here doesn't seem to serve much purpose, but Scylla does that
+        // in their parser: https://github.com/scylladb/scylladb/blob/7a9546f46fd2d95c5abb08a33f44683ef7dc2c1c/db/marshal/type_parser.cc#L83
+        // We just do the same - there should be no harm done by this.
         self.skip_blank();
         let result = self.parser.accept("(");
         match result {
             // Here we do not change the parser state, because we want to keep the state as it was before the accept.
             Ok(_) => self.get_complex_abstract_type(name),
-            Err(_) => CustomTypeParser::get_simple_abstract_type(name),
+            Err(_) => {
+                self.parser = parser_before_params;
+                CustomTypeParser::get_simple_abstract_type(name)
+            }
         }
     }
 }
@@ -598,6 +615,55 @@ mod tests {
         assert_eq!(
             CustomTypeParser::parse("zz:org.apache.cassandra.db.marshal.Int32Type"),
             Err(CustomTypeParseError::BadHexString("zz".to_string()))
+        );
+
+        assert_eq!(
+            CustomTypeParser::parse("org.apache.cassandra.db.marshal.Int32Type garbage"),
+            Err(CustomTypeParseError::UnexpectedTrailingCharacters(
+                " garbage".to_string()
+            ))
+        );
+
+        assert_eq!(
+            CustomTypeParser::parse(
+                "org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)garbage"
+            ),
+            Err(CustomTypeParseError::UnexpectedTrailingCharacters(
+                "garbage".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn custom_cassandra_type_parser_rejects_trailing_whitespace() {
+        assert_eq!(
+            CustomTypeParser::parse("org.apache.cassandra.db.marshal.Int32Type \t\n"),
+            Err(CustomTypeParseError::UnexpectedTrailingCharacters(
+                " \t\n".to_string()
+            ))
+        );
+
+        assert_eq!(
+            CustomTypeParser::parse(
+                "org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type) \t\n",
+            ),
+            Err(CustomTypeParseError::UnexpectedTrailingCharacters(
+                " \t\n".to_string()
+            ))
+        );
+    }
+
+    // Vefifies that whitespace between type name and opening comma of type params
+    // is accepted for complex type, in line with Scylla own parser.
+    #[test]
+    fn custom_cassandra_type_parser_accepts_middle_whitespace_for_complex() {
+        assert_eq!(
+            CustomTypeParser::parse(
+                "org.apache.cassandra.db.marshal.ListType  (org.apache.cassandra.db.marshal.Int32Type) \t\n",
+            ),
+            Err(CustomTypeParseError::UnexpectedTrailingCharacters(
+                " \t\n".to_string()
+            ))
         );
     }
 }
