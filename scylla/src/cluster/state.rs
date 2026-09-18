@@ -63,6 +63,19 @@ impl Topology {
         }
     }
 
+    /// Whether `known_nodes` holds exactly the `Node` objects of `self`.
+    ///
+    /// Pointer identity is enough: `ClusterState::calculate_new_topology`
+    /// reuses a `Node` object only if nothing about the node changed.
+    fn has_same_nodes(&self, known_nodes: &KnownNodes) -> bool {
+        self.known_nodes.len() == known_nodes.len()
+            && known_nodes.iter().all(|(host_id, node)| {
+                self.known_nodes
+                    .get(host_id)
+                    .is_some_and(|own_node| Arc::ptr_eq(own_node, node))
+            })
+    }
+
     /// Whether some enabled `Node` object is present in both topologies.
     pub(crate) fn shares_enabled_node_with(&self, other: &Topology) -> bool {
         self.known_nodes.iter().any(|(host_id, node)| {
@@ -290,24 +303,18 @@ impl ClusterState {
         node_config: &NodeConfig,
         host_filter: Option<&dyn HostFilter>,
     ) -> Self {
-        let (topology, ring) = match peers {
-            Some(peers) => {
-                let (new_known_nodes, ring) = Self::calculate_new_topology(
-                    peers,
-                    &self.topology.known_nodes,
-                    node_config,
-                    host_filter,
-                );
-                (Arc::new(Topology::new(new_known_nodes)), ring)
-            }
-            // The topology is unchanged, so it is shared with `self`. The ring
-            // in place is exactly the (token, node) list that it implies, so it
-            // is reused as is.
-            None => (
-                Arc::clone(&self.topology),
-                self.locator.ring().iter().cloned().collect(),
-            ),
-        };
+        // The topology is unchanged if it was not re-read, or was re-read
+        // and turned out identical. Either way it is shared with `self`. The
+        // ring in place is exactly the (token, node) list that it implies, so
+        // it is reused as is.
+        let (topology, ring) = peers
+            .and_then(|peers| self.updated_topology(peers, node_config, host_filter))
+            .unwrap_or_else(|| {
+                (
+                    Arc::clone(&self.topology),
+                    self.locator.ring().iter().cloned().collect(),
+                )
+            });
 
         let keyspaces = match schema {
             Some(schema) => Arc::new(self.updated_keyspaces(schema)),
@@ -331,6 +338,49 @@ impl ClusterState {
             locator,
             cluster_name: self.cluster_name.clone(),
         }
+    }
+
+    /// The topology that `peers` describe, with its ring, reusing the `Node`
+    /// objects of `self` where possible - or `None` if it is exactly the
+    /// topology of `self`: the same `Node` objects, holding the same tokens.
+    ///
+    /// That is what the fetch triggered by a STATUS_CHANGE event usually
+    /// yields, as a node going down or up changes nothing about the topology.
+    fn updated_topology(
+        &self,
+        peers: Vec<Peer>,
+        node_config: &NodeConfig,
+        host_filter: Option<&dyn HostFilter>,
+    ) -> Option<(Arc<Topology>, Ring)> {
+        let (new_known_nodes, mut ring) = Self::calculate_new_topology(
+            peers,
+            &self.topology.known_nodes,
+            node_config,
+            host_filter,
+        );
+
+        // The ring of `self` is sorted by token, so the new one is sorted too
+        // to be compared with it entry by entry. `ReplicaLocator::new` would
+        // sort it anyway.
+        ring.sort_by_key(|(token, _)| *token);
+
+        // The ring holds only nodes with tokens, so the nodes are compared
+        // separately: a zero-token node may have appeared or gone.
+        let unchanged = self.topology.has_same_nodes(&new_known_nodes) && self.has_same_ring(&ring);
+        (!unchanged).then(|| (Arc::new(Topology::new(new_known_nodes)), ring))
+    }
+
+    /// Whether `sorted_ring` holds exactly the entries of the ring of `self`:
+    /// the same `Node` objects at the same tokens.
+    fn has_same_ring(&self, sorted_ring: &Ring) -> bool {
+        let ring = self.locator.ring();
+        ring.len() == sorted_ring.len()
+            && ring
+                .iter()
+                .zip(sorted_ring)
+                .all(|((token, node), (new_token, new_node))| {
+                    token == new_token && Arc::ptr_eq(node, new_node)
+                })
     }
 
     /// Applies a partial schema update onto the schema metadata of `self`:
@@ -978,6 +1028,17 @@ mod tests {
             .await
     }
 
+    /// Helper: apply partially fetched metadata onto `previous`.
+    async fn partially_update_cluster_state(
+        previous: &ClusterState,
+        peers: Option<Vec<Peer>>,
+        schema: Option<SchemaUpdate>,
+    ) -> ClusterState {
+        previous
+            .new_with_partial_changes(peers, schema, &make_node_config(), None)
+            .await
+    }
+
     // Node's address changes so that host filter no longer rejects it.
     // The node should become enabled, and the Node object must NOT be reused.
     #[tokio::test]
@@ -1123,6 +1184,72 @@ mod tests {
             !disabled
                 .topology
                 .shares_enabled_node_with(&same_disabled.topology)
+        );
+    }
+
+    // A re-read peer list that describes the current topology exactly must
+    // share it; one that differs in any way must build a new one.
+    #[tokio::test]
+    async fn partial_topology_update_shares_unchanged_topology() {
+        setup_tracing();
+
+        let host_ids = [Uuid::new_v4(), Uuid::new_v4()];
+        let peer = |host_id: Uuid, addr: u16, tokens: Vec<i64>| Peer {
+            tokens: tokens.into_iter().map(Token::new).collect(),
+            ..make_peer(host_id, make_addr(addr), Some("dc1"), Some("r1"))
+        };
+        let peers = || {
+            vec![
+                peer(host_ids[0], 1, vec![1, 3]),
+                peer(host_ids[1], 2, vec![2, 4]),
+            ]
+        };
+        let state = new_cluster_state(make_metadata(peers()), None).await;
+
+        let same = partially_update_cluster_state(&state, Some(peers()), None).await;
+        assert!(
+            Arc::ptr_eq(&state.topology, &same.topology),
+            "the same peers again must share the topology"
+        );
+
+        let mut reordered = peers();
+        reordered.reverse();
+        let same = partially_update_cluster_state(&state, Some(reordered), None).await;
+        assert!(
+            Arc::ptr_eq(&state.topology, &same.topology),
+            "the order of peers does not matter"
+        );
+
+        let mut token_moved = peers();
+        token_moved[0].tokens[1] = Token::new(5);
+        let changed = partially_update_cluster_state(&state, Some(token_moved), None).await;
+        assert!(
+            !Arc::ptr_eq(&state.topology, &changed.topology),
+            "a node holding a different token changes the topology"
+        );
+
+        let mut added = peers();
+        added.push(peer(Uuid::new_v4(), 3, vec![]));
+        let changed = partially_update_cluster_state(&state, Some(added), None).await;
+        assert!(
+            !Arc::ptr_eq(&state.topology, &changed.topology),
+            "a new node, even without tokens, changes the topology"
+        );
+
+        let mut removed = peers();
+        removed.pop();
+        let changed = partially_update_cluster_state(&state, Some(removed), None).await;
+        assert!(
+            !Arc::ptr_eq(&state.topology, &changed.topology),
+            "a node gone changes the topology"
+        );
+
+        let mut moved = peers();
+        moved[0].address = make_addr(9);
+        let changed = partially_update_cluster_state(&state, Some(moved), None).await;
+        assert!(
+            !Arc::ptr_eq(&state.topology, &changed.topology),
+            "a node with a new address changes the topology"
         );
     }
 
