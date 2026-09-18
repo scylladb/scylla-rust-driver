@@ -53,8 +53,8 @@ make bench
 Both targets ensure the cluster is up first. Under the hood they run:
 
 ```bash
-cargo bench -p benchmarks --bench requests -- --save-baseline=base
-cargo bench -p benchmarks --bench requests -- --baseline=base
+cargo bench -p benchmarks --benches -- --save-baseline=base
+cargo bench -p benchmarks --benches -- --baseline=base
 ```
 
 ## Finding what to optimize

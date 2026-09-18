@@ -160,13 +160,13 @@ build:
 bench-baseline: up
 	# Run the driver benchmarks and store the results as the baseline named
 	# "base" to compare against later (e.g. before applying your changes).
-	cargo bench -p benchmarks --bench requests -- --save-baseline=base
+	cargo bench -p benchmarks --benches -- --save-baseline=base
 
 .PHONY: bench
 bench: up
 	# Run the driver benchmarks and compare against the "base" baseline saved
 	# by `make bench-baseline` (without overwriting it).
-	cargo bench -p benchmarks --bench requests -- --baseline=base
+	cargo bench -p benchmarks --benches -- --baseline=base
 
 .PHONY: docs
 docs:
