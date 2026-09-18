@@ -186,7 +186,7 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
                     ..
                 } => {
                     let iter = MapIterator::<'_, '_, CqlValue, CqlValue>::deserialize(typ, v)?;
-                    let m: Vec<(CqlValue, CqlValue)> = iter.collect::<Result<_, _>>()?;
+                    let m: Vec<(CqlValue, CqlValue)> = collect_exact(iter)?;
                     CqlValue::Map(m)
                 }
                 Collection {
@@ -198,21 +198,20 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
                 }
                 Vector { .. } => {
                     let iter = VectorIterator::deserialize(typ, v)?;
-                    let v: Vec<CqlValue> = iter.collect::<Result<_, _>>()?;
+                    let v: Vec<CqlValue> = collect_exact(iter)?;
                     CqlValue::Vector(v)
                 }
                 UserDefinedType {
                     definition: udt, ..
                 } => {
                     let iter = UdtIterator::deserialize(typ, v)?;
-                    let fields: Vec<(String, Option<CqlValue>)> = iter
-                        .map(|((col_name, col_type), res)| {
+                    let fields: Vec<(String, Option<CqlValue>)> =
+                        collect_exact(iter.map(|((col_name, col_type), res)| {
                             res.and_then(|v| {
                                 let val = Option::<CqlValue>::deserialize(col_type, v.flatten())?;
                                 Ok((col_name.clone().into_owned(), val))
                             })
-                        })
-                        .collect::<Result<_, _>>()?;
+                        }))?;
 
                     CqlValue::UserDefinedType {
                         keyspace: udt.keyspace.clone().into_owned(),
@@ -221,9 +220,8 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
                     }
                 }
                 Tuple(type_names) => {
-                    let t = type_names
-                        .iter()
-                        .map(|typ| -> Result<_, DeserializationError> {
+                    let t = collect_exact(type_names.iter().map(
+                        |typ| -> Result<_, DeserializationError> {
                             let raw = if frame_slice.is_empty() {
                                 // Special case: if there are no bytes left to read, consider the tuple element as null.
                                 // This is needed to handle tuples with fewer elements than expected
@@ -238,8 +236,8 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
                                 })?
                             };
                             raw.map(|v| CqlValue::deserialize(typ, Some(v))).transpose()
-                        })
-                        .collect::<Result<_, _>>()?;
+                        },
+                    ))?;
                     CqlValue::Tuple(t)
                 }
             },
