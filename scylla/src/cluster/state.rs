@@ -948,19 +948,23 @@ mod tests {
         }
     }
 
+    /// Helper: a `NodeConfig` whose connectivity events go nowhere.
+    fn make_node_config() -> NodeConfig {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        NodeConfig {
+            pool_config: Default::default(),
+            used_keyspace: None,
+            connectivity_events_sender: tx,
+            metrics: Default::default(),
+        }
+    }
+
     /// Helper: build a ClusterState from metadata and an optional host filter.
     async fn new_cluster_state(
         metadata: Metadata,
         host_filter: Option<&dyn HostFilter>,
     ) -> ClusterState {
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let node_config = NodeConfig {
-            pool_config: Default::default(),
-            used_keyspace: None,
-            connectivity_events_sender: tx,
-            metrics: Default::default(),
-        };
-        ClusterState::new(metadata, &node_config, host_filter).await
+        ClusterState::new(metadata, &make_node_config(), host_filter).await
     }
 
     /// Helper: build a ClusterState from metadata, old state, and an optional host filter.
@@ -969,15 +973,8 @@ mod tests {
         metadata: Metadata,
         host_filter: Option<&dyn HostFilter>,
     ) -> ClusterState {
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let node_config = NodeConfig {
-            pool_config: Default::default(),
-            used_keyspace: None,
-            connectivity_events_sender: tx,
-            metrics: Default::default(),
-        };
         previous
-            .new_updated(metadata, &node_config, host_filter)
+            .new_updated(metadata, &make_node_config(), host_filter)
             .await
     }
 
