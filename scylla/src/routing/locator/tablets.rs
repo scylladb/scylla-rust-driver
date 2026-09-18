@@ -984,7 +984,7 @@ impl TabletsInfo {
     ///   for completeness.
     pub(crate) fn perform_maintenance(
         &mut self,
-        keyspaces: &HashMap<String, Keyspace>,
+        keyspaces: &HashMap<String, Arc<Keyspace>>,
         removed_nodes: &HashSet<Uuid>,
         all_current_nodes: &HashMap<Uuid, Arc<Node>>,
         recreated_nodes: &HashMap<Uuid, Arc<Node>>,
@@ -2207,7 +2207,7 @@ mod tests {
         let spec_to_ks_tuple = |spec: TableSpec<'_>| {
             (
                 spec.ks_name().to_owned(),
-                Keyspace {
+                Arc::new(Keyspace {
                     strategy: Strategy::LocalStrategy,
                     durable_writes: false,
                     tablet_based: true,
@@ -2224,7 +2224,7 @@ mod tests {
                     )]),
                     views: HashMap::new(),
                     user_defined_types: HashMap::new(),
-                },
+                }),
             )
         };
 

@@ -213,6 +213,7 @@ impl PrecomputedReplicas {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     use crate::{
         cluster::metadata::{ConsistencyMode, Keyspace, Strategy},
@@ -231,7 +232,7 @@ mod tests {
         let mut metadata = mock_metadata_for_token_aware_tests();
         metadata.keyspaces = [(
             "SimpleStrategy{rf=2}".into(),
-            Ok(Keyspace {
+            Ok(Arc::new(Keyspace {
                 strategy: Strategy::SimpleStrategy {
                     replication_factor: 2,
                 },
@@ -241,7 +242,7 @@ mod tests {
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
-            }),
+            })),
         )]
         .iter()
         .cloned()
