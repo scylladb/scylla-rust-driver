@@ -411,7 +411,7 @@ impl ClusterWorker {
         // Unlike UP hints, DOWN hints are applied to the *current* state: a keepalive
         // query only makes sense for a node the driver still holds connections to, so
         // there is nothing a freshly built state could add, and waiting for the refresh
-        // (which awaits pool initialization) would only delay the liveness probe.
+        // would only delay the liveness probe.
         update
             .status_hints
             .iter()
@@ -480,9 +480,19 @@ impl ClusterWorker {
             &mut self.node_status,
         );
 
-        new_cluster_state
-            .wait_until_all_pools_are_initialized()
-            .await;
+        // The wait keeps a working session from being replaced by one whose
+        // pools are all still connecting. That is only possible when no
+        // connected node carries over, e.g. from dummy initial metadata to
+        // the first real fetch. Otherwise it would just delay every other
+        // update this worker handles.
+        if !cluster_state
+            .topology
+            .shares_enabled_node_with(&new_cluster_state.topology)
+        {
+            new_cluster_state
+                .wait_until_all_pools_are_initialized()
+                .await;
+        }
 
         self.update_cluster_state(new_cluster_state);
 

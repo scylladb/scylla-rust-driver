@@ -62,6 +62,17 @@ impl Topology {
             known_nodes,
         }
     }
+
+    /// Whether some enabled `Node` object is present in both topologies.
+    pub(crate) fn shares_enabled_node_with(&self, other: &Topology) -> bool {
+        self.known_nodes.iter().any(|(host_id, node)| {
+            node.is_enabled()
+                && other
+                    .known_nodes
+                    .get(host_id)
+                    .is_some_and(|other_node| Arc::ptr_eq(node, other_node))
+        })
+    }
 }
 
 /// Represents the state of the cluster, including known nodes, keyspaces, and replica locator.
@@ -1086,6 +1097,35 @@ mod tests {
         assert!(
             Arc::ptr_eq(&old_node, new_node),
             "Node object should be reused when disabled node's attributes haven't changed"
+        );
+    }
+
+    #[tokio::test]
+    async fn shares_enabled_node_with_detects_carried_over_nodes() {
+        setup_tracing();
+
+        let host_id = Uuid::new_v4();
+        let peer = || make_peer(host_id, make_addr(1), Some("dc1"), Some("r1"));
+        let state = new_cluster_state(make_metadata(vec![peer()]), None).await;
+
+        // The same peer again: the node object is reused.
+        let same = update_cluster_state(&state, make_metadata(vec![peer()]), None).await;
+        assert!(state.topology.shares_enabled_node_with(&same.topology));
+
+        // A peer with a new host id, as after dummy initial metadata.
+        let other_peer = make_peer(Uuid::new_v4(), make_addr(1), Some("dc1"), Some("r1"));
+        let replaced = update_cluster_state(&state, make_metadata(vec![other_peer]), None).await;
+        assert!(!state.topology.shares_enabled_node_with(&replaced.topology));
+
+        // A shared node that is disabled does not count.
+        let filter = AddrRejectFilter::rejecting([make_addr(1)]);
+        let disabled = new_cluster_state(make_metadata(vec![peer()]), Some(&filter)).await;
+        let same_disabled =
+            update_cluster_state(&disabled, make_metadata(vec![peer()]), Some(&filter)).await;
+        assert!(
+            !disabled
+                .topology
+                .shares_enabled_node_with(&same_disabled.topology)
         );
     }
 
