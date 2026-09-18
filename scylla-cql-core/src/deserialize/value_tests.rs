@@ -1125,6 +1125,31 @@ fn test_collections_are_allocated_once() {
     let deserialized = deserialize::<Vec<i32>>(&vector_typ, &vector).unwrap();
     assert_eq!(deserialized.len(), LEN);
     assert_eq!(deserialized.capacity(), LEN);
+
+    // `CqlValue` builds its collections itself, rather than through the impls
+    // exercised above.
+    let map_typ = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::Map(
+            Box::new(ColumnType::Native(NativeType::Int)),
+            Box::new(ColumnType::Native(NativeType::BigInt)),
+        ),
+    };
+    let map_values: BTreeMap<i32, i64> = (0..LEN as i32).map(|i| (i, i64::from(i))).collect();
+    let map = serialize(&map_typ, &map_values);
+
+    let CqlValue::Vector(deserialized) = deserialize::<CqlValue>(&vector_typ, &vector).unwrap()
+    else {
+        panic!("expected a vector");
+    };
+    assert_eq!(deserialized.len(), LEN);
+    assert_eq!(deserialized.capacity(), LEN);
+
+    let CqlValue::Map(deserialized) = deserialize::<CqlValue>(&map_typ, &map).unwrap() else {
+        panic!("expected a map");
+    };
+    assert_eq!(deserialized.len(), LEN);
+    assert_eq!(deserialized.capacity(), LEN);
 }
 
 #[test]
