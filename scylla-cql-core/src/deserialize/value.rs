@@ -198,7 +198,7 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
                 }
                 Vector { .. } => {
                     let iter = VectorIterator::deserialize(typ, v)?;
-                    let v: Vec<CqlValue> = collect_exact(iter)?;
+                    let v: Vec<CqlValue> = iter.into_vec()?;
                     CqlValue::Vector(v)
                 }
                 UserDefinedType {
@@ -1114,7 +1114,7 @@ where
                 .map_err(deser_error_replace_rust_name::<Self>),
             ColumnType::Vector { .. } => {
                 VectorIterator::<'frame, 'metadata, T>::deserialize(typ, v)
-                    .and_then(collect_exact)
+                    .and_then(VectorIterator::into_vec)
                     .map_err(deser_error_replace_rust_name::<Self>)
             }
             _ => unreachable!("Should be prevented by typecheck"),
@@ -1288,6 +1288,47 @@ impl<'frame, 'metadata, T> VectorIterator<'frame, 'metadata, T>
 where
     T: DeserializeValue<'frame, 'metadata>,
 {
+    /// Deserializes the remaining elements into a `Vec`.
+    ///
+    /// Elements of a constant length occupy one contiguous run of bytes, so the
+    /// run's length can be checked once instead of once per element. Going
+    /// through `Iterator::next` instead costs, for every element, a bounds
+    /// check and a `Result<Option<FrameSlice>>` to build and match - which for
+    /// a 1536-dimension `vector<float>` is most of the work.
+    pub fn into_vec(mut self) -> Result<Vec<T>, DeserializationError> {
+        // A zero length would make `chunks_exact` panic, and `next` treats such
+        // elements differently anyway (an empty slice reads as `None`).
+        let Some(element_length) = self.element_length.filter(|&len| len > 0) else {
+            return collect_exact(self);
+        };
+
+        let mut collected = Vec::with_capacity(self.remaining);
+
+        // Only the elements that are entirely present are taken in bulk.
+        let bulk = (self.slice.as_slice().len() / element_length).min(self.remaining);
+        let (run, rest) = self.slice.split_at(bulk * element_length);
+        self.slice = rest;
+        self.remaining -= bulk;
+
+        for raw in run.chunks_exact(element_length) {
+            let elem = T::deserialize(self.element_type, Some(raw)).map_err(|err| {
+                mk_deser_err::<Self>(
+                    self.collection_type,
+                    VectorDeserializationErrorKind::ElementDeserializationFailed(err),
+                )
+            })?;
+            collected.push(elem);
+        }
+
+        // Whatever the bulk pass did not cover - the elements of a truncated
+        // frame - goes through `Iterator::next`, which reports the error
+        // exactly as it would have without this fast path.
+        for elem in self {
+            collected.push(elem?);
+        }
+        Ok(collected)
+    }
+
     fn next_constant_length_elem(
         &mut self,
         element_length: usize,

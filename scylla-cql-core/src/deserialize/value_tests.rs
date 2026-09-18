@@ -25,7 +25,8 @@ use super::{
     BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
     BuiltinTypeCheckErrorKind, DeserializeValue, ListlikeIterator, MapDeserializationErrorKind,
     MapIterator, MapTypeCheckErrorKind, MaybeEmpty, SetOrListDeserializationErrorKind,
-    SetOrListTypeCheckErrorKind, VectorIterator, mk_deser_err,
+    SetOrListTypeCheckErrorKind, VectorIterator, collect_exact, deser_error_replace_rust_name,
+    mk_deser_err,
 };
 
 #[test]
@@ -1099,6 +1100,40 @@ fn test_map() {
         &BTreeMap::<i32, &str>::from_iter([(-42, "qwik")]),
         &mut Bytes::new(),
     );
+}
+
+/// Decoding a vector's fixed-size elements in bulk must behave exactly like
+/// decoding them one by one, including which error a truncated frame produces.
+#[test]
+fn test_vector_bulk_decoding_matches_element_by_element() {
+    let typ = ColumnType::Vector {
+        typ: Box::new(ColumnType::Native(NativeType::Int)),
+        dimensions: 4,
+    };
+    let full: Vec<u8> = (0..4i32).flat_map(|i| i.to_be_bytes()).collect();
+
+    // Every truncation, including ones that cut an element in half.
+    for len in 0..=full.len() {
+        let bytes = make_bytes(&full[..len]);
+        let mut frame_slice = FrameSlice::new(&bytes);
+        let cell = frame_slice.read_cql_bytes().unwrap();
+
+        let bulk = <Vec<i32> as DeserializeValue>::deserialize(&typ, cell);
+        let elementwise = collect_exact(VectorIterator::<i32>::deserialize(&typ, cell).unwrap())
+            .map_err(deser_error_replace_rust_name::<Vec<i32>>);
+
+        match (bulk, elementwise) {
+            (Ok(bulk), Ok(elementwise)) => assert_eq!(bulk, elementwise, "at length {len}"),
+            (Err(bulk), Err(elementwise)) => assert_eq!(
+                format!("{bulk:?}"),
+                format!("{elementwise:?}"),
+                "at length {len}"
+            ),
+            (bulk, elementwise) => {
+                panic!("at length {len}: {bulk:?} does not match {elementwise:?}")
+            }
+        }
+    }
 }
 
 /// Collections must be allocated once, with the exact capacity, rather than

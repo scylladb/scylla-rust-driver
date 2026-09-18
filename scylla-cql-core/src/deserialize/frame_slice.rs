@@ -143,6 +143,48 @@ impl<'frame> FrameSlice<'frame> {
         self.original_frame.slice_ref(self.frame_subslice)
     }
 
+    /// Splits this slice in two at `mid` bytes, both over the same original frame.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mid` is greater than the slice's length, as
+    /// [`slice::split_at`] does.
+    #[inline]
+    pub fn split_at(self, mid: usize) -> (Self, Self) {
+        let (left, right) = self.frame_subslice.split_at(mid);
+        (
+            Self {
+                frame_subslice: left,
+                original_frame: self.original_frame,
+            },
+            Self {
+                frame_subslice: right,
+                original_frame: self.original_frame,
+            },
+        )
+    }
+
+    /// Returns an iterator over `chunk_size`-byte chunks of this slice, each as
+    /// a [`FrameSlice`] over the same original frame. A trailing remainder
+    /// shorter than `chunk_size` is not yielded, as for [`slice::chunks_exact`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `chunk_size` is 0.
+    #[inline]
+    pub fn chunks_exact(
+        self,
+        chunk_size: usize,
+    ) -> impl ExactSizeIterator<Item = FrameSlice<'frame>> {
+        let original_frame = self.original_frame;
+        self.frame_subslice
+            .chunks_exact(chunk_size)
+            .map(move |frame_subslice| Self {
+                frame_subslice,
+                original_frame,
+            })
+    }
+
     /// Reads and consumes a `[bytes]` item from the beginning of the frame,
     /// returning a subslice that encompasses that item.
     ///
