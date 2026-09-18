@@ -3106,11 +3106,12 @@ mod tests {
         use crate::routing::locator::tablets::RawTablet;
         use crate::routing::locator::test::{A, B, C, F, G, KEYSPACE_NTS_RF_3, id_to_invalid_addr};
         use std::collections::HashMap;
+        use std::sync::Arc;
         use uuid::Uuid;
 
         let mut metadata = mock_metadata_for_token_aware_tests();
         if let Some(Ok(ks)) = metadata.keyspaces.get_mut(KEYSPACE_NTS_RF_3) {
-            ks.consistency_mode = ConsistencyMode::Global;
+            Arc::make_mut(ks).consistency_mode = ConsistencyMode::Global;
         }
 
         let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
