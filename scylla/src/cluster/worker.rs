@@ -446,17 +446,20 @@ impl ClusterWorker {
                 schema,
                 client_routes_updates: _, // Already applied above.
             })) if peers.is_some() || schema.is_some() => {
-                let new_cluster_state = Arc::new(
-                    cluster_state
-                        .new_with_partial_changes(
-                            peers,
-                            schema,
-                            &self.node_config,
-                            self.host_filter.as_deref(),
-                        )
-                        .await,
-                );
-                Some((new_cluster_state, Vec::new()))
+                let new_cluster_state = cluster_state
+                    .new_with_partial_changes(
+                        peers,
+                        schema,
+                        &self.node_config,
+                        self.host_filter.as_deref(),
+                    )
+                    .await;
+                if new_cluster_state.is_none() {
+                    debug!(
+                        "Partial metadata fetches changed nothing, not publishing a new ClusterState"
+                    );
+                }
+                new_cluster_state.map(|state| (Arc::new(state), Vec::new()))
             }
             None | Some(MetadataChanges::Partial(_)) => {
                 // For now there is nothing that requires publishing new ClusterState.
