@@ -1902,6 +1902,7 @@ impl<'frame, 'metadata> Iterator for UdtIterator<'frame, 'metadata> {
         Result<Option<Option<FrameSlice<'frame>>>, DeserializationError>,
     );
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let (head, fields) = self.remaining_fields.split_first()?;
         self.remaining_fields = fields;
@@ -2163,6 +2164,7 @@ impl<'frame> From<FrameSlice<'frame>> for BytesSequenceIterator<'frame> {
 impl<'frame> Iterator for BytesSequenceIterator<'frame> {
     type Item = Result<Option<FrameSlice<'frame>>, LowLevelDeserializationError>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.slice.as_slice().is_empty() {
             None
