@@ -73,7 +73,7 @@ jobs:
           jq -r '.packages[] | select(.name == "gungraun").version'
         )
         cargo binstall --no-confirm gungraun-runner --version "$version"
-        cargo bench -p benchmarks --bench requests -- --save-baseline=base
+        cargo bench -p benchmarks --benches -- --save-baseline=base
 
     - name: Benchmark the pull request
       run: |
@@ -82,7 +82,7 @@ jobs:
           jq -r '.packages[] | select(.name == "gungraun").version'
         )
         cargo binstall --no-confirm gungraun-runner --version "$version"
-        cargo bench -p benchmarks --bench requests -- \
+        cargo bench -p benchmarks --benches -- \
           --baseline=base --output-format=json > results.jsonl
 
     - name: Compare and report
