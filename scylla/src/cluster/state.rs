@@ -296,31 +296,38 @@ impl ClusterState {
     /// aspect was not re-read, so the one of `self` stands. The cluster name is
     /// never re-read by a partial fetch - it is fixed for the lifetime of a
     /// cluster.
+    ///
+    /// Returns `None` if the fetches changed nothing: no schema was re-read and
+    /// the peer list, if re-read, describes the topology of `self` exactly.
+    /// `self` then stands as it is; building an identical state would only
+    /// cost a locator rebuild.
     pub(crate) async fn new_with_partial_changes(
         &self,
         peers: Option<Vec<Peer>>,
         schema: Option<SchemaUpdate>,
         node_config: &NodeConfig,
         host_filter: Option<&dyn HostFilter>,
-    ) -> Self {
-        // The topology is unchanged if it was not re-read, or was re-read
-        // and turned out identical. Either way it is shared with `self`. The
-        // ring in place is exactly the (token, node) list that it implies, so
-        // it is reused as is.
-        let (topology, ring) = peers
-            .and_then(|peers| self.updated_topology(peers, node_config, host_filter))
-            .unwrap_or_else(|| {
-                (
-                    Arc::clone(&self.topology),
-                    self.locator.ring().iter().cloned().collect(),
-                )
-            });
+    ) -> Option<Self> {
+        // `None` if the topology was not re-read, or was re-read and turned
+        // out identical.
+        let new_topology =
+            peers.and_then(|peers| self.updated_topology(peers, node_config, host_filter));
+        let new_keyspaces = schema.map(|schema| Arc::new(self.updated_keyspaces(schema)));
 
-        let keyspaces = match schema {
-            Some(schema) => Arc::new(self.updated_keyspaces(schema)),
-            // The schema is unchanged, so it is shared with `self`.
-            None => Arc::clone(&self.keyspaces),
-        };
+        if new_topology.is_none() && new_keyspaces.is_none() {
+            return None;
+        }
+
+        // An unchanged topology is shared with `self`. The ring in place is
+        // exactly the (token, node) list that it implies, so it is reused as is.
+        let (topology, ring) = new_topology.unwrap_or_else(|| {
+            (
+                Arc::clone(&self.topology),
+                self.locator.ring().iter().cloned().collect(),
+            )
+        });
+        // An unchanged schema is shared with `self` too.
+        let keyspaces = new_keyspaces.unwrap_or_else(|| Arc::clone(&self.keyspaces));
 
         let mut tablets = self.locator.tablets.clone();
         Self::perform_tablets_maintenance(
@@ -332,12 +339,12 @@ impl ClusterState {
 
         let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
 
-        ClusterState {
+        Some(ClusterState {
             topology,
             keyspaces,
             locator,
             cluster_name: self.cluster_name.clone(),
-        }
+        })
     }
 
     /// The topology that `peers` describe, with its ring, reusing the `Node`
@@ -1033,7 +1040,7 @@ mod tests {
         previous: &ClusterState,
         peers: Option<Vec<Peer>>,
         schema: Option<SchemaUpdate>,
-    ) -> ClusterState {
+    ) -> Option<ClusterState> {
         previous
             .new_with_partial_changes(peers, schema, &make_node_config(), None)
             .await
@@ -1187,10 +1194,11 @@ mod tests {
         );
     }
 
-    // A re-read peer list that describes the current topology exactly must
-    // share it; one that differs in any way must build a new one.
+    // A re-read peer list that describes the current topology exactly yields
+    // no new state; one that differs in any way yields a state with a new
+    // topology.
     #[tokio::test]
-    async fn partial_topology_update_shares_unchanged_topology() {
+    async fn partial_topology_update_is_skipped_when_nothing_changes() {
         setup_tracing();
 
         let host_ids = [Uuid::new_v4(), Uuid::new_v4()];
@@ -1207,50 +1215,53 @@ mod tests {
         let state = new_cluster_state(make_metadata(peers()), None).await;
 
         let same = partially_update_cluster_state(&state, Some(peers()), None).await;
-        assert!(
-            Arc::ptr_eq(&state.topology, &same.topology),
-            "the same peers again must share the topology"
-        );
+        assert!(same.is_none(), "the same peers again change nothing");
 
         let mut reordered = peers();
         reordered.reverse();
         let same = partially_update_cluster_state(&state, Some(reordered), None).await;
-        assert!(
-            Arc::ptr_eq(&state.topology, &same.topology),
-            "the order of peers does not matter"
-        );
+        assert!(same.is_none(), "the order of peers does not matter");
 
         let mut token_moved = peers();
         token_moved[0].tokens[1] = Token::new(5);
-        let changed = partially_update_cluster_state(&state, Some(token_moved), None).await;
-        assert!(
-            !Arc::ptr_eq(&state.topology, &changed.topology),
-            "a node holding a different token changes the topology"
-        );
+        let changed = partially_update_cluster_state(&state, Some(token_moved), None)
+            .await
+            .expect("a node holding a different token changes the topology");
+        assert!(!Arc::ptr_eq(&state.topology, &changed.topology));
 
         let mut added = peers();
         added.push(peer(Uuid::new_v4(), 3, vec![]));
-        let changed = partially_update_cluster_state(&state, Some(added), None).await;
-        assert!(
-            !Arc::ptr_eq(&state.topology, &changed.topology),
-            "a new node, even without tokens, changes the topology"
-        );
+        let changed = partially_update_cluster_state(&state, Some(added), None)
+            .await
+            .expect("a new node, even without tokens, changes the topology");
+        assert!(!Arc::ptr_eq(&state.topology, &changed.topology));
 
         let mut removed = peers();
         removed.pop();
-        let changed = partially_update_cluster_state(&state, Some(removed), None).await;
-        assert!(
-            !Arc::ptr_eq(&state.topology, &changed.topology),
-            "a node gone changes the topology"
-        );
+        let changed = partially_update_cluster_state(&state, Some(removed), None)
+            .await
+            .expect("a node gone changes the topology");
+        assert!(!Arc::ptr_eq(&state.topology, &changed.topology));
 
         let mut moved = peers();
         moved[0].address = make_addr(9);
-        let changed = partially_update_cluster_state(&state, Some(moved), None).await;
-        assert!(
-            !Arc::ptr_eq(&state.topology, &changed.topology),
-            "a node with a new address changes the topology"
-        );
+        let changed = partially_update_cluster_state(&state, Some(moved), None)
+            .await
+            .expect("a node with a new address changes the topology");
+        assert!(!Arc::ptr_eq(&state.topology, &changed.topology));
+
+        // A schema update is a change on its own, even with the topology
+        // unchanged - which is then shared.
+        let changed = partially_update_cluster_state(
+            &state,
+            Some(peers()),
+            Some(SchemaUpdate {
+                keyspaces: HashMap::from([("ks".to_owned(), FetchedKeyspace::Absent)]),
+            }),
+        )
+        .await
+        .expect("a schema update changes the state");
+        assert!(Arc::ptr_eq(&state.topology, &changed.topology));
     }
 
     // Tablet feedback that repeats what the state already holds must not
