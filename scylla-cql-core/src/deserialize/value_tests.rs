@@ -1101,6 +1101,32 @@ fn test_map() {
     );
 }
 
+/// Collections must be allocated once, with the exact capacity, rather than
+/// grown from empty - which is what `collect::<Result<_, _>>()` does.
+#[test]
+fn test_collections_are_allocated_once() {
+    const LEN: usize = 100;
+    let values: Vec<i32> = (0..LEN as i32).collect();
+
+    let list_typ = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+    };
+    let list = serialize(&list_typ, &values);
+    let deserialized = deserialize::<Vec<i32>>(&list_typ, &list).unwrap();
+    assert_eq!(deserialized.len(), LEN);
+    assert_eq!(deserialized.capacity(), LEN);
+
+    let vector_typ = ColumnType::Vector {
+        typ: Box::new(ColumnType::Native(NativeType::Int)),
+        dimensions: LEN as u16,
+    };
+    let vector = serialize(&vector_typ, &values);
+    let deserialized = deserialize::<Vec<i32>>(&vector_typ, &vector).unwrap();
+    assert_eq!(deserialized.len(), LEN);
+    assert_eq!(deserialized.capacity(), LEN);
+}
+
 #[test]
 fn test_tuples() {
     let mut tuple_contents = BytesMut::new();
