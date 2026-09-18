@@ -305,6 +305,10 @@ macro_rules! impl_strict_type {
                 Ok(())
             }
 
+            // These bodies are a few instructions each once the error
+            // construction is outlined, and callers - in particular a
+            // collection's element loop - benefit a lot from inlining them.
+            #[inline]
             fn deserialize(
                 typ: &'metadata ColumnType<'metadata>,
                 v: Option<FrameSlice<'frame>>,
