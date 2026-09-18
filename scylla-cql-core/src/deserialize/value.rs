@@ -920,6 +920,22 @@ make_error_replace_rust_name!(
     BuiltinDeserializationError
 );
 
+/// Collects a fallible iterator of known length into a `Vec`, allocating once.
+///
+/// `collect::<Result<Vec<_>, _>>()` would not: it goes through an adapter whose
+/// `size_hint` has a lower bound of 0, because iteration stops early on an
+/// error, and `Vec` sizes its allocation from the lower bound. The `Vec` is
+/// then grown geometrically from empty, which for a 1536-element vector means
+/// ten allocations instead of one.
+/// See <https://github.com/rust-lang/rust/issues/48994>.
+fn collect_exact<T, E>(iter: impl ExactSizeIterator<Item = Result<T, E>>) -> Result<Vec<T>, E> {
+    let mut collected = Vec::with_capacity(iter.len());
+    for item in iter {
+        collected.push(item?);
+    }
+    Ok(collected)
+}
+
 // lists and sets
 
 /// An iterator over either a CQL set or list.
@@ -1092,11 +1108,11 @@ where
                 typ: CollectionType::List(_) | CollectionType::Set(_),
                 ..
             } => ListlikeIterator::<'frame, 'metadata, T>::deserialize(typ, v)
-                .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+                .and_then(collect_exact)
                 .map_err(deser_error_replace_rust_name::<Self>),
             ColumnType::Vector { .. } => {
                 VectorIterator::<'frame, 'metadata, T>::deserialize(typ, v)
-                    .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+                    .and_then(collect_exact)
                     .map_err(deser_error_replace_rust_name::<Self>)
             }
             _ => unreachable!("Should be prevented by typecheck"),
