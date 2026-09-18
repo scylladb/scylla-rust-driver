@@ -1049,6 +1049,7 @@ where
 {
     type Item = Result<T, DeserializationError>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let raw = self.raw_iter.next()?.map_err(|err| {
             mk_deser_err::<Self>(
@@ -1555,6 +1556,10 @@ where
 {
     type Item = Result<(K, V), DeserializationError>;
 
+    // Inlined together with `FixedLengthBytesSequenceIterator::next`, which this
+    // calls twice: inlining only that one leaves this body too big to inline
+    // itself, which costs more than it saves.
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         // Note the lack of `?` - we want each call to `next()` to consume EXACTLY two items
         // from the inner iterator. This is necessary for correct and precise
@@ -2115,6 +2120,9 @@ impl<'frame> FixedLengthBytesSequenceIterator<'frame> {
 impl<'frame> Iterator for FixedLengthBytesSequenceIterator<'frame> {
     type Item = Result<Option<FrameSlice<'frame>>, LowLevelDeserializationError>;
 
+    // Not generic, so without this its body is not available for inlining into
+    // the collection iterators wrapping it, in this crate or any other.
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.remaining = self.remaining.checked_sub(1)?;
         Some(self.slice.read_cql_bytes())
