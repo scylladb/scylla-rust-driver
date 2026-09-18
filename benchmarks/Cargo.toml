@@ -26,3 +26,7 @@ gungraun = "=0.19.4"
 [[bench]]
 name = "requests"
 harness = false
+
+[[bench]]
+name = "deserialization"
+harness = false

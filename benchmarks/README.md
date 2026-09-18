@@ -1,6 +1,6 @@
 # Driver benchmarks
 
-Micro-benchmarks that measure, for each request scenario:
+Micro-benchmarks that measure, for each scenario:
 
 - **instructions** executed (via Callgrind),
 - **allocations** — the number of heap blocks allocated (via DHAT), and
@@ -25,6 +25,22 @@ Connecting, schema creation, statement preparation and data population happen in
 each scenario's `setup`, which the harness excludes from the measurements; only
 the request loop is measured.
 
+The `deserialization` benchmark (`benches/deserialization.rs`) measures
+deserialization of a single CQL value, without a cluster:
+
+| Scenario            | What it deserializes                       |
+| ------------------- | ------------------------------------------ |
+| `list_to_vec`       | `list<int>` of 1024 elements to `Vec<i32>`. |
+| `set_to_hash_set`   | `set<int>` of 1024 elements to `HashSet<i32>`. |
+| `map_to_hash_map`   | `map<int, bigint>` of 1024 entries to `HashMap<i32, i64>`. |
+| `vector_to_vec`     | `vector<float, 1536>` to `Vec<f32>`.       |
+| `list_to_cql_value` | `list<int>` of 1024 elements to `CqlValue`. |
+| `udt_to_cql_value`  | A user defined type of 64 `int` fields to `CqlValue`. |
+
+The value is serialized into its wire form in `setup`; only its deserialization
+is measured. The request path allocates hundreds of times per request, which
+would drown out the deserialization path's own cost in the `requests` scenarios.
+
 ## Requirements
 
 - [Valgrind](https://valgrind.org/) (provides Callgrind and DHAT).
@@ -34,9 +50,10 @@ the request loop is measured.
   cargo install gungraun-runner --version 0.19.4
   ```
 
-- A running ScyllaDB cluster. The benchmarks default to the repository's
-  three-node docker-compose cluster (`make up`); override the contact points
-  with `SCYLLA_URI`, `SCYLLA_URI2` and `SCYLLA_URI3` if needed.
+- A running ScyllaDB cluster, for the `requests` benchmark. It defaults to the
+  repository's three-node docker-compose cluster (`make up`); override the
+  contact points with `SCYLLA_URI`, `SCYLLA_URI2` and `SCYLLA_URI3` if needed.
+  The `deserialization` benchmark does not need one.
 
 ## Running
 
