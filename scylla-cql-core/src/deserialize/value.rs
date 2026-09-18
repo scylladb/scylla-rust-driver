@@ -1176,7 +1176,14 @@ where
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         ListlikeIterator::<'frame, 'metadata, T>::deserialize(typ, v)
-            .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+            .and_then(|it| {
+                // Not `collect()`, for the reason described on `collect_exact`.
+                let mut set = HashSet::with_capacity_and_hasher(it.len(), S::default());
+                for item in it {
+                    set.insert(item?);
+                }
+                Ok(set)
+            })
             .map_err(deser_error_replace_rust_name::<Self>)
     }
 }
@@ -1603,7 +1610,15 @@ where
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         MapIterator::<'frame, 'metadata, K, V>::deserialize(typ, v)
-            .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+            .and_then(|it| {
+                // Not `collect()`, for the reason described on `collect_exact`.
+                let mut map = HashMap::with_capacity_and_hasher(it.len(), S::default());
+                for item in it {
+                    let (key, value) = item?;
+                    map.insert(key, value);
+                }
+                Ok(map)
+            })
             .map_err(deser_error_replace_rust_name::<Self>)
     }
 }
