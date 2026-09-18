@@ -2,14 +2,16 @@
 //! metadata aspect must make the driver re-read that aspect alone, instead of
 //! performing a full metadata fetch.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
-use scylla::cluster::metadata::PeriodicFetchMode;
+use scylla::cluster::metadata::{Peer, PeriodicFetchMode};
+use scylla::policies::host_filter::HostFilter;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
     ResponseOpcode, ResponseReaction, ResponseRule, RunningProxy, ShardAwareness, WorkerError,
@@ -78,9 +80,12 @@ async fn status_change_down_event_triggers_only_a_topology_fetch() {
 
 /// Injects one event with `inject_event` and requires the driver to react with
 /// exactly one partial topology fetch: two metadata requests on the control
-/// connection, and a new `ClusterState` that kept the schema metadata of the
-/// previous one (the event cannot have affected the schema, and the fetch does
-/// not re-read it).
+/// connection, followed by a new `ClusterState`.
+///
+/// A fetch that finds the topology unchanged publishes no new state, so it
+/// would leave nothing to wait for. Hence the host filter: it starts rejecting
+/// one node right before the event, so that the fetch has a change to publish -
+/// that node, disabled.
 async fn assert_event_triggers_only_a_topology_fetch(
     inject_event: impl FnOnce(&RunningProxy, SocketAddr),
 ) {
@@ -89,9 +94,19 @@ async fn assert_event_triggers_only_a_topology_fetch(
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, mut running_proxy| async move {
+            // Any node but the contact point, which the control connection
+            // is established to.
+            let rejected_node_ip = translation_map
+                .iter()
+                .find(|(_real_addr, proxy_addr)| proxy_addr.to_string() != proxy_uris[0])
+                .map(|(real_addr, _proxy_addr)| real_addr.ip())
+                .unwrap();
+            let filter = Arc::new(SwitchableRejectFilter::for_node(rejected_node_ip));
+
             let session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map.clone()))
+                .host_filter(Arc::clone(&filter) as Arc<dyn HostFilter>)
                 // Far beyond the test duration: the only fetch on the
                 // established control connection is the one the injected event
                 // triggers.
@@ -104,6 +119,7 @@ async fn assert_event_triggers_only_a_topology_fetch(
             let state_before_event = session.get_cluster_state();
 
             let mut metadata_request_rx = count_metadata_requests(&mut running_proxy);
+            filter.start_rejecting();
 
             // The address named by the event does not matter for the fetch: the
             // driver reacts by re-reading the whole peer list anyway. An address
@@ -111,8 +127,8 @@ async fn assert_event_triggers_only_a_topology_fetch(
             // anything else (a keepalive or a pool refill).
             inject_event(&running_proxy, SocketAddr::from(([127, 0, 0, 1], 9042)));
 
-            // The fetched topology is published as a new `ClusterState`, which
-            // must have kept the schema metadata of the previous one.
+            // The fetched topology, with the rejected node disabled, is
+            // published as a new `ClusterState`.
             let state_after_event =
                 wait_for_state(&session, |state| !Arc::ptr_eq(state, &state_before_event)).await;
 
@@ -123,7 +139,16 @@ async fn assert_event_triggers_only_a_topology_fetch(
                 triggered something other than a partial topology fetch"
             );
 
-            assert_eq!(state_after_event.get_nodes_info().len(), 3);
+            let nodes = state_after_event.get_nodes_info();
+            assert_eq!(nodes.len(), 3);
+            let rejected_node = nodes
+                .iter()
+                .find(|node| node.address.ip() == rejected_node_ip)
+                .expect("the rejected node is still known");
+            assert!(
+                !rejected_node.is_enabled(),
+                "the new state comes from a fetch that applied the filter"
+            );
 
             running_proxy
         },
@@ -309,6 +334,34 @@ async fn full_metadata_mode_picks_up_schema_changes_without_events() {
         Ok(()) => (),
         Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
         Err(err) => panic!("{}", err),
+    }
+}
+
+/// A host filter that accepts every node until told to reject one of them.
+///
+/// Flipping it between two topology fetches makes the second one find a
+/// change - the node to disable - where the peer list itself has none.
+struct SwitchableRejectFilter {
+    rejected_node_ip: IpAddr,
+    rejecting: AtomicBool,
+}
+
+impl SwitchableRejectFilter {
+    fn for_node(rejected_node_ip: IpAddr) -> Self {
+        Self {
+            rejected_node_ip,
+            rejecting: AtomicBool::new(false),
+        }
+    }
+
+    fn start_rejecting(&self) {
+        self.rejecting.store(true, Ordering::Relaxed);
+    }
+}
+
+impl HostFilter for SwitchableRejectFilter {
+    fn accept(&self, peer: &Peer) -> bool {
+        !(self.rejecting.load(Ordering::Relaxed) && peer.address.ip() == self.rejected_node_ip)
     }
 }
 

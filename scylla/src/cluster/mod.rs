@@ -21,7 +21,7 @@ pub(crate) use worker::{Cluster, ClusterNeatDebug, use_keyspace_result};
 mod state;
 pub use state::ClusterState;
 #[cfg(test)]
-pub(crate) use state::NodeConfig;
+pub(crate) use state::{NodeConfig, Topology};
 
 pub(crate) mod node;
 pub use node::{KnownNode, Node, NodeAddr, NodeRef};

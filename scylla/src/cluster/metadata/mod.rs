@@ -93,7 +93,7 @@ pub(crate) enum SingleKeyspaceMetadataError {
 /// Describes all metadata retrieved from the cluster
 pub(crate) struct Metadata {
     pub(crate) peers: Vec<Peer>,
-    pub(crate) keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
+    pub(crate) keyspaces: HashMap<String, Result<Arc<Keyspace>, SingleKeyspaceMetadataError>>,
     pub(crate) cluster_name: Option<String>,
 
     /// The raw snapshot of client routes, as fetched from `system.client_routes`.

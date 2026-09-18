@@ -5,6 +5,8 @@
 //! - `INSERT` via [`Session::execute_unpaged`],
 //! - `BATCH` of a configurable number of statements via [`Session::batch`],
 //! - auto-paged `SELECT` via [`Session::execute_iter`],
+//! - learning the table's tablets from routing feedback, driven by unpaged
+//!   `SELECT`s on a session that has not learned them yet.
 //!
 //! The actual measurement (separating connection setup from the measured
 //! request loop) is handled by the benchmark harness; this crate only provides
@@ -12,6 +14,7 @@
 
 use std::env;
 use std::hint::black_box;
+use std::time::Duration;
 
 use anyhow::Result;
 use futures::StreamExt as _;
@@ -30,12 +33,25 @@ pub const KEYSPACE: &str = "benchmarks_ks";
 /// Table used by all benchmark scenarios.
 pub const TABLE: &str = "t";
 
+/// Number of tablets of the benchmark table.
+///
+/// It is what ScyllaDB picks by default for the repository's docker-compose
+/// cluster (3 nodes, 2 shards each), but the table definition also pins it as
+/// the minimum, so that tablet merges on the tiny table cannot change it and
+/// the cost of learning the table's tablets stays the same across runs.
+pub const TABLET_COUNT: usize = 64;
+
 /// Number of distinct-partition requests issued during context construction to
 /// warm up tablet routing, so that the measured loops are not dominated by the
-/// driver relearning tablets (see the warmup loop in [`BenchContext::build`]).
-/// Chosen comfortably above the table's tablet count so that every tablet is
-/// learned during the warmup.
-const TABLET_WARMUP_REQUESTS: usize = 512;
+/// driver relearning tablets (see the warmup loop in `BenchContext::build`).
+/// Chosen comfortably above [`TABLET_COUNT`] so that every tablet is learned
+/// during the warmup.
+const TABLET_WARMUP_REQUESTS: usize = 8 * TABLET_COUNT;
+
+/// Interval of the driver's periodic background work (keepalives, metadata
+/// refresh) in benchmark sessions. See the session construction in
+/// `BenchContext::build` for why it is pushed this far.
+const BACKGROUND_WORK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// Returns the contact point to connect to, taken from the `SCYLLA_URI`
 /// environment variable and falling back to [`DEFAULT_NODE`].
@@ -53,6 +69,10 @@ pub struct ScenarioConfig {
     /// Page size used by the auto-paged `SELECT` scenario. Chosen smaller than
     /// `paged_rows` so that multiple pages are actually fetched.
     pub page_size: i32,
+    /// Whether to learn every tablet of the table during context construction
+    /// (see the warmup loop in `BenchContext::build`). Disabled only by the
+    /// `tablet_learning` scenario, which measures that learning itself.
+    pub warm_up_tablets: bool,
 }
 
 impl Default for ScenarioConfig {
@@ -62,6 +82,7 @@ impl Default for ScenarioConfig {
             prefilled_rows_per_partition: 10,
             batch_size: 8,
             page_size: 20,
+            warm_up_tablets: true,
         }
     }
 }
@@ -99,7 +120,17 @@ impl BenchContext {
         let (session, prepared_insert, prepared_select, prepared_select_all, batch, batch_values) =
             runtime.block_on(async {
                 // Use the driver defaults, in particular one connection per shard.
-                let builder = SessionBuilder::new().known_node(node);
+                //
+                // Except for the periodic background work: by default the driver
+                // sends a keepalive on every connection every 30 s and refreshes
+                // the cluster metadata every 60 s. Under Valgrind a scenario
+                // easily runs for that long, so a timer firing inside the
+                // measured loop would add a random burst of allocations and
+                // instructions. Push both far past any scenario's duration.
+                let builder = SessionBuilder::new()
+                    .known_node(node)
+                    .keepalive_interval(BACKGROUND_WORK_INTERVAL)
+                    .cluster_metadata_refresh_interval(BACKGROUND_WORK_INTERVAL);
                 let session: Session = builder.build().await?;
 
                 session
@@ -116,7 +147,8 @@ impl BenchContext {
                     .query_unpaged(
                         format!(
                             "CREATE TABLE IF NOT EXISTS {KEYSPACE}.{TABLE} \
-                         (a int, b int, c text, primary key (a, b))"
+                         (a int, b int, c text, primary key (a, b)) \
+                         WITH tablets = {{'min_tablet_count': {TABLET_COUNT}}}"
                         ),
                         &[],
                     )
@@ -185,14 +217,16 @@ impl BenchContext {
                 // scenario's full-table scan; tablet learning is driven by where
                 // a request is routed, so a read of a (possibly absent) row
                 // teaches the driver the tablet just as a write would.
-                futures::stream::iter(0..TABLET_WARMUP_REQUESTS as i32)
-                    .for_each_concurrent(64, async |i| {
-                        session
-                            .execute_unpaged(&prepared_select, (i,))
-                            .await
-                            .unwrap();
-                    })
-                    .await;
+                if config.warm_up_tablets {
+                    futures::stream::iter(0..TABLET_WARMUP_REQUESTS as i32)
+                        .for_each_concurrent(64, async |i| {
+                            session
+                                .execute_unpaged(&prepared_select, (i,))
+                                .await
+                                .unwrap();
+                        })
+                        .await;
+                }
 
                 session.refresh_metadata().await?;
 
@@ -241,6 +275,42 @@ impl BenchContext {
                     .await
                     .unwrap();
                 black_box(result);
+            }
+        })
+    }
+
+    /// Learns the table's tablets: runs `n` unpaged `SELECT`s of distinct
+    /// partitions via [`Session::execute_unpaged`] on a session that has not
+    /// warmed up tablet routing (see [`ScenarioConfig::warm_up_tablets`]), so
+    /// that the measurement covers the tablet-routing feedback the requests
+    /// trigger and the cluster metadata updates it causes.
+    ///
+    /// The loop is made deterministic, so that the allocation count can be
+    /// compared exactly between runs:
+    ///
+    /// - The requests are sequential. Concurrent requests to a not yet learned
+    ///   tablet each trigger feedback for it, and how many do depends on timing.
+    /// - After each request the task yields once. The cluster worker, which
+    ///   applies the feedback, runs on this same single-threaded runtime and only
+    ///   gets to run when this task yields; without the yield the next request
+    ///   would be routed using the state from before the feedback and could
+    ///   trigger it again for the same tablet. With the yield every tablet
+    ///   triggers feedback exactly once, so the number of metadata updates is
+    ///   the tablet count, whichever requests happen to hit unlearned tablets.
+    /// - `n` is many times [`TABLET_COUNT`], so that every tablet is hit enough
+    ///   times to be learned even though an individual request to an unlearned
+    ///   tablet is not guaranteed to trigger feedback (it does not when it happens
+    ///   to be routed to the right node and shard).
+    pub fn run_tablet_learning(&self, n: usize) {
+        self.runtime.block_on(async {
+            for i in 0..n as i32 {
+                let result = self
+                    .session
+                    .execute_unpaged(&self.prepared_select, (i,))
+                    .await
+                    .unwrap();
+                black_box(result);
+                tokio::task::yield_now().await;
             }
         })
     }

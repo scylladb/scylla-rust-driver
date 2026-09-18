@@ -20,10 +20,26 @@ The `requests` benchmark (`benches/requests.rs`) covers:
 | `unpaged_select` | Unpaged `SELECT`s via `Session::execute_unpaged`.                   |
 | `batch`          | Unlogged `BATCH`es of 64 prepared statements.               |
 | `paged_select`   | Auto-paged `SELECT`s via `Session::execute_iter`, draining pages.   |
+| `tablet_learning` | Unpaged `SELECT`s of distinct partitions on a session that has not learned the table's tablets yet, so the tablet-routing feedback and the cluster metadata updates it triggers are measured. |
 
 Connecting, schema creation, statement preparation and data population happen in
 each scenario's `setup`, which the harness excludes from the measurements; only
-the request loop is measured.
+the request loop is measured. The other scenarios also learn the table's
+tablets during `setup`, so that their loops measure only the request path;
+`tablet_learning` skips that on purpose.
+
+## Micro-benchmarks
+
+`benches/dc_replicas.rs` needs no cluster and is not run in CI. It compares three
+representations of a tablet's replica list for answering "which replicas are in
+datacenter X?" - a per-datacenter `HashMap` next to the list, filtering the list
+on each query, and a per-datacenter index of replica-position masks - in terms
+of build cost, clone cost, and the per-request lookup cost. It exists to back
+the decision between them with numbers; run it with:
+
+```bash
+cargo bench -p benchmarks --bench dc_replicas
+```
 
 ## Requirements
 
@@ -60,7 +76,8 @@ cargo bench -p benchmarks --bench requests -- --baseline=base
 ## Finding what to optimize
 
 Each run writes a DHAT output file per scenario (e.g.
-`target/iai/benchmarks/requests/requests/insert/dhat.insert.out`). Open it in
+`target/gungraun/benchmarks/requests/requests/insert.counts_0/dhat.insert.counts_0.out`).
+Open it in
 DHAT's [`dh_view.html`](https://valgrind.org/docs/manual/dh-manual.html) viewer
 to browse the allocations by call stack and see exactly where they come from.
 Since the totals are whole-process, this lists every allocation site, including
