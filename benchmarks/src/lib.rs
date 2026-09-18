@@ -1,14 +1,19 @@
 //! Driver benchmark scenarios.
 //!
-//! The scenarios cover:
+//! The request scenarios cover:
 //! - unpaged `SELECT` via [`Session::execute_unpaged`],
 //! - `INSERT` via [`Session::execute_unpaged`],
 //! - `BATCH` of a configurable number of statements via [`Session::batch`],
 //! - auto-paged `SELECT` via [`Session::execute_iter`],
 //!
+//! [`deserialization`] covers deserialization of CQL values on its own, without
+//! a cluster.
+//!
 //! The actual measurement (separating connection setup from the measured
 //! request loop) is handled by the benchmark harness; this crate only provides
 //! the reusable building blocks.
+
+pub mod deserialization;
 
 use std::env;
 use std::hint::black_box;

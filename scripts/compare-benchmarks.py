@@ -352,8 +352,7 @@ def build_summary(benchmarks: list[Benchmark], thresholds: Thresholds) -> str:
         "",
         "Comparison of this pull request against its base, mirroring the "
         "`cargo bench` output. Instructions come from Callgrind; allocated heap "
-        "blocks and peak memory from DHAT. Each metric is measured over the "
-        "scenario's request loop (setup is excluded by the harness).",
+        "blocks and peak memory from DHAT.",
         "",
         f"**{regressions} regression(s), {improvements} improvement(s).** "
         f"Only instructions, allocations (`Total blocks`) and peak memory "
