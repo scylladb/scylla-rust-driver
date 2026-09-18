@@ -3,7 +3,7 @@
 
 Reads the machine-readable output produced by
 
-    cargo bench -p benchmarks --bench requests -- \
+    cargo bench -p benchmarks --benches -- \
         --baseline=base --output-format=json
 
 (one JSON object per line) and writes a Markdown report comparing the pull

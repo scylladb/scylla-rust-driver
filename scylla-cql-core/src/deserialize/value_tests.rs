@@ -25,7 +25,8 @@ use super::{
     BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
     BuiltinTypeCheckErrorKind, DeserializeValue, ListlikeIterator, MapDeserializationErrorKind,
     MapIterator, MapTypeCheckErrorKind, MaybeEmpty, SetOrListDeserializationErrorKind,
-    SetOrListTypeCheckErrorKind, VectorIterator, mk_deser_err,
+    SetOrListTypeCheckErrorKind, VectorIterator, collect_exact, deser_error_replace_rust_name,
+    mk_deser_err,
 };
 
 #[test]
@@ -1099,6 +1100,91 @@ fn test_map() {
         &BTreeMap::<i32, &str>::from_iter([(-42, "qwik")]),
         &mut Bytes::new(),
     );
+}
+
+/// Decoding a vector's fixed-size elements in bulk must behave exactly like
+/// decoding them one by one, including which error a truncated frame produces.
+#[test]
+fn test_vector_bulk_decoding_matches_element_by_element() {
+    let typ = ColumnType::Vector {
+        typ: Box::new(ColumnType::Native(NativeType::Int)),
+        dimensions: 4,
+    };
+    let full: Vec<u8> = (0..4i32).flat_map(|i| i.to_be_bytes()).collect();
+
+    // Every truncation, including ones that cut an element in half.
+    for len in 0..=full.len() {
+        let bytes = make_bytes(&full[..len]);
+        let mut frame_slice = FrameSlice::new(&bytes);
+        let cell = frame_slice.read_cql_bytes().unwrap();
+
+        let bulk = <Vec<i32> as DeserializeValue>::deserialize(&typ, cell);
+        let elementwise = collect_exact(VectorIterator::<i32>::deserialize(&typ, cell).unwrap())
+            .map_err(deser_error_replace_rust_name::<Vec<i32>>);
+
+        match (bulk, elementwise) {
+            (Ok(bulk), Ok(elementwise)) => assert_eq!(bulk, elementwise, "at length {len}"),
+            (Err(bulk), Err(elementwise)) => assert_eq!(
+                format!("{bulk:?}"),
+                format!("{elementwise:?}"),
+                "at length {len}"
+            ),
+            (bulk, elementwise) => {
+                panic!("at length {len}: {bulk:?} does not match {elementwise:?}")
+            }
+        }
+    }
+}
+
+/// Collections must be allocated once, with the exact capacity, rather than
+/// grown from empty - which is what `collect::<Result<_, _>>()` does.
+#[test]
+fn test_collections_are_allocated_once() {
+    const LEN: usize = 100;
+    let values: Vec<i32> = (0..LEN as i32).collect();
+
+    let list_typ = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+    };
+    let list = serialize(&list_typ, &values);
+    let deserialized = deserialize::<Vec<i32>>(&list_typ, &list).unwrap();
+    assert_eq!(deserialized.len(), LEN);
+    assert_eq!(deserialized.capacity(), LEN);
+
+    let vector_typ = ColumnType::Vector {
+        typ: Box::new(ColumnType::Native(NativeType::Int)),
+        dimensions: LEN as u16,
+    };
+    let vector = serialize(&vector_typ, &values);
+    let deserialized = deserialize::<Vec<i32>>(&vector_typ, &vector).unwrap();
+    assert_eq!(deserialized.len(), LEN);
+    assert_eq!(deserialized.capacity(), LEN);
+
+    // `CqlValue` builds its collections itself, rather than through the impls
+    // exercised above.
+    let map_typ = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::Map(
+            Box::new(ColumnType::Native(NativeType::Int)),
+            Box::new(ColumnType::Native(NativeType::BigInt)),
+        ),
+    };
+    let map_values: BTreeMap<i32, i64> = (0..LEN as i32).map(|i| (i, i64::from(i))).collect();
+    let map = serialize(&map_typ, &map_values);
+
+    let CqlValue::Vector(deserialized) = deserialize::<CqlValue>(&vector_typ, &vector).unwrap()
+    else {
+        panic!("expected a vector");
+    };
+    assert_eq!(deserialized.len(), LEN);
+    assert_eq!(deserialized.capacity(), LEN);
+
+    let CqlValue::Map(deserialized) = deserialize::<CqlValue>(&map_typ, &map).unwrap() else {
+        panic!("expected a map");
+    };
+    assert_eq!(deserialized.len(), LEN);
+    assert_eq!(deserialized.capacity(), LEN);
 }
 
 #[test]

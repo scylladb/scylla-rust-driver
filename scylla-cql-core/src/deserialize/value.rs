@@ -186,7 +186,7 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
                     ..
                 } => {
                     let iter = MapIterator::<'_, '_, CqlValue, CqlValue>::deserialize(typ, v)?;
-                    let m: Vec<(CqlValue, CqlValue)> = iter.collect::<Result<_, _>>()?;
+                    let m: Vec<(CqlValue, CqlValue)> = collect_exact(iter)?;
                     CqlValue::Map(m)
                 }
                 Collection {
@@ -198,21 +198,20 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
                 }
                 Vector { .. } => {
                     let iter = VectorIterator::deserialize(typ, v)?;
-                    let v: Vec<CqlValue> = iter.collect::<Result<_, _>>()?;
+                    let v: Vec<CqlValue> = iter.into_vec()?;
                     CqlValue::Vector(v)
                 }
                 UserDefinedType {
                     definition: udt, ..
                 } => {
                     let iter = UdtIterator::deserialize(typ, v)?;
-                    let fields: Vec<(String, Option<CqlValue>)> = iter
-                        .map(|((col_name, col_type), res)| {
+                    let fields: Vec<(String, Option<CqlValue>)> =
+                        collect_exact(iter.map(|((col_name, col_type), res)| {
                             res.and_then(|v| {
                                 let val = Option::<CqlValue>::deserialize(col_type, v.flatten())?;
                                 Ok((col_name.clone().into_owned(), val))
                             })
-                        })
-                        .collect::<Result<_, _>>()?;
+                        }))?;
 
                     CqlValue::UserDefinedType {
                         keyspace: udt.keyspace.clone().into_owned(),
@@ -221,9 +220,8 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
                     }
                 }
                 Tuple(type_names) => {
-                    let t = type_names
-                        .iter()
-                        .map(|typ| -> Result<_, DeserializationError> {
+                    let t = collect_exact(type_names.iter().map(
+                        |typ| -> Result<_, DeserializationError> {
                             let raw = if frame_slice.is_empty() {
                                 // Special case: if there are no bytes left to read, consider the tuple element as null.
                                 // This is needed to handle tuples with fewer elements than expected
@@ -238,8 +236,8 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
                                 })?
                             };
                             raw.map(|v| CqlValue::deserialize(typ, Some(v))).transpose()
-                        })
-                        .collect::<Result<_, _>>()?;
+                        },
+                    ))?;
                     CqlValue::Tuple(t)
                 }
             },
@@ -307,6 +305,10 @@ macro_rules! impl_strict_type {
                 Ok(())
             }
 
+            // These bodies are a few instructions each once the error
+            // construction is outlined, and callers - in particular a
+            // collection's element loop - benefit a lot from inlining them.
+            #[inline]
             fn deserialize(
                 typ: &'metadata ColumnType<'metadata>,
                 v: Option<FrameSlice<'frame>>,
@@ -920,6 +922,22 @@ make_error_replace_rust_name!(
     BuiltinDeserializationError
 );
 
+/// Collects a fallible iterator of known length into a `Vec`, allocating once.
+///
+/// `collect::<Result<Vec<_>, _>>()` would not: it goes through an adapter whose
+/// `size_hint` has a lower bound of 0, because iteration stops early on an
+/// error, and `Vec` sizes its allocation from the lower bound. The `Vec` is
+/// then grown geometrically from empty, which for a 1536-element vector means
+/// ten allocations instead of one.
+/// See <https://github.com/rust-lang/rust/issues/48994>.
+fn collect_exact<T, E>(iter: impl ExactSizeIterator<Item = Result<T, E>>) -> Result<Vec<T>, E> {
+    let mut collected = Vec::with_capacity(iter.len());
+    for item in iter {
+        collected.push(item?);
+    }
+    Ok(collected)
+}
+
 // lists and sets
 
 /// An iterator over either a CQL set or list.
@@ -1031,6 +1049,7 @@ where
 {
     type Item = Result<T, DeserializationError>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let raw = self.raw_iter.next()?.map_err(|err| {
             mk_deser_err::<Self>(
@@ -1092,11 +1111,11 @@ where
                 typ: CollectionType::List(_) | CollectionType::Set(_),
                 ..
             } => ListlikeIterator::<'frame, 'metadata, T>::deserialize(typ, v)
-                .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+                .and_then(collect_exact)
                 .map_err(deser_error_replace_rust_name::<Self>),
             ColumnType::Vector { .. } => {
                 VectorIterator::<'frame, 'metadata, T>::deserialize(typ, v)
-                    .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+                    .and_then(VectorIterator::into_vec)
                     .map_err(deser_error_replace_rust_name::<Self>)
             }
             _ => unreachable!("Should be prevented by typecheck"),
@@ -1160,7 +1179,14 @@ where
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         ListlikeIterator::<'frame, 'metadata, T>::deserialize(typ, v)
-            .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+            .and_then(|it| {
+                // Not `collect()`, for the reason described on `collect_exact`.
+                let mut set = HashSet::with_capacity_and_hasher(it.len(), S::default());
+                for item in it {
+                    set.insert(item?);
+                }
+                Ok(set)
+            })
             .map_err(deser_error_replace_rust_name::<Self>)
     }
 }
@@ -1263,6 +1289,47 @@ impl<'frame, 'metadata, T> VectorIterator<'frame, 'metadata, T>
 where
     T: DeserializeValue<'frame, 'metadata>,
 {
+    /// Deserializes the remaining elements into a `Vec`.
+    ///
+    /// Elements of a constant length occupy one contiguous run of bytes, so the
+    /// run's length can be checked once instead of once per element. Going
+    /// through `Iterator::next` instead costs, for every element, a bounds
+    /// check and a `Result<Option<FrameSlice>>` to build and match - which for
+    /// a 1536-dimension `vector<float>` is most of the work.
+    pub fn into_vec(mut self) -> Result<Vec<T>, DeserializationError> {
+        // A zero length would make `chunks_exact` panic, and `next` treats such
+        // elements differently anyway (an empty slice reads as `None`).
+        let Some(element_length) = self.element_length.filter(|&len| len > 0) else {
+            return collect_exact(self);
+        };
+
+        let mut collected = Vec::with_capacity(self.remaining);
+
+        // Only the elements that are entirely present are taken in bulk.
+        let bulk = (self.slice.as_slice().len() / element_length).min(self.remaining);
+        let (run, rest) = self.slice.split_at(bulk * element_length);
+        self.slice = rest;
+        self.remaining -= bulk;
+
+        for raw in run.chunks_exact(element_length) {
+            let elem = T::deserialize(self.element_type, Some(raw)).map_err(|err| {
+                mk_deser_err::<Self>(
+                    self.collection_type,
+                    VectorDeserializationErrorKind::ElementDeserializationFailed(err),
+                )
+            })?;
+            collected.push(elem);
+        }
+
+        // Whatever the bulk pass did not cover - the elements of a truncated
+        // frame - goes through `Iterator::next`, which reports the error
+        // exactly as it would have without this fast path.
+        for elem in self {
+            collected.push(elem?);
+        }
+        Ok(collected)
+    }
+
     fn next_constant_length_elem(
         &mut self,
         element_length: usize,
@@ -1489,6 +1556,10 @@ where
 {
     type Item = Result<(K, V), DeserializationError>;
 
+    // Inlined together with `FixedLengthBytesSequenceIterator::next`, which this
+    // calls twice: inlining only that one leaves this body too big to inline
+    // itself, which costs more than it saves.
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         // Note the lack of `?` - we want each call to `next()` to consume EXACTLY two items
         // from the inner iterator. This is necessary for correct and precise
@@ -1587,7 +1658,15 @@ where
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         MapIterator::<'frame, 'metadata, K, V>::deserialize(typ, v)
-            .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+            .and_then(|it| {
+                // Not `collect()`, for the reason described on `collect_exact`.
+                let mut map = HashMap::with_capacity_and_hasher(it.len(), S::default());
+                for item in it {
+                    let (key, value) = item?;
+                    map.insert(key, value);
+                }
+                Ok(map)
+            })
             .map_err(deser_error_replace_rust_name::<Self>)
     }
 }
@@ -1823,6 +1902,7 @@ impl<'frame, 'metadata> Iterator for UdtIterator<'frame, 'metadata> {
         Result<Option<Option<FrameSlice<'frame>>>, DeserializationError>,
     );
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let (head, fields) = self.remaining_fields.split_first()?;
         self.remaining_fields = fields;
@@ -2041,6 +2121,9 @@ impl<'frame> FixedLengthBytesSequenceIterator<'frame> {
 impl<'frame> Iterator for FixedLengthBytesSequenceIterator<'frame> {
     type Item = Result<Option<FrameSlice<'frame>>, LowLevelDeserializationError>;
 
+    // Not generic, so without this its body is not available for inlining into
+    // the collection iterators wrapping it, in this crate or any other.
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.remaining = self.remaining.checked_sub(1)?;
         Some(self.slice.read_cql_bytes())
@@ -2081,6 +2164,7 @@ impl<'frame> From<FrameSlice<'frame>> for BytesSequenceIterator<'frame> {
 impl<'frame> Iterator for BytesSequenceIterator<'frame> {
     type Item = Result<Option<FrameSlice<'frame>>, LowLevelDeserializationError>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.slice.as_slice().is_empty() {
             None
@@ -2114,6 +2198,11 @@ pub fn mk_typck_err<T>(
     mk_typck_err_named(std::any::type_name::<T>(), cql_type, kind)
 }
 
+// Outlined and cold: building the error deep-clones the `ColumnType` and
+// allocates, which would otherwise bloat every `deserialize` body enough to
+// stop it being inlined into a collection's element loop.
+#[cold]
+#[inline(never)]
 fn mk_typck_err_named(
     name: &'static str,
     cql_type: &ColumnType,
@@ -2462,6 +2551,11 @@ pub fn mk_deser_err<T>(
     mk_deser_err_named(std::any::type_name::<T>(), cql_type, kind)
 }
 
+// Outlined and cold: building the error deep-clones the `ColumnType` and
+// allocates, which would otherwise bloat every `deserialize` body enough to
+// stop it being inlined into a collection's element loop.
+#[cold]
+#[inline(never)]
 fn mk_deser_err_named(
     name: &'static str,
     cql_type: &ColumnType,
