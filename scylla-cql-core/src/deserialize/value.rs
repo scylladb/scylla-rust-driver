@@ -2143,6 +2143,11 @@ pub fn mk_typck_err<T>(
     mk_typck_err_named(std::any::type_name::<T>(), cql_type, kind)
 }
 
+// Outlined and cold: building the error deep-clones the `ColumnType` and
+// allocates, which would otherwise bloat every `deserialize` body enough to
+// stop it being inlined into a collection's element loop.
+#[cold]
+#[inline(never)]
 fn mk_typck_err_named(
     name: &'static str,
     cql_type: &ColumnType,
@@ -2491,6 +2496,11 @@ pub fn mk_deser_err<T>(
     mk_deser_err_named(std::any::type_name::<T>(), cql_type, kind)
 }
 
+// Outlined and cold: building the error deep-clones the `ColumnType` and
+// allocates, which would otherwise bloat every `deserialize` body enough to
+// stop it being inlined into a collection's element loop.
+#[cold]
+#[inline(never)]
 fn mk_deser_err_named(
     name: &'static str,
     cql_type: &ColumnType,
