@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use itertools::Itertools as _;
 use scylla::{
-    cluster::metadata::{CollectionType, ColumnKind, ColumnType, NativeType, UserDefinedType},
+    cluster::metadata::{
+        CollectionType, ColumnKind, ColumnType, IndexKind, NativeType, UserDefinedType,
+    },
     value::Row,
 };
 
@@ -482,6 +484,52 @@ async fn test_views_in_schema_info() {
     assert_eq!(tables, std::collections::HashSet::from(["t"]));
     assert_eq!(views, std::collections::HashSet::from(["mv1", "mv2"]));
     assert_eq!(views_base_table, std::collections::HashSet::from(["t"]));
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_indexes_in_metadata() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    // A secondary index is backed by a materialized view on ScyllaDB, which older
+    // versions do not support on tablet keyspaces.
+    let create_ks = format!(
+        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}{}",
+        disable_tablets_unless_supported(&session, "VIEWS_WITH_TABLETS").await
+    );
+    session.ddl(create_ks).await.unwrap();
+    session.use_keyspace(ks.clone(), false).await.unwrap();
+
+    session
+        .ddl("CREATE TABLE t (pk int PRIMARY KEY, a int, b text)")
+        .await
+        .unwrap();
+    session
+        .ddl("CREATE TABLE not_indexed (pk int PRIMARY KEY, a int)")
+        .await
+        .unwrap();
+    session.ddl("CREATE INDEX idx_a ON t(a)").await.unwrap();
+    session.ddl("CREATE INDEX idx_b ON t(b)").await.unwrap();
+
+    let cluster_state = session.get_cluster_state();
+    let keyspace = cluster_state.get_keyspace(&ks).unwrap();
+
+    let indexes = &keyspace.tables["t"].indexes;
+
+    assert_eq!(
+        indexes.keys().sorted().collect::<Vec<_>>(),
+        vec!["idx_a", "idx_b"]
+    );
+
+    let idx_a = &indexes["idx_a"];
+    assert_eq!(idx_a.name, "idx_a");
+    assert_eq!(idx_a.kind, IndexKind::Composites);
+
+    // A table with no index has empty index metadata, rather than missing from it.
+    assert!(keyspace.tables["not_indexed"].indexes.is_empty());
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
