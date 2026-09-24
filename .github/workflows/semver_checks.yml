@@ -149,7 +149,7 @@ jobs:
     - name: Setup rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
     - name: Install semver-checks
-      uses: taiki-e/install-action@56545b37b57562edd73171cb6c62cc509db4c34e # v2.81.7
+      uses: taiki-e/install-action@bffeee26d4db9be238a4ea78d8826604ebcb594d # v2.82.5
       with:
         tool: cargo-semver-checks
     - name: Run semver-checks to see if it agrees with version updates
