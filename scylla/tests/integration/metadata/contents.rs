@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use itertools::Itertools as _;
 use scylla::{
-    cluster::metadata::{CollectionType, ColumnKind, ColumnType, NativeType, UserDefinedType},
+    cluster::metadata::{
+        CollectionType, ColumnKind, ColumnType, FunctionSignature, IndexKind, NativeType,
+        UserDefinedType,
+    },
     value::Row,
 };
 
@@ -482,6 +485,205 @@ async fn test_views_in_schema_info() {
     assert_eq!(tables, std::collections::HashSet::from(["t"]));
     assert_eq!(views, std::collections::HashSet::from(["mv1", "mv2"]));
     assert_eq!(views_base_table, std::collections::HashSet::from(["t"]));
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_indexes_in_metadata() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    // A secondary index is backed by a materialized view on ScyllaDB, which older
+    // versions do not support on tablet keyspaces.
+    let create_ks = format!(
+        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}{}",
+        disable_tablets_unless_supported(&session, "VIEWS_WITH_TABLETS").await
+    );
+    session.ddl(create_ks).await.unwrap();
+    session.use_keyspace(ks.clone(), false).await.unwrap();
+
+    session
+        .ddl("CREATE TABLE t (pk int PRIMARY KEY, a int, b text)")
+        .await
+        .unwrap();
+    session
+        .ddl("CREATE TABLE not_indexed (pk int PRIMARY KEY, a int)")
+        .await
+        .unwrap();
+    session.ddl("CREATE INDEX idx_a ON t(a)").await.unwrap();
+    session.ddl("CREATE INDEX idx_b ON t(b)").await.unwrap();
+
+    let cluster_state = session.get_cluster_state();
+    let keyspace = cluster_state.get_keyspace(&ks).unwrap();
+
+    let indexes = &keyspace.tables["t"].indexes;
+
+    assert_eq!(
+        indexes.keys().sorted().collect::<Vec<_>>(),
+        vec!["idx_a", "idx_b"]
+    );
+
+    let idx_a = &indexes["idx_a"];
+    assert_eq!(idx_a.name, "idx_a");
+    assert_eq!(idx_a.kind, IndexKind::Composites);
+
+    // A table with no index has empty index metadata, rather than missing from it.
+    assert!(keyspace.tables["not_indexed"].indexes.is_empty());
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+// Requires a server with user defined functions enabled, which the ScyllaDB test
+// cluster of this repository is started with. UDFs cannot be enabled through the
+// environment of the Cassandra test cluster, so the test is skipped there.
+#[tokio::test]
+#[cfg_attr(cassandra_tests, ignore)]
+async fn test_user_defined_functions_and_aggregates_in_metadata() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session
+        .ddl(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"))
+        .await
+        .unwrap();
+    session.use_keyspace(ks.clone(), false).await.unwrap();
+
+    // Two overloads of one name, which only a signature tells apart.
+    session
+        .ddl(
+            "CREATE FUNCTION twice(val int) RETURNS NULL ON NULL INPUT RETURNS int \
+             LANGUAGE lua AS 'return 2 * val;'",
+        )
+        .await
+        .unwrap();
+    session
+        .ddl(
+            "CREATE FUNCTION twice(val text) CALLED ON NULL INPUT RETURNS text \
+             LANGUAGE lua AS 'return val .. val;'",
+        )
+        .await
+        .unwrap();
+
+    // An aggregate built out of a state function and a final function.
+    session
+        .ddl(
+            "CREATE FUNCTION accumulate(acc bigint, val int) CALLED ON NULL INPUT \
+             RETURNS bigint LANGUAGE lua AS 'return acc + val;'",
+        )
+        .await
+        .unwrap();
+    session
+        .ddl(
+            "CREATE FUNCTION as_text(acc bigint) CALLED ON NULL INPUT RETURNS text \
+             LANGUAGE lua AS 'return tostring(acc);'",
+        )
+        .await
+        .unwrap();
+    session
+        .ddl(
+            "CREATE AGGREGATE sum_as_text(int) SFUNC accumulate STYPE bigint \
+             FINALFUNC as_text INITCOND 0",
+        )
+        .await
+        .unwrap();
+
+    // A second aggregate, declaring a reduce function - a ScyllaDB extension, which
+    // lets the server compute the aggregate in a distributed manner - and leaving out
+    // the final function and the initial condition.
+    session
+        .ddl(
+            "CREATE FUNCTION merge_states(a bigint, b bigint) CALLED ON NULL INPUT \
+             RETURNS bigint LANGUAGE lua AS 'return a + b;'",
+        )
+        .await
+        .unwrap();
+    session
+        .ddl("CREATE AGGREGATE total(int) SFUNC accumulate STYPE bigint REDUCEFUNC merge_states")
+        .await
+        .unwrap();
+
+    let cluster_state = session.get_cluster_state();
+    let keyspace = cluster_state.get_keyspace(&ks).unwrap();
+
+    let functions = &keyspace.user_defined_functions;
+
+    assert_eq!(
+        functions
+            .keys()
+            .map(|signature| (signature.name.as_str(), signature.argument_types.clone()))
+            .sorted()
+            .collect::<Vec<_>>(),
+        vec![
+            ("accumulate", vec!["bigint".to_owned(), "int".to_owned()]),
+            ("as_text", vec!["bigint".to_owned()]),
+            (
+                "merge_states",
+                vec!["bigint".to_owned(), "bigint".to_owned()]
+            ),
+            ("twice", vec!["int".to_owned()]),
+            ("twice", vec!["text".to_owned()]),
+        ]
+    );
+    assert_eq!(keyspace.functions_named("twice").count(), 2);
+
+    let twice_int = &functions[&FunctionSignature::new("twice".to_owned(), vec!["int".to_owned()])];
+    assert_eq!(twice_int.keyspace, ks);
+    assert_eq!(twice_int.name, "twice");
+    assert_eq!(twice_int.argument_names, vec!["val"]);
+    assert_eq!(
+        twice_int.argument_types,
+        vec![ColumnType::Native(NativeType::Int)]
+    );
+    assert_eq!(twice_int.return_type, ColumnType::Native(NativeType::Int));
+    assert_eq!(twice_int.language, "lua");
+    assert_eq!(twice_int.body, "return 2 * val;");
+    assert!(!twice_int.called_on_null_input);
+
+    let twice_text =
+        &functions[&FunctionSignature::new("twice".to_owned(), vec!["text".to_owned()])];
+    assert_eq!(twice_text.return_type, ColumnType::Native(NativeType::Text));
+    assert_eq!(twice_text.body, "return val .. val;");
+    assert!(twice_text.called_on_null_input);
+
+    let aggregate = &keyspace.user_defined_aggregates
+        [&FunctionSignature::new("sum_as_text".to_owned(), vec!["int".to_owned()])];
+    assert_eq!(aggregate.keyspace, ks);
+    assert_eq!(aggregate.name, "sum_as_text");
+    assert_eq!(
+        aggregate.argument_types,
+        vec![ColumnType::Native(NativeType::Int)]
+    );
+    assert_eq!(aggregate.return_type, ColumnType::Native(NativeType::Text));
+    assert_eq!(aggregate.state_type, ColumnType::Native(NativeType::BigInt));
+    assert_eq!(
+        aggregate.initial_condition.as_deref(),
+        Some("0"),
+        "the initial condition is kept as the CQL literal the server stores"
+    );
+    // No REDUCEFUNC was declared, so there is no reduce function even on ScyllaDB.
+    assert_eq!(aggregate.reduce_function, None);
+
+    assert_eq!(functions[&aggregate.state_function].name, "accumulate");
+    let final_function = aggregate
+        .final_function
+        .as_ref()
+        .expect("the aggregate declares a final function");
+    assert_eq!(functions[final_function].name, "as_text");
+
+    let with_reduce = &keyspace.user_defined_aggregates
+        [&FunctionSignature::new("total".to_owned(), vec!["int".to_owned()])];
+    // A final function and an initial condition the aggregate does not declare are
+    // reported as null by the server, and as `None` here.
+    assert_eq!(with_reduce.final_function, None);
+    assert_eq!(with_reduce.initial_condition, None);
+    let reduce_function = with_reduce
+        .reduce_function
+        .as_ref()
+        .expect("the aggregate declares a reduce function");
+    assert_eq!(functions[reduce_function].name, "merge_states");
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
