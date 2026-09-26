@@ -27,7 +27,7 @@ jobs:
           docker compose -f test/cluster/cassandra/docker-compose.yml up -d --wait
         # A separate step for building to separate measuring time of compilation and testing
       - name: Setup rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
       - name: Install cargo-nextest
         uses: taiki-e/install-action@bffeee26d4db9be238a4ea78d8826604ebcb594d # v2.82.5
         with:
