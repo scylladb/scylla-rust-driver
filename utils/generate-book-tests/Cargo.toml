@@ -1,6 +1,6 @@
 [package]
 edition = "2024"
-name = "generate_book_tests"
+name = "generate-book-tests"
 publish = false
 version = "0.0.0"
 license = "MIT OR Apache-2.0"

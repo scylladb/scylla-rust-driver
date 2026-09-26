@@ -16,7 +16,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings --cfg scylla_unstable
   RUST_BACKTRACE: full
-  rust_min: 1.88.0 # <- Update this when bumping up MSRV
+  rust_min: 1.89.0 # <- Update this when bumping up MSRV
 
 jobs:
   static_checks:
@@ -155,7 +155,7 @@ jobs:
         run: |
           RUST_LOG=trace cargo nextest run --all-features
       - name: Check for stale test keyspaces
-        run: cargo run --bin find_stale_test_keyspaces
+        run: cargo run --bin find-stale-test-keyspaces
       - name: Stop the docker cluster
         if: ${{ always() }}
         run: make stop

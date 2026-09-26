@@ -15,11 +15,15 @@ use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 
 use crate::observability::metrics::Metrics;
 
-use crate::cluster::NodeAddr;
+use crate::cluster::{NodeAddr, use_keyspace_broke_connection};
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
 use arc_swap::ArcSwap;
-use futures::{Future, FutureExt, StreamExt, future::RemoteHandle, stream::FuturesUnordered};
+use futures::{
+    Future, FutureExt, StreamExt,
+    future::{OptionFuture, RemoteHandle},
+    stream::FuturesUnordered,
+};
 use rand::Rng;
 use std::convert::TryInto;
 use std::num::NonZeroUsize;
@@ -538,6 +542,9 @@ struct PoolRefiller {
     connection_errors:
         FuturesUnordered<Pin<Box<dyn Future<Output = BrokenConnectionEvent> + Send + 'static>>>,
 
+    // The `USE KEYSPACE` request that is currently in progress, if any.
+    pending_keyspace_switch: Option<PendingKeyspaceSwitch>,
+
     // When connecting, ScyllaDB always assigns the shard which handles the least
     // number of connections. If there are some non-shard-aware clients
     // connected to the same node, they might cause the shard distribution
@@ -570,6 +577,25 @@ struct PoolRefiller {
 struct UseKeyspaceRequest {
     keyspace_name: VerifiedKeyspaceName,
     response_sender: tokio::sync::oneshot::Sender<Result<(), UseKeyspaceError>>,
+}
+
+// A `USE KEYSPACE` request issued on the connections that were in the pool at the time,
+// waiting for them to answer.
+struct PendingKeyspaceSwitch {
+    switches: FuturesUnordered<Pin<Box<dyn Future<Output = KeyspaceSwitchEvent> + Send + 'static>>>,
+
+    // The connections that have not answered yet. Emptied as the results come in,
+    // which is how the request is recognized as finished.
+    outstanding: Vec<Arc<Connection>>,
+    results: Vec<Result<(), UseKeyspaceError>>,
+    response_sender: tokio::sync::oneshot::Sender<Result<(), UseKeyspaceError>>,
+    deadline: tokio::time::Instant,
+}
+
+// The result of a `USE KEYSPACE` request on a single pooled connection.
+struct KeyspaceSwitchEvent {
+    connection: Arc<Connection>,
+    result: Result<(), UseKeyspaceError>,
 }
 
 impl PoolRefiller {
@@ -607,6 +633,7 @@ impl PoolRefiller {
 
             ready_connections: FuturesUnordered::new(),
             connection_errors: FuturesUnordered::new(),
+            pending_keyspace_switch: None,
 
             excess_connections: Vec::new(),
 
@@ -647,16 +674,15 @@ impl PoolRefiller {
         });
 
         loop {
+            // `Instant` is `Copy`, so reading the deadline out here keeps the `select!`
+            // below from borrowing `pending_keyspace_switch` for two branches at once.
+            let keyspace_switch_deadline = self
+                .pending_keyspace_switch
+                .as_ref()
+                .map(|switch| switch.deadline);
+
             tokio::select! {
-                // Note that some default value must be passed to avoid `unwrap()` here; the guard ensures that `scheduled_refill` is `Some`
-                // when the sleep future is polled, but it does not ensure that `scheduled_refill` is `Some` when the sleep future
-                // is created. With `unwrap()`, we'd get a panic here.
-                // The future created with the default value will not be polled anyway, because the guard prevents that.
-                //
-                // `tokio::select!`'s documentation:
-                // > Additionally, each branch may include an optional if precondition. If the precondition returns false, then the branch is disabled.
-                // > **The provided <async expression> is still evaluated** but the resulting future is never polled.
-                _ = tokio::time::sleep_until(scheduled_refill.as_ref().map_or(tokio::time::Instant::now(), |r| r.when)), if scheduled_refill.is_some() => {
+                Some(_) = OptionFuture::from(scheduled_refill.as_ref().map(|r| tokio::time::sleep_until(r.when))) => {
                     self.had_error_since_last_refill = false;
                     self.start_filling();
                     scheduled_refill = None;
@@ -685,7 +711,21 @@ impl PoolRefiller {
                     }
                 }
 
-                req = use_keyspace_request_receiver.recv() => {
+                Some(evt) = OptionFuture::from(
+                    self.pending_keyspace_switch
+                        .as_mut()
+                        .map(|switch| switch.switches.select_next_some()),
+                ) => {
+                    self.handle_keyspace_switch_event(evt);
+                }
+
+                Some(()) = OptionFuture::from(
+                    keyspace_switch_deadline.map(tokio::time::sleep_until),
+                ) => {
+                    self.time_out_keyspace_switch();
+                }
+
+                req = use_keyspace_request_receiver.recv(), if self.pending_keyspace_switch.is_none() => {
                     if let Some(req) = req {
                         debug!("[{}] Requested keyspace change: {}", self.endpoint_description(), req.keyspace_name.as_str());
                         self.use_keyspace(req.keyspace_name, req.response_sender);
@@ -1322,43 +1362,106 @@ impl PoolRefiller {
     ) {
         self.current_keyspace = Some(keyspace_name.clone());
 
-        let mut conns = self.conns.clone();
-        let address = self.endpoint.read().unwrap().address();
-        let connect_timeout = self.pool_config.connection_config.connect_timeout;
+        let outstanding: Vec<Arc<Connection>> =
+            self.conns.iter().flatten().map(Arc::clone).collect();
 
-        let fut = async move {
-            let mut use_keyspace_futures = Vec::new();
+        if outstanding.is_empty() {
+            // There is nothing to switch; the connections opened from now on will
+            // be set up with the new keyspace.
+            let _ = response_sender.send(Ok(()));
+            return;
+        }
 
-            for shard_conns in conns.iter_mut() {
-                for conn in shard_conns.iter_mut() {
-                    let fut = conn.use_keyspace(&keyspace_name);
-                    use_keyspace_futures.push(fut);
+        let switches = outstanding
+            .iter()
+            .map(|conn| {
+                let conn = Arc::clone(conn);
+                let keyspace_name = keyspace_name.clone();
+                async move {
+                    let result = conn.use_keyspace(&keyspace_name).await;
+                    KeyspaceSwitchEvent {
+                        connection: conn,
+                        result,
+                    }
                 }
-            }
+                .boxed()
+            })
+            .collect();
 
-            if use_keyspace_futures.is_empty() {
-                return Ok(());
-            }
-
-            let use_keyspace_results: Vec<Result<(), UseKeyspaceError>> = tokio::time::timeout(
-                connect_timeout,
-                futures::future::join_all(use_keyspace_futures),
-            )
-            .await
+        self.pending_keyspace_switch = Some(PendingKeyspaceSwitch {
+            switches,
+            outstanding,
+            results: Vec::new(),
+            response_sender,
             // FIXME: We could probably make USE KEYSPACE request timeout configurable in the future.
-            .map_err(|_| UseKeyspaceError::RequestTimeout(connect_timeout))?;
+            deadline: tokio::time::Instant::now()
+                + self.pool_config.connection_config.connect_timeout,
+        });
+    }
 
-            crate::cluster::use_keyspace_result(use_keyspace_results.into_iter())
+    // Records the result of a `USE KEYSPACE` request on a single pooled connection,
+    // and answers the pending request once all of them are in.
+    fn handle_keyspace_switch_event(&mut self, evt: KeyspaceSwitchEvent) {
+        // A connection that did not switch must not stay in the pool: it would keep
+        // silently serving requests against the keyspace used before.
+        if let Err(err) = &evt.result
+            && !use_keyspace_broke_connection(err)
+        {
+            debug!(
+                "[{}] Removing connection {:p} which failed to switch keyspace: {}",
+                self.endpoint_description(),
+                Arc::as_ptr(&evt.connection),
+                err,
+            );
+            self.remove_connection(Arc::clone(&evt.connection), err.clone().into());
+        }
+
+        // Taken rather than borrowed because answering the request consumes its results
+        // and its response channel; put back while it is still unfinished.
+        let Some(mut switch) = self.pending_keyspace_switch.take() else {
+            // Unreachable: the event was yielded by this very request's `switches`.
+            return;
         };
 
-        tokio::task::spawn(async move {
-            let res = fut.await;
-            match &res {
-                Ok(()) => debug!("[{}] Successfully changed current keyspace", address),
-                Err(err) => warn!("[{}] Failed to change keyspace: {:?}", address, err),
-            }
-            let _ = response_sender.send(res);
-        });
+        switch
+            .outstanding
+            .retain(|conn| !Arc::ptr_eq(conn, &evt.connection));
+        switch.results.push(evt.result);
+
+        if !switch.outstanding.is_empty() {
+            self.pending_keyspace_switch = Some(switch);
+            return;
+        }
+
+        let result = crate::cluster::use_keyspace_result(switch.results.into_iter());
+        let endpoint = self.endpoint_description();
+        match &result {
+            Ok(()) => debug!("[{}] Successfully changed current keyspace", endpoint),
+            Err(err) => warn!("[{}] Failed to change keyspace: {:?}", endpoint, err),
+        }
+        let _ = switch.response_sender.send(result);
+    }
+
+    // Gives up on the pending keyspace switch, dropping the requests that did not finish
+    // and the connections they were sent on.
+    fn time_out_keyspace_switch(&mut self) {
+        let Some(switch) = self.pending_keyspace_switch.take() else {
+            return;
+        };
+
+        let connect_timeout = self.pool_config.connection_config.connect_timeout;
+        let timeout_error = UseKeyspaceError::RequestTimeout(connect_timeout);
+        for conn in switch.outstanding {
+            warn!(
+                "[{}] Removing connection {:p}: no answer to USE KEYSPACE within {:?}",
+                self.endpoint_description(),
+                Arc::as_ptr(&conn),
+                connect_timeout,
+            );
+            self.remove_connection(conn, timeout_error.clone().into());
+        }
+
+        let _ = switch.response_sender.send(Err(timeout_error));
     }
 
     // Requires the keyspace to be set
@@ -1369,14 +1472,17 @@ impl PoolRefiller {
         error_receiver: ErrorReceiver,
         requested_shard: Option<RequestedShard>,
     ) {
-        // TODO: There should be a timeout for this
+        // TODO: We could probably make USE KEYSPACE request timeout configurable in the future.
+        // For now it isn't just like in `use_keyspace`.
 
         let keyspace_name = self.current_keyspace.as_ref().cloned().unwrap();
+        let timeout = self.pool_config.connection_config.connect_timeout;
         self.ready_connections.push(
             async move {
-                let result = connection
-                    .use_keyspace(&keyspace_name)
+                let result = tokio::time::timeout(timeout, connection.use_keyspace(&keyspace_name))
                     .await
+                    .map_err(|_elapsed| UseKeyspaceError::RequestTimeout(timeout))
+                    .flatten() // Flattens both errors, getting a single Result out of a nested one.
                     .map(|()| (connection, error_receiver))
                     .map_err(ConnectionSetupError::Keyspace);
                 OpenedConnectionEvent {
@@ -1483,18 +1589,20 @@ mod tests {
     };
     use super::{
         ADVANCED_SHARD_AWARENESS_BLOCK_DURATION, ConnectionSetupError, HostPoolConfig,
-        MaybePoolConnections, OpenedConnectionEvent, PoolConnections, PoolRefiller, RequestedShard,
+        KeyspaceSwitchEvent, MaybePoolConnections, OpenedConnectionEvent, PoolConnections,
+        PoolRefiller, RequestedShard,
     };
     use crate::cluster::NodeAddr;
     use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
     use crate::cluster::node::ResolvedContactPoint;
-    use crate::errors::{ConnectionError, UseKeyspaceError};
+    use crate::errors::{ConnectionError, RequestAttemptError, UseKeyspaceError};
     use crate::frame::request::options;
     use crate::network::TcpSocketOptions;
     use crate::observability::metrics::Metrics;
     use crate::policies::reconnect::{ExponentialReconnectPolicy, ReconnectPolicy as _};
     use crate::routing::{Shard, ShardCount, ShardInfo, Sharder};
     use crate::test_utils::{CapturedLogs, capturing_errors, setup_tracing};
+    use assert_matches::assert_matches;
     use bytes::Bytes;
     use futures::{FutureExt, StreamExt};
     use scylla_proxy::{
@@ -1507,6 +1615,148 @@ mod tests {
     use std::time::Duration;
     use tokio::sync::{Notify, mpsc};
     use uuid::Uuid;
+
+    // Awaits the next result of the keyspace switch the refiller has in progress.
+    async fn next_switch_event(refiller: &mut PoolRefiller) -> KeyspaceSwitchEvent {
+        refiller
+            .pending_keyspace_switch
+            .as_mut()
+            .unwrap()
+            .switches
+            .next()
+            .await
+            .unwrap()
+    }
+
+    /// A connection that failed to switch keyspace must not be left in the pool: it would
+    /// keep serving requests against the keyspace used before.
+    #[tokio::test]
+    async fn keyspace_switch_failure_removes_connection() {
+        setup_tracing();
+        let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+
+        // Connections always open successfully; only the `USE KEYSPACE` query is manipulated.
+        let rules_with_query_reaction = |query_reaction| {
+            vec![
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Options),
+                    RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                        ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
+                    })),
+                ),
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Startup),
+                    RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                        ResponseFrame::forged_ready(frame.params)
+                    })),
+                ),
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Query),
+                    query_reaction,
+                ),
+            ]
+        };
+
+        let mut proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .proxy_address(proxy_addr)
+                    .request_rules(rules_with_query_reaction(
+                        RequestReaction::forge().server_error(),
+                    ))
+                    .build_dry_mode(),
+            )
+            .build()
+            .run()
+            .await
+            .unwrap();
+
+        let endpoint = UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+            address: proxy_addr,
+        });
+        let connection_config = HostConnectionConfig::default();
+        let metrics = Metrics::new();
+        let (pool_empty_notifier, _pool_empty_receiver) = mpsc::channel(1);
+        let mut refiller = PoolRefiller::new(
+            Arc::new(RwLock::new(endpoint.clone())),
+            HostPoolConfig::default(),
+            None,
+            None,
+            Arc::new(Notify::new()),
+            Arc::new(Notify::new()),
+            pool_empty_notifier,
+            metrics.clone(),
+            ExponentialReconnectPolicy::new().new_session(),
+        );
+
+        // The pool must consider a connection to be on its current keyspace already,
+        // or it would first switch it instead of putting it in.
+        let put_connection_in_pool = |refiller: &mut PoolRefiller, connection, error_receiver| {
+            let keyspace_name = refiller.current_keyspace.clone();
+            metrics.inc_total_connections();
+            refiller.handle_ready_connection(OpenedConnectionEvent {
+                result: Ok((connection, error_receiver)),
+                requested_shard: None,
+                keyspace_name,
+            });
+            assert_eq!(refiller.active_connection_count(), 1);
+        };
+        let switch_keyspace = |refiller: &mut PoolRefiller| {
+            let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
+            refiller.use_keyspace(
+                VerifiedKeyspaceName::new("keyspace".to_owned(), false).unwrap(),
+                response_sender,
+            );
+            response_receiver
+        };
+
+        // Sub-case 1: the connection answers the switch with an error.
+        let (connection, error_receiver) = open_connection(&endpoint, None, &connection_config)
+            .await
+            .unwrap();
+        put_connection_in_pool(&mut refiller, connection, error_receiver);
+
+        let response = switch_keyspace(&mut refiller);
+        let event = next_switch_event(&mut refiller).await;
+        refiller.handle_keyspace_switch_event(event);
+
+        assert_eq!(refiller.active_connection_count(), 0);
+        assert!(refiller.pending_keyspace_switch.is_none());
+        assert_matches!(
+            response.await.unwrap(),
+            Err(UseKeyspaceError::RequestError(
+                RequestAttemptError::DbError(..)
+            ))
+        );
+        #[cfg(feature = "metrics")]
+        assert_eq!(metrics.get_total_connections(), 0);
+
+        // Sub-case 2: the connection does not answer the switch at all.
+        proxy.running_nodes[0].change_request_rules(Some(rules_with_query_reaction(
+            RequestReaction::drop_frame(),
+        )));
+        let (connection, error_receiver) = open_connection(&endpoint, None, &connection_config)
+            .await
+            .unwrap();
+        put_connection_in_pool(&mut refiller, connection, error_receiver);
+
+        let response = switch_keyspace(&mut refiller);
+        refiller.time_out_keyspace_switch();
+
+        assert_eq!(refiller.active_connection_count(), 0);
+        assert!(refiller.pending_keyspace_switch.is_none());
+        assert_matches!(
+            response.await.unwrap(),
+            Err(UseKeyspaceError::RequestTimeout(_))
+        );
+        #[cfg(feature = "metrics")]
+        assert_eq!(metrics.get_total_connections(), 0);
+
+        match proxy.finish().await {
+            Ok(()) | Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => {}
+            Err(err) => panic!("{err}"),
+        }
+    }
 
     #[test]
     fn keyspace_setup_failure_triggers_refill() {

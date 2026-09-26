@@ -1,10 +1,22 @@
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
 use scylla::{
     client::session::Session,
+    client::session_builder::SessionBuilder,
     errors::{BadKeyspaceName, UseKeyspaceError},
 };
+use scylla_proxy::{
+    Condition, ProxyError, Reaction as _, RequestFrame, RequestOpcode, RequestReaction,
+    RequestRule, ResponseReaction, ResponseRule, RunningProxy, ShardAwareness, WorkerError,
+};
+use tokio::sync::mpsc;
 
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, setup_tracing, unique_keyspace_name,
+    HEALTHCHECK_QUERY, PerformDDL as _, create_new_session_builder, setup_tracing,
+    test_with_3_node_cluster, unique_keyspace_name,
 };
 
 #[tokio::test]
@@ -48,14 +60,6 @@ async fn test_use_keyspace() {
     rows.sort();
 
     assert_eq!(rows, vec!["test1".to_string(), "test2".to_string()]);
-
-    // Test that trying to use nonexisting keyspace fails
-    assert!(
-        session
-            .use_keyspace("this_keyspace_does_not_exist_at_all", false)
-            .await
-            .is_err()
-    );
 
     // Test that invalid keyspaces get rejected
     assert!(matches!(
@@ -102,6 +106,17 @@ async fn test_use_keyspace() {
     assert_eq!(rows2, vec!["test1".to_string(), "test2".to_string()]);
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+
+    // Trying to use a nonexisting keyspace fails, and leaves the session unable to execute
+    // requests: the connections that did not switch are closed, and the ones opened to
+    // replace them cannot switch either. This is why it is done last here.
+    assert!(
+        session
+            .use_keyspace("this_keyspace_does_not_exist_at_all", false)
+            .await
+            .is_err()
+    );
+    assert!(session.query_unpaged(HEALTHCHECK_QUERY, &[]).await.is_err());
 }
 
 #[tokio::test]
@@ -278,4 +293,101 @@ async fn test_get_keyspace_name() {
     assert_eq!(*session.get_keyspace().unwrap(), ks);
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+/// Two `use_keyspace` calls must not have their `USE` fanouts in flight at the same time,
+/// or the connections can be left split between the two keyspaces.
+///
+/// The responses to the first keyspace's `USE` are delayed by the proxy, so a second fanout
+/// that was allowed to start while the first one is still running would finish first.
+#[tokio::test]
+async fn test_concurrent_use_keyspace_calls_are_serialized() {
+    setup_tracing();
+
+    const USE_RESPONSE_DELAY: Duration = Duration::from_secs(1);
+
+    let test_fut = |proxy_uris: [String; 3],
+                    translation_map: HashMap<SocketAddr, SocketAddr>,
+                    mut running_proxy: RunningProxy| async move {
+        let session: Session = SessionBuilder::new()
+            .known_node(proxy_uris[0].as_str())
+            .address_translator(Arc::new(translation_map))
+            // Schema metadata responses mention keyspace names too, and the response rule
+            // installed below matches on the name alone.
+            .fetch_schema_metadata(false)
+            .build()
+            .await
+            .unwrap();
+
+        let first_ks = unique_keyspace_name();
+        let second_ks = unique_keyspace_name();
+        for ks in [&first_ks, &second_ks] {
+            session
+                .ddl(format!(
+                    "CREATE KEYSPACE {ks} WITH REPLICATION = \
+                     {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+                ))
+                .await
+                .unwrap();
+        }
+
+        let (use_tx, mut use_rx) = mpsc::unbounded_channel::<(RequestFrame, Option<u16>)>();
+        for node in &mut running_proxy.running_nodes {
+            node.change_request_rules(Some(vec![RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Query).and(
+                    Condition::BodyContainsCaseSensitive(Box::from(first_ks.as_bytes())),
+                ),
+                RequestReaction::noop().with_feedback_when_performed(use_tx.clone()),
+            )]));
+            node.change_response_rules(Some(vec![ResponseRule(
+                Condition::BodyContainsCaseSensitive(Box::from(first_ks.as_bytes())),
+                ResponseReaction::delay(USE_RESPONSE_DELAY),
+            )]));
+        }
+
+        let session = Arc::new(session);
+        let finish_order = Arc::new(Mutex::new(Vec::new()));
+
+        let first_call = tokio::spawn({
+            let session = Arc::clone(&session);
+            let finish_order = Arc::clone(&finish_order);
+            let first_ks = first_ks.clone();
+            async move {
+                session.use_keyspace(first_ks, false).await.unwrap();
+                finish_order.lock().unwrap().push("first");
+            }
+        });
+
+        // Only start the second call once the first fanout is observably in progress, so that
+        // the order in which the two requests reach the cluster worker is not left to a race.
+        use_rx.recv().await.unwrap();
+
+        session.use_keyspace(&second_ks, false).await.unwrap();
+        finish_order.lock().unwrap().push("second");
+        first_call.await.unwrap();
+
+        assert_eq!(
+            *finish_order.lock().unwrap(),
+            ["first", "second"],
+            "the second use_keyspace finished first, so the two fanouts overlapped"
+        );
+
+        // The rules would delay the DROPs below as well.
+        for node in &mut running_proxy.running_nodes {
+            node.change_request_rules(None);
+            node.change_response_rules(None);
+        }
+        for ks in [&first_ks, &second_ks] {
+            session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+        }
+
+        running_proxy
+    };
+
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, test_fut).await;
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
 }
