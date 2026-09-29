@@ -5,6 +5,7 @@ use crate::utils::{
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::policies::retry::FallthroughRetryPolicy;
+use scylla::statement::batch::{Batch, BatchType};
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::types;
 use std::sync::Arc;
@@ -27,7 +28,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
 
         // We set up proxy, so that it informs us (via supported_rx) about cluster's Supported features (including LWT optimisation mark),
-        // and also passes us information about which node was queried (via prepared_rx).
+        // and also passes us information about which node was queried (via prepared_rx), both for EXECUTE and BATCH requests.
 
         let (supported_tx, mut supported_rx) = mpsc::unbounded_channel();
 
@@ -37,7 +38,10 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
         )]));
 
         let prepared_rule = |tx| RequestRule(
-            Condition::and(Condition::RequestOpcode(RequestOpcode::Execute), Condition::BodyContainsCaseSensitive(Box::new(MAGIC_MARK.to_be_bytes()))),
+            Condition::and(
+                Condition::or(Condition::RequestOpcode(RequestOpcode::Execute), Condition::RequestOpcode(RequestOpcode::Batch)),
+                Condition::BodyContainsCaseSensitive(Box::new(MAGIC_MARK.to_be_bytes())),
+            ),
             RequestReaction::noop().with_feedback_when_performed(tx)
         );
 
@@ -161,6 +165,22 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
         // We execute LWT statements.
         for _ in 0..15 {
             session.execute_unpaged(&prepared_lwt, (MAGIC_MARK,)).await.unwrap();
+        }
+
+        assert_lwt_routed_optimally_if_supported(&mut prepared_rxs, supports_optimisation_mark);
+
+        // The same must hold for batches.
+        let batch_non_lwt = Batch::new_with_statements(BatchType::Logged, vec![prepared_non_lwt.into()]);
+        let batch_lwt = Batch::new_with_statements(BatchType::Logged, vec![prepared_lwt.into()]);
+
+        for _ in 0..30 {
+            session.batch(&batch_non_lwt, ((MAGIC_MARK,),)).await.unwrap();
+        }
+
+        assert_multiple_replicas_queried(&mut prepared_rxs);
+
+        for _ in 0..15 {
+            session.batch(&batch_lwt, ((MAGIC_MARK,),)).await.unwrap();
         }
 
         assert_lwt_routed_optimally_if_supported(&mut prepared_rxs, supports_optimisation_mark);
