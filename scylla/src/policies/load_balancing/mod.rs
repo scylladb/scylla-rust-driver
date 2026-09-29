@@ -63,6 +63,8 @@ pub struct RoutingInfo<'a> {
     /// can be performed: the request should be routed to the replicas in a predefined order
     /// (i. e. always try first to contact replica A, then B if it fails, then C, etc.).
     /// If false, the request should be routed normally.
+    /// For a batch, this is true if any of its prepared statements is an LWT, because the server
+    /// then executes the whole batch as LWT.
     /// Note: this a ScyllaDB-specific optimisation. Therefore, the flag will be always false for Cassandra.
     ///
     /// <div class="warning">

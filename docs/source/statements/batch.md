@@ -156,12 +156,14 @@ For more information about sending values in a statement see [Statement values](
 ### Performance
 A batch is sent to a single coordinator, which then has to fan its statements
 out to the replicas of each partition.
-Driver routes the batch exactly the same way it would route the first statement
-of the batch. That means if you use our DefaultPolicy (with token awareness enabled),
+Driver routes the batch based on the partition of its first statement.
+That means if you use our DefaultPolicy (with token awareness enabled),
 the first statement is prepared and token-aware, then driver will try to route
 the batch to a replica for this first statement.
 Grouping the statements of a batch by partition is therefore what makes it
 cheaper - the replica used by the driver will be a replica for all statements in the batch.
+If any prepared statement in the batch is an [LWT](lwt.md), the whole batch
+is routed as LWT (see [DefaultPolicy](../load-balancing/default-policy.md)).
 
 Note that a batch is not a way to make many independent writes faster - sending
 them as separate concurrent requests lets each one go straight to a replica of

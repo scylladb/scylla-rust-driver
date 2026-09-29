@@ -1328,12 +1328,19 @@ impl Session {
         let (first_value_token, values) = batch_values::peek_first_token(values, first_prepared)?;
         let values_ref = &values;
 
+        // The server executes the whole batch as LWT if any of its statements
+        // is conditional. This is only known for prepared statements.
+        let is_confirmed_lwt = batch.statements.iter().any(|s| match s {
+            BatchStatement::PreparedStatement(ps) => ps.is_confirmed_lwt(),
+            BatchStatement::Query(_) => false,
+        });
+
         let routing_info = RoutingInfo {
             consistency: exec_params.consistency,
             serial_consistency,
             token: first_value_token,
             table: first_prepared.and_then(PreparedStatement::get_table_spec),
-            is_confirmed_lwt: false,
+            is_confirmed_lwt,
             node_location_preference: &self.node_location_preference,
         };
 
