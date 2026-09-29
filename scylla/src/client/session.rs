@@ -1319,22 +1319,20 @@ impl Session {
 
         let serial_consistency = exec_params.serial_consistency;
 
-        let (first_value_token, values) =
-            batch_values::peek_first_token(values, batch.statements.first())?;
-        let values_ref = &values;
+        // The token and table spec of the batch come from its first statement, if that one is prepared.
+        let first_prepared = match batch.statements.first() {
+            Some(BatchStatement::PreparedStatement(ps)) => Some(ps),
+            Some(BatchStatement::Query(_)) | None => None,
+        };
 
-        let table_spec =
-            if let Some(BatchStatement::PreparedStatement(ps)) = batch.statements.first() {
-                ps.get_table_spec()
-            } else {
-                None
-            };
+        let (first_value_token, values) = batch_values::peek_first_token(values, first_prepared)?;
+        let values_ref = &values;
 
         let routing_info = RoutingInfo {
             consistency: exec_params.consistency,
             serial_consistency,
             token: first_value_token,
-            table: table_spec,
+            table: first_prepared.and_then(PreparedStatement::get_table_spec),
             is_confirmed_lwt: false,
             node_location_preference: &self.node_location_preference,
         };
