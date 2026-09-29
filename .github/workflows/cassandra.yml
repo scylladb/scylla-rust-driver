@@ -18,7 +18,7 @@ env:
   NEXTEST_PROFILE: ci
 
 jobs:
-  build:
+  cassandra_tests:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
