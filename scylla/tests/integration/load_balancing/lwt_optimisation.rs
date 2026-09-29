@@ -109,6 +109,16 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
             assert!(num_queried == 1);
         }
 
+        fn assert_lwt_routed_optimally_if_supported(rxs: &mut Rxs, supports_optimisation_mark: bool) {
+            if supports_optimisation_mark {
+                // If cluster supports LWT mark, we assert that one replica was always queried first (and effectively only that one was queried).
+                assert_one_replica_queried(rxs);
+            } else {
+                // Else we assert that replicas were shuffled as in case of non-LWT.
+                assert_multiple_replicas_queried(rxs);
+            }
+        }
+
         #[expect(unused)]
         fn who_was_queried(rxs: &mut Rxs) {
             for (i, rx) in rxs.iter_mut().enumerate() {
@@ -148,18 +158,12 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
 
         assert_multiple_replicas_queried(&mut prepared_rxs);
 
-        // We execute LWT statements, and...
+        // We execute LWT statements.
         for _ in 0..15 {
             session.execute_unpaged(&prepared_lwt, (MAGIC_MARK,)).await.unwrap();
         }
 
-        if supports_optimisation_mark {
-            // ...if cluster supports LWT, we assert that one replica was always queried first (and effectively only that one was queried).
-            assert_one_replica_queried(&mut prepared_rxs);
-        } else {
-            // ...else we assert that replicas were shuffled as in case of non-LWT.
-            assert_multiple_replicas_queried(&mut prepared_rxs);
-        }
+        assert_lwt_routed_optimally_if_supported(&mut prepared_rxs, supports_optimisation_mark);
 
         session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
