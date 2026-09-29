@@ -170,8 +170,8 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
         assert_lwt_routed_optimally_if_supported(&mut prepared_rxs, supports_optimisation_mark);
 
         // The same must hold for batches.
-        let batch_non_lwt = Batch::new_with_statements(BatchType::Logged, vec![prepared_non_lwt.into()]);
-        let batch_lwt = Batch::new_with_statements(BatchType::Logged, vec![prepared_lwt.into()]);
+        let batch_non_lwt = Batch::new_with_statements(BatchType::Logged, vec![prepared_non_lwt.clone().into()]);
+        let batch_lwt = Batch::new_with_statements(BatchType::Logged, vec![prepared_lwt.clone().into()]);
 
         for _ in 0..30 {
             session.batch(&batch_non_lwt, ((MAGIC_MARK,),)).await.unwrap();
@@ -181,6 +181,16 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
 
         for _ in 0..15 {
             session.batch(&batch_lwt, ((MAGIC_MARK,),)).await.unwrap();
+        }
+
+        assert_lwt_routed_optimally_if_supported(&mut prepared_rxs, supports_optimisation_mark);
+
+        // The server executes the whole batch as LWT if any of its statements is conditional,
+        // so the LWT statement doesn't have to be the first one.
+        let batch_lwt_not_first = Batch::new_with_statements(BatchType::Logged, vec![prepared_non_lwt.into(), prepared_lwt.into()]);
+
+        for _ in 0..15 {
+            session.batch(&batch_lwt_not_first, ((MAGIC_MARK,), (MAGIC_MARK,))).await.unwrap();
         }
 
         assert_lwt_routed_optimally_if_supported(&mut prepared_rxs, supports_optimisation_mark);
