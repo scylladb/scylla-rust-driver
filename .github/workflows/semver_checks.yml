@@ -47,6 +47,10 @@ jobs:
       with:
         fetch-depth: "2"
         ref: "refs/pull/${{ env.PR_ID }}/merge"
+        # Running fork PR code here is safe only because this job has no
+        # permissions, no secrets and read-only cache access (the default for
+        # pull_request_target, so don't set `cache-mode`).
+        allow-unsafe-pr-checkout: true
     # Check if there was another push before this job started.
     # If there was, wrong commit would be checked out.
     - name: Sanity check
