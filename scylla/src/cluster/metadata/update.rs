@@ -6,7 +6,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::cluster::metadata::{
-    ClientRoute, ClientRoutes, Keyspace, Metadata, Peer, SingleKeyspaceMetadataError,
+    ClientRoute, ClientRoutes, Keyspace, Metadata, Peer, SingleKeyspaceMetadataError, Topology,
 };
 use crate::errors::MetadataError;
 
@@ -223,7 +223,7 @@ impl MetadataUpdate {
                 // the partial ones in flight, so a partial fetch can only
                 // complete after a pending full fetch if it was started after
                 // that fetch completed.
-                metadata.peers = peers;
+                metadata.topology = Topology::Peers(peers);
             }
         }
     }
@@ -798,7 +798,7 @@ mod tests {
         FetchedKeyspace, MetadataChanges, MetadataUpdate, SchemaUpdate,
     };
     use crate::cluster::metadata::{
-        ConsistencyMode, Keyspace, Metadata, SingleKeyspaceMetadataError, Strategy,
+        ConsistencyMode, Keyspace, Metadata, SingleKeyspaceMetadataError, Strategy, Topology,
     };
 
     // Keyspaces are told apart by `durable_writes`, which is all it takes to
@@ -823,7 +823,7 @@ mod tests {
 
     fn metadata(keyspaces: Vec<(&str, Result<Keyspace, SingleKeyspaceMetadataError>)>) -> Metadata {
         Metadata {
-            peers: Vec::new(),
+            topology: Topology::Peers(Vec::new()),
             keyspaces: keyspaces
                 .into_iter()
                 .map(|(name, keyspace)| (name.to_owned(), keyspace))

@@ -17,7 +17,7 @@ use crate::cluster::control_connection::MetadataRequestTimeouts;
 use crate::cluster::metadata::{
     PeriodicFetchMode, SchemaMetadataFetchLevel, SchemaMetadataFetchMode,
 };
-use crate::cluster::node::KnownNode;
+use crate::cluster::node::{InitialEndpoints, KnownNode};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::DbError;
 use crate::errors::{
@@ -384,6 +384,9 @@ pub struct SessionConfig {
     #[cfg(feature = "unstable-client-routes")]
     pub(crate) client_routes_config: Option<super::client_routes::ClientRoutesConfig>,
 
+    /// The single endpoint of a maintenance-mode session.
+    pub(crate) maintenance_mode: Option<super::maintenance_mode::MaintenanceModeEndpoint>,
+
     /// The host filter decides whether any connections should be opened
     /// to the node or not. The driver will also avoid filtered out nodes when
     /// re-establishing the control connection.
@@ -513,6 +516,7 @@ impl SessionConfig {
             driver_config_reporting: true,
             #[cfg(feature = "unstable-client-routes")]
             client_routes_config: None,
+            maintenance_mode: None,
         }
     }
 
@@ -610,12 +614,7 @@ impl SessionConfig {
 
     /// [SessionConfig] may unfortunately represent invalid configurations. We need to rule them out
     /// at runtime by running validation.
-    fn validate(&self) -> Result<(), NewSessionError> {
-        // Ensure there is at least one known node
-        if self.known_nodes.is_empty() {
-            return Err(NewSessionError::EmptyKnownNodesList);
-        }
-
+    fn validate(&self, initial_endpoints: &InitialEndpoints) -> Result<(), NewSessionError> {
         if self.keepalive_interval == Some(Duration::ZERO) {
             return Err(NewSessionError::IllegalConfig(
                 "Keepalive interval must be non-zero".into(),
@@ -657,6 +656,45 @@ impl SessionConfig {
                 return Err(NewSessionError::IllegalConfig(
                     "TLS is not (yet) supported if ClientRoutesConfig is provided, \
                         because of architectural limitations that are out of the driver's scope"
+                        .into(),
+                ));
+            }
+        }
+
+        // Ensure no illegal configuration with maintenance mode.
+        if initial_endpoints.is_maintenance() {
+            if self.address_translator.is_some() {
+                return Err(NewSessionError::IllegalConfig(
+                    "An address translator is not supported in maintenance mode: the session \
+                        connects only to the maintenance mode endpoint, which is given \
+                        already-translated, and no peer addresses are ever fetched to translate"
+                        .into(),
+                ));
+            }
+
+            if self.host_filter.is_some() {
+                return Err(NewSessionError::IllegalConfig(
+                    "A host filter is not supported in maintenance mode: the session is pinned \
+                        to the maintenance mode endpoint, so filtering could only reject that \
+                        one node and leave the session unable to serve any request"
+                        .into(),
+                ));
+            }
+
+            if !matches!(self.node_location_preference, NodeLocationPreference::Any) {
+                return Err(NewSessionError::IllegalConfig(
+                    "A node location preference is not supported in maintenance mode: no \
+                        metadata is fetched, so the one node's datacenter and rack are unknown \
+                        and any preference would exclude it from query plans"
+                        .into(),
+                ));
+            }
+
+            #[cfg(feature = "unstable-client-routes")]
+            if self.client_routes_config.is_some() {
+                return Err(NewSessionError::IllegalConfig(
+                    "Client routes are not supported in maintenance mode: routes are read from \
+                        `system.client_routes`, and maintenance mode fetches no metadata"
                         .into(),
                 ));
             }
@@ -1394,8 +1432,13 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
-        config.validate()?;
+    pub async fn connect(mut config: SessionConfig) -> Result<Self, NewSessionError> {
+        // Decide where this session connects before anything else.
+        let initial_endpoints = InitialEndpoints::from_config(
+            std::mem::take(&mut config.known_nodes),
+            config.maintenance_mode.take(),
+        )?;
+        config.validate(&initial_endpoints)?;
 
         let session_id = Uuid::new_v4();
 
@@ -1427,7 +1470,6 @@ impl Session {
         });
 
         let node_location_preference = config.node_location_preference;
-        let known_nodes = config.known_nodes;
 
         let (tablet_sender, tablet_receiver) = tokio::sync::mpsc::channel(TABLET_CHANNEL_SIZE);
 
@@ -1517,7 +1559,7 @@ impl Session {
         };
 
         let cluster = Cluster::new(
-            known_nodes,
+            initial_endpoints,
             pool_config,
             driver_config_reporter,
             config.keyspaces_to_fetch,
