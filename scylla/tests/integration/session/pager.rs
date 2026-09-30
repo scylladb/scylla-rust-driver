@@ -25,9 +25,10 @@ use scylla::{
     errors::{NextPageError, NextRowError, PagerExecutionError, RequestError},
 };
 use scylla_cql::Consistency;
+use scylla_cql::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
 use scylla_proxy::{
-    Condition, ProxyError, Reaction as _, RequestOpcode, RequestReaction, RequestRule, WorkerError,
-    example_db_errors,
+    Condition, ProxyError, Reaction as _, RequestFrame, RequestOpcode, RequestReaction,
+    RequestRule, ResponseFrame, WorkerError, example_db_errors,
 };
 use tracing::info;
 
@@ -445,14 +446,34 @@ async fn test_pager_timeouts() {
                 let timeout = Duration::from_millis(200);
                 prepared.set_request_timeout(Some(timeout));
 
+                // The first page is forged by the proxy, so that the test does not depend
+                // on the DB responding within the timeout. The paging state makes the driver
+                // request the second page.
+                let ks_for_forge = ks.clone();
+                let forge_first_page =
+                    RequestReaction::forge_response(Arc::new(move |request: RequestFrame| {
+                        let col_specs = [ColumnSpec::owned(
+                            "a".to_owned(),
+                            ColumnType::Native(NativeType::Int),
+                            TableSpec::owned(ks_for_forge.clone(), "t".to_owned()),
+                        )];
+                        ResponseFrame::forged_rows(
+                            request.params,
+                            &col_specs,
+                            [(0_i32,)],
+                            Some(b"forged_paging_state"),
+                        )
+                        .unwrap()
+                    }));
+
                 running_proxy.running_nodes.iter_mut().for_each(|node| {
                     node.change_request_rules(Some(vec![
-                        // Pass one frame, then delay all subsequent ones.
+                        // Forge the first page, then delay all subsequent ones.
                         RequestRule(
                             Condition::RequestOpcode(RequestOpcode::Execute)
                                 .and(Condition::not(Condition::ConnectionRegisteredAnyEvent))
                                 .and(Condition::TrueForLimitedTimes(1)),
-                            RequestReaction::noop(),
+                            forge_first_page.clone(),
                         ),
                         RequestRule(
                             Condition::RequestOpcode(RequestOpcode::Execute)
