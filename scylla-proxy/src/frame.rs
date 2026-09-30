@@ -202,10 +202,14 @@ impl ResponseFrame {
     /// Rows are serialized with the same machinery as bound values, so anything
     /// implementing [`SerializeRow`] (e.g. a tuple) is a valid row, and it is
     /// type checked against `col_specs`.
+    ///
+    /// If `paging_state` is `Some`, the response announces more pages,
+    /// and the driver will request the next one with this paging state.
     pub fn forged_rows<R: SerializeRow>(
         request_params: FrameParams,
         col_specs: &[ColumnSpec<'_>],
         rows: impl IntoIterator<Item = R>,
+        paging_state: Option<&[u8]>,
     ) -> Result<Self, ForgedRowsError> {
         let ctx = RowSerializationContext::from_specs(col_specs);
         let mut rows_buf = Vec::new();
@@ -218,8 +222,12 @@ impl ResponseFrame {
         let mut buf = BytesMut::new();
         types::write_int(0x0002, &mut buf); // Kind: Rows.
         // Every column carries its own table spec, so columns of different tables are allowed.
-        ResultMetadata::new_for_test(col_specs.len(), col_specs.to_vec())
-            .serialize(&mut buf, false, false)?;
+        ResultMetadata::new_for_test(col_specs.len(), col_specs.to_vec()).serialize(
+            &mut buf,
+            false,
+            false,
+            paging_state,
+        )?;
         types::write_int(i32::try_from(rows_count)?, &mut buf);
         buf.extend_from_slice(&rows_buf);
 
