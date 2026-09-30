@@ -99,7 +99,7 @@ pub struct ClusterState {
     pub(crate) topology: Arc<Topology>,
 
     /// All keyspaces in the cluster, accessible by their name.
-    /// Often refered to as "schema metadata".
+    /// Often referred to as "schema metadata".
     ///
     /// Shared, not copied, when a new `ClusterState` is derived from this one
     /// without a schema change (e.g. on a tablet update).
