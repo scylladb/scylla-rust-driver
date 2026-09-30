@@ -12,6 +12,7 @@ on:
   pull_request:
     branches:
     - '**'
+  merge_group:
 
 permissions:
   contents: read
@@ -20,7 +21,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  book:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

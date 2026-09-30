@@ -9,6 +9,7 @@ on:
   pull_request:
     branches:
       - "**"
+  merge_group:
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,7 +18,7 @@ env:
   NEXTEST_PROFILE: ci
 
 jobs:
-  build:
+  cassandra_tests:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
