@@ -1584,13 +1584,13 @@ impl ConnectivityChangeEvent {
 #[cfg(test)]
 mod tests {
     use super::super::connection::{
-        HostConnectionConfig, VerifiedKeyspaceName, open_connection,
+        ConnectionConfig, HostConnectionConfig, VerifiedKeyspaceName, open_connection,
         open_connection_to_shard_aware_port,
     };
     use super::{
         ADVANCED_SHARD_AWARENESS_BLOCK_DURATION, ConnectionSetupError, HostPoolConfig,
-        KeyspaceSwitchEvent, MaybePoolConnections, OpenedConnectionEvent, PoolConnections,
-        PoolRefiller, RequestedShard,
+        KeyspaceSwitchEvent, MaybePoolConnections, NodeConnectionPool, OpenedConnectionEvent,
+        PoolConfig, PoolConnections, PoolRefiller, RequestedShard,
     };
     use crate::cluster::NodeAddr;
     use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
@@ -1751,6 +1751,93 @@ mod tests {
         );
         #[cfg(feature = "metrics")]
         assert_eq!(metrics.get_total_connections(), 0);
+
+        match proxy.finish().await {
+            Ok(()) | Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => {}
+            Err(err) => panic!("{err}"),
+        }
+    }
+
+    /// A `USE KEYSPACE` that gets no answer must time out, or the pool gets stuck: a new
+    /// connection waiting for it keeps the pool from initializing or refilling, and a switch
+    /// of the pooled connections blocks all later ones.
+    #[tokio::test]
+    async fn unanswered_use_keyspace_times_out() {
+        setup_tracing();
+        let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+
+        let proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .proxy_address(proxy_addr)
+                    .request_rules(vec![
+                        RequestRule(
+                            Condition::RequestOpcode(RequestOpcode::Options),
+                            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                                ResponseFrame::forged_supported(frame.params, &HashMap::new())
+                                    .unwrap()
+                            })),
+                        ),
+                        RequestRule(
+                            Condition::RequestOpcode(RequestOpcode::Startup),
+                            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                                ResponseFrame::forged_ready(frame.params)
+                            })),
+                        ),
+                        RequestRule(
+                            Condition::RequestOpcode(RequestOpcode::Query),
+                            RequestReaction::drop_frame(),
+                        ),
+                    ])
+                    .build_dry_mode(),
+            )
+            .build()
+            .run()
+            .await
+            .unwrap();
+
+        let endpoint = UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+            address: proxy_addr,
+        });
+        let pool_config = PoolConfig {
+            connection_config: ConnectionConfig {
+                // It is also the `USE KEYSPACE` timeout, which the test waits for.
+                connect_timeout: Duration::from_millis(100),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (pool_empty_notifier, _pool_empty_receiver) = mpsc::channel(1);
+        let new_pool = |keyspace| {
+            NodeConnectionPool::new(
+                endpoint.clone(),
+                &pool_config,
+                None,
+                keyspace,
+                pool_empty_notifier.clone(),
+                Metrics::new(),
+            )
+        };
+        let keyspace = VerifiedKeyspaceName::new("keyspace".to_owned(), false).unwrap();
+
+        // Sub-case 1: a pool with a keyspace switches each new connection to it before use.
+        let pool = new_pool(Some(keyspace.clone()));
+        pool.wait_until_initialized().await;
+        assert_matches!(
+            &**pool.conns.load(),
+            MaybePoolConnections::Broken(ConnectionError::UseKeyspaceError(
+                UseKeyspaceError::RequestTimeout(_)
+            ))
+        );
+
+        // Sub-case 2: switching the keyspace of the pooled connections.
+        let pool = new_pool(None);
+        pool.wait_until_initialized().await;
+        assert!(pool.is_connected());
+        assert_matches!(
+            pool.use_keyspace(keyspace).await,
+            Err(UseKeyspaceError::RequestTimeout(_))
+        );
 
         match proxy.finish().await {
             Ok(()) | Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => {}
