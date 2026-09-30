@@ -64,7 +64,7 @@ fn forge_schema_version(version: Uuid) -> RequestReaction {
             ColumnType::Native(NativeType::Uuid),
             TableSpec::owned("system".to_owned(), "local".to_owned()),
         )];
-        ResponseFrame::forged_rows(request.params, &col_specs, [(version,)]).unwrap()
+        ResponseFrame::forged_rows(request.params, &col_specs, [(version,)], None).unwrap()
     }))
 }
 

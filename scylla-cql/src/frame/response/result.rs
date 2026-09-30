@@ -1199,11 +1199,13 @@ mod test_utils {
         /// Serializes the metadata in the CQL wire format.
         ///
         /// Lets test tooling, like `scylla-proxy`, forge `RESULT::Rows` responses.
+        /// If `paging_state` is `Some`, the metadata announces more pages.
         pub fn serialize(
             &self,
             buf: &mut impl BufMut,
             no_metadata: bool,
             global_tables_spec: bool,
+            paging_state: Option<&[u8]>,
         ) -> StdResult<(), TryFromIntError> {
             let global_table_spec = global_tables_spec
                 .then(|| self.col_specs.first().map(|col_spec| col_spec.table_spec()))
@@ -1213,6 +1215,9 @@ mod test_utils {
             if global_table_spec.is_some() {
                 flags |= 0x0001;
             }
+            if paging_state.is_some() {
+                flags |= 0x0002;
+            }
             if no_metadata {
                 flags |= 0x0004;
             }
@@ -1220,7 +1225,9 @@ mod test_utils {
 
             types::write_int_length(self.col_count, buf)?;
 
-            // No paging state.
+            if let Some(paging_state) = paging_state {
+                types::write_bytes(paging_state, buf)?;
+            }
 
             if !no_metadata {
                 if let Some(spec) = global_table_spec {
@@ -1260,7 +1267,7 @@ mod test_utils {
 
             let raw_result_rows = {
                 let mut buf = BytesMut::new();
-                used_metadata.serialize(&mut buf, no_metadata, global_tables_spec)?;
+                used_metadata.serialize(&mut buf, no_metadata, global_tables_spec, None)?;
                 types::write_int_length(rows_count, &mut buf)?;
                 buf.extend_from_slice(raw_rows);
 
