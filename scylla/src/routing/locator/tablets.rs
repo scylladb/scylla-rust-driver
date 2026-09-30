@@ -1915,11 +1915,14 @@ mod tests {
                             partition_key: vec![],
                             clustering_key: vec![],
                             partitioner: None,
+                            indexes: HashMap::new(),
                             pk_column_specs: vec![],
                         },
                     )]),
                     views: HashMap::new(),
                     user_defined_types: HashMap::new(),
+                    user_defined_functions: HashMap::new(),
+                    user_defined_aggregates: HashMap::new(),
                 },
             )
         };

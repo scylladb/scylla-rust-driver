@@ -9,6 +9,11 @@
 //!   - [Column],
 //!   - [ColumnKind],
 //!   - [MaterializedView],
+//!   - [Index],
+//!   - [IndexKind],
+//!   - [UserDefinedFunction],
+//!   - [UserDefinedAggregate],
+//!   - [FunctionSignature] - identifies one overload of a function or an aggregate,
 //!   - CQL types (re-exported from scylla-cql):
 //!     - [ColumnType],
 //!     - [NativeType],
@@ -255,6 +260,36 @@ pub struct Keyspace {
     ///
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
     pub user_defined_types: HashMap<String, Arc<UserDefinedType<'static>>>,
+    /// User defined functions in the keyspace, keyed by their signature.
+    ///
+    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
+    pub user_defined_functions: HashMap<FunctionSignature, UserDefinedFunction>,
+    /// User defined aggregates in the keyspace, keyed by their signature.
+    ///
+    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
+    pub user_defined_aggregates: HashMap<FunctionSignature, UserDefinedAggregate>,
+}
+
+impl Keyspace {
+    /// Iterates over all overloads of the user defined function with the given name.
+    pub fn functions_named<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> impl Iterator<Item = &'a UserDefinedFunction> {
+        self.user_defined_functions
+            .iter()
+            .filter_map(move |(signature, function)| (signature.name == name).then_some(function))
+    }
+
+    /// Iterates over all overloads of the user defined aggregate with the given name.
+    pub fn aggregates_named<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> impl Iterator<Item = &'a UserDefinedAggregate> {
+        self.user_defined_aggregates
+            .iter()
+            .filter_map(move |(signature, aggregate)| (signature.name == name).then_some(aggregate))
+    }
 }
 
 /// Describes a table in the cluster.
@@ -271,6 +306,10 @@ pub struct Table {
     pub clustering_key: Vec<String>,
     /// Name of the partitioner used by the table.
     pub partitioner: Option<String>,
+    /// Indexes defined on the table, keyed by the index name.
+    ///
+    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
+    pub indexes: HashMap<String, Index>,
     /// Column specs for the partition key columns.
     pub(crate) pk_column_specs: Vec<ColumnSpec<'static>>,
 }
@@ -294,6 +333,133 @@ pub struct Column {
     pub typ: ColumnType<'static>,
     /// Describes role of the column in the table.
     pub kind: ColumnKind,
+}
+
+/// Describes an index defined on a table, as fetched from `system_schema.indexes`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Index {
+    /// Name of the index. Unique within a keyspace.
+    pub name: String,
+    /// Kind of the index.
+    pub kind: IndexKind,
+    /// Options of the index, as stored by the server.
+    pub options: HashMap<String, String>,
+}
+
+/// Kind of an index, as reported by the `kind` column of `system_schema.indexes`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IndexKind {
+    /// A regular secondary index.
+    Composites,
+    /// An index provided by a custom, server-side implementation, created with
+    /// `CREATE CUSTOM INDEX`.
+    Custom,
+    /// A kind that this driver version does not know about.
+    Other(String),
+}
+
+impl IndexKind {
+    /// Maps the raw `kind` column value from `system_schema.indexes` to an [`IndexKind`].
+    fn from_column_value(kind: String) -> Self {
+        match kind.as_str() {
+            "COMPOSITES" => Self::Composites,
+            "CUSTOM" => Self::Custom,
+            _ => Self::Other(kind),
+        }
+    }
+}
+
+/// Identifies one overload of a user defined function or aggregate.
+///
+/// A name alone does not identify a function: CQL permits overloading, and
+/// accordingly `system_schema.functions` and `system_schema.aggregates` are
+/// keyed by `(keyspace_name, function_name, argument_types)`.
+///
+/// The argument types are held as the raw CQL type names, exactly as the server
+/// stores them in those tables, rather than as parsed [`ColumnType`]s.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct FunctionSignature {
+    /// Name of the function or aggregate.
+    pub name: String,
+    /// CQL type names of the arguments, in order, as the server stores them.
+    pub argument_types: Vec<String>,
+}
+
+impl FunctionSignature {
+    /// Creates a signature of the function with the given name and argument types.
+    pub fn new(name: String, argument_types: Vec<String>) -> Self {
+        Self {
+            name,
+            argument_types,
+        }
+    }
+}
+
+/// Describes a user defined function, as fetched from `system_schema.functions`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UserDefinedFunction {
+    /// Name of the keyspace the function belongs to.
+    pub keyspace: String,
+    /// Name of the function. Does not identify it on its own.
+    pub name: String,
+    /// Signature of the function, i.e. the key under which
+    /// [`Keyspace::user_defined_functions`] holds it.
+    pub signature: FunctionSignature,
+    /// Names of the arguments, in order.
+    pub argument_names: Vec<String>,
+    /// Types of the arguments, in order.
+    pub argument_types: Vec<ColumnType<'static>>,
+    /// Type that the function returns.
+    pub return_type: ColumnType<'static>,
+    /// Language the function is implemented in, e.g. `lua` or `wasm` on
+    /// ScyllaDB, `java` or `javascript` on Cassandra.
+    pub language: String,
+    /// Source of the function, in [`Self::language`], as the server stores it.
+    pub body: String,
+    /// Whether the function is called when any of its arguments is null,
+    /// as opposed to returning null right away.
+    pub called_on_null_input: bool,
+}
+
+/// Describes a user defined aggregate, as fetched from `system_schema.aggregates`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UserDefinedAggregate {
+    /// Name of the keyspace the aggregate belongs to.
+    pub keyspace: String,
+    /// Name of the aggregate. Does not identify it on its own - see [`Self::signature`].
+    pub name: String,
+    /// Signature of the aggregate, i.e. the key under which
+    /// [`Keyspace::user_defined_aggregates`] holds it.
+    pub signature: FunctionSignature,
+    /// Types of the arguments, in order.
+    pub argument_types: Vec<ColumnType<'static>>,
+    /// Type that the aggregate returns.
+    pub return_type: ColumnType<'static>,
+    /// Type of the accumulated state.
+    pub state_type: ColumnType<'static>,
+    /// The state function (`SFUNC`), which folds each row into the state, as a
+    /// signature ready to be looked up in [`Keyspace::user_defined_functions`].
+    pub state_function: FunctionSignature,
+    /// The final function (`FINALFUNC`), which turns the accumulated state into
+    /// the result, if the aggregate declares one, as a signature ready to be
+    /// looked up in [`Keyspace::user_defined_functions`].
+    pub final_function: Option<FunctionSignature>,
+    /// The reduce function (`REDUCEFUNC`), which merges the states accumulated
+    /// by separate nodes, as a signature ready to be looked up in
+    /// [`Keyspace::user_defined_functions`].
+    ///
+    /// Reduce functions are a ScyllaDB extension, stored in
+    /// `system_schema.scylla_aggregates`. This is always `None` on Cassandra and
+    /// on ScyllaDB versions that predate the table.
+    pub reduce_function: Option<FunctionSignature>,
+    /// The initial state (`INITCOND`), as the CQL literal that the server
+    /// stores, verbatim, or `None` if the aggregate has no initial condition.
+    pub initial_condition: Option<String>,
 }
 
 /// Represents a user defined type whose definition is missing from the metadata.
