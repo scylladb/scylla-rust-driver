@@ -51,6 +51,11 @@ num-bigint-03 = ["scylla-cql/num-bigint-03", "scylla-cql-core/num-bigint-03"]
 num-bigint-04 = ["scylla-cql/num-bigint-04", "scylla-cql-core/num-bigint-04"]
 # Enables support for CQL ser/de of arbitrary precision decimal types from bigdecimal 0.4 crate.
 bigdecimal-04 = ["scylla-cql/bigdecimal-04", "scylla-cql-core/bigdecimal-04"]
+# Enables serde::Serialize / serde::Deserialize derives for CQL value types.
+# The resulting serde representations are not covered by our semver guarantees -
+# they may change between driver versions. Any such change is announced in the
+# release notes.
+serde = ["scylla-cql/serde", "scylla-cql-core/serde"]
 # Enables support for CQL ser/de of all supported external types.
 full-serialization = [
     "chrono-04",

@@ -38,6 +38,24 @@ Database types and their Rust equivalents:
 
 Additionally, `Box`, `Arc`, and `Cow` serialization and deserialization is supported for all above types.
 
+## Using the `value` types with serde
+
+The `value::*` types above are plain data, so they can be embedded in your own
+structures that are serialized with [serde](https://serde.rs) - to a cache, a
+message queue, a config file, etc. Enabling the `serde` feature of the driver
+derives serde's `Serialize` and `Deserialize` for `value::Counter`,
+`value::CqlDate`, `value::CqlDecimal`, `value::CqlDuration`, `value::CqlTime`,
+`value::CqlTimestamp`, `value::CqlTimeuuid`, `value::CqlVarint` and the borrowed
+decimal/varint variants.
+
+Note that this is unrelated to how values are represented on the wire - the CQL
+binary format is always used when talking to the database.
+
+The serde representations of these types are **not** covered by the driver's
+semver guarantees - they may change between driver versions. Any such change is
+announced in the release notes, so if you persist these values, check the release
+notes before upgrading.
+
 ```{eval-rst}
 .. toctree::
    :hidden:
