@@ -98,3 +98,16 @@ jobs:
           path: |
             target/llvm-cov/html
             target/llvm-cov/lcov.info
+      # No `if: always()` here: only a run in which every step above passed
+      # uploads, so a failed run's partial report never becomes the baseline
+      # later pull requests are compared against. Pull requests from forks
+      # get no secrets and upload without a token, and Dependabot-triggered
+      # runs get no CODECOV_TOKEN either; neither fails the job if Codecov
+      # refuses the upload.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: target/llvm-cov/lcov.info
+          disable_search: true
+          fail_ci_if_error: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}

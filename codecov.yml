@@ -1,0 +1,25 @@
+# Codecov configuration for the upload in .github/workflows/coverage.yml.
+# Reference: https://docs.codecov.com/docs/codecov-yaml
+
+codecov:
+  # coverage.yml is the only uploader, so its report should neither be withheld
+  # because another workflow's check failed nor wait for those checks to finish.
+  require_ci_to_pass: false
+  notify:
+    wait_for_ci: false
+
+coverage:
+  status:
+    # Informational: report the delta, never fail a pull request on it. The
+    # integration and ccm suites run against live ScyllaDB clusters, so which
+    # lines they reach depends on cluster timing as well as on the diff.
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        informational: true
+    patch:
+      default:
+        target: auto
+        threshold: 1%
+        informational: true
