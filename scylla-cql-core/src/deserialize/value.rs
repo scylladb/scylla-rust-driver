@@ -388,6 +388,12 @@ impl_strict_type!(
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
+        if val.is_empty() {
+            return Err(mk_deser_err::<Self>(
+                typ,
+                BuiltinDeserializationErrorKind::ExpectedNonEmpty,
+            ));
+        }
         Ok(num_bigint_03::BigInt::from_signed_bytes_be(val))
     }
 );
@@ -398,6 +404,12 @@ impl_strict_type!(
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
+        if val.is_empty() {
+            return Err(mk_deser_err::<Self>(
+                typ,
+                BuiltinDeserializationErrorKind::ExpectedNonEmpty,
+            ));
+        }
         Ok(num_bigint_04::BigInt::from_signed_bytes_be(val))
     }
 );
@@ -2493,6 +2505,9 @@ pub enum BuiltinDeserializationErrorKind {
     /// Expected non-null value, got null.
     ExpectedNonNull,
 
+    /// Expected non-empty value, got empty.
+    ExpectedNonEmpty,
+
     /// The length of read value in bytes is different than expected for the Rust type.
     ByteLengthMismatch { expected: usize, got: usize },
 
@@ -2543,6 +2558,9 @@ impl Display for BuiltinDeserializationErrorKind {
             }
             BuiltinDeserializationErrorKind::ExpectedNonNull => {
                 f.write_str("expected a non-null value, got null")
+            }
+            BuiltinDeserializationErrorKind::ExpectedNonEmpty => {
+                f.write_str("expected a non-empty value, got empty")
             }
             BuiltinDeserializationErrorKind::ByteLengthMismatch { expected, got } => {
                 write!(f, "the CQL type requires {expected} bytes, but got {got}",)

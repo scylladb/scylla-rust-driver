@@ -2422,7 +2422,36 @@ fn test_bigint03() {
         let bytes = make_bytes(&t.encoding);
         let value = deserialize::<CqlValue>(&ColumnType::Native(Varint), &bytes).unwrap();
         assert_eq!(CqlValue::Varint(t.value.to_bigint().unwrap().into()), value);
+        let direct =
+            deserialize::<num_bigint_03::BigInt>(&ColumnType::Native(Varint), &bytes).unwrap();
+        assert_eq!(direct, num_bigint_03::BigInt::from(t.value));
     }
+}
+
+#[cfg(feature = "num-bigint-03")]
+#[test]
+fn test_bigint03_rejects_empty_varint() {
+    let empty = make_bytes(&[]);
+    let typ = ColumnType::Native(Varint);
+
+    assert_deser_error!(
+        &empty,
+        num_bigint_03::BigInt,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+    assert_eq!(
+        deserialize::<MaybeEmpty<num_bigint_03::BigInt>>(&typ, &empty).unwrap(),
+        MaybeEmpty::Empty
+    );
+
+    let null = make_null();
+    assert_deser_error!(
+        &null,
+        num_bigint_03::BigInt,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonNull
+    );
 }
 
 #[cfg(feature = "num-bigint-04")]
@@ -2436,7 +2465,36 @@ fn test_bigint04() {
         let bytes = make_bytes(&t.encoding);
         let value = deserialize::<CqlValue>(&ColumnType::Native(Varint), &bytes).unwrap();
         assert_eq!(CqlValue::Varint(t.value.to_bigint().unwrap().into()), value);
+        let direct =
+            deserialize::<num_bigint_04::BigInt>(&ColumnType::Native(Varint), &bytes).unwrap();
+        assert_eq!(direct, num_bigint_04::BigInt::from(t.value));
     }
+}
+
+#[cfg(feature = "num-bigint-04")]
+#[test]
+fn test_bigint04_rejects_empty_varint() {
+    let empty = make_bytes(&[]);
+    let typ = ColumnType::Native(Varint);
+
+    assert_deser_error!(
+        &empty,
+        num_bigint_04::BigInt,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+    assert_eq!(
+        deserialize::<MaybeEmpty<num_bigint_04::BigInt>>(&typ, &empty).unwrap(),
+        MaybeEmpty::Empty
+    );
+
+    let null = make_null();
+    assert_deser_error!(
+        &null,
+        num_bigint_04::BigInt,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonNull
+    );
 }
 
 #[cfg(feature = "bigdecimal-04")]
