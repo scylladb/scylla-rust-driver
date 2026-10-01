@@ -37,6 +37,9 @@ mod connecting {
     mod tls {
         #![doc = include_str!("../../docs/source/connecting/tls.md")]
     }
+    mod client_routes {
+        #![doc = include_str!("../../docs/source/connecting/client-routes.md")]
+    }
 }
 
 mod statements {
@@ -138,6 +141,9 @@ mod data_types {
     }
     mod udt {
         #![doc = include_str!("../../docs/source/data-types/udt.md")]
+    }
+    mod vector {
+        #![doc = include_str!("../../docs/source/data-types/vector.md")]
     }
 }
 

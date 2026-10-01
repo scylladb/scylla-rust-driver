@@ -214,7 +214,6 @@ skip = [
     #"ansi_term@0.11.0",
     #{ crate = "ansi_term@0.11.0", reason = "you can specify a reason why it can't be updated/removed" },
     { crate = "hashbrown@0.14.x", reason = "dashmap 6.2.1 (newest) depends on old hashbrown" },
-    { crate = "syn@2.x", reason = "the entire ecosystem slowly migrates to syn 3.x" },
     { crate = "num-bigint@0.3.x", reason = "we also support num-bigint 0.4.x under another feature flag" },
     { crate = "secrecy@0.8.x", reason = "we also support secrecy 0.10.x under another feature flag" },
 

@@ -4,9 +4,12 @@
 /// `#![doc = include_str!("...")]` is emitted so that rustdoc compiles and
 /// tests those code blocks alongside normal doctests.
 ///
+/// Fails if any chapter in `docs/source/` is missing from SUMMARY.md.
+///
 /// Usage:
 ///     cargo run -p utils --bin generate_book_tests           # (re)generate the file
 ///     cargo run -p utils --bin generate_book_tests -- --check # exit 1 if file is stale
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -90,6 +93,32 @@ fn parse_summary(summary_path: &Path) -> Vec<String> {
         .lines()
         .filter_map(|line| extract_md_path(line).map(String::from))
         .collect()
+}
+
+/// Return `.md` files under `source_dir` that SUMMARY.md doesn't reference.
+/// mdbook silently skips such chapters, so their code blocks would go untested.
+fn find_unlisted_chapters(summary_paths: &[String], source_dir: &Path) -> Vec<PathBuf> {
+    let listed: HashSet<PathBuf> = summary_paths
+        .iter()
+        .map(String::as_str)
+        .chain(["SUMMARY.md"])
+        .map(|p| source_dir.join(p))
+        .collect();
+
+    let mut unlisted = Vec::new();
+    let mut dirs = vec![source_dir.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).expect("Failed to read directory") {
+            let path = entry.expect("Failed to read directory entry").path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "md") && !listed.contains(&path) {
+                unlisted.push(path);
+            }
+        }
+    }
+    unlisted.sort();
+    unlisted
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +235,19 @@ fn main() {
     }
 
     let summary_paths = parse_summary(&summary_path);
+
+    let unlisted = find_unlisted_chapters(&summary_paths, &source_dir);
+    if !unlisted.is_empty() {
+        for path in &unlisted {
+            let rel_path = path.strip_prefix(&source_dir).unwrap();
+            eprintln!(
+                "ERROR: {} is not referenced in SUMMARY.md",
+                rel_path.display()
+            );
+        }
+        process::exit(1);
+    }
+
     let content = generate(&summary_paths, &source_dir);
 
     if check_mode {

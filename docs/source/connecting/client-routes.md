@@ -1,7 +1,8 @@
-# Client Routes (Private Networking)
+# Client Routes (ScyllaDB Cloud Private Connectivity)
 
-When connecting to ScyllaDB Cloud clusters via private networking (e.g. AWS PrivateLink or
-GCP Private Service Connect), nodes are not reachable at the addresses they broadcast to each other.
+When connecting to clusters with ScyllaDB Cloud Private Connectivity, 
+a ScyllaDB feature provided using AWS PrivateLink or GCP Private Service Connect,
+nodes are not reachable at the addresses they broadcast to each other.
 Instead, each node is reachable through a proxy endpoint whose address is stored in the
 `system.client_routes` table. The driver needs to be told to use this table for routing —  that is
 what the **Client Routes** feature provides.
