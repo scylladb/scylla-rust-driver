@@ -183,9 +183,9 @@ impl Cluster {
                 std::io::ErrorKind::NotFound => {
                     tokio::fs::create_dir_all(config_dir_path)
                         .await
-                        .with_context(
-                            || format! {"failed to create root directory {config_dir_path:?}"},
-                        )?;
+                        .with_context(|| {
+                            format!("failed to create root directory {config_dir_path:?}")
+                        })?;
                 }
                 _ => {
                     return Err(Error::from(err).context(format!(
