@@ -2,6 +2,24 @@
 
 Thank you for your interest in contributing to our driver!
 
+## External contributions
+
+External contributions (contributions from non-employees of ScyllaDB) are very welcome, with a few conditions:
+
+- Before you start working on a task, please let us know on the relevant issue. That way we can let you know if such work
+  collides with our other plans, and if we have review capacity for it. Only tiny PRs, like typo fixes,
+  are OK to open without prior notice.
+- In the PR description, please state how LLMs were used. Please include a short checklist, for example:
+  - Used for: writing code / drafting / refactoring / tests / debugging / analysis / not used
+  - Human review performed: yes / no
+  - Parts not reviewed by a human: none / describe briefly
+  - Fully automated change with no human oversight: yes / no
+  This information makes it easier for us to review the PR and to know how to interact with it.
+  PRs whose description lacks this information will be asked to provide it, and may be closed if they don't.
+- If the change is fully automated, with no human oversight, please don't open a PR. We also have access to AI,
+  and it's easier and faster for us to make the change ourselves than to guide someone's LLM using GitHub as a proxy.
+  Ask yourself what YOU (not your LLM) contribute. If the answer is nothing, your PR will most likely not be helpful.
+
 ## Pre-review checklist
 
 Before submitting a PR with your patch for review, make sure it will satisfy the following requirements:
