@@ -291,11 +291,9 @@ pub(crate) mod batch_values {
 
     use crate::errors::ExecutionError;
     use crate::routing::Token;
-    use crate::statement::prepared::PartitionKeyError;
+    use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
 
-    use super::BatchStatement;
-
-    /// Takes an optional reference to the first statement in the batch and
+    /// Takes the first statement of the batch (`None` if it's not prepared) and
     /// the batch values, and tries to compute the token for the statement.
     /// Returns the (optional) token and batch values. If the function needed
     /// to serialize values for the first statement, the returned batch values
@@ -304,16 +302,16 @@ pub(crate) mod batch_values {
     /// NOTE: Batch values returned by this function might not type check
     /// the first statement when it is serialized! However, if they don't,
     /// then the first row was already checked by the function. It is assumed
-    /// that `statement` holds the first prepared statement of the batch (if
-    /// there is one), and that it will be used later to serialize the values.
+    /// that `first_prepared` is the first statement of the batch, and that
+    /// it will be used later to serialize the values.
     #[allow(clippy::result_large_err)]
     pub(crate) fn peek_first_token<'bv, ValuesT: BatchValues + 'bv>(
         values: ValuesT,
-        statement: Option<&BatchStatement>,
+        first_prepared: Option<&PreparedStatement>,
     ) -> Result<(Option<Token>, impl BatchValues + use<'bv, ValuesT>), ExecutionError> {
         let mut values_iter = values.batch_values_iter();
-        let (token, first_values) = match statement {
-            Some(BatchStatement::PreparedStatement(ps)) => {
+        let (token, first_values) = match first_prepared {
+            Some(ps) => {
                 let ctx = RowSerializationContext::from_prepared(ps.get_prepared_metadata());
                 let (first_values, did_write) = SerializedValues::from_closure(|writer| {
                     values_iter
@@ -330,7 +328,7 @@ pub(crate) mod batch_values {
                     (None, None)
                 }
             }
-            _ => (None, None),
+            None => (None, None),
         };
 
         // Need to do it explicitly, otherwise the next line will complain

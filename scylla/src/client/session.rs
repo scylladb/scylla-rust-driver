@@ -1319,23 +1319,28 @@ impl Session {
 
         let serial_consistency = exec_params.serial_consistency;
 
-        let (first_value_token, values) =
-            batch_values::peek_first_token(values, batch.statements.first())?;
+        // The token and table spec of the batch come from its first statement, if that one is prepared.
+        let first_prepared = match batch.statements.first() {
+            Some(BatchStatement::PreparedStatement(ps)) => Some(ps),
+            Some(BatchStatement::Query(_)) | None => None,
+        };
+
+        let (first_value_token, values) = batch_values::peek_first_token(values, first_prepared)?;
         let values_ref = &values;
 
-        let table_spec =
-            if let Some(BatchStatement::PreparedStatement(ps)) = batch.statements.first() {
-                ps.get_table_spec()
-            } else {
-                None
-            };
+        // The server executes the whole batch as LWT if any of its statements
+        // is conditional. This is only known for prepared statements.
+        let is_confirmed_lwt = batch.statements.iter().any(|s| match s {
+            BatchStatement::PreparedStatement(ps) => ps.is_confirmed_lwt(),
+            BatchStatement::Query(_) => false,
+        });
 
         let routing_info = RoutingInfo {
             consistency: exec_params.consistency,
             serial_consistency,
             token: first_value_token,
-            table: table_spec,
-            is_confirmed_lwt: false,
+            table: first_prepared.and_then(PreparedStatement::get_table_spec),
+            is_confirmed_lwt,
             node_location_preference: &self.node_location_preference,
         };
 
