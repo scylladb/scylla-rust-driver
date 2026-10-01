@@ -3,7 +3,7 @@
 
 Reads the machine-readable output produced by
 
-    cargo bench -p benchmarks --bench requests -- \
+    cargo bench -p benchmarks --benches -- \
         --baseline=base --output-format=json
 
 (one JSON object per line) and writes a Markdown report comparing the pull
@@ -352,8 +352,7 @@ def build_summary(benchmarks: list[Benchmark], thresholds: Thresholds) -> str:
         "",
         "Comparison of this pull request against its base, mirroring the "
         "`cargo bench` output. Instructions come from Callgrind; allocated heap "
-        "blocks and peak memory from DHAT. Each metric is measured over the "
-        "scenario's request loop (setup is excluded by the harness).",
+        "blocks and peak memory from DHAT.",
         "",
         f"**{regressions} regression(s), {improvements} improvement(s).** "
         f"Only instructions, allocations (`Total blocks`) and peak memory "
