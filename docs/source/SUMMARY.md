@@ -15,6 +15,7 @@
     - [Compression](connecting/compression.md)
     - [Authentication](connecting/authentication.md)
     - [TLS](connecting/tls.md)
+    - [Client Routes (ScyllaDB Cloud Private Connectivity)](connecting/client-routes.md)
 
 - [Executing CQL statements](statements/statements.md)
     - [Unprepared statement](statements/unprepared.md)
@@ -53,6 +54,7 @@
     - [List, Set, Map](data-types/collections.md)
     - [Tuple](data-types/tuple.md)
     - [UDT (User defined type)](data-types/udt.md)
+    - [Vector](data-types/vector.md)
 
 - [Load balancing](load-balancing/load-balancing.md)
     - [Default policy](load-balancing/default-policy.md)
