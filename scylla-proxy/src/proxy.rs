@@ -1282,15 +1282,24 @@ impl ProxyWorker {
     {
         let fut = f(self.driver_addr, self.proxy_addr, self.real_addr);
 
+        // Biased is necessary here. We have many workers. It is possible
+        // for one worker to stop, drop sender half of the connection, Scylla
+        // then send a possible remaining response to the reader half, and closes
+        // the reader half. Reader worker then notices that the server disconnected.
+        // If before each poll of the worker future we check the notifiers, this should
+        // not be possible at all - at least with the current thread runtime that the tests
+        // use. With the multi-threaded runtime it is possible in theory, but so improbable
+        // that I don't think we need to worry about that.
         tokio::select! {
+            biased;
+            _ = self.terminate_notifier.recv() => (),
+            _ = self.connection_close_notifier.recv() => (),
             result = fut => {
                 if let Err(err) = result {
                     // error_propagator could be a field
                     let _ = self.error_propagator.send(err);
                 }
             }
-            _ = self.terminate_notifier.recv() => (),
-            _ = self.connection_close_notifier.recv() => (),
         }
         self.exit(worker_name);
     }
@@ -1424,7 +1433,7 @@ impl ProxyWorker {
     ) {
         let shard = self.shard;
         self.run_until_interrupted(
-            "sender_to_driver",
+            "sender_to_cluster",
             |_driver_addr, proxy_addr, real_addr| async move {
                 let real_addr = real_addr.expect("BUG: no real_addr in cluster worker");
                 loop {

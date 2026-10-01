@@ -10,13 +10,16 @@ use scylla::cluster::ClusterState;
 use scylla::cluster::NodeRef;
 use scylla::cluster::metadata::ColumnType;
 use scylla::deserialize::value::DeserializeValue;
-use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
+use scylla::errors::{DbError, ExecutionError, RequestAttemptError, WriteType};
 use scylla::frame::types::Consistency;
 use scylla::policies::host_filter::AllowListHostFilter;
 use scylla::policies::load_balancing::{
     FallbackPlan, LoadBalancingPolicy, NodeIdentifier, RoutingInfo, SingleTargetLoadBalancingPolicy,
 };
-use scylla::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
+use scylla::policies::retry::{
+    DefaultRetrySession, FallthroughRetryPolicy, RequestInfo, RetryDecision, RetryPolicy,
+    RetrySession,
+};
 use scylla::response::query_result::QueryResult;
 use scylla::routing::Shard;
 use scylla::serialize::row::SerializeRow;
@@ -204,34 +207,105 @@ where
     running_proxy.finish().await
 }
 
-/// # Warning
-/// This function **requires full schema metadata** to function correctly.
-pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
-    // Cassandra doesn't have a concept of features, so first detect
-    // if there is the `supported_features` column in system.local
+/// Retry policy for tests running LWTs. Retries the transient LWT failures
+/// of the shared test cluster on the same target, so that assertions about
+/// which node served a request still hold.
+#[derive(Debug)]
+pub(crate) struct LwtRetryPolicy;
+pub(crate) struct LwtRetryPolicySession {
+    retries_left: usize,
+    inner: DefaultRetrySession,
+}
 
-    let meta = session.get_cluster_state();
-    let system_local = meta
-        .get_keyspace("system")
-        .unwrap()
-        .tables
-        .get("local")
-        .unwrap();
+impl LwtRetryPolicySession {
+    const MAX_RETRIES: usize = 20;
+}
 
-    if !system_local.columns.contains_key("supported_features") {
-        return false;
+impl RetryPolicy for LwtRetryPolicy {
+    fn new_session(&self) -> Box<dyn RetrySession> {
+        Box::new(LwtRetryPolicySession {
+            retries_left: LwtRetryPolicySession::MAX_RETRIES,
+            inner: DefaultRetrySession::new(),
+        })
+    }
+}
+
+impl RetrySession for LwtRetryPolicySession {
+    fn decide_should_retry(&mut self, request_info: RequestInfo) -> RetryDecision {
+        let is_transient_lwt_error = match request_info.error {
+            // The first LWT on a table makes the server create its Paxos state
+            // table, a schema change that is slow while other tests run DDL.
+            // LWTs waiting for it time out.
+            RequestAttemptError::DbError(
+                DbError::WriteTimeout {
+                    write_type: WriteType::Cas,
+                    ..
+                },
+                _,
+            ) => true,
+            // That schema change goes through Raft group 0, whose read barrier
+            // can time out as well; the server reports it as an internal error.
+            RequestAttemptError::DbError(DbError::ServerError, message) => {
+                message.contains("raft operation") && message.contains("timed out")
+            }
+            // Scylla bug: https://scylladb.atlassian.net/browse/SCYLLADB-3194
+            RequestAttemptError::DbError(
+                DbError::WriteFailure {
+                    write_type: WriteType::Cas,
+                    consistency: Consistency::LocalSerial,
+                    ..
+                },
+                message,
+            ) => message.contains("Failed to prepare ballot"),
+            _ => false,
+        };
+
+        if !is_transient_lwt_error {
+            return self.inner.decide_should_retry(request_info);
+        }
+
+        if self.retries_left == 0 {
+            // Panic explicitly so that we know that retry policy worked, but
+            // error kept happening.
+            panic!(
+                "Transient LWT error happened {} times in a row! e: {}",
+                Self::MAX_RETRIES,
+                request_info.error
+            );
+        }
+        self.retries_left -= 1;
+        RetryDecision::RetrySameTarget(None)
     }
 
-    let result = session
-        .query_unpaged(
-            "SELECT supported_features FROM system.local WHERE key='local'",
-            (),
-        )
-        .await
-        .unwrap()
-        .into_rows_result()
-        .unwrap();
+    fn reset(&mut self) {
+        self.retries_left = Self::MAX_RETRIES;
+        self.inner.reset();
+    }
+}
 
+/// Whether the server lists `feature` in `system.local.supported_features`.
+/// Always `false` on Cassandra.
+pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
+    // Asked from the server rather than read from the cached schema, which
+    // has no columns under `fetch_full_schema_metadata(false)`.
+    let mut statement =
+        Statement::new("SELECT supported_features FROM system.local WHERE key='local'");
+    // Some tests use retry policies that turn errors into successes, which
+    // would hide the `Invalid` error below.
+    statement.set_retry_policy(Some(Arc::new(FallthroughRetryPolicy::new())));
+
+    let result = match session.query_unpaged(statement, ()).await {
+        Ok(result) => result,
+        // Cassandra has no such column.
+        Err(ExecutionError::LastAttemptError(RequestAttemptError::DbError(
+            DbError::Invalid,
+            _,
+        ))) => return false,
+        // Not `false`: that would silently disable the test gated on it.
+        Err(error) => panic!("failed to read system.local.supported_features: {error}"),
+    };
+
+    let result = result.into_rows_result().unwrap();
     let (features,): (Option<&str>,) = result.single_row().unwrap();
 
     features
@@ -240,8 +314,7 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
         .any(|f| f == feature)
 }
 
-/// # Warning
-/// This function **requires full schema metadata** to function correctly.
+/// Whether the server advertises the `TABLETS` feature.
 pub(crate) async fn scylla_supports_tablets(session: &Session) -> bool {
     supports_feature(session, "TABLETS").await
 }
@@ -254,9 +327,6 @@ pub(crate) async fn scylla_supports_tablets(session: &Session) -> bool {
 /// `LWT_WITH_TABLETS`, `VIEWS_WITH_TABLETS`, `COUNTERS_WITH_TABLETS`). A test relying on
 /// such a functionality should run on the default, tablet-enabled setup wherever the
 /// server supports it, and fall back to vnodes on older servers that do not.
-///
-/// # Warning
-/// This function **requires full schema metadata** to function correctly.
 pub(crate) async fn disable_tablets_unless_supported(
     session: &Session,
     feature: &str,
@@ -470,13 +540,13 @@ pub(crate) fn calculate_proxy_host_ids(
     host_ids
 }
 
-async fn for_each_target_execute<ExecuteFn, ExecuteFut>(
+async fn for_each_target_execute<T, ExecuteFn, ExecuteFut>(
     cluster: &ClusterState,
     execute: ExecuteFn,
-) -> Result<Vec<QueryResult>, ExecutionError>
+) -> Result<Vec<T>, ExecutionError>
 where
     ExecuteFn: Fn(Arc<scylla::cluster::Node>, Option<Shard>) -> ExecuteFut,
-    ExecuteFut: Future<Output = Result<QueryResult, ExecutionError>>,
+    ExecuteFut: Future<Output = Result<T, ExecutionError>>,
 {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
         let maybe_shard_count: Option<u16> = node.sharder().map(|sharder| sharder.nr_shards.into());
@@ -540,6 +610,7 @@ pub(crate) async fn with_migration_retry<Snapshot, TakeSnapshot, Attempt>(
                     panic!("Test attempt failed despite no migration. Error: {error}");
                 }
                 // There was a migration, let's try again.
+                tracing::info!("Tablet migration detected, retrying the attempt. Error: {error}");
                 last_error = Some(error);
             }
         }
@@ -688,6 +759,59 @@ pub(crate) async fn wait_until_all_nodes_are_connected(expected_nodes: usize, se
             panic!(
                 "Timed out after {ALL_NODES_CONNECTED_TIMEOUT:?} waiting for {expected_nodes} \
                  connected nodes; driver sees (host_id, address, connected): {seen:?}"
+            )
+        });
+}
+
+/// Upper bound for [`wait_until_all_shards_are_connected`].
+const ALL_SHARDS_CONNECTED_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Waits until the driver holds a connection to every shard of every node.
+///
+/// Pool filling is asynchronous and, through the proxy, needs retries to reach
+/// every shard. Meanwhile a request meant for a shard without a connection is
+/// sent to another shard of the node, which a test asserting on shard-level
+/// routing would see as a misroute. The driver exposes no per-shard pool
+/// state, so each shard is probed with a request pinned to it.
+///
+/// # Panics
+///
+/// Panics if the pools are not full within [`ALL_SHARDS_CONNECTED_TIMEOUT`].
+pub(crate) async fn wait_until_all_shards_are_connected(session: &Session) {
+    let statement = Statement::new(HEALTHCHECK_QUERY);
+    let wait = async {
+        loop {
+            let state = session.get_cluster_state();
+            let probes = for_each_target_execute(&state, |node, shard| {
+                let mut statement = statement.clone();
+                statement.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
+                    NodeIdentifier::Node(node.clone()),
+                    shard,
+                )));
+                async move {
+                    let result = session.query_unpaged(statement, ()).await?;
+                    let coordinator = result.request_coordinator();
+                    Ok(coordinator.node().host_id == node.host_id && coordinator.shard() == shard)
+                }
+            })
+            .await;
+            let all_reached = match probes {
+                Ok(reached) => reached.into_iter().all(|reached| reached),
+                // A node without any usable connection yet fails the probe.
+                Err(_) => false,
+            };
+            if all_reached {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+
+    tokio::time::timeout(ALL_SHARDS_CONNECTED_TIMEOUT, wait)
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "Timed out after {ALL_SHARDS_CONNECTED_TIMEOUT:?} waiting for connections to all shards"
             )
         });
 }
