@@ -1424,7 +1424,7 @@ impl ProxyWorker {
     ) {
         let shard = self.shard;
         self.run_until_interrupted(
-            "sender_to_driver",
+            "sender_to_cluster",
             |_driver_addr, proxy_addr, real_addr| async move {
                 let real_addr = real_addr.expect("BUG: no real_addr in cluster worker");
                 loop {
