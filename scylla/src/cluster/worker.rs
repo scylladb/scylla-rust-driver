@@ -151,7 +151,7 @@ impl Cluster {
         let cluster_state = ClusterState::new(metadata, &node_config, host_filter.as_deref()).await;
         ClusterWorker::handle_topology_changes(
             &HashMap::new(),
-            &cluster_state.known_nodes,
+            &cluster_state.topology.known_nodes,
             host_listener.as_deref(),
             &mut node_status,
         );
@@ -322,9 +322,14 @@ impl ClusterWorker {
                     // I decided to stick with the approach that fits with the driver.
                     // Apart from the reasons above, it is much easier to reason about concurrency etc
                     // when reading the code in other parts of the driver.
-                    let mut new_cluster_state: ClusterState = self.cluster_state.load().as_ref().clone();
-                    new_cluster_state.update_tablets(tablets);
-                    self.update_cluster_state(Arc::new(new_cluster_state));
+                    //
+                    // Feedback that repeats what the current state already holds is
+                    // detected before cloning, so it produces no new state at all.
+                    if let Some(new_cluster_state) = self.cluster_state.load().with_updated_tablets(tablets) {
+                        self.update_cluster_state(Arc::new(new_cluster_state));
+                    } else {
+                        tracing::trace!("All received tablets were already known, not publishing a new ClusterState");
+                    }
                 }
 
                 maybe_metadata_update = self.metadata_updates.recv() => {
@@ -381,6 +386,7 @@ impl ClusterWorker {
         keyspace_name: &VerifiedKeyspaceName,
     ) -> Result<(), UseKeyspaceError> {
         let use_keyspace_futures = cluster_state
+            .topology
             .known_nodes
             .values()
             .map(|node| node.use_keyspace(keyspace_name.clone()));
@@ -468,8 +474,8 @@ impl ClusterWorker {
         process_up_hints(&new_cluster_state);
 
         ClusterWorker::handle_topology_changes(
-            &cluster_state.known_nodes,
-            &new_cluster_state.known_nodes,
+            &cluster_state.topology.known_nodes,
+            &new_cluster_state.topology.known_nodes,
             self.host_listener.as_deref(),
             &mut self.node_status,
         );
@@ -729,7 +735,7 @@ impl ClusterWorker {
         let cluster_state = self.cluster_state.load();
 
         let (Some(node), Some(connectivity)) = (
-            cluster_state.known_nodes.get(&host_id),
+            cluster_state.topology.known_nodes.get(&host_id),
             self.node_status.get_mut(&host_id),
         ) else {
             trace!("Received connectivity change event for unknown host_id: {host_id}");
