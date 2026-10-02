@@ -242,6 +242,7 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
 
 #[tokio::test]
 async fn test_iter_methods_with_modification_statements() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -293,6 +294,7 @@ async fn test_iter_methods_with_modification_statements() {
 // PR with fix: https://github.com/scylladb/scylla-rust-driver/pull/1449
 #[tokio::test]
 async fn test_iter_methods_when_altering_table() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 

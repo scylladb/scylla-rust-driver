@@ -241,6 +241,7 @@ async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(
 // Batches containing LWT queries (IF col = som) return rows with information whether the queries were applied.
 #[tokio::test]
 async fn test_batch_lwts() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
@@ -376,6 +377,7 @@ async fn test_batch_lwts_for_cassandra(
 
 #[tokio::test]
 async fn test_prepare_batch() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();

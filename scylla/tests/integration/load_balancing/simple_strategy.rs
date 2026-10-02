@@ -1,5 +1,6 @@
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, unique_keyspace_name,
+    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, setup_tracing,
+    unique_keyspace_name,
 };
 
 /// It's recommended to use NetworkTopologyStrategy everywhere, so most tests use only NetworkTopologyStrategy.
@@ -7,6 +8,7 @@ use crate::utils::{
 /// a few queries in a SimpleStrategy keyspace.
 #[tokio::test]
 async fn simple_strategy_test() {
+    setup_tracing();
     let ks = unique_keyspace_name();
     let session = create_new_session_builder().build().await.unwrap();
 
