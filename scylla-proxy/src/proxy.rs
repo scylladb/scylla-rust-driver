@@ -32,7 +32,8 @@ type TerminateNotifier = tokio::sync::broadcast::Receiver<()>;
 type TerminateSignaler = tokio::sync::broadcast::Sender<()>;
 
 // Used to tell all proxy workers working on same connection to stop when
-// a rule being applied has connection drop set.
+// a rule being applied has connection drop set, or when the driver or the node
+// disconnects.
 type ConnectionCloseNotifier = tokio::sync::broadcast::Receiver<()>;
 type ConnectionCloseSignaler = tokio::sync::broadcast::Sender<()>;
 
@@ -777,8 +778,8 @@ impl Doorkeeper {
         shard: Option<TargetShard>,
     ) {
         // The receivers are spawned last, after all other workers have subscribed
-        // to `connection_close_tx`: a close signal is caused by the frames they
-        // pass on, and a later subscriber would miss it.
+        // to `connection_close_tx`: a close signal originates from them (directly,
+        // or from the frames they pass on), and a later subscriber would miss it.
         let (connection_close_tx, _) = broadcast::channel::<()>(2);
         let new_worker = || ProxyWorker {
             terminate_notifier: self.terminate_signaler.subscribe(),
@@ -887,11 +888,13 @@ impl Doorkeeper {
             }
             {
                 let worker = new_worker();
+                let conn_close = connection_close_tx.clone();
                 tokio::task::spawn(async move {
                     worker
                         .receiver_from_cluster(
                             cluster_read,
                             tx_response,
+                            conn_close,
                             compression_reader_receiver_from_cluster,
                         )
                         .await;
@@ -900,11 +903,13 @@ impl Doorkeeper {
         }
         {
             let worker = new_worker();
+            let conn_close = connection_close_tx.clone();
             tokio::task::spawn(async move {
                 worker
                     .receiver_from_driver(
                         driver_read,
                         tx_request,
+                        conn_close,
                         compression_reader_receiver_from_driver,
                     )
                     .await;
@@ -1311,6 +1316,7 @@ impl ProxyWorker {
         self,
         mut read_half: impl AsyncRead + Unpin,
         request_processor_tx: mpsc::UnboundedSender<RequestFrame>,
+        connection_close_signaler: ConnectionCloseSignaler,
         compression: CompressionReader,
     ) {
         let shard = self.shard;
@@ -1322,6 +1328,8 @@ impl ProxyWorker {
                         .await
                         .map_err(|err| {
                             warn!("Request reception from {} error: {}", driver_addr, err);
+                            // Don't keep the connection to the node open without the driver.
+                            let _ = connection_close_signaler.send(());
                             WorkerError::DriverDisconnected(driver_addr)
                         })?;
 
@@ -1346,6 +1354,7 @@ impl ProxyWorker {
         self,
         mut read_half: impl AsyncRead + Unpin,
         response_processor_tx: mpsc::UnboundedSender<ResponseFrame>,
+        connection_close_signaler: ConnectionCloseSignaler,
         compression: CompressionReader,
     ) {
         let shard = self.shard;
@@ -1358,6 +1367,8 @@ impl ProxyWorker {
                         .await
                         .map_err(|err| {
                             warn!("Response reception from {} error: {}", real_addr, err);
+                            // Don't keep the connection to the driver open without the node.
+                            let _ = connection_close_signaler.send(());
                             WorkerError::NodeDisconnected(real_addr)
                         })?;
 
@@ -2595,7 +2606,7 @@ mod tests {
             conn
         };
 
-        let (node_conn, driver_conn) = join(mock_node_action, send_frame_to_shard).await;
+        let (_node_conn, driver_conn) = join(mock_node_action, send_frame_to_shard).await;
 
         running_proxy.sanity_check().unwrap();
 
@@ -2606,7 +2617,14 @@ mod tests {
         );
         running_proxy.sanity_check().unwrap();
 
-        mem::drop(node_conn);
+        // The proxy closes the connection to the node once the driver is gone,
+        // so a node disconnect needs another connection.
+        let (node_conn2, _driver_conn2) = join(
+            async { mock_node_listener.accept().await.unwrap().0 },
+            async { TcpStream::connect(node1_proxy_addr).await.unwrap() },
+        )
+        .await;
+        mem::drop(node_conn2);
         assert_matches!(
             running_proxy.wait_for_error().await,
             Some(ProxyError::Worker(WorkerError::NodeDisconnected(_)))
@@ -3573,6 +3591,44 @@ mod tests {
         send_register(&mut driver_conn1, &mut node_conn1).await;
 
         running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn proxy_closes_connection_when_either_side_disconnects() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        let (driver_conn, mut node_conn) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        mem::drop(driver_conn);
+        assert_matches!(node_conn.read(&mut [0u8; 1]).await, Ok(0));
+
+        let (mut driver_conn, node_conn) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        mem::drop(node_conn);
+        assert_matches!(driver_conn.read(&mut [0u8; 1]).await, Ok(0));
+
+        // Only the first error is reported.
+        assert_matches!(
+            running_proxy.finish().await,
+            Err(ProxyError::Worker(WorkerError::DriverDisconnected(_)))
+        );
     }
 
     #[tokio::test]
