@@ -434,7 +434,7 @@ async fn test_table_partitioner_in_metadata() {
 #[tokio::test]
 #[cfg_attr(cassandra_tests, ignore)]
 async fn test_views_in_schema_info() {
-    let _ = tracing_subscriber::fmt::try_init();
+    setup_tracing();
 
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();

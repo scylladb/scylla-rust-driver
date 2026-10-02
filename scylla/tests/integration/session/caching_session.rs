@@ -14,10 +14,11 @@ use scylla_proxy::RequestRule;
 use scylla_proxy::WorkerError;
 use tokio::sync::mpsc;
 
-use crate::utils::{fetch_negotiated_features, test_with_3_node_cluster};
+use crate::utils::{fetch_negotiated_features, setup_tracing, test_with_3_node_cluster};
 
 #[tokio::test]
 async fn test_caching_session_metadata_cache() {
+    setup_tracing();
     let features = fetch_negotiated_features(None).await;
     let has_metadata_extension = features.scylla_metadata_id_supported;
     let res = test_with_3_node_cluster(

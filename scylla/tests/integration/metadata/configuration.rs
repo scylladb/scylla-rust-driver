@@ -239,6 +239,7 @@ async fn test_custom_metadata_timeouts() {
 
 #[tokio::test]
 async fn test_refresh_metadata_after_schema_agreement() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
