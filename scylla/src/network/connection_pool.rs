@@ -707,7 +707,7 @@ impl PoolRefiller {
                 evt = self.connection_errors.select_next_some(), if !self.connection_errors.is_empty() => {
                     if let Some(conn) = evt.connection.upgrade() {
                         debug!("[{}] Got error for connection {:p}: {:?}", self.endpoint_description(), Arc::as_ptr(&conn), evt.error);
-                        self.remove_connection(conn, evt.error);
+                        self.remove_connection(&conn, evt.error);
                     }
                 }
 
@@ -1291,8 +1291,8 @@ impl PoolRefiller {
 
     // Removes given connection from the pool. It looks both into active
     // connections and excess connections.
-    fn remove_connection(&mut self, connection: Arc<Connection>, last_error: ConnectionError) {
-        let ptr = Arc::as_ptr(&connection);
+    fn remove_connection(&mut self, connection: &Arc<Connection>, last_error: ConnectionError) {
+        let ptr = Arc::as_ptr(connection);
 
         let endpoint = self.endpoint_description();
 
@@ -1300,7 +1300,7 @@ impl PoolRefiller {
             let maybe_idx = v
                 .iter()
                 .enumerate()
-                .find(|(_, other_conn)| Arc::ptr_eq(&connection, other_conn))
+                .find(|(_, other_conn)| Arc::ptr_eq(connection, other_conn))
                 .map(|(idx, _)| idx);
             match maybe_idx {
                 Some(idx) => {
@@ -1413,7 +1413,7 @@ impl PoolRefiller {
                 Arc::as_ptr(&evt.connection),
                 err,
             );
-            self.remove_connection(Arc::clone(&evt.connection), err.clone().into());
+            self.remove_connection(&evt.connection, err.clone().into());
         }
 
         // Taken rather than borrowed because answering the request consumes its results
@@ -1458,7 +1458,7 @@ impl PoolRefiller {
                 Arc::as_ptr(&conn),
                 connect_timeout,
             );
-            self.remove_connection(conn, timeout_error.clone().into());
+            self.remove_connection(&conn, timeout_error.clone().into());
         }
 
         let _ = switch.response_sender.send(Err(timeout_error));
