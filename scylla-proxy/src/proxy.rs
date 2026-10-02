@@ -962,6 +962,8 @@ impl Doorkeeper {
         let (driver_stream, driver_addr) = tokio::select! {
             v = self.listener.accept() => {
                 let (stream, addr) = v.map_err(|err| DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr(), err))?;
+                // See the comment in `make_cluster_stream`.
+                stream.set_nodelay(true).map_err(|err| DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr(), err))?;
                 (Either::Left(stream), addr)
             },
             v = self.duplex_receiver.recv(), if !self.duplex_receiver.is_closed() => {
@@ -1022,6 +1024,11 @@ impl Doorkeeper {
             stream
         }
         .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
+        // Without this, Nagle's algorithm together with the peer's delayed ACK
+        // can hold back a frame for ~40 ms, which adds up to seconds over a session.
+        cluster_stream
+            .set_nodelay(true)
+            .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
 
         // If ShardAwareness is aware (QueryNode or FixedNum variants) and the
         // proxy succeeded to know the shards count (in FixedNum we get it for
