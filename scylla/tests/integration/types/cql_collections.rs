@@ -909,6 +909,7 @@ async fn test_vector_type_all_types() {
 /// `None::<RustCollection>`. This test checks that.
 #[tokio::test]
 async fn test_deserialize_empty_collections() {
+    setup_tracing();
     // Setup session.
     let ks = unique_keyspace_name();
     let session = create_new_session_builder().build().await.unwrap();

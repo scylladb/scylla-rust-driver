@@ -32,7 +32,8 @@ type TerminateNotifier = tokio::sync::broadcast::Receiver<()>;
 type TerminateSignaler = tokio::sync::broadcast::Sender<()>;
 
 // Used to tell all proxy workers working on same connection to stop when
-// a rule being applied has connection drop set.
+// a rule being applied has connection drop set, or when the driver or the node
+// disconnects.
 type ConnectionCloseNotifier = tokio::sync::broadcast::Receiver<()>;
 type ConnectionCloseSignaler = tokio::sync::broadcast::Sender<()>;
 
@@ -704,11 +705,10 @@ impl Doorkeeper {
     async fn run(mut self) {
         self.update_shards_count().await;
         let mut own_terminate_notifier = self.terminate_signaler.subscribe();
-        let (connection_close_tx, _connection_close_rx) = broadcast::channel::<()>(2);
         let mut connection_no: usize = 0;
         loop {
             tokio::select! {
-                res = self.accept_connection(&connection_close_tx, connection_no) => {
+                res = self.accept_connection(connection_no) => {
                     match res {
                         Ok(()) => connection_no += 1,
                         Err(err) => {
@@ -768,17 +768,19 @@ impl Doorkeeper {
         }
     }
 
-    #[expect(clippy::too_many_arguments)]
     async fn spawn_workers(
         &mut self,
         driver_addr: SocketAddr,
-        connection_close_tx: &ConnectionCloseSignaler,
         connection_no: usize,
         driver_read: impl AsyncRead + Send + Unpin + 'static,
         driver_write: impl AsyncWrite + Send + Unpin + 'static,
         cluster_stream: Option<TcpStream>,
         shard: Option<TargetShard>,
     ) {
+        // The receivers are spawned last, after all other workers have subscribed
+        // to `connection_close_tx`: a close signal originates from them (directly,
+        // or from the frames they pass on), and a later subscriber would miss it.
+        let (connection_close_tx, _) = broadcast::channel::<()>(2);
         let new_worker = || ProxyWorker {
             terminate_notifier: self.terminate_signaler.subscribe(),
             finish_guard: self.finish_guard.clone(),
@@ -804,18 +806,6 @@ impl Doorkeeper {
             compression_reader_sender_to_cluster,
         ) = compression::make_compression_infra();
 
-        {
-            let worker = new_worker();
-            tokio::task::spawn(async move {
-                worker
-                    .receiver_from_driver(
-                        driver_read,
-                        tx_request,
-                        compression_reader_receiver_from_driver,
-                    )
-                    .await;
-            });
-        }
         {
             let worker = new_worker();
             let conn_close_sub = connection_close_tx.subscribe();
@@ -879,18 +869,6 @@ impl Doorkeeper {
             }
             {
                 let worker = new_worker();
-                tokio::task::spawn(async move {
-                    worker
-                        .receiver_from_cluster(
-                            cluster_read,
-                            tx_response,
-                            compression_reader_receiver_from_cluster,
-                        )
-                        .await;
-                });
-            }
-            {
-                let worker = new_worker();
                 let response_rules = Arc::clone(response_rules);
                 let conn_close = connection_close_tx.clone();
                 let event_flag = Arc::clone(&event_register_flag);
@@ -908,6 +886,34 @@ impl Doorkeeper {
                         .await;
                 });
             }
+            {
+                let worker = new_worker();
+                let conn_close = connection_close_tx.clone();
+                tokio::task::spawn(async move {
+                    worker
+                        .receiver_from_cluster(
+                            cluster_read,
+                            tx_response,
+                            conn_close,
+                            compression_reader_receiver_from_cluster,
+                        )
+                        .await;
+                });
+            }
+        }
+        {
+            let worker = new_worker();
+            let conn_close = connection_close_tx.clone();
+            tokio::task::spawn(async move {
+                worker
+                    .receiver_from_driver(
+                        driver_read,
+                        tx_request,
+                        conn_close,
+                        compression_reader_receiver_from_driver,
+                    )
+                    .await;
+            });
         }
         debug!(
             "Doorkeeper with addr {} of node {} spawned workers.",
@@ -916,11 +922,7 @@ impl Doorkeeper {
         );
     }
 
-    async fn accept_connection(
-        &mut self,
-        connection_close_tx: &ConnectionCloseSignaler,
-        connection_no: usize,
-    ) -> Result<(), DoorkeeperError> {
+    async fn accept_connection(&mut self, connection_no: usize) -> Result<(), DoorkeeperError> {
         let (driver_stream, driver_addr) = self.make_driver_stream(connection_no).await?;
         let (cluster_stream, shard) = match self.node {
             InternalNode::Real { real_addr, .. } => {
@@ -943,7 +945,6 @@ impl Doorkeeper {
 
         self.spawn_workers(
             driver_addr,
-            connection_close_tx,
             connection_no,
             driver_read,
             driver_write,
@@ -962,6 +963,8 @@ impl Doorkeeper {
         let (driver_stream, driver_addr) = tokio::select! {
             v = self.listener.accept() => {
                 let (stream, addr) = v.map_err(|err| DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr(), err))?;
+                // See the comment in `make_cluster_stream`.
+                stream.set_nodelay(true).map_err(|err| DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr(), err))?;
                 (Either::Left(stream), addr)
             },
             v = self.duplex_receiver.recv(), if !self.duplex_receiver.is_closed() => {
@@ -1022,6 +1025,11 @@ impl Doorkeeper {
             stream
         }
         .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
+        // Without this, Nagle's algorithm together with the peer's delayed ACK
+        // can hold back a frame for ~40 ms, which adds up to seconds over a session.
+        cluster_stream
+            .set_nodelay(true)
+            .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
 
         // If ShardAwareness is aware (QueryNode or FixedNum variants) and the
         // proxy succeeded to know the shards count (in FixedNum we get it for
@@ -1308,6 +1316,7 @@ impl ProxyWorker {
         self,
         mut read_half: impl AsyncRead + Unpin,
         request_processor_tx: mpsc::UnboundedSender<RequestFrame>,
+        connection_close_signaler: ConnectionCloseSignaler,
         compression: CompressionReader,
     ) {
         let shard = self.shard;
@@ -1319,6 +1328,8 @@ impl ProxyWorker {
                         .await
                         .map_err(|err| {
                             warn!("Request reception from {} error: {}", driver_addr, err);
+                            // Don't keep the connection to the node open without the driver.
+                            let _ = connection_close_signaler.send(());
                             WorkerError::DriverDisconnected(driver_addr)
                         })?;
 
@@ -1343,6 +1354,7 @@ impl ProxyWorker {
         self,
         mut read_half: impl AsyncRead + Unpin,
         response_processor_tx: mpsc::UnboundedSender<ResponseFrame>,
+        connection_close_signaler: ConnectionCloseSignaler,
         compression: CompressionReader,
     ) {
         let shard = self.shard;
@@ -1355,6 +1367,8 @@ impl ProxyWorker {
                         .await
                         .map_err(|err| {
                             warn!("Response reception from {} error: {}", real_addr, err);
+                            // Don't keep the connection to the driver open without the node.
+                            let _ = connection_close_signaler.send(());
                             WorkerError::NodeDisconnected(real_addr)
                         })?;
 
@@ -1486,6 +1500,9 @@ impl ProxyWorker {
         cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
     ) {
         let shard = self.shard;
+        let (driver_addr, real_addr) = (self.driver_addr, self.real_addr);
+        let registered = Arc::clone(&event_registered_flag);
+        let cc_senders = Arc::clone(&cc_event_sender);
         self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
             'mainloop: loop {
                 match requests_rx.recv().await {
@@ -1599,26 +1616,26 @@ impl ProxyWorker {
                         }
                         let _ = cluster_tx.send(request); // default action
                     }
-                    None => {
-                        // Connection closed. If this was the control
-                        // connection (REGISTER was seen), remove only this
-                        // connection's sender from the shared map.
-                        if event_registered_flag.load(Ordering::Relaxed) {
-                            cc_event_sender.lock().unwrap().remove(&connection_no);
-                            info!(
-                                "Control connection {} ({} →  {} ({})) closed; removed cc_event_sender",
-                                connection_no,
-                                driver_addr,
-                                DisplayableRealAddrOption(real_addr),
-                                DisplayableShard(shard),
-                            );
-                        }
-                        return Ok(());
-                    }
+                    None => return Ok(()),
                 }
             }
         })
         .await;
+
+        // Connection closed. If this was the control connection (REGISTER was seen),
+        // remove only this connection's sender from the shared map. This is done here,
+        // as the worker's future is dropped if the close signal (sent also on a
+        // disconnect) or the terminate signal stops it.
+        if registered.load(Ordering::Relaxed) {
+            cc_senders.lock().unwrap().remove(&connection_no);
+            info!(
+                "Control connection {} ({} →  {} ({})) closed; removed cc_event_sender",
+                connection_no,
+                driver_addr,
+                DisplayableRealAddrOption(real_addr),
+                DisplayableShard(shard),
+            );
+        }
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -2589,7 +2606,7 @@ mod tests {
             conn
         };
 
-        let (node_conn, driver_conn) = join(mock_node_action, send_frame_to_shard).await;
+        let (_node_conn, driver_conn) = join(mock_node_action, send_frame_to_shard).await;
 
         running_proxy.sanity_check().unwrap();
 
@@ -2600,7 +2617,14 @@ mod tests {
         );
         running_proxy.sanity_check().unwrap();
 
-        mem::drop(node_conn);
+        // The proxy closes the connection to the node once the driver is gone,
+        // so a node disconnect needs another connection.
+        let (node_conn2, _driver_conn2) = join(
+            async { mock_node_listener.accept().await.unwrap().0 },
+            async { TcpStream::connect(node1_proxy_addr).await.unwrap() },
+        )
+        .await;
+        mem::drop(node_conn2);
         assert_matches!(
             running_proxy.wait_for_error().await,
             Some(ProxyError::Worker(WorkerError::NodeDisconnected(_)))
@@ -3512,5 +3536,167 @@ mod tests {
         // finish() may report DriverDisconnected errors from the intentionally
         // dropped connections — that's expected.
         let _ = running_proxy.finish().await;
+    }
+
+    #[tokio::test]
+    async fn drop_connection_drops_only_the_matching_connection() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            Some(vec![RequestRule(
+                Condition::ConnectionSeqNo(0),
+                RequestReaction::drop_connection(),
+            )]),
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        let (mut driver_conn0, mut node_conn0) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        let (mut driver_conn1, mut node_conn1) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        // Makes sure that the workers of connection 1 are already running when
+        // connection 0 gets dropped.
+        send_register(&mut driver_conn1, &mut node_conn1).await;
+
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        write_frame(
+            params,
+            FrameOpcode::Request(RequestOpcode::Options),
+            b"",
+            &mut driver_conn0,
+            &no_compression(),
+        )
+        .await
+        .unwrap();
+        assert_matches!(driver_conn0.read(&mut [0u8; 1]).await, Ok(0));
+        assert_matches!(node_conn0.read(&mut [0u8; 1]).await, Ok(0));
+
+        // Connection 1 still forwards requests.
+        send_register(&mut driver_conn1, &mut node_conn1).await;
+
+        running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn proxy_closes_connection_when_either_side_disconnects() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        let (driver_conn, mut node_conn) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        mem::drop(driver_conn);
+        assert_matches!(node_conn.read(&mut [0u8; 1]).await, Ok(0));
+
+        let (mut driver_conn, node_conn) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        mem::drop(node_conn);
+        assert_matches!(driver_conn.read(&mut [0u8; 1]).await, Ok(0));
+
+        // Only the first error is reported.
+        assert_matches!(
+            running_proxy.finish().await,
+            Err(ProxyError::Worker(WorkerError::DriverDisconnected(_)))
+        );
+    }
+
+    #[tokio::test]
+    async fn closed_control_connection_is_unregistered() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            Some(vec![RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Options),
+                RequestReaction::drop_connection(),
+            )]),
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+        let cc_event_sender = Arc::clone(&running_proxy.running_nodes[0].cc_event_sender);
+        let wait_until_unregistered = || async {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !cc_event_sender.lock().unwrap().is_empty() {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .expect("closed control connection is still registered");
+        };
+
+        // Closed by a drop_connection rule.
+        let (mut driver_conn, mut node_conn) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        send_register(&mut driver_conn, &mut node_conn).await;
+        assert_eq!(cc_event_sender.lock().unwrap().len(), 1);
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        write_frame(
+            params,
+            FrameOpcode::Request(RequestOpcode::Options),
+            b"",
+            &mut driver_conn,
+            &no_compression(),
+        )
+        .await
+        .unwrap();
+        wait_until_unregistered().await;
+
+        // Closed by the driver.
+        let (mut driver_conn, mut node_conn) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        send_register(&mut driver_conn, &mut node_conn).await;
+        assert_eq!(cc_event_sender.lock().unwrap().len(), 1);
+        mem::drop(driver_conn);
+        wait_until_unregistered().await;
+
+        assert_matches!(
+            running_proxy.finish().await,
+            Err(ProxyError::Worker(WorkerError::DriverDisconnected(_)))
+        );
     }
 }

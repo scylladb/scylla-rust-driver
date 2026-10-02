@@ -66,6 +66,7 @@ async fn test_db_errors() {
 
 #[tokio::test]
 async fn test_rate_limit_exceeded_exception() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
     // Typed errors in RPC were introduced along with per-partition rate limiting.
