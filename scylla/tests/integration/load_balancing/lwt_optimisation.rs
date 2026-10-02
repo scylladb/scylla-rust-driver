@@ -139,7 +139,9 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
         let mut prepared_lwt = session.prepare("UPDATE t SET b=3 WHERE a=? IF b=2").await.unwrap();
         // The first LWT on a fresh table can time out on the shared cluster (see
         // `LwtRetryPolicy`). Retrying on the same target keeps the node count below intact.
-        prepared_lwt.set_retry_policy(Some(Arc::new(LwtRetryPolicy)));
+        prepared_lwt.set_retry_policy(Some(Arc::new(LwtRetryPolicy {
+            retry_commit_timeouts: true,
+        })));
 
         if supports_optimisation_mark {
             // We make sure that the driver properly marked prepared statements wrt being LWT.

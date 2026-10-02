@@ -1027,7 +1027,9 @@ where
                 .fetch_full_schema_metadata(fetch_full_schema)
                 .default_execution_profile_handle(
                     ExecutionProfile::builder()
-                        .retry_policy(Arc::new(LwtRetryPolicy))
+                        .retry_policy(Arc::new(LwtRetryPolicy {
+                            retry_commit_timeouts: true,
+                        }))
                         .build()
                         .into_handle(),
                 )
