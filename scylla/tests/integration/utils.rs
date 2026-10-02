@@ -211,9 +211,15 @@ where
 /// of the shared test cluster on the same target, so that assertions about
 /// which node served a request still hold.
 #[derive(Debug)]
-pub(crate) struct LwtRetryPolicy;
+pub(crate) struct LwtRetryPolicy {
+    /// Whether to retry an LWT whose commit timed out. Such an LWT has already
+    /// been applied, so the retry reports it as not applied. Tests asserting
+    /// on LWT results must not retry it.
+    pub(crate) retry_commit_timeouts: bool,
+}
 pub(crate) struct LwtRetryPolicySession {
     retries_left: usize,
+    retry_commit_timeouts: bool,
     inner: DefaultRetrySession,
 }
 
@@ -225,6 +231,7 @@ impl RetryPolicy for LwtRetryPolicy {
     fn new_session(&self) -> Box<dyn RetrySession> {
         Box::new(LwtRetryPolicySession {
             retries_left: LwtRetryPolicySession::MAX_RETRIES,
+            retry_commit_timeouts: self.retry_commit_timeouts,
             inner: DefaultRetrySession::new(),
         })
     }
@@ -236,13 +243,16 @@ impl RetrySession for LwtRetryPolicySession {
             // The first LWT on a table makes the server create its Paxos state
             // table, a schema change that is slow while other tests run DDL.
             // LWTs waiting for it time out.
+            // A timeout at a non-serial consistency happens in the commit phase,
+            // after the LWT has been decided.
             RequestAttemptError::DbError(
                 DbError::WriteTimeout {
                     write_type: WriteType::Cas,
+                    consistency,
                     ..
                 },
                 _,
-            ) => true,
+            ) => consistency.is_serial() || self.retry_commit_timeouts,
             // That schema change goes through Raft group 0, whose read barrier
             // can time out as well; the server reports it as an internal error.
             RequestAttemptError::DbError(DbError::ServerError, message) => {
