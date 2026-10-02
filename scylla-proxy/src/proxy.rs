@@ -1489,6 +1489,9 @@ impl ProxyWorker {
         cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
     ) {
         let shard = self.shard;
+        let (driver_addr, real_addr) = (self.driver_addr, self.real_addr);
+        let registered = Arc::clone(&event_registered_flag);
+        let cc_senders = Arc::clone(&cc_event_sender);
         self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
             'mainloop: loop {
                 match requests_rx.recv().await {
@@ -1602,26 +1605,26 @@ impl ProxyWorker {
                         }
                         let _ = cluster_tx.send(request); // default action
                     }
-                    None => {
-                        // Connection closed. If this was the control
-                        // connection (REGISTER was seen), remove only this
-                        // connection's sender from the shared map.
-                        if event_registered_flag.load(Ordering::Relaxed) {
-                            cc_event_sender.lock().unwrap().remove(&connection_no);
-                            info!(
-                                "Control connection {} ({} →  {} ({})) closed; removed cc_event_sender",
-                                connection_no,
-                                driver_addr,
-                                DisplayableRealAddrOption(real_addr),
-                                DisplayableShard(shard),
-                            );
-                        }
-                        return Ok(());
-                    }
+                    None => return Ok(()),
                 }
             }
         })
         .await;
+
+        // Connection closed. If this was the control connection (REGISTER was seen),
+        // remove only this connection's sender from the shared map. This is done here,
+        // as the worker's future is dropped if the close signal (sent also on a
+        // disconnect) or the terminate signal stops it.
+        if registered.load(Ordering::Relaxed) {
+            cc_senders.lock().unwrap().remove(&connection_no);
+            info!(
+                "Control connection {} ({} →  {} ({})) closed; removed cc_event_sender",
+                connection_no,
+                driver_addr,
+                DisplayableRealAddrOption(real_addr),
+                DisplayableShard(shard),
+            );
+        }
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -3570,5 +3573,74 @@ mod tests {
         send_register(&mut driver_conn1, &mut node_conn1).await;
 
         running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn closed_control_connection_is_unregistered() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            Some(vec![RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Options),
+                RequestReaction::drop_connection(),
+            )]),
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+        let cc_event_sender = Arc::clone(&running_proxy.running_nodes[0].cc_event_sender);
+        let wait_until_unregistered = || async {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !cc_event_sender.lock().unwrap().is_empty() {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .expect("closed control connection is still registered");
+        };
+
+        // Closed by a drop_connection rule.
+        let (mut driver_conn, mut node_conn) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        send_register(&mut driver_conn, &mut node_conn).await;
+        assert_eq!(cc_event_sender.lock().unwrap().len(), 1);
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        write_frame(
+            params,
+            FrameOpcode::Request(RequestOpcode::Options),
+            b"",
+            &mut driver_conn,
+            &no_compression(),
+        )
+        .await
+        .unwrap();
+        wait_until_unregistered().await;
+
+        // Closed by the driver.
+        let (mut driver_conn, mut node_conn) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        send_register(&mut driver_conn, &mut node_conn).await;
+        assert_eq!(cc_event_sender.lock().unwrap().len(), 1);
+        mem::drop(driver_conn);
+        wait_until_unregistered().await;
+
+        assert_matches!(
+            running_proxy.finish().await,
+            Err(ProxyError::Worker(WorkerError::DriverDisconnected(_)))
+        );
     }
 }
