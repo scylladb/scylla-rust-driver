@@ -16,7 +16,9 @@
 //    from the cluster.
 
 mod worker;
-pub(crate) use worker::{Cluster, ClusterNeatDebug, use_keyspace_result};
+pub(crate) use worker::{
+    Cluster, ClusterNeatDebug, use_keyspace_broke_connection, use_keyspace_result,
+};
 
 mod state;
 pub use state::ClusterState;

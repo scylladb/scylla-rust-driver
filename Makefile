@@ -174,11 +174,11 @@ docs:
 
 .PHONY: check-book-tests
 check-book-tests:
-	cargo run -p generate_book_tests -- --check
+	cargo run -p generate-book-tests -- --check
 
 .PHONY: regenerate-book-tests
 regenerate-book-tests:
-	cargo run -p generate_book_tests
+	cargo run -p generate-book-tests
 
 .PHONY: semver-rev
 semver-rev:
