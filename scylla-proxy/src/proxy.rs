@@ -704,11 +704,10 @@ impl Doorkeeper {
     async fn run(mut self) {
         self.update_shards_count().await;
         let mut own_terminate_notifier = self.terminate_signaler.subscribe();
-        let (connection_close_tx, _connection_close_rx) = broadcast::channel::<()>(2);
         let mut connection_no: usize = 0;
         loop {
             tokio::select! {
-                res = self.accept_connection(&connection_close_tx, connection_no) => {
+                res = self.accept_connection(connection_no) => {
                     match res {
                         Ok(()) => connection_no += 1,
                         Err(err) => {
@@ -768,17 +767,16 @@ impl Doorkeeper {
         }
     }
 
-    #[expect(clippy::too_many_arguments)]
     async fn spawn_workers(
         &mut self,
         driver_addr: SocketAddr,
-        connection_close_tx: &ConnectionCloseSignaler,
         connection_no: usize,
         driver_read: impl AsyncRead + Send + Unpin + 'static,
         driver_write: impl AsyncWrite + Send + Unpin + 'static,
         cluster_stream: Option<TcpStream>,
         shard: Option<TargetShard>,
     ) {
+        let (connection_close_tx, _) = broadcast::channel::<()>(2);
         let new_worker = || ProxyWorker {
             terminate_notifier: self.terminate_signaler.subscribe(),
             finish_guard: self.finish_guard.clone(),
@@ -916,11 +914,7 @@ impl Doorkeeper {
         );
     }
 
-    async fn accept_connection(
-        &mut self,
-        connection_close_tx: &ConnectionCloseSignaler,
-        connection_no: usize,
-    ) -> Result<(), DoorkeeperError> {
+    async fn accept_connection(&mut self, connection_no: usize) -> Result<(), DoorkeeperError> {
         let (driver_stream, driver_addr) = self.make_driver_stream(connection_no).await?;
         let (cluster_stream, shard) = match self.node {
             InternalNode::Real { real_addr, .. } => {
@@ -943,7 +937,6 @@ impl Doorkeeper {
 
         self.spawn_workers(
             driver_addr,
-            connection_close_tx,
             connection_no,
             driver_read,
             driver_write,
@@ -3519,5 +3512,60 @@ mod tests {
         // finish() may report DriverDisconnected errors from the intentionally
         // dropped connections — that's expected.
         let _ = running_proxy.finish().await;
+    }
+
+    #[tokio::test]
+    async fn drop_connection_drops_only_the_matching_connection() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            Some(vec![RequestRule(
+                Condition::ConnectionSeqNo(0),
+                RequestReaction::drop_connection(),
+            )]),
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        let (mut driver_conn0, mut node_conn0) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        let (mut driver_conn1, mut node_conn1) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        // Makes sure that the workers of connection 1 are already running when
+        // connection 0 gets dropped.
+        send_register(&mut driver_conn1, &mut node_conn1).await;
+
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        write_frame(
+            params,
+            FrameOpcode::Request(RequestOpcode::Options),
+            b"",
+            &mut driver_conn0,
+            &no_compression(),
+        )
+        .await
+        .unwrap();
+        assert_matches!(driver_conn0.read(&mut [0u8; 1]).await, Ok(0));
+        assert_matches!(node_conn0.read(&mut [0u8; 1]).await, Ok(0));
+
+        // Connection 1 still forwards requests.
+        send_register(&mut driver_conn1, &mut node_conn1).await;
+
+        running_proxy.finish().await.unwrap();
     }
 }
