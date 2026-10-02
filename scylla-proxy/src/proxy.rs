@@ -776,6 +776,9 @@ impl Doorkeeper {
         cluster_stream: Option<TcpStream>,
         shard: Option<TargetShard>,
     ) {
+        // The receivers are spawned last, after all other workers have subscribed
+        // to `connection_close_tx`: a close signal is caused by the frames they
+        // pass on, and a later subscriber would miss it.
         let (connection_close_tx, _) = broadcast::channel::<()>(2);
         let new_worker = || ProxyWorker {
             terminate_notifier: self.terminate_signaler.subscribe(),
@@ -802,18 +805,6 @@ impl Doorkeeper {
             compression_reader_sender_to_cluster,
         ) = compression::make_compression_infra();
 
-        {
-            let worker = new_worker();
-            tokio::task::spawn(async move {
-                worker
-                    .receiver_from_driver(
-                        driver_read,
-                        tx_request,
-                        compression_reader_receiver_from_driver,
-                    )
-                    .await;
-            });
-        }
         {
             let worker = new_worker();
             let conn_close_sub = connection_close_tx.subscribe();
@@ -877,18 +868,6 @@ impl Doorkeeper {
             }
             {
                 let worker = new_worker();
-                tokio::task::spawn(async move {
-                    worker
-                        .receiver_from_cluster(
-                            cluster_read,
-                            tx_response,
-                            compression_reader_receiver_from_cluster,
-                        )
-                        .await;
-                });
-            }
-            {
-                let worker = new_worker();
                 let response_rules = Arc::clone(response_rules);
                 let conn_close = connection_close_tx.clone();
                 let event_flag = Arc::clone(&event_register_flag);
@@ -906,6 +885,30 @@ impl Doorkeeper {
                         .await;
                 });
             }
+            {
+                let worker = new_worker();
+                tokio::task::spawn(async move {
+                    worker
+                        .receiver_from_cluster(
+                            cluster_read,
+                            tx_response,
+                            compression_reader_receiver_from_cluster,
+                        )
+                        .await;
+                });
+            }
+        }
+        {
+            let worker = new_worker();
+            tokio::task::spawn(async move {
+                worker
+                    .receiver_from_driver(
+                        driver_read,
+                        tx_request,
+                        compression_reader_receiver_from_driver,
+                    )
+                    .await;
+            });
         }
         debug!(
             "Doorkeeper with addr {} of node {} spawned workers.",
