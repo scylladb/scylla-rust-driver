@@ -1382,7 +1382,7 @@ where
         Some(raw.and_then(|raw| {
             T::deserialize(self.element_type, raw).map_err(|err| {
                 mk_deser_err::<Self>(
-                    self.element_type,
+                    self.collection_type,
                     VectorDeserializationErrorKind::ElementDeserializationFailed(err),
                 )
             })
