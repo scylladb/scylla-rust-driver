@@ -385,8 +385,11 @@ pub(crate) async fn write_frame(
     };
     header[5..9].copy_from_slice(&(body.len() as u32).to_be_bytes());
 
-    writer.write_all(&header).await?;
-    writer.write_all(body).await?;
+    // One (vectored) write instead of two, so that a frame doesn't get split
+    // into two TCP segments.
+    writer
+        .write_all_buf(&mut Buf::chain(&header[..], body))
+        .await?;
     writer.flush().await?;
     Ok(())
 }
