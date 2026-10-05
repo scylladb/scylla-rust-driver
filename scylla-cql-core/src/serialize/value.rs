@@ -76,6 +76,10 @@ macro_rules! impl_serialize_via_writer {
         impl_serialize_via_writer!(|$me, _typ, $writer| $e);
     };
     (|$me:ident, $typ:ident, $writer:ident| $e:expr) => {
+        // Most of these bodies are a few instructions each once the error
+        // construction is outlined, and callers - in particular a
+        // collection's element loop - benefit a lot from inlining them.
+        #[inline]
         fn serialize<'b>(
             &self,
             typ: &ColumnType,
