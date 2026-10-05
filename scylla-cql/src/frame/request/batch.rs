@@ -171,6 +171,36 @@ where
         self.do_serialize(buf)?;
         Ok(())
     }
+
+    // The values are serialized straight into the request, so their size is
+    // not known up front: everything else is the lower bound.
+    fn serialized_size_hint(&self) -> (usize, Option<usize>) {
+        let statements_size: usize = self
+            .statements
+            .iter()
+            .map(|statement| {
+                let statement_size = match BatchStatement::from(statement) {
+                    // [long string]
+                    BatchStatement::Query { text } => size_of::<i32>() + text.len(),
+                    // [short bytes]
+                    BatchStatement::Prepared { id } => size_of::<u16>() + id.len(),
+                };
+                // Kind, statement and the number of values.
+                size_of::<u8>() + statement_size + size_of::<u16>()
+            })
+            .sum();
+        let serial_consistency_size = self.serial_consistency.map_or(0, |_| size_of::<u16>());
+        let timestamp_size = self.timestamp.map_or(0, |_| size_of::<i64>());
+        // Type, number of statements, statements, consistency and flags.
+        let min_size = size_of::<u8>()
+            + size_of::<u16>()
+            + statements_size
+            + size_of::<u16>()
+            + size_of::<u8>()
+            + serial_consistency_size
+            + timestamp_size;
+        (min_size, None)
+    }
 }
 
 fn deserialize_batch_statement(

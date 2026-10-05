@@ -409,6 +409,11 @@ mod tests {
         {
             let mut buf = Vec::new();
             batch.serialize(&mut buf).unwrap();
+            let values_size: usize = batch.values.iter().map(|v| v.buffer_size()).sum();
+            assert_eq!(
+                batch.serialized_size_hint(),
+                (buf.len() - values_size, None)
+            );
 
             let batch_deserialized =
                 Batch::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
