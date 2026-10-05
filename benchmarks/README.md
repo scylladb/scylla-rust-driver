@@ -44,6 +44,20 @@ The value is serialized into its wire form in `setup`; only its deserialization 
 is measured. The request path allocates many of times per request, which
 would drown out the deserialization path's own cost in the `requests` scenarios.
 
+The `serialization` benchmark (`benches/serialization.rs`) measures
+serialization of a single CQL value, without a cluster:
+
+| Scenario              | What it serializes                                    |
+| --------------------- | ----------------------------------------------------- |
+| `vec_to_list`         | `Vec<i32>` of 1024 elements to `list<int>`.           |
+| `btree_map_to_map`    | `BTreeMap<i32, i64>` of 1024 entries to `map<int, bigint>`. |
+| `vec_to_float_vector` | `Vec<f32>` to `vector<float, 1536>`.                  |
+| `vec_to_text_vector`  | `Vec<String>` to `vector<text, 1536>`.                |
+| `cql_value_to_udt`    | `CqlValue` to a user defined type of 64 `int` fields. |
+
+The value is built in `setup`; only its serialization, into a new buffer each
+time, is measured.
+
 ## Requirements
 
 - [Valgrind](https://valgrind.org/) (provides Callgrind and DHAT).
@@ -56,7 +70,7 @@ would drown out the deserialization path's own cost in the `requests` scenarios.
 - A running ScyllaDB cluster, for the `requests` benchmark. It defaults to the
   repository's three-node docker-compose cluster (`make up`); override the
   contact points with `SCYLLA_URI`, `SCYLLA_URI2` and `SCYLLA_URI3` if needed.
-  The `deserialization` benchmark does not need one.
+  The `serialization` and `deserialization` benchmarks do not need one.
 
 ## Running
 
