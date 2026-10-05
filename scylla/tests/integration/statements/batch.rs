@@ -1,6 +1,6 @@
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, disable_tablets_unless_supported, setup_tracing,
-    unique_keyspace_name,
+    LwtRetryPolicy, PerformDDL as _, create_new_session_builder, disable_tablets_unless_supported,
+    setup_tracing, unique_keyspace_name,
 };
 use assert_matches::assert_matches;
 use scylla::client::session::Session;
@@ -241,6 +241,7 @@ async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(
 // Batches containing LWT queries (IF col = som) return rows with information whether the queries were applied.
 #[tokio::test]
 async fn test_batch_lwts() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
@@ -263,6 +264,12 @@ async fn test_batch_lwts() {
         .unwrap();
 
     let mut batch: Batch = Batch::default();
+    // LWTs on a fresh table can time out while the server creates its Paxos
+    // state table (see `LwtRetryPolicy`). Such an attempt is not applied, so
+    // a retry still returns the expected rows.
+    batch.set_retry_policy(Some(Arc::new(LwtRetryPolicy {
+        retry_commit_timeouts: false,
+    })));
     batch.append_statement("UPDATE tab SET r2 = 1 WHERE p1 = 0 AND c1 = 0 IF r1 = 0");
     batch.append_statement("INSERT INTO tab (p1, c1, r1, r2) VALUES (0, 123, 321, 312)");
     batch.append_statement("UPDATE tab SET r1 = 1 WHERE p1 = 0 AND c1 = 0 IF r2 = 0");
@@ -370,6 +377,7 @@ async fn test_batch_lwts_for_cassandra(
 
 #[tokio::test]
 async fn test_prepare_batch() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
