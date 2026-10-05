@@ -1379,6 +1379,22 @@ fn cqlduration_serialization() {
         do_serialize(duration, &ColumnType::Native(NativeType::Duration)),
         vec![0, 0, 0, 3, 2, 4, 6]
     );
+
+    // The longest possible encoding.
+    let duration = CqlDuration {
+        months: i32::MIN,
+        days: i32::MIN,
+        nanoseconds: i64::MIN,
+    };
+    assert_eq!(
+        do_serialize(duration, &ColumnType::Native(NativeType::Duration)),
+        vec![
+            0, 0, 0, 19, // size
+            0xf0, 0xff, 0xff, 0xff, 0xff, // months
+            0xf0, 0xff, 0xff, 0xff, 0xff, // days
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // nanoseconds
+        ]
+    );
 }
 
 #[test]

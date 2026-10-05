@@ -396,12 +396,14 @@ impl SerializeValue for Counter {
 impl SerializeValue for CqlDuration {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Duration);
-        // TODO: adjust vint_encode to use CellValueBuilder or something like that
-        let mut buf = Vec::with_capacity(27); // worst case size is 27
-        vint_encode(me.months as i64, &mut buf);
-        vint_encode(me.days as i64, &mut buf);
-        vint_encode(me.nanoseconds, &mut buf);
-        writer.set_value(buf.as_slice()).unwrap()
+        // A vint takes at most 9 bytes.
+        let mut buf = [0; 27];
+        let mut unused = &mut buf[..];
+        vint_encode(me.months as i64, &mut unused);
+        vint_encode(me.days as i64, &mut unused);
+        vint_encode(me.nanoseconds, &mut unused);
+        let unused_len = unused.len();
+        writer.set_value(&buf[..buf.len() - unused_len]).unwrap()
     });
 }
 impl<V: SerializeValue> SerializeValue for MaybeUnset<V> {
