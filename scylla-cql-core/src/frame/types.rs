@@ -260,7 +260,7 @@ fn zig_zag_decode(v: u64) -> i64 {
     ((v >> 1) as i64) ^ -((v & 1) as i64)
 }
 
-pub(crate) fn unsigned_vint_encode(v: u64, buf: &mut Vec<u8>) {
+pub(crate) fn unsigned_vint_encode(v: u64, buf: &mut impl BufMut) {
     let mut v = v;
     let mut number_of_bytes = (639 - 9 * v.leading_zeros()) >> 6;
     if number_of_bytes <= 1 {
