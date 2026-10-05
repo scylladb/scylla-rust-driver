@@ -1171,6 +1171,11 @@ pub fn mk_typck_err<T: ?Sized>(
     mk_typck_err_named(std::any::type_name::<T>(), got, kind)
 }
 
+// Outlined and cold: building the error deep-clones the `ColumnType` and
+// allocates, which would otherwise bloat every `serialize` body enough to
+// stop it being inlined into a collection's element loop.
+#[cold]
+#[inline(never)]
 fn mk_typck_err_named(
     name: &'static str,
     got: &ColumnType,
@@ -1205,6 +1210,11 @@ pub fn mk_ser_err<T: ?Sized>(
     mk_ser_err_named(std::any::type_name::<T>(), got, kind)
 }
 
+// Outlined and cold: building the error deep-clones the `ColumnType` and
+// allocates, which would otherwise bloat every `serialize` body enough to
+// stop it being inlined into a collection's element loop.
+#[cold]
+#[inline(never)]
 fn mk_ser_err_named(
     name: &'static str,
     got: &ColumnType,
