@@ -24,6 +24,10 @@ margin.
 
 When the ``GITHUB_OUTPUT`` environment variable is set, ``has_regressions`` is
 written to it so the workflow can decide whether to label the pull request.
+
+Fails if the output uses an unknown gungraun schema version or a benchmark lacks
+a thresholded metric, so a format change fails the job instead of producing an
+empty report.
 """
 
 from __future__ import annotations
@@ -35,6 +39,10 @@ import re
 import sys
 from dataclasses import dataclass
 from typing import Optional
+
+# The gungraun JSON summary schema version this script parses. gungraun bumps it
+# on every backwards-incompatible change to the format.
+SCHEMA_VERSION = "7"
 
 # gungraun metric keys that are checked against thresholds.
 INSTRUCTIONS = "Ir"
@@ -169,6 +177,12 @@ def _scenario_name(function: str, params: tuple[int, ...]) -> str:
 
 def _benchmark(record: dict) -> Benchmark:
     """Parses one JSON record into a :class:`Benchmark`, keeping every metric."""
+    version = record["version"]
+    if version != SCHEMA_VERSION:
+        raise ValueError(
+            f"unsupported gungraun summary schema version {version!r} (expected "
+            f"{SCHEMA_VERSION!r}), update scripts/compare-benchmarks.py"
+        )
     function = record["function_name"]
     details = record.get("description") or ""
     # The trailing setup argument is the request count; any leading arguments
@@ -186,10 +200,15 @@ def _benchmark(record: dict) -> Benchmark:
             if metric is not None:
                 rows.append(MetricRow(key, _label(tool, key), tool, metric))
 
+    name = _scenario_name(function, params)
+    missing = set(_THRESHOLDED) - {row.key for row in rows}
+    if missing:
+        raise ValueError(f"{name}: missing thresholded metrics {sorted(missing)}")
+
     return Benchmark(
         function=function,
         details=details,
-        name=_scenario_name(function, params),
+        name=name,
         rows=rows,
     )
 
@@ -403,7 +422,11 @@ def main() -> int:
         with open(args.results, encoding="utf-8") as handle:
             text = handle.read()
 
-    benchmarks = parse_results(text)
+    try:
+        benchmarks = parse_results(text)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     if not benchmarks:
         print("error: no benchmark results found", file=sys.stderr)
         return 1
