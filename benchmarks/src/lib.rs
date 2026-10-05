@@ -16,6 +16,7 @@
 //! the reusable building blocks.
 
 pub mod deserialization;
+pub mod value;
 
 use std::env;
 use std::hint::black_box;
