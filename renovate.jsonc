@@ -5,6 +5,21 @@
         "helpers:pinGitHubActionDigestsToSemver"
     ],
     "commitBodyTable": true,
+    // The merge queue copies the PR body into the merge commit message, so keep it short:
+    // drop the config description, rebase checkbox, footer and inline release notes.
+    // Release notes are linked from the table instead.
+    "prBodyTemplate": "{{{header}}}{{{table}}}{{{warnings}}}{{{notes}}}",
+    "prBodyColumns": [
+        "Package",
+        "Type",
+        "Update",
+        "Change",
+        "Pending",
+        "Release notes"
+    ],
+    "prBodyDefinitions": {
+        "Release notes": "{{#each releases}}{{#if releaseNotes.url}}[{{{version}}}]({{{releaseNotes.url}}}) {{/if}}{{/each}}"
+    },
     "description": "Global branch-creation cadence: Renovate may only open update branches on Saturdays. Individual deps can be slowed down further with a per-package `schedule` below.",
     // See https://crontab.cronhub.io/ for cheatsheet on crontab syntax and translation to natural language.
     "schedule": [
