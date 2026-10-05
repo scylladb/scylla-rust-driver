@@ -1691,6 +1691,44 @@ fn cqlvalue_serialization() {
         ]
     );
 
+    // Fields missing from the value are serialized as nulls, whether the
+    // other fields are in order or not.
+    let typ = ColumnType::UserDefinedType {
+        frozen: false,
+        definition: Arc::new(UserDefinedType {
+            name: "t".into(),
+            keyspace: "ks".into(),
+            field_types: vec![
+                ("foo".into(), ColumnType::Native(NativeType::Int)),
+                ("bar".into(), ColumnType::Native(NativeType::Text)),
+                ("baz".into(), ColumnType::Native(NativeType::Int)),
+            ],
+        }),
+    };
+    let expected = vec![
+        0, 0, 0, 20, // size of the whole thing
+        0, 0, 0, 4, 0, 0, 0, 123, // foo: 123_i32
+        255, 255, 255, 255, // bar: null
+        0, 0, 0, 4, 0, 0, 1, 200, // baz: 456_i32
+    ];
+    for fields in [
+        vec![
+            ("foo".to_string(), Some(CqlValue::Int(123))),
+            ("baz".to_string(), Some(CqlValue::Int(456))),
+        ],
+        vec![
+            ("baz".to_string(), Some(CqlValue::Int(456))),
+            ("foo".to_string(), Some(CqlValue::Int(123))),
+        ],
+    ] {
+        let udt = CqlValue::UserDefinedType {
+            keyspace: "ks".to_string(),
+            name: "t".to_string(),
+            fields,
+        };
+        assert_eq!(do_serialize(udt, &typ), expected);
+    }
+
     // Tuples
     let tup = CqlValue::Tuple(vec![Some(CqlValue::Int(123)), None]);
     let typ = ColumnType::Tuple(vec![

@@ -7,8 +7,8 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Display;
 use std::hash::BuildHasher;
+use std::iter::Peekable;
 use std::net::IpAddr;
-use std::ops::Deref as _;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -779,15 +779,13 @@ fn serialize_udt<'b>(
 
     // Allow columns present in the CQL type which are not present in CqlValue,
     // but not the other way around
-    let mut indexed_fields: HashMap<_, _> = values.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    let mut field_values = UdtFieldValues::new(field_types, values);
 
     let mut builder = writer.into_value_builder();
     for (fname, ftyp) in field_types {
         // Take a value from the original list.
         // If a field is missing, write null instead.
-        let fvalue = indexed_fields
-            .remove(fname.deref())
-            .and_then(|x| x.as_ref());
+        let fvalue = field_values.take(fname).and_then(|x| x.as_ref());
 
         let writer = builder.make_sub_writer();
         match fvalue {
@@ -806,10 +804,7 @@ fn serialize_udt<'b>(
     }
 
     // If there are some leftover fields, it's an error.
-    if !indexed_fields.is_empty() {
-        // In order to have deterministic errors, return an error about
-        // the lexicographically smallest field.
-        let fname = indexed_fields.keys().min().unwrap();
+    if let Some(fname) = field_values.smallest_leftover() {
         return Err(mk_typck_err::<CqlValue>(
             typ,
             UdtTypeCheckErrorKind::NoSuchFieldInUdt {
@@ -821,6 +816,53 @@ fn serialize_udt<'b>(
     builder
         .finish()
         .map_err(|_| mk_ser_err::<CqlValue>(typ, BuiltinSerializationErrorKind::SizeOverflow))
+}
+
+/// The values of a `CqlValue::UserDefinedType`'s fields, looked up by the
+/// fields' names.
+enum UdtFieldValues<'a> {
+    /// The values follow the order of the UDT's fields, possibly with some
+    /// fields missing. This is almost always the case, and then the values
+    /// can be matched up as the fields are walked, without an index.
+    InOrder(Peekable<std::slice::Iter<'a, (String, Option<CqlValue>)>>),
+    Indexed(HashMap<&'a str, &'a Option<CqlValue>>),
+}
+
+impl<'a> UdtFieldValues<'a> {
+    fn new(
+        field_types: &[(Cow<'_, str>, ColumnType<'_>)],
+        values: &'a [(String, Option<CqlValue>)],
+    ) -> Self {
+        let mut in_order = values.iter().peekable();
+        for (fname, _) in field_types {
+            in_order.next_if(|(name, _)| name == fname);
+        }
+        if in_order.peek().is_none() {
+            Self::InOrder(values.iter().peekable())
+        } else {
+            Self::Indexed(values.iter().map(|(k, v)| (k.as_str(), v)).collect())
+        }
+    }
+
+    /// Takes the value of the field `name`. Must be called for the UDT's
+    /// fields in order.
+    fn take(&mut self, name: &str) -> Option<&'a Option<CqlValue>> {
+        match self {
+            Self::InOrder(values) => values.next_if(|(n, _)| n == name).map(|(_, v)| v),
+            Self::Indexed(values) => values.remove(name),
+        }
+    }
+
+    /// Returns the lexicographically smallest of the fields not taken, so
+    /// that the error about them is deterministic.
+    fn smallest_leftover(&self) -> Option<&'a str> {
+        match self {
+            // All the values matched one of the fields, or this would be
+            // `Indexed`.
+            Self::InOrder(_) => None,
+            Self::Indexed(values) => values.keys().min().copied(),
+        }
+    }
 }
 
 fn serialize_tuple_like<'t, 'b>(
