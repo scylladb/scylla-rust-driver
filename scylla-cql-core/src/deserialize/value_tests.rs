@@ -25,8 +25,8 @@ use super::{
     BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
     BuiltinTypeCheckErrorKind, DeserializeValue, ListlikeIterator, MapDeserializationErrorKind,
     MapIterator, MapTypeCheckErrorKind, MaybeEmpty, SetOrListDeserializationErrorKind,
-    SetOrListTypeCheckErrorKind, VectorIterator, collect_exact_vec, deser_error_replace_rust_name,
-    mk_deser_err,
+    SetOrListTypeCheckErrorKind, VectorDeserializationErrorKind, VectorIterator, collect_exact_vec,
+    deser_error_replace_rust_name, mk_deser_err,
 };
 
 #[test]
@@ -1135,6 +1135,43 @@ fn test_vector_bulk_decoding_matches_element_by_element() {
             }
         }
     }
+}
+
+#[test]
+fn test_vector_elem_deser_errors() {
+    // Blob and text elements share the wire format, so this is a vector<text>
+    // whose element is not valid UTF-8.
+    let ser_typ = ColumnType::Vector {
+        typ: Box::new(ColumnType::Native(NativeType::Blob)),
+        dimensions: 1,
+    };
+    let bytes = serialize(&ser_typ, &vec![vec![0xff_u8]]);
+    let deser_typ = ColumnType::Vector {
+        typ: Box::new(ColumnType::Native(NativeType::Text)),
+        dimensions: 1,
+    };
+
+    fn verify_elem_deser_err<T>(err: &BuiltinDeserializationError, deser_typ: &ColumnType) {
+        assert_eq!(err.rust_name, std::any::type_name::<T>());
+        assert_eq!(err.cql_type, *deser_typ);
+        let BuiltinDeserializationErrorKind::VectorError(
+            VectorDeserializationErrorKind::ElementDeserializationFailed(err),
+        ) = &err.kind
+        else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        let err = get_deser_err_inner(err);
+        assert_eq!(err.rust_name, std::any::type_name::<&str>());
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::Text));
+        assert_matches!(err.kind, BuiltinDeserializationErrorKind::InvalidUtf8(_));
+    }
+
+    let err = deserialize::<Vec<&str>>(&deser_typ, &bytes).unwrap_err();
+    verify_elem_deser_err::<Vec<&str>>(get_deser_err(&err), &deser_typ);
+
+    let mut iterator = deserialize::<VectorIterator<&str>>(&deser_typ, &bytes).unwrap();
+    let err = iterator.next().unwrap().unwrap_err();
+    verify_elem_deser_err::<VectorIterator<&str>>(get_deser_err_inner(&err), &deser_typ);
 }
 
 /// Collections must be allocated once, with the exact capacity, rather than
