@@ -61,6 +61,19 @@
             "minimumReleaseAge": null
         },
         {
+            "description": "Shorter wait for actions used only in jobs without a write token or secrets. A compromised release there could at most fake a CI result, which the crates built in those jobs (updated without any wait) can do anyway. The few days only guard against broken releases. Remove an action from this list before using it in a privileged job.",
+            "matchManagers": [
+                "github-actions"
+            ],
+            "matchPackageNames": [
+                "actions-rust-lang/setup-rust-toolchain",
+                "taiki-e/install-action",
+                "EmbarkStudios/cargo-deny-action",
+                "actions/upload-artifact"
+            ],
+            "minimumReleaseAge": "3 days"
+        },
+        {
             "description": "Newest supported version of feature-pinned crates: surface new majors on the Dependency Dashboard (no PR), as adopting them needs a new feature/alias.",
             "matchManagers": [
                 "cargo"
