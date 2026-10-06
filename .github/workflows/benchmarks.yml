@@ -102,6 +102,8 @@ jobs:
     needs: benchmark
     permissions:
       pull-requests: write
+    # Holds a write token, so it must not restore caches.
+    cache-mode: none
     timeout-minutes: 3
     steps:
     - name: Add the affects-performance label
