@@ -89,6 +89,8 @@ jobs:
     if: github.event_name == 'pull_request_target'
     permissions:
       pull-requests: write
+    # Holds a write token, so it must not restore caches.
+    cache-mode: none
     needs: semver-pull-request-check
     timeout-minutes: 3
     steps:
