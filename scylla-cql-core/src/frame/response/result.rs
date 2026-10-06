@@ -5,6 +5,8 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use crate::utils::safe_format::IteratorSafeFormatExt;
+
 /// Specification of a table in a keyspace.
 ///
 /// For a given cluster, [TableSpec] uniquely identifies a table.
@@ -190,6 +192,35 @@ impl NativeType {
     }
 }
 
+/// Formats the type in CQL syntax, e.g. `bigint`.
+impl std::fmt::Display for NativeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            NativeType::Ascii => "ascii",
+            NativeType::Boolean => "boolean",
+            NativeType::Blob => "blob",
+            NativeType::Counter => "counter",
+            NativeType::Date => "date",
+            NativeType::Decimal => "decimal",
+            NativeType::Double => "double",
+            NativeType::Duration => "duration",
+            NativeType::Float => "float",
+            NativeType::Int => "int",
+            NativeType::BigInt => "bigint",
+            NativeType::Text => "text",
+            NativeType::Timestamp => "timestamp",
+            NativeType::Inet => "inet",
+            NativeType::SmallInt => "smallint",
+            NativeType::TinyInt => "tinyint",
+            NativeType::Time => "time",
+            NativeType::Timeuuid => "timeuuid",
+            NativeType::Uuid => "uuid",
+            NativeType::Varint => "varint",
+        };
+        f.write_str(name)
+    }
+}
+
 /// Collection variants of [ColumnType]. A collection is a composite type that
 /// has dynamic size, so it is possible to add and remove values to/from it.
 ///
@@ -293,6 +324,45 @@ impl ColumnType<'_> {
             | ColumnType::UserDefinedType { .. } => false,
 
             _ => true,
+        }
+    }
+}
+
+/// Formats the type in CQL syntax, the way schema metadata spells it,
+/// e.g. `map<text, frozen<list<int>>>`.
+///
+/// Tuples and vectors are always frozen. Schema metadata spells only
+/// a tuple with `frozen<>`, so it is printed as `frozen<tuple<...>>`
+/// even though [ColumnType::Tuple] carries no `frozen` flag.
+impl std::fmt::Display for ColumnType<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ColumnType::Native(typ) => std::fmt::Display::fmt(typ, f),
+            ColumnType::Collection { frozen: true, typ } => write!(f, "frozen<{typ}>"),
+            ColumnType::Collection { frozen: false, typ } => std::fmt::Display::fmt(typ, f),
+            ColumnType::Vector { typ, dimensions } => write!(f, "vector<{typ}, {dimensions}>"),
+            ColumnType::UserDefinedType {
+                frozen: true,
+                definition,
+            } => write!(f, "frozen<{}>", definition.name),
+            ColumnType::UserDefinedType {
+                frozen: false,
+                definition,
+            } => f.write_str(&definition.name),
+            ColumnType::Tuple(types) => {
+                write!(f, "frozen<tuple<{}>>", types.iter().safe_format(", "))
+            }
+        }
+    }
+}
+
+/// Formats the type in CQL syntax, e.g. `map<text, int>`.
+impl std::fmt::Display for CollectionType<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CollectionType::List(typ) => write!(f, "list<{typ}>"),
+            CollectionType::Map(key, value) => write!(f, "map<{key}, {value}>"),
+            CollectionType::Set(typ) => write!(f, "set<{typ}>"),
         }
     }
 }
@@ -407,4 +477,71 @@ pub struct PreparedMetadata {
     pub pk_indexes: Vec<PartitionKeyIndex>,
     /// Specifications of the bound values.
     pub col_specs: Vec<ColumnSpec<'static>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CollectionType, ColumnType, NativeType, UserDefinedType};
+    use std::sync::Arc;
+
+    #[test]
+    fn column_type_is_displayed_in_cql_syntax() {
+        let int = || Box::new(ColumnType::Native(NativeType::Int));
+        let text = || Box::new(ColumnType::Native(NativeType::Text));
+        let udt = |frozen| ColumnType::UserDefinedType {
+            frozen,
+            definition: Arc::new(UserDefinedType {
+                name: "my_udt".into(),
+                keyspace: "ks".into(),
+                field_types: vec![],
+            }),
+        };
+        let cases = [
+            (ColumnType::Native(NativeType::BigInt), "bigint"),
+            (ColumnType::Native(NativeType::Timeuuid), "timeuuid"),
+            (
+                ColumnType::Collection {
+                    frozen: false,
+                    typ: CollectionType::List(int()),
+                },
+                "list<int>",
+            ),
+            (
+                ColumnType::Collection {
+                    frozen: false,
+                    typ: CollectionType::Set(text()),
+                },
+                "set<text>",
+            ),
+            (
+                ColumnType::Collection {
+                    frozen: false,
+                    typ: CollectionType::Map(
+                        text(),
+                        Box::new(ColumnType::Collection {
+                            frozen: true,
+                            typ: CollectionType::Map(text(), text()),
+                        }),
+                    ),
+                },
+                "map<text, frozen<map<text, text>>>",
+            ),
+            (
+                ColumnType::Tuple(vec![*int(), *text()]),
+                "frozen<tuple<int, text>>",
+            ),
+            (
+                ColumnType::Vector {
+                    typ: Box::new(ColumnType::Native(NativeType::Float)),
+                    dimensions: 3,
+                },
+                "vector<float, 3>",
+            ),
+            (udt(false), "my_udt"),
+            (udt(true), "frozen<my_udt>"),
+        ];
+        for (typ, expected) in cases {
+            assert_eq!(typ.to_string(), expected);
+        }
+    }
 }
