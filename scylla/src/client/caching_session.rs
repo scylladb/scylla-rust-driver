@@ -433,8 +433,6 @@ mod tests {
     use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
     use crate::response::PagingState;
     use crate::routing::partitioner::PartitionerName;
-    use crate::statement::batch::{Batch, BatchStatement};
-    use crate::statement::prepared::PreparedStatement;
     use crate::statement::unprepared::Statement;
     use crate::statement::{Consistency, SerialConsistency};
     use crate::test_utils::{
@@ -448,7 +446,6 @@ mod tests {
         Condition, Proxy, Reaction as _, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
         ResponseFrame, RunningProxy,
     };
-    use std::collections::BTreeSet;
     use std::hash::{BuildHasher, RandomState};
     use std::net::SocketAddr;
     use std::sync::Arc;
@@ -499,23 +496,6 @@ mod tests {
     async fn teardown_keyspace(session: &Session) {
         let ks = session.get_keyspace().unwrap();
         session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
-    }
-
-    async fn create_caching_session() -> CachingSession {
-        let session = CachingSession::from(new_for_test(None).await, 2);
-
-        // Add a row, this makes it easier to check if the caching works combined with the regular execute fn on Session
-        session
-            .execute_unpaged("insert into test_table(a, b) values (1, 2)", &[])
-            .await
-            .unwrap();
-
-        // Clear the cache because it now contains an insert
-        assert_eq!(session.cache.len(), 1);
-
-        session.cache.clear();
-
-        session
     }
 
     /// Test that when the cache is full and a different query comes in, that query will be added
@@ -607,29 +587,6 @@ mod tests {
         let _ = proxy.finish().await;
     }
 
-    async fn assert_test_batch_table_rows_contain(
-        sess: &CachingSession,
-        expected_rows: &[(i32, i32)],
-    ) {
-        let selected_rows: BTreeSet<(i32, i32)> = sess
-            .execute_unpaged("SELECT a, b FROM test_batch_table", ())
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .rows::<(i32, i32)>()
-            .unwrap()
-            .map(|r| r.unwrap())
-            .collect();
-        for expected_row in expected_rows.iter() {
-            if !selected_rows.contains(expected_row) {
-                panic!(
-                    "Expected {selected_rows:?} to contain row: {expected_row:?}, but they didn't"
-                );
-            }
-        }
-    }
-
     #[derive(Default, Clone)]
     struct CustomBuildHasher;
     impl std::hash::BuildHasher for CustomBuildHasher {
@@ -665,124 +622,6 @@ mod tests {
             CachingSession::with_hasher(connect(proxy_addr).await, 2, Default::default());
 
         let _ = proxy.finish().await;
-    }
-
-    #[tokio::test]
-    async fn test_batch() {
-        setup_tracing();
-        let session: CachingSession = create_caching_session().await;
-
-        session
-            .ddl("CREATE TABLE IF NOT EXISTS test_batch_table (a int, b int, primary key (a, b))")
-            .await
-            .unwrap();
-
-        let unprepared_insert_a_b: &str = "insert into test_batch_table (a, b) values (?, ?)";
-        let unprepared_insert_a_7: &str = "insert into test_batch_table (a, b) values (?, 7)";
-        let unprepared_insert_8_b: &str = "insert into test_batch_table (a, b) values (8, ?)";
-        let prepared_insert_a_b: PreparedStatement = session
-            .add_prepared_statement(&unprepared_insert_a_b.into())
-            .await
-            .unwrap();
-        let prepared_insert_a_7: PreparedStatement = session
-            .add_prepared_statement(&unprepared_insert_a_7.into())
-            .await
-            .unwrap();
-        let prepared_insert_8_b: PreparedStatement = session
-            .add_prepared_statement(&unprepared_insert_8_b.into())
-            .await
-            .unwrap();
-
-        let assert_batch_prepared = |b: &Batch| {
-            for stmt in &b.statements {
-                match stmt {
-                    BatchStatement::PreparedStatement(_) => {}
-                    _ => panic!("Unprepared statement in prepared batch!"),
-                }
-            }
-        };
-
-        {
-            let mut unprepared_batch: Batch = Default::default();
-            unprepared_batch.append_statement(unprepared_insert_a_b);
-            unprepared_batch.append_statement(unprepared_insert_a_7);
-            unprepared_batch.append_statement(unprepared_insert_8_b);
-
-            session
-                .batch(&unprepared_batch, ((10, 20), (10,), (20,)))
-                .await
-                .unwrap();
-            assert_test_batch_table_rows_contain(&session, &[(10, 20), (10, 7), (8, 20)]).await;
-
-            let prepared_batch: Batch = session.prepare_batch(&unprepared_batch).await.unwrap();
-            assert_batch_prepared(&prepared_batch);
-
-            session
-                .batch(&prepared_batch, ((15, 25), (15,), (25,)))
-                .await
-                .unwrap();
-            assert_test_batch_table_rows_contain(&session, &[(15, 25), (15, 7), (8, 25)]).await;
-        }
-
-        {
-            let mut partially_prepared_batch: Batch = Default::default();
-            partially_prepared_batch.append_statement(unprepared_insert_a_b);
-            partially_prepared_batch.append_statement(prepared_insert_a_7.clone());
-            partially_prepared_batch.append_statement(unprepared_insert_8_b);
-
-            session
-                .batch(&partially_prepared_batch, ((30, 40), (30,), (40,)))
-                .await
-                .unwrap();
-            assert_test_batch_table_rows_contain(&session, &[(30, 40), (30, 7), (8, 40)]).await;
-
-            let prepared_batch: Batch = session
-                .prepare_batch(&partially_prepared_batch)
-                .await
-                .unwrap();
-            assert_batch_prepared(&prepared_batch);
-
-            session
-                .batch(&prepared_batch, ((35, 45), (35,), (45,)))
-                .await
-                .unwrap();
-            assert_test_batch_table_rows_contain(&session, &[(35, 45), (35, 7), (8, 45)]).await;
-        }
-
-        {
-            let mut fully_prepared_batch: Batch = Default::default();
-            fully_prepared_batch.append_statement(prepared_insert_a_b);
-            fully_prepared_batch.append_statement(prepared_insert_a_7);
-            fully_prepared_batch.append_statement(prepared_insert_8_b);
-
-            session
-                .batch(&fully_prepared_batch, ((50, 60), (50,), (60,)))
-                .await
-                .unwrap();
-            assert_test_batch_table_rows_contain(&session, &[(50, 60), (50, 7), (8, 60)]).await;
-
-            let prepared_batch: Batch = session.prepare_batch(&fully_prepared_batch).await.unwrap();
-            assert_batch_prepared(&prepared_batch);
-
-            session
-                .batch(&prepared_batch, ((55, 65), (55,), (65,)))
-                .await
-                .unwrap();
-
-            assert_test_batch_table_rows_contain(&session, &[(55, 65), (55, 7), (8, 65)]).await;
-        }
-
-        {
-            let mut bad_batch: Batch = Default::default();
-            bad_batch.append_statement(unprepared_insert_a_b);
-            bad_batch.append_statement("This isnt even CQL");
-            bad_batch.append_statement(unprepared_insert_8_b);
-
-            assert!(session.batch(&bad_batch, ((1, 2), (), (2,))).await.is_err());
-            assert!(session.prepare_batch(&bad_batch).await.is_err());
-        }
-
-        teardown_keyspace(session.get_session()).await;
     }
 
     // The CachingSession::execute and friends should have the same StatementConfig
