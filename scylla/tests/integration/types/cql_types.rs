@@ -122,11 +122,14 @@ where
 // Whenever the value *is* representable, it is additionally inserted bound -
 // exercising serialization, which a literal does not - and read back again.
 //
+// The values go to `column` of row `id = 0` in `table`.
+//
 // `quote_literal` says whether the type's CQL literal is the value in single
 // quotes (dates, times, blobs as text, ...) or the value itself.
 async fn run_literal_and_bound_tests_maybe_representable<T>(
     session: &Session,
     table: &str,
+    column: &str,
     quote_literal: bool,
     tests: impl IntoIterator<Item = (&str, Option<T>)>,
 ) where
@@ -140,14 +143,14 @@ async fn run_literal_and_bound_tests_maybe_representable<T>(
         };
         session
             .query_unpaged(
-                format!("INSERT INTO {table} (id, val) VALUES (0, {literal_sql})"),
+                format!("INSERT INTO {table} (id, {column}) VALUES (0, {literal_sql})"),
                 &[],
             )
             .await
             .unwrap();
 
         let read_literal = session
-            .query_unpaged(format!("SELECT val FROM {table}"), &[])
+            .query_unpaged(format!("SELECT {column} FROM {table}"), &[])
             .await
             .unwrap()
             .into_rows_result()
@@ -160,20 +163,20 @@ async fn run_literal_and_bound_tests_maybe_representable<T>(
                 assert_eq!(
                     read_literal.as_ref().unwrap(),
                     &expected,
-                    "Literal {literal} did not read back as expected"
+                    "Literal {literal} did not read back as expected from column {column}"
                 );
 
                 // The value is representable, so it can also be sent bound.
                 session
                     .query_unpaged(
-                        format!("INSERT INTO {table} (id, val) VALUES (0, ?)"),
+                        format!("INSERT INTO {table} (id, {column}) VALUES (0, ?)"),
                         (&expected,),
                     )
                     .await
                     .unwrap();
 
                 let (read_bound,) = session
-                    .query_unpaged(format!("SELECT val FROM {table}"), &[])
+                    .query_unpaged(format!("SELECT {column} FROM {table}"), &[])
                     .await
                     .unwrap()
                     .into_rows_result()
@@ -182,13 +185,13 @@ async fn run_literal_and_bound_tests_maybe_representable<T>(
                     .unwrap();
                 assert_eq!(
                     &read_bound, &expected,
-                    "Bound value {expected:?} did not read back as itself"
+                    "Bound value {expected:?} did not read back as itself from column {column}"
                 );
             }
             None => assert!(
                 read_literal.is_err(),
-                "Literal {literal} is not representable, so reading it back should have failed, \
-                 but it yielded {read_literal:?}"
+                "Literal {literal} is not representable, so reading it back from column {column} \
+                 should have failed, but it yielded {read_literal:?}"
             ),
         }
     }
@@ -199,6 +202,7 @@ async fn run_literal_and_bound_tests_maybe_representable<T>(
 async fn run_literal_and_bound_tests<T>(
     session: &Session,
     table: &str,
+    column: &str,
     quote_literal: bool,
     tests: impl IntoIterator<Item = (&str, T)>,
 ) where
@@ -207,6 +211,7 @@ async fn run_literal_and_bound_tests<T>(
     run_literal_and_bound_tests_maybe_representable(
         session,
         table,
+        column,
         quote_literal,
         tests
             .into_iter()
@@ -463,6 +468,7 @@ async fn test_naive_date_04() {
     run_literal_and_bound_tests_maybe_representable(
         &session,
         "chrono_naive_date_tests",
+        "val",
         true,
         tests,
     )
@@ -507,7 +513,7 @@ async fn test_cql_date() {
         //("5881580-07-11", Date(u32::MAX)),
     ];
 
-    run_literal_and_bound_tests(&session, "cql_date_tests", true, tests).await;
+    run_literal_and_bound_tests(&session, "cql_date_tests", "val", true, tests).await;
 
     // 1 less/more than min/max values allowed by the database should cause error
     let err = session
@@ -577,7 +583,14 @@ async fn test_date_03() {
         ("-5877641-06-23", None),
     ];
 
-    run_literal_and_bound_tests_maybe_representable(&session, "time_date_tests", true, tests).await;
+    run_literal_and_bound_tests_maybe_representable(
+        &session,
+        "time_date_tests",
+        "val",
+        true,
+        tests,
+    )
+    .await;
 
     session
         .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
@@ -604,7 +617,7 @@ async fn test_cql_time() {
         ("23:59:59.999999999", CqlTime(max_time)),
     ];
 
-    run_literal_and_bound_tests(&session, "cql_time_tests", true, tests).await;
+    run_literal_and_bound_tests(&session, "cql_time_tests", "val", true, tests).await;
 
     // Tests with invalid time values
     // Make sure that database rejects them
@@ -691,7 +704,7 @@ async fn test_naive_time_04() {
         ),
     ];
 
-    run_literal_and_bound_tests(&session, "chrono_time_tests", true, tests).await;
+    run_literal_and_bound_tests(&session, "chrono_time_tests", "val", true, tests).await;
 
     // chrono can represent leap seconds, but CQL `time` cannot.
     // Serialization must reject such a value instead of panicking.
@@ -740,7 +753,7 @@ async fn test_time_03() {
         ),
     ];
 
-    run_literal_and_bound_tests(&session, "time_time_tests", true, tests).await;
+    run_literal_and_bound_tests(&session, "time_time_tests", "val", true, tests).await;
 
     session
         .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
@@ -778,7 +791,7 @@ async fn test_cql_timestamp() {
         //("2011-02-03T04:05:00.000+0000", Duration::milliseconds(1299038700000)),
     ];
 
-    run_literal_and_bound_tests(&session, "cql_timestamp_tests", true, tests).await;
+    run_literal_and_bound_tests(&session, "cql_timestamp_tests", "val", true, tests).await;
 
     session
         .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
@@ -839,7 +852,7 @@ async fn test_date_time_04() {
         ),
     ];
 
-    run_literal_and_bound_tests(&session, "chrono_datetime_tests", true, tests).await;
+    run_literal_and_bound_tests(&session, "chrono_datetime_tests", "val", true, tests).await;
 
     // chrono datetime has higher precision, round excessive submillisecond time down
     let nanosecond_precision_1st_half = NaiveDateTime::new(
@@ -987,7 +1000,7 @@ async fn test_offset_date_time_03() {
         ),
     ];
 
-    run_literal_and_bound_tests(&session, "time_datetime_tests", true, tests).await;
+    run_literal_and_bound_tests(&session, "time_datetime_tests", "val", true, tests).await;
 
     // time datetime has higher precision, round excessive submillisecond time down
     let nanosecond_precision_1st_half = PrimitiveDateTime::new(
@@ -1257,7 +1270,7 @@ async fn test_inet() {
         ),
     ];
 
-    run_literal_and_bound_tests(&session, "inet_tests", true, tests).await;
+    run_literal_and_bound_tests(&session, "inet_tests", "val", true, tests).await;
 
     session
         .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
@@ -1295,7 +1308,7 @@ async fn test_blob() {
         (&long_blob_str, long_blob),
     ];
 
-    run_literal_and_bound_tests(&session, "blob_tests", false, tests).await;
+    run_literal_and_bound_tests(&session, "blob_tests", "val", false, tests).await;
 
     session
         .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
