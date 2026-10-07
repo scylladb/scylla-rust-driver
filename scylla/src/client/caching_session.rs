@@ -427,13 +427,15 @@ mod tests {
     use crate::client::caching_session::{CachingSessionBuilder, DEFAULT_MAX_CAPACITY};
     use crate::client::session::Session;
     use crate::client::session_builder::SessionBuilder;
+    use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
     use crate::response::PagingState;
     use crate::routing::partitioner::PartitionerName;
     use crate::statement::batch::{Batch, BatchStatement};
     use crate::statement::prepared::PreparedStatement;
     use crate::statement::unprepared::Statement;
     use crate::test_utils::{
-        PerformDDL, create_new_session_builder, disable_tablets_unless_supported, setup_tracing,
+        PerformDDL, create_new_session_builder, disable_tablets_unless_supported,
+        dry_mode_handshake_rules, setup_tracing,
     };
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::value::Row;
@@ -442,10 +444,11 @@ mod tests {
         Condition, Proxy, Reaction as _, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
         ResponseFrame, RunningProxy,
     };
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::BTreeSet;
     use std::hash::{BuildHasher, RandomState};
     use std::net::SocketAddr;
     use std::sync::Arc;
+    use tokio::sync::mpsc;
 
     use super::CachingSession;
 
@@ -516,7 +519,8 @@ mod tests {
     #[tokio::test]
     async fn test_full() {
         setup_tracing();
-        let session = create_caching_session().await;
+        let (proxy_addr, proxy, _prepares) = make_test_table_proxy().await;
+        let session: CachingSession = CachingSession::from(connect(proxy_addr).await, 2);
 
         let first_query = "SELECT * FROM test_table";
         let middle_query = "INSERT INTO test_table(a, b) VALUES (?, ?)";
@@ -546,82 +550,57 @@ mod tests {
 
         assert!(first_query_removed || middle_query_removed);
 
-        teardown_keyspace(session.get_session()).await;
+        let _ = proxy.finish().await;
     }
 
-    /// Checks that the same prepared statement is reused when executing the same query twice
+    /// Checks that executing a statement twice prepares it only once,
+    /// with every method that uses the cache.
     #[tokio::test]
-    async fn test_execute_unpaged_cached() {
+    async fn test_execute_cached() {
         setup_tracing();
-        let session = create_caching_session().await;
-        let result = session
-            .execute_unpaged("SELECT * FROM test_table", &[])
-            .await
-            .unwrap();
-        let result_rows = result.into_rows_result().unwrap();
+        let (proxy_addr, proxy, mut prepares) = make_test_table_proxy().await;
+        let session: CachingSession = CachingSession::from(connect(proxy_addr).await, 2);
 
-        assert_eq!(1, session.cache.len());
-        assert_eq!(1, result_rows.rows_num());
+        let mut assert_prepared_once = || {
+            prepares.try_recv().unwrap();
+            prepares.try_recv().unwrap_err();
+            assert_eq!(1, session.cache.len());
+            session.cache.clear();
+        };
 
-        let result = session
-            .execute_unpaged("SELECT * FROM test_table", &[])
-            .await
-            .unwrap();
+        for _ in 0..2 {
+            let result = session
+                .execute_unpaged(SELECT_FROM_TEST_TABLE, &[])
+                .await
+                .unwrap();
+            assert_eq!(1, result.into_rows_result().unwrap().rows_num());
+        }
+        assert_prepared_once();
 
-        let result_rows = result.into_rows_result().unwrap();
+        for _ in 0..2 {
+            let rows = session
+                .execute_iter(SELECT_FROM_TEST_TABLE, &[])
+                .await
+                .unwrap()
+                .rows_stream::<Row>()
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap();
+            assert_eq!(1, rows.len());
+        }
+        assert_prepared_once();
 
-        assert_eq!(1, session.cache.len());
-        assert_eq!(1, result_rows.rows_num());
+        for _ in 0..2 {
+            let (result, _paging_state) = session
+                .execute_single_page(SELECT_FROM_TEST_TABLE, &[], PagingState::start())
+                .await
+                .unwrap();
+            assert_eq!(1, result.into_rows_result().unwrap().rows_num());
+        }
+        assert_prepared_once();
 
-        teardown_keyspace(session.get_session()).await;
-    }
-
-    /// Checks that caching works with execute_iter
-    #[tokio::test]
-    async fn test_execute_iter_cached() {
-        setup_tracing();
-        let session = create_caching_session().await;
-
-        assert!(session.cache.is_empty());
-
-        let iter = session
-            .execute_iter("SELECT * FROM test_table", &[])
-            .await
-            .unwrap()
-            .rows_stream::<Row>()
-            .unwrap()
-            .into_stream();
-
-        let rows = iter
-            .into_stream()
-            .try_collect::<Vec<_>>()
-            .await
-            .unwrap()
-            .len();
-
-        assert_eq!(1, rows);
-        assert_eq!(1, session.cache.len());
-
-        teardown_keyspace(session.get_session()).await;
-    }
-
-    /// Checks that caching works with execute_single_page
-    #[tokio::test]
-    async fn test_execute_single_page_cached() {
-        setup_tracing();
-        let session = create_caching_session().await;
-
-        assert!(session.cache.is_empty());
-
-        let (result, _paging_state) = session
-            .execute_single_page("SELECT * FROM test_table", &[], PagingState::start())
-            .await
-            .unwrap();
-
-        assert_eq!(1, session.cache.len());
-        assert_eq!(1, result.into_rows_result().unwrap().rows_num());
-
-        teardown_keyspace(session.get_session()).await;
+        let _ = proxy.finish().await;
     }
 
     async fn assert_test_batch_table_rows_contain(
@@ -672,16 +651,16 @@ mod tests {
     #[tokio::test]
     async fn test_custom_hasher() {
         setup_tracing();
+        let (proxy_addr, proxy) = make_minimal_proxy().await;
 
-        let session: CachingSession<std::collections::hash_map::RandomState> =
-            CachingSession::from(new_for_test(None).await, 2);
-        teardown_keyspace(session.get_session()).await;
-        let session: CachingSession<CustomBuildHasher> =
-            CachingSession::from(new_for_test(None).await, 2);
-        teardown_keyspace(session.get_session()).await;
-        let session: CachingSession<CustomBuildHasher> =
-            CachingSession::with_hasher(new_for_test(None).await, 2, Default::default());
-        teardown_keyspace(session.get_session()).await;
+        let _: CachingSession<std::collections::hash_map::RandomState> =
+            CachingSession::from(connect(proxy_addr).await, 2);
+        let _: CachingSession<CustomBuildHasher> =
+            CachingSession::from(connect(proxy_addr).await, 2);
+        let _: CachingSession<CustomBuildHasher> =
+            CachingSession::with_hasher(connect(proxy_addr).await, 2, Default::default());
+
+        let _ = proxy.finish().await;
     }
 
     #[tokio::test]
@@ -908,41 +887,22 @@ mod tests {
         assert_eq!(h1.hash_one(TO_BE_HASHED), h2.hash_one(TO_BE_HASHED));
     }
 
-    async fn make_minimal_proxy() -> (SocketAddr, RunningProxy) {
+    /// Starts a dry-mode proxy that allows finishing creation of a Session.
+    /// It performs the whole handshake on all connections, applies `rules`, and
+    /// responds to all other QUERY, PREPARE and EXECUTE requests with an error.
+    async fn make_proxy(rules: Vec<RequestRule>) -> (SocketAddr, RunningProxy) {
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
 
-        // A proxy that allows finishing creation of a Session.
-        // It performs the whole handshake on all connections, but responds to all
-        // QUERY, PREPARE and EXECUTE requests with an error.
-        let proxy_rules = vec![
-            // OPTIONS -> SUPPORTED rule
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Options),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_supported(frame.params, &HashMap::default()).unwrap()
-                })),
-            ),
-            // STARTUP -> READY rule
-            // REGISTER -> READY rule
-            RequestRule(
-                Condition::or(
-                    Condition::RequestOpcode(RequestOpcode::Startup),
-                    Condition::RequestOpcode(RequestOpcode::Register),
-                ),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_ready(frame.params)
-                })),
-            ),
-            // QUERY, PREPARE, EXECUTE -> ERROR rule
-            RequestRule(
-                Condition::any([
-                    Condition::RequestOpcode(RequestOpcode::Query),
-                    Condition::RequestOpcode(RequestOpcode::Prepare),
-                    Condition::RequestOpcode(RequestOpcode::Execute),
-                ]),
-                RequestReaction::forge().server_error(),
-            ),
-        ];
+        let mut proxy_rules = dry_mode_handshake_rules();
+        proxy_rules.extend(rules);
+        proxy_rules.push(RequestRule(
+            Condition::any([
+                Condition::RequestOpcode(RequestOpcode::Query),
+                Condition::RequestOpcode(RequestOpcode::Prepare),
+                Condition::RequestOpcode(RequestOpcode::Execute),
+            ]),
+            RequestReaction::forge().server_error(),
+        ));
 
         let proxy = Proxy::builder()
             .with_node(
@@ -957,6 +917,71 @@ mod tests {
             .unwrap();
 
         (proxy_addr, proxy)
+    }
+
+    async fn make_minimal_proxy() -> (SocketAddr, RunningProxy) {
+        make_proxy(Vec::new()).await
+    }
+
+    const SELECT_FROM_TEST_TABLE: &str = "SELECT * FROM test_table";
+
+    fn test_table_col_specs() -> [ColumnSpec<'static>; 2] {
+        let table_spec = TableSpec::borrowed("ks", "test_table");
+        [
+            ColumnSpec::borrowed("a", ColumnType::Native(NativeType::Int), table_spec.clone()),
+            ColumnSpec::borrowed("b", ColumnType::Native(NativeType::Int), table_spec),
+        ]
+    }
+
+    /// Starts a dry-mode proxy pretending that `test_table` holds a single row.
+    ///
+    /// It prepares any statement on `test_table`, reporting each PREPARE to the returned
+    /// receiver, and answers every EXECUTE with that row.
+    async fn make_test_table_proxy() -> (
+        SocketAddr,
+        RunningProxy,
+        mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>,
+    ) {
+        let (prepare_tx, prepare_rx) = mpsc::unbounded_channel();
+        let rules = vec![
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Prepare).and(
+                    Condition::BodyContainsCaseSensitive(b"test_table"[..].into()),
+                ),
+                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                    ResponseFrame::forged_prepared(
+                        frame.params,
+                        b"test_table_statement",
+                        &[],
+                        &test_table_col_specs(),
+                    )
+                    .unwrap()
+                }))
+                .with_feedback_when_performed(prepare_tx),
+            ),
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Execute),
+                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                    ResponseFrame::forged_rows(
+                        frame.params,
+                        &test_table_col_specs(),
+                        [(1, 2)],
+                        None,
+                    )
+                    .unwrap()
+                })),
+            ),
+        ];
+        let (proxy_addr, proxy) = make_proxy(rules).await;
+        (proxy_addr, proxy, prepare_rx)
+    }
+
+    async fn connect(proxy_addr: SocketAddr) -> Session {
+        SessionBuilder::new()
+            .known_node_addr(proxy_addr)
+            .build()
+            .await
+            .unwrap()
     }
 
     /// Tests that [CachingSessionBuilder] passes its config options to the built [CachingSession].
