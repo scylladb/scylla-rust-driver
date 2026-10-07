@@ -8,6 +8,7 @@ use std::cmp::PartialEq;
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
+use uuid::Uuid;
 
 use crate::utils::{
     DeserializeOwnedValue, PerformDDL, create_new_session_builder,
@@ -168,8 +169,8 @@ async fn run_literal_and_bound_tests<T>(
 }
 
 // `run_literal_and_bound_tests` on the `scalar_types` table, for a type whose
-// unquoted literal parses into the expected value with `FromStr`.
-async fn run_from_str_tests<T>(session: &Session, column: &str, tests: &[&str])
+// literal parses into the expected value with `FromStr`.
+async fn run_from_str_tests<T>(session: &Session, column: &str, quote_literal: bool, tests: &[&str])
 where
     T: SerializeValue + DeserializeOwnedValue + FromStr + Debug + Clone + PartialEq,
 {
@@ -177,7 +178,7 @@ where
         session,
         "scalar_types",
         column,
-        false,
+        quote_literal,
         tests
             .iter()
             .map(|literal| (*literal, T::from_str(literal).ok().unwrap())),
@@ -207,13 +208,13 @@ fn varint_test_cases() -> Vec<&'static str> {
 #[cfg(feature = "num-bigint-03")]
 async fn check_varint03(session: &Session) {
     let tests = varint_test_cases();
-    run_from_str_tests::<num_bigint_03::BigInt>(session, "c_varint", &tests).await;
+    run_from_str_tests::<num_bigint_03::BigInt>(session, "c_varint", false, &tests).await;
 }
 
 #[cfg(feature = "num-bigint-04")]
 async fn check_varint04(session: &Session) {
     let tests = varint_test_cases();
-    run_from_str_tests::<num_bigint_04::BigInt>(session, "c_varint", &tests).await;
+    run_from_str_tests::<num_bigint_04::BigInt>(session, "c_varint", false, &tests).await;
 }
 
 async fn check_cql_varint(session: &Session) {
@@ -278,13 +279,13 @@ async fn check_decimal(session: &Session) {
         "-123456789012345678901234567890.1234567890",
     ];
 
-    run_from_str_tests::<bigdecimal_04::BigDecimal>(session, "c_decimal", &tests).await;
+    run_from_str_tests::<bigdecimal_04::BigDecimal>(session, "c_decimal", false, &tests).await;
 }
 
 async fn check_bool(session: &Session) {
     let tests = ["true", "false"];
 
-    run_from_str_tests::<bool>(session, "c_boolean", &tests).await;
+    run_from_str_tests::<bool>(session, "c_boolean", false, &tests).await;
 }
 
 async fn check_float(session: &Session) {
@@ -300,7 +301,7 @@ async fn check_float(session: &Session) {
         min.as_str(),
     ];
 
-    run_from_str_tests::<f32>(session, "c_float", &tests).await;
+    run_from_str_tests::<f32>(session, "c_float", false, &tests).await;
 }
 
 #[tokio::test]
@@ -360,6 +361,14 @@ const SCALAR_TYPES_COLUMNS: &[(&str, &str)] = &[
     ("c_float", "float"),
     ("c_decimal", "decimal"),
     ("c_varint", "varint"),
+    ("c_tinyint", "tinyint"),
+    ("c_smallint", "smallint"),
+    ("c_int", "int"),
+    ("c_bigint", "bigint"),
+    ("c_double", "double"),
+    ("c_uuid", "uuid"),
+    ("c_varchar", "varchar"),
+    ("c_ascii", "ascii"),
 ];
 
 /// Serialization and deserialization of the scalar CQL types.
@@ -425,7 +434,67 @@ async fn test_scalar_types() {
     #[cfg(feature = "num-bigint-04")]
     check_varint04(&session).await;
 
+    check_tinyint(&session).await;
+    check_smallint(&session).await;
+    check_int(&session).await;
+    check_bigint(&session).await;
+    check_double(&session).await;
+    check_uuid(&session).await;
+    check_varchar(&session).await;
+    check_ascii(&session).await;
+
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+async fn check_tinyint(session: &Session) {
+    let (min, max) = (i8::MIN.to_string(), i8::MAX.to_string());
+    let tests = ["0", "1", "-1", &min, &max];
+    run_from_str_tests::<i8>(session, "c_tinyint", false, &tests).await;
+}
+
+async fn check_smallint(session: &Session) {
+    let (min, max) = (i16::MIN.to_string(), i16::MAX.to_string());
+    let tests = ["0", "1", "-1", &min, &max];
+    run_from_str_tests::<i16>(session, "c_smallint", false, &tests).await;
+}
+
+async fn check_int(session: &Session) {
+    let (min, max) = (i32::MIN.to_string(), i32::MAX.to_string());
+    let tests = ["0", "1", "-1", "997", &min, &max];
+    run_from_str_tests::<i32>(session, "c_int", false, &tests).await;
+}
+
+async fn check_bigint(session: &Session) {
+    let (min, max) = (i64::MIN.to_string(), i64::MAX.to_string());
+    let tests = ["0", "1", "-1", "997", &min, &max];
+    run_from_str_tests::<i64>(session, "c_bigint", false, &tests).await;
+}
+
+async fn check_double(session: &Session) {
+    let (min, max) = (f64::MIN.to_string(), f64::MAX.to_string());
+    let tests = ["3.5", "997", "0.1", "128", "-128", &min, &max];
+    run_from_str_tests::<f64>(session, "c_double", false, &tests).await;
+}
+
+async fn check_uuid(session: &Session) {
+    let tests = [
+        "00000000-0000-0000-0000-000000000000",
+        "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        "8e14e760-7fa8-11eb-bc66-000000000001",
+    ];
+    // A `uuid` literal is unquoted, hence `quote_literal: false`.
+    run_from_str_tests::<Uuid>(session, "c_uuid", false, &tests).await;
+}
+
+// `text` is an alias of `varchar`, so testing the latter covers both.
+async fn check_varchar(session: &Session) {
+    let tests = ["", "a", "Zażółć gęślą jaźń", "quote ' inside", "🦀"];
+    run_from_str_tests::<String>(session, "c_varchar", true, &tests).await;
+}
+
+async fn check_ascii(session: &Session) {
+    let tests = ["", "a", "plain ascii text", "quote ' inside"];
+    run_from_str_tests::<String>(session, "c_ascii", true, &tests).await;
 }
 
 #[cfg(feature = "chrono-04")]
