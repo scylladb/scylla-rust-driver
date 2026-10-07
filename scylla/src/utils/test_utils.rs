@@ -11,7 +11,6 @@ use crate::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::cluster::ClusterState;
 use crate::cluster::NodeRef;
 use crate::errors::{ExecutionError, RequestAttemptError};
-use crate::network::Connection;
 use crate::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Shard;
@@ -21,7 +20,6 @@ use scylla_proxy::{
     ResponseFrame,
 };
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::{num::NonZeroU32, time::Duration};
 
@@ -30,20 +28,6 @@ pub(crate) fn unique_keyspace_name() -> String {
     let name = format!("test_rust_{}", id.as_simple(),);
     println!("Unique name: {name}");
     name
-}
-
-// Just like resolve_hostname in session.rs
-pub(crate) async fn resolve_hostname(hostname: &str) -> SocketAddr {
-    match tokio::net::lookup_host(hostname).await {
-        Ok(mut addrs) => addrs.next().unwrap(),
-        Err(_) => {
-            tokio::net::lookup_host((hostname, 9042)) // Port might not be specified, try default
-                .await
-                .unwrap()
-                .next()
-                .unwrap()
-        }
-    }
 }
 
 pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
@@ -273,18 +257,6 @@ impl PerformDDL for CachingSession {
         let mut query = query.into();
         apply_ddl_lbp(&mut query);
         self.execute_unpaged(query, &[]).await.map(|_| ())
-    }
-}
-
-#[async_trait::async_trait]
-impl PerformDDL for Connection {
-    async fn ddl(&self, query: impl Into<Statement> + Send) -> Result<(), ExecutionError> {
-        let mut query = query.into();
-        apply_ddl_lbp(&mut query);
-        self.query_unpaged(&query)
-            .await
-            .map(|_| ())
-            .map_err(ExecutionError::LastAttemptError)
     }
 }
 
