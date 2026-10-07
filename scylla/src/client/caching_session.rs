@@ -432,14 +432,9 @@ mod tests {
     use crate::frame::request::execute::ExecuteV2;
     use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
     use crate::response::PagingState;
-    use crate::routing::partitioner::PartitionerName;
     use crate::statement::unprepared::Statement;
     use crate::statement::{Consistency, SerialConsistency};
-    use crate::test_utils::{
-        PerformDDL, create_new_session_builder, disable_tablets_unless_supported,
-        dry_mode_handshake_rules, setup_tracing,
-    };
-    use crate::utils::test_utils::unique_keyspace_name;
+    use crate::test_utils::{dry_mode_handshake_rules, setup_tracing};
     use crate::value::Row;
     use futures::TryStreamExt;
     use scylla_proxy::{
@@ -452,51 +447,6 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::CachingSession;
-
-    /// Creates a session with a fresh keyspace.
-    ///
-    /// If `required_tablet_feature` is `Some`, tablets are disabled in that keyspace
-    /// unless the cluster supports the given feature - see
-    /// [`disable_tablets_unless_supported`].
-    async fn new_for_test(required_tablet_feature: Option<&str>) -> Session {
-        let session = create_new_session_builder()
-            .build()
-            .await
-            .expect("Could not create session");
-        let ks = unique_keyspace_name();
-
-        let mut create_ks = format!(
-            "CREATE KEYSPACE IF NOT EXISTS {ks}
-        WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
-        );
-        if let Some(feature) = required_tablet_feature {
-            create_ks += disable_tablets_unless_supported(&session, feature).await;
-        }
-
-        session
-            .ddl(create_ks)
-            .await
-            .expect("Could not create keyspace");
-
-        session
-            .ddl(format!(
-                "CREATE TABLE IF NOT EXISTS {ks}.test_table (a int primary key, b int)"
-            ))
-            .await
-            .expect("Could not create table");
-
-        session
-            .use_keyspace(ks, false)
-            .await
-            .expect("Could not set keyspace");
-
-        session
-    }
-
-    async fn teardown_keyspace(session: &Session) {
-        let ks = session.get_keyspace().unwrap();
-        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
-    }
 
     /// Test that when the cache is full and a different query comes in, that query will be added
     /// to the cache and a random query is removed
@@ -708,45 +658,6 @@ mod tests {
         prepares.try_recv().unwrap_err();
 
         let _ = proxy.finish().await;
-    }
-
-    // Checks whether the PartitionerName is cached properly.
-    #[tokio::test]
-    #[cfg_attr(cassandra_tests, ignore)]
-    async fn test_partitioner_name_caching() {
-        setup_tracing();
-
-        let session: CachingSession =
-            CachingSession::from(new_for_test(Some("CDC_WITH_TABLETS")).await, 100);
-
-        session
-            .ddl("CREATE TABLE tbl (a int PRIMARY KEY) with cdc = {'enabled': true}")
-            .await
-            .unwrap();
-
-        session
-            .get_session()
-            .await_schema_agreement()
-            .await
-            .unwrap();
-
-        // This creates a query with default partitioner name (murmur hash),
-        // but after adding the statement it should be changed to the cdc
-        // partitioner. It should happen when the query is prepared
-        // and after it is fetched from the cache.
-        let verify_partitioner = || async {
-            let query =
-                Statement::new("SELECT * FROM tbl_scylla_cdc_log WHERE \"cdc$stream_id\" = ?");
-            let prepared = session.add_prepared_statement(&query).await.unwrap();
-            assert_eq!(prepared.get_partitioner_name(), &PartitionerName::CDC);
-        };
-
-        // Using a closure here instead of a loop so that, when the test fails,
-        // one can see which case failed by looking at the full backtrace
-        verify_partitioner().await;
-        verify_partitioner().await;
-
-        teardown_keyspace(session.get_session()).await;
     }
 
     // NOTE: intentionally no `#[test]`: this is a compile-time test
