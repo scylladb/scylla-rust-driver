@@ -2441,6 +2441,29 @@ fn test_floating_points() {
     assert_eq!(double_serialize, CqlValue::Double(double));
 }
 
+#[test]
+fn test_varint_rejects_empty() {
+    let empty = make_bytes(&[]);
+    let typ = ColumnType::Native(Varint);
+
+    assert_deser_error!(
+        &empty,
+        CqlVarint,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+    assert_deser_error!(
+        &empty,
+        CqlVarintBorrowed,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+    assert_eq!(
+        deserialize::<MaybeEmpty<CqlVarint>>(&typ, &empty).unwrap(),
+        MaybeEmpty::Empty
+    );
+}
+
 #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
 struct VarintTestCase {
     value: i32,

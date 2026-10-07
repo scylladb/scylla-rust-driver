@@ -370,6 +370,7 @@ impl_strict_type!(
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
+        let val = ensure_not_empty::<Self>(typ, val)?;
         Ok(CqlVarint::from_signed_bytes_be_slice(val))
     }
 );
@@ -379,6 +380,7 @@ impl_strict_type!(
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
+        let val = ensure_not_empty::<Self>(typ, val)?;
         Ok(CqlVarintBorrowed::from_signed_bytes_be_slice(val))
     },
     'b
@@ -2066,6 +2068,19 @@ fn ensure_not_null_owned<T>(
     v: Option<FrameSlice>,
 ) -> Result<Bytes, DeserializationError> {
     ensure_not_null_frame_slice::<T>(typ, v).map(|frame_slice| frame_slice.to_bytes())
+}
+
+fn ensure_not_empty<'frame, T>(
+    typ: &ColumnType,
+    v: &'frame [u8],
+) -> Result<&'frame [u8], DeserializationError> {
+    if v.is_empty() {
+        return Err(mk_deser_err::<T>(
+            typ,
+            BuiltinDeserializationErrorKind::ExpectedNonEmpty,
+        ));
+    }
+    Ok(v)
 }
 
 fn ensure_exact_length<'frame, T, const SIZE: usize>(
