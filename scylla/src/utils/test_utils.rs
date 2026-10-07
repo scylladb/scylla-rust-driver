@@ -16,6 +16,11 @@ use crate::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, Routing
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Shard;
 use crate::statement::unprepared::Statement;
+use scylla_proxy::{
+    Condition, Reaction as _, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
+    ResponseFrame,
+};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::{num::NonZeroU32, time::Duration};
@@ -121,6 +126,28 @@ pub(crate) async fn disable_tablets_unless_supported(
     } else {
         ""
     }
+}
+
+/// Request rules that let a dry-mode proxy node complete the CQL handshake:
+/// OPTIONS is answered with an empty SUPPORTED, and STARTUP and REGISTER with READY.
+pub(crate) fn dry_mode_handshake_rules() -> Vec<RequestRule> {
+    vec![
+        RequestRule(
+            Condition::RequestOpcode(RequestOpcode::Options),
+            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
+            })),
+        ),
+        RequestRule(
+            Condition::or(
+                Condition::RequestOpcode(RequestOpcode::Startup),
+                Condition::RequestOpcode(RequestOpcode::Register),
+            ),
+            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                ResponseFrame::forged_ready(frame.params)
+            })),
+        ),
+    ]
 }
 
 pub(crate) fn setup_tracing() {
