@@ -993,29 +993,6 @@ impl Connection {
         Ok(response)
     }
 
-    #[cfg(test)]
-    async fn execute_raw_unpaged(
-        &self,
-        prepared: &PreparedStatement,
-        values: &SerializedValues,
-    ) -> Result<QueryResponse, RequestAttemptError> {
-        // This method is used only for driver internal queries, so no need to consult execution profile here.
-        self.execute_raw_with_consistency(
-            prepared,
-            values,
-            prepared
-                .config
-                .determine_consistency(self.config.default_consistency),
-            prepared.config.serial_consistency.flatten(),
-            None,
-            PagingState::start(),
-            // A test-only helper executing on one given connection: no cached tablet version
-            // to probe.
-            0,
-        )
-        .await
-    }
-
     fn handle_result_metadata_new_id(
         prepared_statement: &PreparedStatement,
         query_response: &QueryResponse,
@@ -2699,7 +2676,6 @@ mod tests {
     use crate::statement::prepared::PreparedStatement;
     use crate::statement::unprepared::Statement;
     use crate::test_utils::{dry_mode_handshake_rules, setup_tracing};
-    use crate::utils::test_utils::{PerformDDL, resolve_hostname, unique_keyspace_name};
     use futures::{StreamExt, TryStreamExt};
     use std::collections::HashMap;
     use std::net::SocketAddr;
@@ -3140,140 +3116,6 @@ mod tests {
         assert_unexpected_response(err);
 
         fixture.finish().await;
-    }
-
-    #[tokio::test]
-    async fn test_coalescing() {
-        use std::num::NonZeroU64;
-
-        use super::WriteCoalescingDelay;
-        use crate::client::session_builder::SessionBuilder;
-
-        setup_tracing();
-        // It's difficult to write a reliable test that checks whether coalescing
-        // works like intended or not. Instead, this is a smoke test which is supposed
-        // to trigger the coalescing logic and check that everything works fine
-        // no matter whether coalescing is enabled or not.
-
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
-        let addr: SocketAddr = resolve_hostname(&uri).await;
-        let ks = unique_keyspace_name();
-
-        let session = SessionBuilder::new()
-            .known_node_addr(addr)
-            .build()
-            .await
-            .unwrap();
-
-        {
-            // Preparation phase
-            session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone())).await.unwrap();
-            session.use_keyspace(ks.clone(), false).await.unwrap();
-            session
-                .ddl("CREATE TABLE IF NOT EXISTS t (p int primary key, v blob)")
-                .await
-                .unwrap();
-        }
-
-        let subtest = |write_coalescing_delay: Option<WriteCoalescingDelay>, ks: String| async move {
-            let (connection, _) = super::open_connection(
-                &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address: addr }),
-                None,
-                &HostConnectionConfig {
-                    write_coalescing_delay,
-                    ..HostConnectionConfig::default()
-                },
-            )
-            .await
-            .unwrap();
-            let connection = Arc::new(connection);
-
-            connection
-                .use_keyspace(&super::VerifiedKeyspaceName::new(ks, false).unwrap())
-                .await
-                .unwrap();
-
-            connection.ddl("TRUNCATE t").await.unwrap();
-
-            let mut futs = Vec::new();
-
-            const NUM_BATCHES: i32 = 10;
-
-            for batch_size in 0..NUM_BATCHES {
-                // Each future should issue more and more queries in the first poll
-                let base = arithmetic_sequence_sum(batch_size);
-                let conn = connection.clone();
-                futs.push(tokio::task::spawn(async move {
-                    let futs = (base..base + batch_size).map(|j| {
-                        let q = Statement::new("INSERT INTO t (p, v) VALUES (?, ?)");
-                        let conn = conn.clone();
-                        async move {
-                            let prepared = conn.prepare(&q).await.unwrap();
-                            let values = prepared
-                                .serialize_values(&(j, vec![j as u8; j as usize]))
-                                .unwrap();
-                            let response =
-                                conn.execute_raw_unpaged(&prepared, &values).await.unwrap();
-                            // QueryResponse might contain an error - make sure that there were no errors
-                            let _nonerror_response =
-                                response.into_non_error_query_response().unwrap();
-                        }
-                    });
-                    let _joined: Vec<()> = futures::future::join_all(futs).await;
-                }));
-
-                tokio::task::yield_now().await;
-            }
-
-            let _joined: Vec<()> = futures::future::try_join_all(futs).await.unwrap();
-
-            // Check that everything was written properly
-            let range_end = arithmetic_sequence_sum(NUM_BATCHES);
-            let mut results = connection
-                .query_unpaged(&"SELECT p, v FROM t".into())
-                .await
-                .unwrap()
-                .into_rows_result()
-                .unwrap()
-                .rows::<(i32, Vec<u8>)>()
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
-            results.sort();
-
-            let expected = (0..range_end)
-                .map(|i| (i, vec![i as u8; i as usize]))
-                .collect::<Vec<_>>();
-
-            assert_eq!(results, expected);
-        };
-
-        // Non-deterministic sub-millisecond delay
-        subtest(
-            Some(WriteCoalescingDelay::SmallNondeterministic),
-            ks.clone(),
-        )
-        .await;
-        // 1ms delay
-        subtest(
-            Some(WriteCoalescingDelay::Milliseconds(
-                NonZeroU64::new(1).unwrap(),
-            )),
-            ks.clone(),
-        )
-        .await;
-        // No delay - coalescing disabled
-        subtest(None, ks.clone()).await;
-
-        {
-            // Teardown phase
-            session.ddl(format!("DROP KEYSPACE {ks} ")).await.unwrap();
-        }
-    }
-
-    // Returns the sum of integral numbers in the range [0..n)
-    fn arithmetic_sequence_sum(n: i32) -> i32 {
-        n * (n - 1) / 2
     }
 
     #[tokio::test]
