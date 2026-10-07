@@ -144,17 +144,23 @@ jobs:
           tool: nextest
       - name: Print rustc version
         run: rustc --version
+      # Unit tests run before the cluster is set up, so that a unit test that
+      # tries to use a cluster fails. Such tests belong in integration tests.
+      - name: Run unit tests
+        run: |
+          RUST_LOG=trace cargo nextest run --all-features -E 'not binary_id(scylla::integration)'
       - name: Setup 3-node ScyllaDB cluster
         run: |
           sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
           make up
       # We need to run doctests separately, because nextest doesn't support them :(
       # https://github.com/nextest-rs/nextest/issues/16
+      # Some of them connect to the cluster.
       - name: Run doctests
         run: cargo test --doc --all-features
-      - name: Run tests
+      - name: Run integration tests
         run: |
-          RUST_LOG=trace cargo nextest run --all-features
+          RUST_LOG=trace cargo nextest run --all-features -E 'binary_id(scylla::integration)'
       - name: Check for stale test keyspaces
         run: cargo run --bin find-stale-test-keyspaces
       - name: Stop the docker cluster
