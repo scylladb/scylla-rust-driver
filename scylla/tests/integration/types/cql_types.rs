@@ -416,14 +416,69 @@ async fn test_counter() {
         .unwrap();
 }
 
-#[cfg(feature = "chrono-04")]
+// Columns of the `scalar_types` table, as `(name, CQL type)`. Each scalar type
+// has one column. All Rust types that map to that CQL type use it.
+const SCALAR_TYPES_COLUMNS: &[(&str, &str)] = &[
+    ("c_date", "date"),
+    ("c_time", "time"),
+    ("c_timestamp", "timestamp"),
+];
+
+/// Serialization and deserialization of the scalar CQL types.
+///
+/// All the types share one session, one keyspace and one table, with a column
+/// per type. Each type is checked by a sub-test that works on its column only.
+/// This keeps the load on the shared test cluster low.
 #[tokio::test]
-async fn test_naive_date_04() {
+async fn test_scalar_types() {
     setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE {ks} WITH REPLICATION = \
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+        ))
+        .await
+        .unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
+
+    let columns = SCALAR_TYPES_COLUMNS
+        .iter()
+        .map(|(name, typ)| format!("{name} {typ}"))
+        .join(", ");
+    session
+        .ddl(format!(
+            "CREATE TABLE scalar_types (id int PRIMARY KEY, {columns})"
+        ))
+        .await
+        .unwrap();
+
+    check_cql_date(&session).await;
+    #[cfg(feature = "chrono-04")]
+    check_naive_date_04(&session).await;
+    #[cfg(feature = "time-03")]
+    check_date_03(&session).await;
+
+    check_cql_time(&session).await;
+    #[cfg(feature = "chrono-04")]
+    check_naive_time_04(&session).await;
+    #[cfg(feature = "time-03")]
+    check_time_03(&session).await;
+
+    check_cql_timestamp(&session).await;
+    #[cfg(feature = "chrono-04")]
+    check_date_time_04(&session).await;
+    #[cfg(feature = "time-03")]
+    check_offset_date_time_03(&session).await;
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+#[cfg(feature = "chrono-04")]
+async fn check_naive_date_04(session: &Session) {
     use chrono::Datelike;
     use chrono::NaiveDate;
-
-    let session: Session = init_test("chrono_naive_date_tests", "date").await;
 
     let min_naive_date: NaiveDate = NaiveDate::MIN;
     let min_naive_date_string = min_naive_date.format("%Y-%m-%d").to_string();
@@ -465,19 +520,8 @@ async fn test_naive_date_04() {
         //("5881580-07-11", None),
     ];
 
-    run_literal_and_bound_tests_maybe_representable(
-        &session,
-        "chrono_naive_date_tests",
-        "val",
-        true,
-        tests,
-    )
-    .await;
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    run_literal_and_bound_tests_maybe_representable(session, "scalar_types", "c_date", true, tests)
+        .await;
 }
 
 // Asserts that `err` comes from the database rejecting a literal value as
@@ -497,12 +541,8 @@ fn assert_invalid_literal(err: &ExecutionError, scylla_reason: &str) {
     }
 }
 
-#[tokio::test]
-async fn test_cql_date() {
-    setup_tracing();
+async fn check_cql_date(session: &Session) {
     // Tests value::Date which allows to insert dates outside NaiveDate range
-
-    let session: Session = init_test("cql_date_tests", "date").await;
 
     let tests = [
         ("1970-01-01", CqlDate(2_u32.pow(31))),
@@ -513,12 +553,12 @@ async fn test_cql_date() {
         //("5881580-07-11", Date(u32::MAX)),
     ];
 
-    run_literal_and_bound_tests(&session, "cql_date_tests", "val", true, tests).await;
+    run_literal_and_bound_tests(session, "scalar_types", "c_date", true, tests).await;
 
     // 1 less/more than min/max values allowed by the database should cause error
     let err = session
         .query_unpaged(
-            "INSERT INTO cql_date_tests (id, val) VALUES (0, '-5877641-06-22')",
+            "INSERT INTO scalar_types (id, c_date) VALUES (0, '-5877641-06-22')",
             &[],
         )
         .await
@@ -527,26 +567,17 @@ async fn test_cql_date() {
 
     let err = session
         .query_unpaged(
-            "INSERT INTO cql_date_tests (id, val) VALUES (0, '5881580-07-12')",
+            "INSERT INTO scalar_types (id, c_date) VALUES (0, '5881580-07-12')",
             &[],
         )
         .await
         .unwrap_err();
     assert_invalid_literal(&err, "is greater than max supported date");
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
 }
 
 #[cfg(feature = "time-03")]
-#[tokio::test]
-async fn test_date_03() {
-    setup_tracing();
+async fn check_date_03(session: &Session) {
     use time::{Date, Month::*};
-
-    let session: Session = init_test("time_date_tests", "date").await;
 
     let tests = [
         // Basic test values
@@ -583,28 +614,13 @@ async fn test_date_03() {
         ("-5877641-06-23", None),
     ];
 
-    run_literal_and_bound_tests_maybe_representable(
-        &session,
-        "time_date_tests",
-        "val",
-        true,
-        tests,
-    )
-    .await;
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    run_literal_and_bound_tests_maybe_representable(session, "scalar_types", "c_date", true, tests)
+        .await;
 }
 
-#[tokio::test]
-async fn test_cql_time() {
-    setup_tracing();
+async fn check_cql_time(session: &Session) {
     // CqlTime is an i64 - nanoseconds since midnight
     // in range 0..=86399999999999
-
-    let session: Session = init_test("cql_time_tests", "time").await;
 
     let max_time: i64 = 24 * 60 * 60 * 1_000_000_000 - 1;
     assert_eq!(max_time, 86399999999999);
@@ -617,7 +633,7 @@ async fn test_cql_time() {
         ("23:59:59.999999999", CqlTime(max_time)),
     ];
 
-    run_literal_and_bound_tests(&session, "cql_time_tests", "val", true, tests).await;
+    run_literal_and_bound_tests(session, "scalar_types", "c_time", true, tests).await;
 
     // Tests with invalid time values
     // Make sure that database rejects them
@@ -635,18 +651,13 @@ async fn test_cql_time() {
     for (time_str, reason) in &invalid_tests {
         let err = session
             .query_unpaged(
-                format!("INSERT INTO cql_time_tests (id, val) VALUES (0, '{time_str}')"),
+                format!("INSERT INTO scalar_types (id, c_time) VALUES (0, '{time_str}')"),
                 &[],
             )
             .await
             .unwrap_err();
         assert_invalid_literal(&err, reason);
     }
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
 }
 
 // Asserts that `err` comes from the driver refusing to serialize a bound value
@@ -676,12 +687,8 @@ fn assert_value_overflow(err: &ExecutionError) {
 }
 
 #[cfg(feature = "chrono-04")]
-#[tokio::test]
-async fn test_naive_time_04() {
-    setup_tracing();
+async fn check_naive_time_04(session: &Session) {
     use chrono::NaiveTime;
-
-    let session = init_test("chrono_time_tests", "time").await;
 
     let tests = [
         ("00:00:00", NaiveTime::MIN),
@@ -704,33 +711,24 @@ async fn test_naive_time_04() {
         ),
     ];
 
-    run_literal_and_bound_tests(&session, "chrono_time_tests", "val", true, tests).await;
+    run_literal_and_bound_tests(session, "scalar_types", "c_time", true, tests).await;
 
     // chrono can represent leap seconds, but CQL `time` cannot.
     // Serialization must reject such a value instead of panicking.
     let leap_second = NaiveTime::from_hms_nano_opt(23, 59, 59, 1_500_000_000).unwrap();
     let err = session
         .query_unpaged(
-            "INSERT INTO chrono_time_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO scalar_types (id, c_time) VALUES (0, ?)",
             (leap_second,),
         )
         .await
         .unwrap_err();
     assert_value_overflow(&err);
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
 }
 
 #[cfg(feature = "time-03")]
-#[tokio::test]
-async fn test_time_03() {
-    setup_tracing();
+async fn check_time_03(session: &Session) {
     use time::Time;
-
-    let session = init_test("time_time_tests", "time").await;
 
     let tests = [
         ("00:00:00", Time::MIDNIGHT),
@@ -753,19 +751,10 @@ async fn test_time_03() {
         ),
     ];
 
-    run_literal_and_bound_tests(&session, "time_time_tests", "val", true, tests).await;
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    run_literal_and_bound_tests(session, "scalar_types", "c_time", true, tests).await;
 }
 
-#[tokio::test]
-async fn test_cql_timestamp() {
-    setup_tracing();
-    let session: Session = init_test("cql_timestamp_tests", "timestamp").await;
-
+async fn check_cql_timestamp(session: &Session) {
     //let epoch_date = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
 
     //let before_epoch = NaiveDate::from_ymd_opt(1333, 4, 30).unwrap();
@@ -791,21 +780,12 @@ async fn test_cql_timestamp() {
         //("2011-02-03T04:05:00.000+0000", Duration::milliseconds(1299038700000)),
     ];
 
-    run_literal_and_bound_tests(&session, "cql_timestamp_tests", "val", true, tests).await;
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    run_literal_and_bound_tests(session, "scalar_types", "c_timestamp", true, tests).await;
 }
 
 #[cfg(feature = "chrono-04")]
-#[tokio::test]
-async fn test_date_time_04() {
-    setup_tracing();
+async fn check_date_time_04(session: &Session) {
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-
-    let session = init_test("chrono_datetime_tests", "timestamp").await;
 
     let tests = [
         ("0", DateTime::from_timestamp(0, 0).unwrap()),
@@ -852,7 +832,7 @@ async fn test_date_time_04() {
         ),
     ];
 
-    run_literal_and_bound_tests(&session, "chrono_datetime_tests", "val", true, tests).await;
+    run_literal_and_bound_tests(session, "scalar_types", "c_timestamp", true, tests).await;
 
     // chrono datetime has higher precision, round excessive submillisecond time down
     let nanosecond_precision_1st_half = NaiveDateTime::new(
@@ -867,14 +847,14 @@ async fn test_date_time_04() {
     .and_utc();
     session
         .query_unpaged(
-            "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO scalar_types (id, c_timestamp) VALUES (0, ?)",
             (nanosecond_precision_1st_half,),
         )
         .await
         .unwrap();
 
     let (read_datetime,) = session
-        .query_unpaged("SELECT val from chrono_datetime_tests", &[])
+        .query_unpaged("SELECT c_timestamp FROM scalar_types", &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -895,14 +875,14 @@ async fn test_date_time_04() {
     .and_utc();
     session
         .query_unpaged(
-            "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO scalar_types (id, c_timestamp) VALUES (0, ?)",
             (nanosecond_precision_2nd_half,),
         )
         .await
         .unwrap();
 
     let (read_datetime,) = session
-        .query_unpaged("SELECT val from chrono_datetime_tests", &[])
+        .query_unpaged("SELECT c_timestamp FROM scalar_types", &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -925,14 +905,14 @@ async fn test_date_time_04() {
     .and_utc();
     session
         .query_unpaged(
-            "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO scalar_types (id, c_timestamp) VALUES (0, ?)",
             (leap_second,),
         )
         .await
         .unwrap();
 
     let (read_datetime,) = session
-        .query_unpaged("SELECT val from chrono_datetime_tests", &[])
+        .query_unpaged("SELECT c_timestamp FROM scalar_types", &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -940,20 +920,11 @@ async fn test_date_time_04() {
         .first_row::<(DateTime<Utc>,)>()
         .unwrap();
     assert_eq!(read_datetime, leap_second_normalized);
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
 }
 
 #[cfg(feature = "time-03")]
-#[tokio::test]
-async fn test_offset_date_time_03() {
-    setup_tracing();
+async fn check_offset_date_time_03(session: &Session) {
     use time::{Date, Month::*, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
-
-    let session = init_test("time_datetime_tests", "timestamp").await;
 
     let tests = [
         ("0", OffsetDateTime::UNIX_EPOCH),
@@ -1000,7 +971,7 @@ async fn test_offset_date_time_03() {
         ),
     ];
 
-    run_literal_and_bound_tests(&session, "time_datetime_tests", "val", true, tests).await;
+    run_literal_and_bound_tests(session, "scalar_types", "c_timestamp", true, tests).await;
 
     // time datetime has higher precision, round excessive submillisecond time down
     let nanosecond_precision_1st_half = PrimitiveDateTime::new(
@@ -1015,14 +986,14 @@ async fn test_offset_date_time_03() {
     .assume_utc();
     session
         .query_unpaged(
-            "INSERT INTO time_datetime_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO scalar_types (id, c_timestamp) VALUES (0, ?)",
             (nanosecond_precision_1st_half,),
         )
         .await
         .unwrap();
 
     let (read_datetime,) = session
-        .query_unpaged("SELECT val from time_datetime_tests", &[])
+        .query_unpaged("SELECT c_timestamp FROM scalar_types", &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -1043,14 +1014,14 @@ async fn test_offset_date_time_03() {
     .assume_utc();
     session
         .query_unpaged(
-            "INSERT INTO time_datetime_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO scalar_types (id, c_timestamp) VALUES (0, ?)",
             (nanosecond_precision_2nd_half,),
         )
         .await
         .unwrap();
 
     let (read_datetime,) = session
-        .query_unpaged("SELECT val from time_datetime_tests", &[])
+        .query_unpaged("SELECT c_timestamp FROM scalar_types", &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -1058,11 +1029,6 @@ async fn test_offset_date_time_03() {
         .first_row::<(OffsetDateTime,)>()
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_2nd_half_rounded);
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
 }
 
 #[tokio::test]
