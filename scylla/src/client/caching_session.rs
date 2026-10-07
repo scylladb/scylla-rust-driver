@@ -427,12 +427,16 @@ mod tests {
     use crate::client::caching_session::{CachingSessionBuilder, DEFAULT_MAX_CAPACITY};
     use crate::client::session::Session;
     use crate::client::session_builder::SessionBuilder;
+    use crate::frame::protocol_features::ProtocolFeatures;
+    use crate::frame::request::RequestV2;
+    use crate::frame::request::execute::ExecuteV2;
     use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
     use crate::response::PagingState;
     use crate::routing::partitioner::PartitionerName;
     use crate::statement::batch::{Batch, BatchStatement};
     use crate::statement::prepared::PreparedStatement;
     use crate::statement::unprepared::Statement;
+    use crate::statement::{Consistency, SerialConsistency};
     use crate::test_utils::{
         PerformDDL, create_new_session_builder, disable_tablets_unless_supported,
         dry_mode_handshake_rules, setup_tracing,
@@ -788,53 +792,83 @@ mod tests {
     #[tokio::test]
     async fn test_parameters_caching() {
         setup_tracing();
-        let session: CachingSession = CachingSession::from(new_for_test(None).await, 100);
 
-        session
-            .ddl("CREATE TABLE tbl (a int PRIMARY KEY, b int)")
-            .await
-            .unwrap();
+        fn col_spec(name: &'static str) -> ColumnSpec<'static> {
+            ColumnSpec::borrowed(
+                name,
+                ColumnType::Native(NativeType::Int),
+                TableSpec::borrowed("ks", "test_table"),
+            )
+        }
 
-        let q = Statement::new("INSERT INTO tbl (a, b) VALUES (?, ?)");
+        let (prepare_tx, mut prepares) = mpsc::unbounded_channel();
+        let (execute_tx, mut executes) = mpsc::unbounded_channel();
+        let (proxy_addr, proxy) = make_proxy(vec![
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Prepare).and(
+                    Condition::BodyContainsCaseSensitive(b"test_table"[..].into()),
+                ),
+                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                    ResponseFrame::forged_prepared(
+                        frame.params,
+                        b"select_b",
+                        &[col_spec("a")],
+                        &[col_spec("b")],
+                    )
+                    .unwrap()
+                }))
+                .with_feedback_when_performed(prepare_tx),
+            ),
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Execute),
+                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                    ResponseFrame::forged_rows(frame.params, &[col_spec("b")], [(2,)], None)
+                        .unwrap()
+                }))
+                .with_feedback_when_performed(execute_tx),
+            ),
+        ])
+        .await;
+        let session: CachingSession = CachingSession::from(connect(proxy_addr).await, 100);
 
-        // Insert one row with timestamp 1000
-        let mut q1 = q.clone();
-        q1.set_timestamp(Some(1000));
+        let cases = [
+            (Consistency::One, SerialConsistency::Serial, 1000, 10),
+            (
+                Consistency::Quorum,
+                SerialConsistency::LocalSerial,
+                2000,
+                20,
+            ),
+        ];
+        for (consistency, serial_consistency, timestamp, page_size) in cases {
+            let mut statement = Statement::new("SELECT b FROM test_table WHERE a = ?");
+            statement.set_consistency(consistency);
+            statement.set_serial_consistency(Some(serial_consistency));
+            statement.set_timestamp(Some(timestamp));
+            statement.set_page_size(page_size);
 
-        session
-            .execute_unpaged(q1, (1, 1))
-            .await
-            .unwrap()
-            .result_not_rows()
-            .unwrap();
+            session
+                .execute_single_page(statement, (1,), PagingState::start())
+                .await
+                .unwrap();
 
-        // Insert another row with timestamp 2000
-        let mut q2 = q.clone();
-        q2.set_timestamp(Some(2000));
+            let (frame, _) = executes.try_recv().unwrap();
+            let RequestV2::Execute(ExecuteV2 { parameters, .. }) =
+                frame.deserialize(&ProtocolFeatures::default()).unwrap()
+            else {
+                panic!("Expected an EXECUTE request");
+            };
+            assert_eq!(parameters.consistency, consistency);
+            assert_eq!(parameters.serial_consistency, Some(serial_consistency));
+            assert_eq!(parameters.timestamp, Some(timestamp));
+            assert_eq!(parameters.page_size, Some(page_size));
+        }
 
-        session
-            .execute_unpaged(q2, (2, 2))
-            .await
-            .unwrap()
-            .result_not_rows()
-            .unwrap();
+        // The second statement must have been served from the cache.
+        prepares.try_recv().unwrap();
+        prepares.try_recv().unwrap_err();
 
-        // Fetch both rows with their timestamps
-        let mut rows = session
-            .execute_unpaged("SELECT b, WRITETIME(b) FROM tbl", ())
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .rows::<(i32, i64)>()
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-
-        rows.sort_unstable();
-        assert_eq!(rows, vec![(1, 1000), (2, 2000)]);
-
-        teardown_keyspace(session.get_session()).await;
+        let _ = proxy.finish().await;
     }
 
     // Checks whether the PartitionerName is cached properly.
