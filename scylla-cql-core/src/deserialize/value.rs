@@ -412,7 +412,8 @@ impl_strict_type!(
     CqlDecimal,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
-        let mut val = ensure_not_null_slice::<Self>(typ, v)?;
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        let mut val = ensure_not_empty::<Self>(typ, val)?;
         let scale = types::read_int(&mut val).map_err(|err| {
             mk_deser_err::<Self>(
                 typ,
@@ -429,7 +430,8 @@ impl_strict_type!(
     CqlDecimalBorrowed<'b>,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
-        let mut val = ensure_not_null_slice::<Self>(typ, v)?;
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        let mut val = ensure_not_empty::<Self>(typ, val)?;
         let scale = types::read_int(&mut val).map_err(|err| {
             mk_deser_err::<Self>(
                 typ,
@@ -448,7 +450,8 @@ impl_strict_type!(
     bigdecimal_04::BigDecimal,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
-        let mut val = ensure_not_null_slice::<Self>(typ, v)?;
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        let mut val = ensure_not_empty::<Self>(typ, val)?;
         let scale = types::read_int(&mut val).map_err(|err| {
             mk_deser_err::<Self>(
                 typ,

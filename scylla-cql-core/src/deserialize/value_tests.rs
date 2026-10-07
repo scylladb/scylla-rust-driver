@@ -2608,6 +2608,36 @@ fn test_bigint04_rejects_empty_varint() {
     );
 }
 
+#[test]
+fn test_decimal_rejects_empty() {
+    let empty = make_bytes(&[]);
+    let typ = ColumnType::Native(Decimal);
+
+    assert_deser_error!(
+        &empty,
+        CqlDecimal,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+    assert_deser_error!(
+        &empty,
+        CqlDecimalBorrowed,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+}
+
+#[cfg(feature = "bigdecimal-04")]
+#[test]
+fn test_bigdecimal04_rejects_empty() {
+    assert_deser_error!(
+        &make_bytes(&[]),
+        bigdecimal_04::BigDecimal,
+        ColumnType::Native(Decimal),
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+}
+
 #[cfg(feature = "bigdecimal-04")]
 #[test]
 fn test_decimal() {
