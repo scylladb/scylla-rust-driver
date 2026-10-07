@@ -24,6 +24,10 @@ margin.
 
 When the ``GITHUB_OUTPUT`` environment variable is set, ``has_regressions`` is
 written to it so the workflow can decide whether to label the pull request.
+
+Fails if the output uses an unknown gungraun schema version or a benchmark lacks
+a thresholded metric, so a format change fails the job instead of producing an
+empty report.
 """
 
 from __future__ import annotations
@@ -35,6 +39,10 @@ import re
 import sys
 from dataclasses import dataclass
 from typing import Optional
+
+# The gungraun JSON summary schema version this script parses. gungraun bumps it
+# on every backwards-incompatible change to the format.
+SCHEMA_VERSION = "7"
 
 # gungraun metric keys that are checked against thresholds.
 INSTRUCTIONS = "Ir"
@@ -84,8 +92,9 @@ _DHAT_LABELS = {
     "MaximumBlocks": "Maximum blocks",
 }
 
-# The tools we render, in order, with the heading gungraun prints for each.
-_TOOLS = (("Callgrind", "Callgrind"), ("Dhat", "DHAT"))
+# The tools we render, in order, named as in gungraun's `tool` field and its
+# headings.
+_TOOLS = ("Callgrind", "DHAT")
 
 
 def _label(tool: str, key: str) -> str:
@@ -119,45 +128,34 @@ class Metric:
 class MetricRow:
     key: str  # gungraun variant name, e.g. "Ir"
     label: str  # display label, e.g. "Instructions"
-    tool: str  # "Callgrind" or "Dhat"
+    tool: str  # "Callgrind" or "DHAT"
     metric: Metric
 
 
 @dataclass
 class Benchmark:
     function: str  # benchmark function name, e.g. "insert"
-    details: str  # setup call, e.g. "setup_default(100)"
+    details: str  # setup call, e.g. "(setup_default(100))"
     name: str  # readable scenario name, used in logs
     rows: list[MetricRow]
 
 
-def _metric(metrics: dict) -> Optional[Metric]:
-    """Builds a :class:`Metric` from a gungraun metric entry.
+def _metric(values: dict) -> Optional[Metric]:
+    """Builds a :class:`Metric` from the ``values`` of a gungraun metric entry.
 
-    A comparison against a baseline yields ``{"Both": [new, old]}``; a run with
-    no baseline yields ``{"Left": new}``. Each value is wrapped as ``{"Int": n}``
-    or ``{"Float": x}``.
+    A comparison against a baseline yields ``{"new": n, "old": n}``; a run with
+    no baseline yields only ``new``. Values are plain JSON numbers, except
+    non-finite floats, which are ``null``.
     """
-
-    def number(value: dict) -> tuple[float, bool]:
-        if "Int" in value:
-            return float(value["Int"]), False
-        return float(value["Float"]), True
-
-    if "Both" in metrics:
-        new, old = metrics["Both"]
-        new_val, new_float = number(new)
-        old_val, old_float = number(old)
-        return Metric(new_val, old_val, is_float=new_float or old_float)
-    if "Left" in metrics:
-        # `Left` is the bare value `{"Int"/"Float": n}`. Older payloads wrapped
-        # it in a single-element list, so tolerate that shape too.
-        left = metrics["Left"]
-        if isinstance(left, list):
-            left = left[0]
-        new_val, new_float = number(left)
-        return Metric(new_val, None, is_float=new_float)
-    return None
+    new = values.get("new")
+    if new is None:
+        return None
+    old = values.get("old")
+    return Metric(
+        float(new),
+        None if old is None else float(old),
+        is_float=isinstance(new, float) or isinstance(old, float),
+    )
 
 
 def _parse_args(details: str) -> list[int]:
@@ -179,33 +177,39 @@ def _scenario_name(function: str, params: tuple[int, ...]) -> str:
 
 def _benchmark(record: dict) -> Benchmark:
     """Parses one JSON record into a :class:`Benchmark`, keeping every metric."""
+    version = record["version"]
+    if version != SCHEMA_VERSION:
+        raise ValueError(
+            f"unsupported gungraun summary schema version {version!r} (expected "
+            f"{SCHEMA_VERSION!r}), update scripts/compare-benchmarks.py"
+        )
     function = record["function_name"]
-    details = record.get("details") or ""
+    details = record.get("description") or ""
     # The trailing setup argument is the request count; any leading arguments
     # (e.g. the batch size) parameterise the scenario and give it its name.
     params = tuple(_parse_args(details)[:-1])
 
-    # Keyed by (tool, metric) to preserve the tool's emitted order while
-    # tolerating a metric appearing in more than one profile.
-    rows: dict[tuple[str, str], MetricRow] = {}
-    for profile in record.get("profiles", []):
-        summary = profile.get("summaries", {}).get("total", {}).get("summary", {})
-        for tool, _ in _TOOLS:
-            entries = summary.get(tool)
-            if not entries:
-                continue
-            for key, entry in entries.items():
-                if (tool, key) in rows:
-                    continue
-                metric = _metric(entry.get("metrics", {}))
-                if metric is not None:
-                    rows[(tool, key)] = MetricRow(key, _label(tool, key), tool, metric)
+    # One profile per tool; the totals aggregate all of the tool's parts.
+    rows = []
+    for profile in record["profiles"]:
+        tool = profile["tool"]
+        if tool not in _TOOLS:
+            continue
+        for key, entry in profile["data"]["total"]["metrics"].items():
+            metric = _metric(entry["values"])
+            if metric is not None:
+                rows.append(MetricRow(key, _label(tool, key), tool, metric))
+
+    name = _scenario_name(function, params)
+    missing = set(_THRESHOLDED) - {row.key for row in rows}
+    if missing:
+        raise ValueError(f"{name}: missing thresholded metrics {sorted(missing)}")
 
     return Benchmark(
         function=function,
         details=details,
-        name=_scenario_name(function, params),
-        rows=list(rows.values()),
+        name=name,
+        rows=rows,
     )
 
 
@@ -319,11 +323,11 @@ def _section(bench: Benchmark, thresholds: Thresholds) -> str:
     if bench.details:
         heading += f" — `{bench.details}`"
     parts = [heading, ""]
-    for tool, title in _TOOLS:
+    for tool in _TOOLS:
         rows = [row for row in bench.rows if row.tool == tool]
         if not rows:
             continue
-        parts.append(f"**{title}**")
+        parts.append(f"**{tool}**")
         parts.append("")
         parts.append("| Metric | Pull request | Baseline | Change | Status |")
         parts.append("| :-- | --: | --: | :-- | :-- |")
@@ -418,7 +422,11 @@ def main() -> int:
         with open(args.results, encoding="utf-8") as handle:
             text = handle.read()
 
-    benchmarks = parse_results(text)
+    try:
+        benchmarks = parse_results(text)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     if not benchmarks:
         print("error: no benchmark results found", file=sys.stderr)
         return 1
