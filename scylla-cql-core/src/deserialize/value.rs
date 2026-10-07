@@ -408,20 +408,28 @@ impl_strict_type!(
     }
 );
 
+fn get_unscaled_and_scale_from_decimal_column<'frame, T>(
+    typ: &ColumnType,
+    v: Option<FrameSlice<'frame>>,
+) -> Result<(&'frame [u8], i32), DeserializationError> {
+    let val = ensure_not_null_slice::<T>(typ, v)?;
+    let mut val = ensure_not_empty::<T>(typ, val)?;
+    let scale = types::read_int(&mut val).map_err(|err| {
+        mk_deser_err::<T>(
+            typ,
+            BuiltinDeserializationErrorKind::BadDecimalScale(err.into()),
+        )
+    })?;
+    Ok((val, scale))
+}
+
 impl_strict_type!(
     CqlDecimal,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
-        let val = ensure_not_null_slice::<Self>(typ, v)?;
-        let mut val = ensure_not_empty::<Self>(typ, val)?;
-        let scale = types::read_int(&mut val).map_err(|err| {
-            mk_deser_err::<Self>(
-                typ,
-                BuiltinDeserializationErrorKind::BadDecimalScale(err.into()),
-            )
-        })?;
+        let (unscaled, scale) = get_unscaled_and_scale_from_decimal_column::<Self>(typ, v)?;
         Ok(CqlDecimal::from_signed_be_bytes_slice_and_exponent(
-            val, scale,
+            unscaled, scale,
         ))
     }
 );
@@ -430,16 +438,9 @@ impl_strict_type!(
     CqlDecimalBorrowed<'b>,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
-        let val = ensure_not_null_slice::<Self>(typ, v)?;
-        let mut val = ensure_not_empty::<Self>(typ, val)?;
-        let scale = types::read_int(&mut val).map_err(|err| {
-            mk_deser_err::<Self>(
-                typ,
-                BuiltinDeserializationErrorKind::BadDecimalScale(err.into()),
-            )
-        })?;
+        let (unscaled, scale) = get_unscaled_and_scale_from_decimal_column::<Self>(typ, v)?;
         Ok(CqlDecimalBorrowed::from_signed_be_bytes_slice_and_exponent(
-            val, scale,
+            unscaled, scale,
         ))
     },
     'b
@@ -450,16 +451,9 @@ impl_strict_type!(
     bigdecimal_04::BigDecimal,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
-        let val = ensure_not_null_slice::<Self>(typ, v)?;
-        let mut val = ensure_not_empty::<Self>(typ, val)?;
-        let scale = types::read_int(&mut val).map_err(|err| {
-            mk_deser_err::<Self>(
-                typ,
-                BuiltinDeserializationErrorKind::BadDecimalScale(err.into()),
-            )
-        })? as i64;
-        let int_value = bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(val);
-        Ok(bigdecimal_04::BigDecimal::from((int_value, scale)))
+        let (unscaled, scale) = get_unscaled_and_scale_from_decimal_column::<Self>(typ, v)?;
+        let int_value = bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(unscaled);
+        Ok(bigdecimal_04::BigDecimal::from((int_value, scale as i64)))
     }
 );
 
