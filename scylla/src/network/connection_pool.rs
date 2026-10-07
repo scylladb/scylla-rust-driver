@@ -1651,24 +1651,14 @@ mod tests {
 
         // Connections always open successfully; only the `USE KEYSPACE` query is manipulated.
         let rules_with_query_reaction = |query_reaction| {
-            vec![
-                RequestRule(
-                    Condition::RequestOpcode(RequestOpcode::Options),
-                    RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
-                        ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
-                    })),
-                ),
-                RequestRule(
-                    Condition::RequestOpcode(RequestOpcode::Startup),
-                    RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
-                        ResponseFrame::forged_ready(frame.params)
-                    })),
-                ),
-                RequestRule(
+            [
+                dry_mode_handshake_rules(),
+                vec![RequestRule(
                     Condition::RequestOpcode(RequestOpcode::Query),
                     query_reaction,
-                ),
+                )],
             ]
+            .concat()
         };
 
         let mut proxy = Proxy::builder()
@@ -1784,25 +1774,16 @@ mod tests {
             .with_node(
                 Node::builder()
                     .proxy_address(proxy_addr)
-                    .request_rules(vec![
-                        RequestRule(
-                            Condition::RequestOpcode(RequestOpcode::Options),
-                            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
-                                ResponseFrame::forged_supported(frame.params, &HashMap::new())
-                                    .unwrap()
-                            })),
-                        ),
-                        RequestRule(
-                            Condition::RequestOpcode(RequestOpcode::Startup),
-                            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
-                                ResponseFrame::forged_ready(frame.params)
-                            })),
-                        ),
-                        RequestRule(
-                            Condition::RequestOpcode(RequestOpcode::Query),
-                            RequestReaction::drop_frame(),
-                        ),
-                    ])
+                    .request_rules(
+                        [
+                            dry_mode_handshake_rules(),
+                            vec![RequestRule(
+                                Condition::RequestOpcode(RequestOpcode::Query),
+                                RequestReaction::drop_frame(),
+                            )],
+                        ]
+                        .concat(),
+                    )
                     .build_dry_mode(),
             )
             .build()
@@ -2279,20 +2260,7 @@ mod tests {
             msb_ignore: 12,
         };
         let (mut proxy, endpoint) = start_simulated_node(initial_shard_info).await;
-        proxy.running_nodes[0].change_request_rules(Some(vec![
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Options),
-                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
-                    ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
-                })),
-            ),
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Startup),
-                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
-                    ResponseFrame::forged_ready(frame.params)
-                })),
-            ),
-        ]));
+        proxy.running_nodes[0].change_request_rules(Some(dry_mode_handshake_rules()));
         let mut refiller = mock_pool_refiller();
         let metrics = refiller.metrics.clone();
 
