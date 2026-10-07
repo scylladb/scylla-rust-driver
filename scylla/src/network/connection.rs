@@ -2679,7 +2679,7 @@ mod tests {
     use assert_matches::assert_matches;
     use scylla_proxy::{
         Condition, Node, Proxy, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction,
-        RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, ShardAwareness, WorkerError,
+        RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, WorkerError,
     };
 
     use bytes::Bytes;
@@ -3431,41 +3431,60 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn connection_is_closed_on_no_response_to_keepalives() {
         use crate::errors::BrokenConnectionErrorKind;
 
         setup_tracing();
 
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
-        let node_addr: SocketAddr = resolve_hostname(&uri).await;
 
+        let (options_tx, mut options_rx) = mpsc::unbounded_channel();
+        let answer_options_rule = RequestRule(
+            Condition::RequestOpcode(RequestOpcode::Options),
+            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
+            }))
+            .with_feedback_when_performed(options_tx),
+        );
         let drop_options_rule = RequestRule(
             Condition::RequestOpcode(RequestOpcode::Options),
             RequestReaction::drop_frame(),
         );
-
-        let config = HostConnectionConfig {
-            keepalive_interval: Some(Duration::from_millis(500)),
-            keepalive_timeout: Some(Duration::from_secs(1)),
-            ..Default::default()
+        // The first matching rule wins, so `options_rule` overrides the handshake rules.
+        let rules_with = |options_rule| {
+            let mut rules = vec![
+                options_rule,
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Query),
+                    forge_void_result(),
+                ),
+            ];
+            rules.extend(dry_mode_handshake_rules());
+            rules
         };
 
         let mut proxy = Proxy::builder()
             .with_node(
                 Node::builder()
                     .proxy_address(proxy_addr)
-                    .real_address(node_addr)
-                    .shard_awareness(ShardAwareness::QueryNode)
-                    .build(),
+                    .request_rules(rules_with(answer_options_rule))
+                    .build_dry_mode(),
             )
             .build()
             .run()
             .await
             .unwrap();
 
-        // Setup connection normally, without obstruction
+        let config = HostConnectionConfig {
+            keepalive_interval: Some(Duration::from_millis(500)),
+            keepalive_timeout: Some(Duration::from_secs(1)),
+            // With the in-memory transport, the paused clock cannot advance
+            // while a keepalive or its response is in flight.
+            transport_factory: Some(proxy.transport_factory()),
+            ..Default::default()
+        };
+
         let (conn, mut error_receiver) = open_connection(
             &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                 address: proxy_addr,
@@ -3476,9 +3495,12 @@ mod tests {
         .await
         .unwrap();
 
-        // As everything is normal, these queries should succeed.
+        // The first OPTIONS belongs to the handshake.
+        options_rx.recv().await.unwrap();
+
+        // As everything is normal, keepalives are answered and queries should succeed.
         for _ in 0..3 {
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            options_rx.recv().await.unwrap();
             conn.query_unpaged(&"SELECT host_id FROM system.local WHERE key='local'".into())
                 .await
                 .unwrap();
@@ -3489,8 +3511,7 @@ mod tests {
             Err(tokio::sync::oneshot::error::TryRecvError::Empty)
         );
 
-        // Set up proxy to drop keepalive messages
-        proxy.running_nodes[0].change_request_rules(Some(vec![drop_options_rule]));
+        proxy.running_nodes[0].change_request_rules(Some(rules_with(drop_options_rule)));
 
         // Wait until keepaliver gots impatient and terminates router.
         // Then, the error from keepaliver will be propagated to the error receiver.
