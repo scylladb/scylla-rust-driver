@@ -649,6 +649,33 @@ async fn test_cql_time() {
         .unwrap();
 }
 
+// Asserts that `err` comes from the driver refusing to serialize a bound value
+// because it does not fit in the CQL type.
+#[cfg(feature = "chrono-04")]
+fn assert_value_overflow(err: &scylla::errors::ExecutionError) {
+    use assert_matches::assert_matches;
+    use scylla::errors::{ExecutionError, RequestAttemptError};
+    use scylla::serialize::{row, value};
+
+    let ExecutionError::LastAttemptError(RequestAttemptError::SerializationError(err)) = err else {
+        panic!("Expected a serialization error, got {err:?}");
+    };
+    let row_err = err
+        .downcast_ref::<row::BuiltinSerializationError>()
+        .unwrap_or_else(|| panic!("Expected a builtin row serialization error, got {err:?}"));
+    let row::BuiltinSerializationErrorKind::ColumnSerializationFailed { err, .. } = &row_err.kind
+    else {
+        panic!("Expected a column serialization failure, got {row_err:?}");
+    };
+    let value_err = err
+        .downcast_ref::<value::BuiltinSerializationError>()
+        .unwrap_or_else(|| panic!("Expected a builtin value serialization error, got {err:?}"));
+    assert_matches!(
+        value_err.kind,
+        value::BuiltinSerializationErrorKind::ValueOverflow
+    );
+}
+
 #[cfg(feature = "chrono-04")]
 #[tokio::test]
 async fn test_naive_time_04() {
@@ -719,15 +746,17 @@ async fn test_naive_time_04() {
         assert_eq!(read_time, *time);
     }
 
-    // chrono can represent leap seconds, this should not panic
-    let leap_second = NaiveTime::from_hms_nano_opt(23, 59, 59, 1_500_000_000);
-    session
+    // chrono can represent leap seconds, but CQL `time` cannot.
+    // Serialization must reject such a value instead of panicking.
+    let leap_second = NaiveTime::from_hms_nano_opt(23, 59, 59, 1_500_000_000).unwrap();
+    let err = session
         .query_unpaged(
-            "INSERT INTO cql_time_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO chrono_time_tests (id, val) VALUES (0, ?)",
             (leap_second,),
         )
         .await
         .unwrap_err();
+    assert_value_overflow(&err);
 
     session
         .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
@@ -1042,19 +1071,35 @@ async fn test_date_time_04() {
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_2nd_half_rounded);
 
-    // chrono can represent leap seconds, this should not panic
+    // chrono can represent leap seconds. CQL `timestamp` counts milliseconds
+    // since the epoch, so a leap second is stored as the next instant.
     let leap_second = NaiveDateTime::new(
         NaiveDate::from_ymd_opt(2015, 6, 30).unwrap(),
         NaiveTime::from_hms_milli_opt(23, 59, 59, 1500).unwrap(),
     )
     .and_utc();
+    let leap_second_normalized = NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2015, 7, 1).unwrap(),
+        NaiveTime::from_hms_milli_opt(0, 0, 0, 500).unwrap(),
+    )
+    .and_utc();
     session
         .query_unpaged(
-            "INSERT INTO cql_datetime_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, ?)",
             (leap_second,),
         )
         .await
-        .unwrap_err();
+        .unwrap();
+
+    let (read_datetime,) = session
+        .query_unpaged("SELECT val from chrono_datetime_tests", &[])
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .first_row::<(DateTime<Utc>,)>()
+        .unwrap();
+    assert_eq!(read_datetime, leap_second_normalized);
 
     session
         .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
