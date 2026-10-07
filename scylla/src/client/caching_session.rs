@@ -774,18 +774,10 @@ mod tests {
         setup_tracing();
         let (proxy_addr, proxy) = make_minimal_proxy().await;
 
-        let create_session = || async {
-            SessionBuilder::new()
-                .known_node_addr(proxy_addr)
-                .build()
-                .await
-                .unwrap()
-        };
-
         // Default hasher and max_capacity.
         {
             const MAX_CAPACITY: usize = 42;
-            let session = create_session().await;
+            let session = connect(proxy_addr).await;
             let mut builder = CachingSessionBuilder::new(session);
             builder = builder.max_capacity(MAX_CAPACITY);
             let caching_session: CachingSession = builder.build();
@@ -797,7 +789,7 @@ mod tests {
 
         // Default hasher type with custom construction of it.
         {
-            let session = create_session().await;
+            let session = connect(proxy_addr).await;
             let hasher = RandomState::new();
             let caching_session = CachingSessionBuilder::new(session)
                 .hasher(hasher.clone())
@@ -809,7 +801,7 @@ mod tests {
 
         // Custom hasher.
         {
-            let session = create_session().await;
+            let session = connect(proxy_addr).await;
             let caching_session = CachingSessionBuilder::new(session)
                 .hasher(CustomBuildHasher)
                 .build();
@@ -826,11 +818,7 @@ mod tests {
     async fn test_builder_zero_capacity_panics() {
         setup_tracing();
         let (proxy_addr, proxy) = make_minimal_proxy().await;
-        let session = SessionBuilder::new()
-            .known_node_addr(proxy_addr)
-            .build()
-            .await
-            .unwrap();
+        let session = connect(proxy_addr).await;
         let _ = CachingSessionBuilder::new(session).max_capacity(0);
         let _ = proxy.finish().await;
     }
@@ -840,11 +828,7 @@ mod tests {
     async fn test_from_zero_capacity_panics() {
         setup_tracing();
         let (proxy_addr, proxy) = make_minimal_proxy().await;
-        let session = SessionBuilder::new()
-            .known_node_addr(proxy_addr)
-            .build()
-            .await
-            .unwrap();
+        let session = connect(proxy_addr).await;
         let _: CachingSession = CachingSession::from(session, 0);
         let _ = proxy.finish().await;
     }
@@ -854,11 +838,7 @@ mod tests {
     async fn test_with_hasher_zero_capacity_panics() {
         setup_tracing();
         let (proxy_addr, proxy) = make_minimal_proxy().await;
-        let session = SessionBuilder::new()
-            .known_node_addr(proxy_addr)
-            .build()
-            .await
-            .unwrap();
+        let session = connect(proxy_addr).await;
         let _ = CachingSession::with_hasher(session, 0, RandomState::new());
         let _ = proxy.finish().await;
     }
