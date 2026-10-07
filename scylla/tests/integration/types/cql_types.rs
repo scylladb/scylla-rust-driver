@@ -1,5 +1,6 @@
 use itertools::Itertools;
 use scylla::client::session::Session;
+use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
 use scylla::serialize::value::SerializeValue;
 use scylla::value::{Counter, CqlDate, CqlTime, CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint};
 use scylla::{DeserializeValue, SerializeValue};
@@ -408,6 +409,23 @@ async fn test_naive_date_04() {
         .unwrap();
 }
 
+// Asserts that `err` comes from the database rejecting a literal value as
+// invalid. A missing table is reported as invalid too, so on ScyllaDB the
+// message must also contain `scylla_reason`. Cassandra words its messages
+// differently, so there only the error code is checked.
+fn assert_invalid_literal(err: &ExecutionError, scylla_reason: &str) {
+    let ExecutionError::LastAttemptError(RequestAttemptError::DbError(DbError::Invalid, msg)) = err
+    else {
+        panic!("Expected the database to reject the literal as invalid, got {err:?}");
+    };
+    if !cfg!(cassandra_tests) {
+        assert!(
+            msg.contains(scylla_reason),
+            "Expected the rejection reason to contain {scylla_reason:?}, got {msg:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn test_cql_date() {
     setup_tracing();
@@ -446,21 +464,23 @@ async fn test_cql_date() {
     }
 
     // 1 less/more than min/max values allowed by the database should cause error
-    session
+    let err = session
         .query_unpaged(
             "INSERT INTO cql_date_tests (id, val) VALUES (0, '-5877641-06-22')",
             &[],
         )
         .await
         .unwrap_err();
+    assert_invalid_literal(&err, "is less than min supported date");
 
-    session
+    let err = session
         .query_unpaged(
             "INSERT INTO cql_date_tests (id, val) VALUES (0, '5881580-07-12')",
             &[],
         )
         .await
         .unwrap_err();
+    assert_invalid_literal(&err, "is greater than max supported date");
 
     session
         .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
@@ -623,24 +643,26 @@ async fn test_cql_time() {
 
     // Tests with invalid time values
     // Make sure that database rejects them
+    // Each value is paired with the reason ScyllaDB gives for rejecting it.
     let invalid_tests = [
-        "-01:00:00",
+        ("-01:00:00", "Hour out of bounds"),
         // "-00:00:01", - actually this gets parsed as 0h 0m 1s, looks like a harmless bug
         //"0", - this is invalid in scylla but valid in cassandra
         //"86399999999999",
-        "24:00:00.000000000",
-        "00:00:00.0000000001",
-        "23:59:59.9999999999",
+        ("24:00:00.000000000", "Hour out of bounds"),
+        ("00:00:00.0000000001", "more than 9 nanosecond digits"),
+        ("23:59:59.9999999999", "more than 9 nanosecond digits"),
     ];
 
-    for time_str in &invalid_tests {
-        session
+    for (time_str, reason) in &invalid_tests {
+        let err = session
             .query_unpaged(
                 format!("INSERT INTO cql_time_tests (id, val) VALUES (0, '{time_str}')"),
                 &[],
             )
             .await
             .unwrap_err();
+        assert_invalid_literal(&err, reason);
     }
 
     session
@@ -652,9 +674,8 @@ async fn test_cql_time() {
 // Asserts that `err` comes from the driver refusing to serialize a bound value
 // because it does not fit in the CQL type.
 #[cfg(feature = "chrono-04")]
-fn assert_value_overflow(err: &scylla::errors::ExecutionError) {
+fn assert_value_overflow(err: &ExecutionError) {
     use assert_matches::assert_matches;
-    use scylla::errors::{ExecutionError, RequestAttemptError};
     use scylla::serialize::{row, value};
 
     let ExecutionError::LastAttemptError(RequestAttemptError::SerializationError(err)) = err else {
