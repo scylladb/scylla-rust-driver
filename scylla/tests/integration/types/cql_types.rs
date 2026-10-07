@@ -1,5 +1,6 @@
 use itertools::Itertools;
 use scylla::client::session::Session;
+use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
 use scylla::serialize::value::SerializeValue;
 use scylla::value::{Counter, CqlDate, CqlTime, CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint};
 use scylla::{DeserializeValue, SerializeValue};
@@ -7,6 +8,7 @@ use std::cmp::PartialEq;
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
+use uuid::Uuid;
 
 use crate::utils::{
     DeserializeOwnedValue, PerformDDL, create_new_session_builder,
@@ -58,57 +60,130 @@ async fn init_test(table_name: &str, type_name: &str) -> Session {
     init_test_maybe_without_tablets(table_name, type_name, None).await
 }
 
-// This function tests serialization and deserialization mechanisms by sending insert and select
-// queries to running Scylla instance.
-// To do so, it:
-// Prepares a table for tests (by creating test keyspace and table {table_name} using init_test)
-// Runs a test that, for every element of `tests`:
-// - inserts 2 values (one encoded as string and one as bound values) into table {type_name}
-// - selects this 2 values and compares them with expected value
-// Expected values and bound values are computed using T::from_str
-async fn run_tests<T>(tests: &[&str], type_name: &str)
-where
-    T: SerializeValue + DeserializeOwnedValue + FromStr + Debug + Clone + PartialEq,
+// Runs a table-driven serialization/deserialization test for one type.
+//
+// For every `(literal, expected)` pair it inserts the value written as a CQL
+// literal, reads it back as `T` and compares it against `expected`. `expected`
+// being `None` means the literal denotes a value the database accepts but `T`
+// cannot represent, so reading it back has to fail.
+//
+// Whenever the value *is* representable, it is additionally inserted bound -
+// exercising serialization, which a literal does not - and read back again.
+//
+// The values go to `column` of row `id = 0` in `table`.
+//
+// `quote_literal` says whether the type's CQL literal is the value in single
+// quotes (dates, times, blobs as text, ...) or the value itself.
+async fn run_literal_and_bound_tests_maybe_representable<T>(
+    session: &Session,
+    table: &str,
+    column: &str,
+    quote_literal: bool,
+    tests: impl IntoIterator<Item = (&str, Option<T>)>,
+) where
+    T: SerializeValue + DeserializeOwnedValue + Debug + Clone + PartialEq,
 {
-    let session: Session = init_test(type_name, type_name).await;
-    session.await_schema_agreement().await.unwrap();
-
-    for test in tests.iter() {
-        let insert_string_encoded_value =
-            format!("INSERT INTO {type_name} (id, val) VALUES (0, {test})");
+    for (literal, expected) in tests.into_iter() {
+        let literal_sql = if quote_literal {
+            format!("'{}'", literal.replace('\'', "''"))
+        } else {
+            literal.to_owned()
+        };
         session
-            .query_unpaged(insert_string_encoded_value, &[])
+            .query_unpaged(
+                format!("INSERT INTO {table} (id, {column}) VALUES (0, {literal_sql})"),
+                &[],
+            )
             .await
             .unwrap();
 
-        let insert_bound_value = format!("INSERT INTO {type_name} (id, val) VALUES (1, ?)");
-        let value_to_bound = T::from_str(test).ok().unwrap();
-        session
-            .query_unpaged(insert_bound_value, (value_to_bound,))
-            .await
-            .unwrap();
-
-        let select_values = format!("SELECT val from {type_name}");
-        let read_values: Vec<T> = session
-            .query_unpaged(select_values, &[])
+        let read_literal = session
+            .query_unpaged(format!("SELECT {column} FROM {table}"), &[])
             .await
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .rows::<(T,)>()
-            .unwrap()
-            .map(Result::unwrap)
-            .map(|row| row.0)
-            .collect::<Vec<_>>();
+            .single_row::<(T,)>()
+            .map(|(val,)| val);
 
-        let expected_value = T::from_str(test).ok().unwrap();
-        assert_eq!(read_values, vec![expected_value.clone(), expected_value]);
+        match expected {
+            Some(expected) => {
+                assert_eq!(
+                    read_literal.as_ref().unwrap(),
+                    &expected,
+                    "Literal {literal} did not read back as expected from column {column}"
+                );
+
+                // The value is representable, so it can also be sent bound.
+                session
+                    .query_unpaged(
+                        format!("INSERT INTO {table} (id, {column}) VALUES (0, ?)"),
+                        (&expected,),
+                    )
+                    .await
+                    .unwrap();
+
+                let (read_bound,) = session
+                    .query_unpaged(format!("SELECT {column} FROM {table}"), &[])
+                    .await
+                    .unwrap()
+                    .into_rows_result()
+                    .unwrap()
+                    .single_row::<(T,)>()
+                    .unwrap();
+                assert_eq!(
+                    &read_bound, &expected,
+                    "Bound value {expected:?} did not read back as itself from column {column}"
+                );
+            }
+            None => assert!(
+                read_literal.is_err(),
+                "Literal {literal} is not representable, so reading it back from column {column} \
+                 should have failed, but it yielded {read_literal:?}"
+            ),
+        }
     }
+}
 
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+// `run_literal_and_bound_tests_maybe_representable` for the common case of
+// every value being representable by `T`.
+async fn run_literal_and_bound_tests<T>(
+    session: &Session,
+    table: &str,
+    column: &str,
+    quote_literal: bool,
+    tests: impl IntoIterator<Item = (&str, T)>,
+) where
+    T: SerializeValue + DeserializeOwnedValue + Debug + Clone + PartialEq,
+{
+    run_literal_and_bound_tests_maybe_representable(
+        session,
+        table,
+        column,
+        quote_literal,
+        tests
+            .into_iter()
+            .map(|(literal, expected)| (literal, Some(expected))),
+    )
+    .await;
+}
+
+// `run_literal_and_bound_tests` on the `scalar_types` table, for a type whose
+// literal parses into the expected value with `FromStr`.
+async fn run_from_str_tests<T>(session: &Session, column: &str, quote_literal: bool, tests: &[&str])
+where
+    T: SerializeValue + DeserializeOwnedValue + FromStr + Debug + Clone + PartialEq,
+{
+    run_literal_and_bound_tests(
+        session,
+        "scalar_types",
+        column,
+        quote_literal,
+        tests
+            .iter()
+            .map(|literal| (*literal, T::from_str(literal).ok().unwrap())),
+    )
+    .await;
 }
 
 #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
@@ -131,24 +206,18 @@ fn varint_test_cases() -> Vec<&'static str> {
 }
 
 #[cfg(feature = "num-bigint-03")]
-#[tokio::test]
-async fn test_varint03() {
-    setup_tracing();
+async fn check_varint03(session: &Session) {
     let tests = varint_test_cases();
-    run_tests::<num_bigint_03::BigInt>(&tests, "varint").await;
+    run_from_str_tests::<num_bigint_03::BigInt>(session, "c_varint", false, &tests).await;
 }
 
 #[cfg(feature = "num-bigint-04")]
-#[tokio::test]
-async fn test_varint04() {
-    setup_tracing();
+async fn check_varint04(session: &Session) {
     let tests = varint_test_cases();
-    run_tests::<num_bigint_04::BigInt>(&tests, "varint").await;
+    run_from_str_tests::<num_bigint_04::BigInt>(session, "c_varint", false, &tests).await;
 }
 
-#[tokio::test]
-async fn test_cql_varint() {
-    setup_tracing();
+async fn check_cql_varint(session: &Session) {
     let tests = [
         vec![0x00],       // 0
         vec![0x01],       // 1
@@ -167,32 +236,12 @@ async fn test_cql_varint() {
         ], // -123456789012345678901234567890
     ];
 
-    let table_name = "cql_varint_tests";
-    let session: Session = create_new_session_builder().build().await.unwrap();
-    let ks = unique_keyspace_name();
-
-    session
-        .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = \
-            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
-        ))
-        .await
-        .unwrap();
-    session.use_keyspace(&ks, false).await.unwrap();
-
-    session
-        .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {table_name} (id int PRIMARY KEY, val varint)"
-        ))
-        .await
-        .unwrap();
-
     let prepared_insert = session
-        .prepare(format!("INSERT INTO {table_name} (id, val) VALUES (0, ?)"))
+        .prepare("INSERT INTO scalar_types (id, c_varint) VALUES (0, ?)")
         .await
         .unwrap();
     let prepared_select = session
-        .prepare(format!("SELECT val FROM {table_name} WHERE id = 0"))
+        .prepare("SELECT c_varint FROM scalar_types WHERE id = 0")
         .await
         .unwrap();
 
@@ -217,14 +266,10 @@ async fn test_cql_varint() {
 
         assert_eq!(read_values, vec![cql_varint])
     }
-
-    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[cfg(feature = "bigdecimal-04")]
-#[tokio::test]
-async fn test_decimal() {
-    setup_tracing();
+async fn check_decimal(session: &Session) {
     let tests = [
         "4.2",
         "0",
@@ -234,20 +279,16 @@ async fn test_decimal() {
         "-123456789012345678901234567890.1234567890",
     ];
 
-    run_tests::<bigdecimal_04::BigDecimal>(&tests, "decimal").await;
+    run_from_str_tests::<bigdecimal_04::BigDecimal>(session, "c_decimal", false, &tests).await;
 }
 
-#[tokio::test]
-async fn test_bool() {
-    setup_tracing();
+async fn check_bool(session: &Session) {
     let tests = ["true", "false"];
 
-    run_tests::<bool>(&tests, "boolean").await;
+    run_from_str_tests::<bool>(session, "c_boolean", false, &tests).await;
 }
 
-#[tokio::test]
-async fn test_float() {
-    setup_tracing();
+async fn check_float(session: &Session) {
     let max = f32::MAX.to_string();
     let min = f32::MIN.to_string();
     let tests = [
@@ -260,7 +301,7 @@ async fn test_float() {
         min.as_str(),
     ];
 
-    run_tests::<f32>(&tests, "float").await;
+    run_from_str_tests::<f32>(session, "c_float", false, &tests).await;
 }
 
 #[tokio::test]
@@ -307,14 +348,159 @@ async fn test_counter() {
         .unwrap();
 }
 
-#[cfg(feature = "chrono-04")]
+// Columns of the `scalar_types` table, as `(name, CQL type)`. Each scalar type
+// has one column. All Rust types that map to that CQL type use it.
+const SCALAR_TYPES_COLUMNS: &[(&str, &str)] = &[
+    ("c_date", "date"),
+    ("c_time", "time"),
+    ("c_timestamp", "timestamp"),
+    ("c_timeuuid", "timeuuid"),
+    ("c_inet", "inet"),
+    ("c_blob", "blob"),
+    ("c_boolean", "boolean"),
+    ("c_float", "float"),
+    ("c_decimal", "decimal"),
+    ("c_varint", "varint"),
+    ("c_tinyint", "tinyint"),
+    ("c_smallint", "smallint"),
+    ("c_int", "int"),
+    ("c_bigint", "bigint"),
+    ("c_double", "double"),
+    ("c_uuid", "uuid"),
+    ("c_varchar", "varchar"),
+    ("c_ascii", "ascii"),
+];
+
+/// Serialization and deserialization of the scalar CQL types.
+///
+/// All the types share one session, one keyspace and one table, with a column
+/// per type. Each type is checked by a sub-test that works on its column only.
+/// This keeps the load on the shared test cluster low.
 #[tokio::test]
-async fn test_naive_date_04() {
+async fn test_scalar_types() {
     setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE {ks} WITH REPLICATION = \
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+        ))
+        .await
+        .unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
+
+    let columns = SCALAR_TYPES_COLUMNS
+        .iter()
+        .map(|(name, typ)| format!("{name} {typ}"))
+        .join(", ");
+    session
+        .ddl(format!(
+            "CREATE TABLE scalar_types (id int PRIMARY KEY, {columns})"
+        ))
+        .await
+        .unwrap();
+
+    check_cql_date(&session).await;
+    #[cfg(feature = "chrono-04")]
+    check_naive_date_04(&session).await;
+    #[cfg(feature = "time-03")]
+    check_date_03(&session).await;
+
+    check_cql_time(&session).await;
+    #[cfg(feature = "chrono-04")]
+    check_naive_time_04(&session).await;
+    #[cfg(feature = "time-03")]
+    check_time_03(&session).await;
+
+    check_cql_timestamp(&session).await;
+    #[cfg(feature = "chrono-04")]
+    check_date_time_04(&session).await;
+    #[cfg(feature = "time-03")]
+    check_offset_date_time_03(&session).await;
+
+    check_timeuuid(&session).await;
+    check_inet(&session).await;
+    check_blob(&session).await;
+
+    check_bool(&session).await;
+    check_float(&session).await;
+    #[cfg(feature = "bigdecimal-04")]
+    check_decimal(&session).await;
+
+    check_cql_varint(&session).await;
+    #[cfg(feature = "num-bigint-03")]
+    check_varint03(&session).await;
+    #[cfg(feature = "num-bigint-04")]
+    check_varint04(&session).await;
+
+    check_tinyint(&session).await;
+    check_smallint(&session).await;
+    check_int(&session).await;
+    check_bigint(&session).await;
+    check_double(&session).await;
+    check_uuid(&session).await;
+    check_varchar(&session).await;
+    check_ascii(&session).await;
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+async fn check_tinyint(session: &Session) {
+    let (min, max) = (i8::MIN.to_string(), i8::MAX.to_string());
+    let tests = ["0", "1", "-1", &min, &max];
+    run_from_str_tests::<i8>(session, "c_tinyint", false, &tests).await;
+}
+
+async fn check_smallint(session: &Session) {
+    let (min, max) = (i16::MIN.to_string(), i16::MAX.to_string());
+    let tests = ["0", "1", "-1", &min, &max];
+    run_from_str_tests::<i16>(session, "c_smallint", false, &tests).await;
+}
+
+async fn check_int(session: &Session) {
+    let (min, max) = (i32::MIN.to_string(), i32::MAX.to_string());
+    let tests = ["0", "1", "-1", "997", &min, &max];
+    run_from_str_tests::<i32>(session, "c_int", false, &tests).await;
+}
+
+async fn check_bigint(session: &Session) {
+    let (min, max) = (i64::MIN.to_string(), i64::MAX.to_string());
+    let tests = ["0", "1", "-1", "997", &min, &max];
+    run_from_str_tests::<i64>(session, "c_bigint", false, &tests).await;
+}
+
+async fn check_double(session: &Session) {
+    let (min, max) = (f64::MIN.to_string(), f64::MAX.to_string());
+    let tests = ["3.5", "997", "0.1", "128", "-128", &min, &max];
+    run_from_str_tests::<f64>(session, "c_double", false, &tests).await;
+}
+
+async fn check_uuid(session: &Session) {
+    let tests = [
+        "00000000-0000-0000-0000-000000000000",
+        "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        "8e14e760-7fa8-11eb-bc66-000000000001",
+    ];
+    // A `uuid` literal is unquoted, hence `quote_literal: false`.
+    run_from_str_tests::<Uuid>(session, "c_uuid", false, &tests).await;
+}
+
+// `text` is an alias of `varchar`, so testing the latter covers both.
+async fn check_varchar(session: &Session) {
+    let tests = ["", "a", "Zażółć gęślą jaźń", "quote ' inside", "🦀"];
+    run_from_str_tests::<String>(session, "c_varchar", true, &tests).await;
+}
+
+async fn check_ascii(session: &Session) {
+    let tests = ["", "a", "plain ascii text", "quote ' inside"];
+    run_from_str_tests::<String>(session, "c_ascii", true, &tests).await;
+}
+
+#[cfg(feature = "chrono-04")]
+async fn check_naive_date_04(session: &Session) {
     use chrono::Datelike;
     use chrono::NaiveDate;
-
-    let session: Session = init_test("chrono_naive_date_tests", "date").await;
 
     let min_naive_date: NaiveDate = NaiveDate::MIN;
     let min_naive_date_string = min_naive_date.format("%Y-%m-%d").to_string();
@@ -356,64 +542,29 @@ async fn test_naive_date_04() {
         //("5881580-07-11", None),
     ];
 
-    for (date_text, date) in tests.iter() {
-        session
-            .query_unpaged(
-                format!("INSERT INTO chrono_naive_date_tests (id, val) VALUES (0, '{date_text}')"),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let read_date: Option<NaiveDate> = session
-            .query_unpaged("SELECT val from chrono_naive_date_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .rows::<(NaiveDate,)>()
-            .unwrap()
-            .next()
-            .unwrap()
-            .ok()
-            .map(|row| row.0);
-
-        assert_eq!(read_date, *date);
-
-        // If date is representable by NaiveDate try inserting it and reading again
-        if let Some(naive_date) = date {
-            session
-                .query_unpaged(
-                    "INSERT INTO chrono_naive_date_tests (id, val) VALUES (0, ?)",
-                    (naive_date,),
-                )
-                .await
-                .unwrap();
-
-            let (read_date,): (NaiveDate,) = session
-                .query_unpaged("SELECT val from chrono_naive_date_tests", &[])
-                .await
-                .unwrap()
-                .into_rows_result()
-                .unwrap()
-                .single_row::<(NaiveDate,)>()
-                .unwrap();
-            assert_eq!(read_date, *naive_date);
-        }
-    }
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    run_literal_and_bound_tests_maybe_representable(session, "scalar_types", "c_date", true, tests)
+        .await;
 }
 
-#[tokio::test]
-async fn test_cql_date() {
-    setup_tracing();
-    // Tests value::Date which allows to insert dates outside NaiveDate range
+// Asserts that `err` comes from the database rejecting a literal value as
+// invalid. A missing table is reported as invalid too, so on ScyllaDB the
+// message must also contain `scylla_reason`. Cassandra words its messages
+// differently, so there only the error code is checked.
+fn assert_invalid_literal(err: &ExecutionError, scylla_reason: &str) {
+    let ExecutionError::LastAttemptError(RequestAttemptError::DbError(DbError::Invalid, msg)) = err
+    else {
+        panic!("Expected the database to reject the literal as invalid, got {err:?}");
+    };
+    if !cfg!(cassandra_tests) {
+        assert!(
+            msg.contains(scylla_reason),
+            "Expected the rejection reason to contain {scylla_reason:?}, got {msg:?}"
+        );
+    }
+}
 
-    let session: Session = init_test("cql_date_tests", "date").await;
+async fn check_cql_date(session: &Session) {
+    // Tests value::Date which allows to insert dates outside NaiveDate range
 
     let tests = [
         ("1970-01-01", CqlDate(2_u32.pow(31))),
@@ -424,57 +575,31 @@ async fn test_cql_date() {
         //("5881580-07-11", Date(u32::MAX)),
     ];
 
-    for (date_text, date) in &tests {
-        session
-            .query_unpaged(
-                format!("INSERT INTO cql_date_tests (id, val) VALUES (0, '{date_text}')"),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let (read_date,): (CqlDate,) = session
-            .query_unpaged("SELECT val from cql_date_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(CqlDate,)>()
-            .unwrap();
-
-        assert_eq!(read_date, *date);
-    }
+    run_literal_and_bound_tests(session, "scalar_types", "c_date", true, tests).await;
 
     // 1 less/more than min/max values allowed by the database should cause error
-    session
+    let err = session
         .query_unpaged(
-            "INSERT INTO cql_date_tests (id, val) VALUES (0, '-5877641-06-22')",
+            "INSERT INTO scalar_types (id, c_date) VALUES (0, '-5877641-06-22')",
             &[],
         )
         .await
         .unwrap_err();
+    assert_invalid_literal(&err, "is less than min supported date");
 
-    session
+    let err = session
         .query_unpaged(
-            "INSERT INTO cql_date_tests (id, val) VALUES (0, '5881580-07-12')",
+            "INSERT INTO scalar_types (id, c_date) VALUES (0, '5881580-07-12')",
             &[],
         )
         .await
         .unwrap_err();
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    assert_invalid_literal(&err, "is greater than max supported date");
 }
 
 #[cfg(feature = "time-03")]
-#[tokio::test]
-async fn test_date_03() {
-    setup_tracing();
+async fn check_date_03(session: &Session) {
     use time::{Date, Month::*};
-
-    let session: Session = init_test("time_date_tests", "date").await;
 
     let tests = [
         // Basic test values
@@ -511,62 +636,13 @@ async fn test_date_03() {
         ("-5877641-06-23", None),
     ];
 
-    for (date_text, date) in tests.iter() {
-        session
-            .query_unpaged(
-                format!("INSERT INTO time_date_tests (id, val) VALUES (0, '{date_text}')"),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let read_date = session
-            .query_unpaged("SELECT val from time_date_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(Date,)>()
-            .ok()
-            .map(|val| val.0);
-
-        assert_eq!(read_date, *date);
-
-        // If date is representable by time::Date try inserting it and reading again
-        if let Some(date) = date {
-            session
-                .query_unpaged(
-                    "INSERT INTO time_date_tests (id, val) VALUES (0, ?)",
-                    (date,),
-                )
-                .await
-                .unwrap();
-
-            let (read_date,) = session
-                .query_unpaged("SELECT val from time_date_tests", &[])
-                .await
-                .unwrap()
-                .into_rows_result()
-                .unwrap()
-                .first_row::<(Date,)>()
-                .unwrap();
-            assert_eq!(read_date, *date);
-        }
-    }
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    run_literal_and_bound_tests_maybe_representable(session, "scalar_types", "c_date", true, tests)
+        .await;
 }
 
-#[tokio::test]
-async fn test_cql_time() {
-    setup_tracing();
+async fn check_cql_time(session: &Session) {
     // CqlTime is an i64 - nanoseconds since midnight
     // in range 0..=86399999999999
-
-    let session: Session = init_test("cql_time_tests", "time").await;
 
     let max_time: i64 = 24 * 60 * 60 * 1_000_000_000 - 1;
     assert_eq!(max_time, 86399999999999);
@@ -579,83 +655,62 @@ async fn test_cql_time() {
         ("23:59:59.999999999", CqlTime(max_time)),
     ];
 
-    for (time_str, time_duration) in &tests {
-        // Insert time as a string and verify that it matches
-        session
-            .query_unpaged(
-                format!("INSERT INTO cql_time_tests (id, val) VALUES (0, '{time_str}')"),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let (read_time,) = session
-            .query_unpaged("SELECT val from cql_time_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(CqlTime,)>()
-            .unwrap();
-
-        assert_eq!(read_time, *time_duration);
-
-        // Insert time as a bound CqlTime value and verify that it matches
-        session
-            .query_unpaged(
-                "INSERT INTO cql_time_tests (id, val) VALUES (0, ?)",
-                (*time_duration,),
-            )
-            .await
-            .unwrap();
-
-        let (read_time,) = session
-            .query_unpaged("SELECT val from cql_time_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(CqlTime,)>()
-            .unwrap();
-
-        assert_eq!(read_time, *time_duration);
-    }
+    run_literal_and_bound_tests(session, "scalar_types", "c_time", true, tests).await;
 
     // Tests with invalid time values
     // Make sure that database rejects them
+    // Each value is paired with the reason ScyllaDB gives for rejecting it.
     let invalid_tests = [
-        "-01:00:00",
+        ("-01:00:00", "Hour out of bounds"),
         // "-00:00:01", - actually this gets parsed as 0h 0m 1s, looks like a harmless bug
         //"0", - this is invalid in scylla but valid in cassandra
         //"86399999999999",
-        "24:00:00.000000000",
-        "00:00:00.0000000001",
-        "23:59:59.9999999999",
+        ("24:00:00.000000000", "Hour out of bounds"),
+        ("00:00:00.0000000001", "more than 9 nanosecond digits"),
+        ("23:59:59.9999999999", "more than 9 nanosecond digits"),
     ];
 
-    for time_str in &invalid_tests {
-        session
+    for (time_str, reason) in &invalid_tests {
+        let err = session
             .query_unpaged(
-                format!("INSERT INTO cql_time_tests (id, val) VALUES (0, '{time_str}')"),
+                format!("INSERT INTO scalar_types (id, c_time) VALUES (0, '{time_str}')"),
                 &[],
             )
             .await
             .unwrap_err();
+        assert_invalid_literal(&err, reason);
     }
+}
 
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+// Asserts that `err` comes from the driver refusing to serialize a bound value
+// because it does not fit in the CQL type.
+#[cfg(feature = "chrono-04")]
+fn assert_value_overflow(err: &ExecutionError) {
+    use assert_matches::assert_matches;
+    use scylla::serialize::{row, value};
+
+    let ExecutionError::LastAttemptError(RequestAttemptError::SerializationError(err)) = err else {
+        panic!("Expected a serialization error, got {err:?}");
+    };
+    let row_err = err
+        .downcast_ref::<row::BuiltinSerializationError>()
+        .unwrap_or_else(|| panic!("Expected a builtin row serialization error, got {err:?}"));
+    let row::BuiltinSerializationErrorKind::ColumnSerializationFailed { err, .. } = &row_err.kind
+    else {
+        panic!("Expected a column serialization failure, got {row_err:?}");
+    };
+    let value_err = err
+        .downcast_ref::<value::BuiltinSerializationError>()
+        .unwrap_or_else(|| panic!("Expected a builtin value serialization error, got {err:?}"));
+    assert_matches!(
+        value_err.kind,
+        value::BuiltinSerializationErrorKind::ValueOverflow
+    );
 }
 
 #[cfg(feature = "chrono-04")]
-#[tokio::test]
-async fn test_naive_time_04() {
-    setup_tracing();
+async fn check_naive_time_04(session: &Session) {
     use chrono::NaiveTime;
-
-    let session = init_test("chrono_time_tests", "time").await;
 
     let tests = [
         ("00:00:00", NaiveTime::MIN),
@@ -678,70 +733,24 @@ async fn test_naive_time_04() {
         ),
     ];
 
-    for (time_text, time) in tests.iter() {
-        // Insert as string and read it again
-        session
-            .query_unpaged(
-                format!("INSERT INTO chrono_time_tests (id, val) VALUES (0, '{time_text}')"),
-                &[],
-            )
-            .await
-            .unwrap();
+    run_literal_and_bound_tests(session, "scalar_types", "c_time", true, tests).await;
 
-        let (read_time,) = session
-            .query_unpaged("SELECT val from chrono_time_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(NaiveTime,)>()
-            .unwrap();
-
-        assert_eq!(read_time, *time);
-
-        // Insert as type and read it again
-        session
-            .query_unpaged(
-                "INSERT INTO chrono_time_tests (id, val) VALUES (0, ?)",
-                (time,),
-            )
-            .await
-            .unwrap();
-
-        let (read_time,) = session
-            .query_unpaged("SELECT val from chrono_time_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(NaiveTime,)>()
-            .unwrap();
-        assert_eq!(read_time, *time);
-    }
-
-    // chrono can represent leap seconds, this should not panic
-    let leap_second = NaiveTime::from_hms_nano_opt(23, 59, 59, 1_500_000_000);
-    session
+    // chrono can represent leap seconds, but CQL `time` cannot.
+    // Serialization must reject such a value instead of panicking.
+    let leap_second = NaiveTime::from_hms_nano_opt(23, 59, 59, 1_500_000_000).unwrap();
+    let err = session
         .query_unpaged(
-            "INSERT INTO cql_time_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO scalar_types (id, c_time) VALUES (0, ?)",
             (leap_second,),
         )
         .await
         .unwrap_err();
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    assert_value_overflow(&err);
 }
 
 #[cfg(feature = "time-03")]
-#[tokio::test]
-async fn test_time_03() {
-    setup_tracing();
+async fn check_time_03(session: &Session) {
     use time::Time;
-
-    let session = init_test("time_time_tests", "time").await;
 
     let tests = [
         ("00:00:00", Time::MIDNIGHT),
@@ -764,58 +773,10 @@ async fn test_time_03() {
         ),
     ];
 
-    for (time_text, time) in tests.iter() {
-        // Insert as string and read it again
-        session
-            .query_unpaged(
-                format!("INSERT INTO time_time_tests (id, val) VALUES (0, '{time_text}')"),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let (read_time,) = session
-            .query_unpaged("SELECT val from time_time_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(Time,)>()
-            .unwrap();
-
-        assert_eq!(read_time, *time);
-
-        // Insert as type and read it again
-        session
-            .query_unpaged(
-                "INSERT INTO time_time_tests (id, val) VALUES (0, ?)",
-                (time,),
-            )
-            .await
-            .unwrap();
-
-        let (read_time,) = session
-            .query_unpaged("SELECT val from time_time_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(Time,)>()
-            .unwrap();
-        assert_eq!(read_time, *time);
-    }
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    run_literal_and_bound_tests(session, "scalar_types", "c_time", true, tests).await;
 }
 
-#[tokio::test]
-async fn test_cql_timestamp() {
-    setup_tracing();
-    let session: Session = init_test("cql_timestamp_tests", "timestamp").await;
-
+async fn check_cql_timestamp(session: &Session) {
     //let epoch_date = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
 
     //let before_epoch = NaiveDate::from_ymd_opt(1333, 4, 30).unwrap();
@@ -841,61 +802,12 @@ async fn test_cql_timestamp() {
         //("2011-02-03T04:05:00.000+0000", Duration::milliseconds(1299038700000)),
     ];
 
-    for (timestamp_str, timestamp_duration) in &tests {
-        // Insert timestamp as a string and verify that it matches
-        session
-            .query_unpaged(
-                format!("INSERT INTO cql_timestamp_tests (id, val) VALUES (0, '{timestamp_str}')"),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let (read_timestamp,) = session
-            .query_unpaged("SELECT val from cql_timestamp_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(CqlTimestamp,)>()
-            .unwrap();
-
-        assert_eq!(read_timestamp, *timestamp_duration);
-
-        // Insert timestamp as a bound CqlTimestamp value and verify that it matches
-        session
-            .query_unpaged(
-                "INSERT INTO cql_timestamp_tests (id, val) VALUES (0, ?)",
-                (*timestamp_duration,),
-            )
-            .await
-            .unwrap();
-
-        let (read_timestamp,) = session
-            .query_unpaged("SELECT val from cql_timestamp_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(CqlTimestamp,)>()
-            .unwrap();
-
-        assert_eq!(read_timestamp, *timestamp_duration);
-    }
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    run_literal_and_bound_tests(session, "scalar_types", "c_timestamp", true, tests).await;
 }
 
 #[cfg(feature = "chrono-04")]
-#[tokio::test]
-async fn test_date_time_04() {
-    setup_tracing();
+async fn check_date_time_04(session: &Session) {
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-
-    let session = init_test("chrono_datetime_tests", "timestamp").await;
 
     let tests = [
         ("0", DateTime::from_timestamp(0, 0).unwrap()),
@@ -942,48 +854,7 @@ async fn test_date_time_04() {
         ),
     ];
 
-    for (datetime_text, datetime) in tests.iter() {
-        // Insert as string and read it again
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, '{datetime_text}')"
-                ),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let (read_datetime,) = session
-            .query_unpaged("SELECT val from chrono_datetime_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(DateTime<Utc>,)>()
-            .unwrap();
-
-        assert_eq!(read_datetime, *datetime);
-
-        // Insert as type and read it again
-        session
-            .query_unpaged(
-                "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, ?)",
-                (datetime,),
-            )
-            .await
-            .unwrap();
-
-        let (read_datetime,) = session
-            .query_unpaged("SELECT val from chrono_datetime_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(DateTime<Utc>,)>()
-            .unwrap();
-        assert_eq!(read_datetime, *datetime);
-    }
+    run_literal_and_bound_tests(session, "scalar_types", "c_timestamp", true, tests).await;
 
     // chrono datetime has higher precision, round excessive submillisecond time down
     let nanosecond_precision_1st_half = NaiveDateTime::new(
@@ -998,14 +869,14 @@ async fn test_date_time_04() {
     .and_utc();
     session
         .query_unpaged(
-            "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO scalar_types (id, c_timestamp) VALUES (0, ?)",
             (nanosecond_precision_1st_half,),
         )
         .await
         .unwrap();
 
     let (read_datetime,) = session
-        .query_unpaged("SELECT val from chrono_datetime_tests", &[])
+        .query_unpaged("SELECT c_timestamp FROM scalar_types", &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -1026,14 +897,14 @@ async fn test_date_time_04() {
     .and_utc();
     session
         .query_unpaged(
-            "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO scalar_types (id, c_timestamp) VALUES (0, ?)",
             (nanosecond_precision_2nd_half,),
         )
         .await
         .unwrap();
 
     let (read_datetime,) = session
-        .query_unpaged("SELECT val from chrono_datetime_tests", &[])
+        .query_unpaged("SELECT c_timestamp FROM scalar_types", &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -1042,33 +913,40 @@ async fn test_date_time_04() {
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_2nd_half_rounded);
 
-    // chrono can represent leap seconds, this should not panic
+    // chrono can represent leap seconds. CQL `timestamp` counts milliseconds
+    // since the epoch, so a leap second is stored as the next instant.
     let leap_second = NaiveDateTime::new(
         NaiveDate::from_ymd_opt(2015, 6, 30).unwrap(),
         NaiveTime::from_hms_milli_opt(23, 59, 59, 1500).unwrap(),
     )
     .and_utc();
+    let leap_second_normalized = NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2015, 7, 1).unwrap(),
+        NaiveTime::from_hms_milli_opt(0, 0, 0, 500).unwrap(),
+    )
+    .and_utc();
     session
         .query_unpaged(
-            "INSERT INTO cql_datetime_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO scalar_types (id, c_timestamp) VALUES (0, ?)",
             (leap_second,),
         )
         .await
-        .unwrap_err();
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
         .unwrap();
+
+    let (read_datetime,) = session
+        .query_unpaged("SELECT c_timestamp FROM scalar_types", &[])
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .first_row::<(DateTime<Utc>,)>()
+        .unwrap();
+    assert_eq!(read_datetime, leap_second_normalized);
 }
 
 #[cfg(feature = "time-03")]
-#[tokio::test]
-async fn test_offset_date_time_03() {
-    setup_tracing();
+async fn check_offset_date_time_03(session: &Session) {
     use time::{Date, Month::*, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
-
-    let session = init_test("time_datetime_tests", "timestamp").await;
 
     let tests = [
         ("0", OffsetDateTime::UNIX_EPOCH),
@@ -1115,46 +993,7 @@ async fn test_offset_date_time_03() {
         ),
     ];
 
-    for (datetime_text, datetime) in tests.iter() {
-        // Insert as string and read it again
-        session
-            .query_unpaged(
-                format!("INSERT INTO time_datetime_tests (id, val) VALUES (0, '{datetime_text}')"),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let (read_datetime,) = session
-            .query_unpaged("SELECT val from time_datetime_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(OffsetDateTime,)>()
-            .unwrap();
-
-        assert_eq!(read_datetime, *datetime);
-
-        // Insert as type and read it again
-        session
-            .query_unpaged(
-                "INSERT INTO time_datetime_tests (id, val) VALUES (0, ?)",
-                (datetime,),
-            )
-            .await
-            .unwrap();
-
-        let (read_datetime,) = session
-            .query_unpaged("SELECT val from time_datetime_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(OffsetDateTime,)>()
-            .unwrap();
-        assert_eq!(read_datetime, *datetime);
-    }
+    run_literal_and_bound_tests(session, "scalar_types", "c_timestamp", true, tests).await;
 
     // time datetime has higher precision, round excessive submillisecond time down
     let nanosecond_precision_1st_half = PrimitiveDateTime::new(
@@ -1169,14 +1008,14 @@ async fn test_offset_date_time_03() {
     .assume_utc();
     session
         .query_unpaged(
-            "INSERT INTO time_datetime_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO scalar_types (id, c_timestamp) VALUES (0, ?)",
             (nanosecond_precision_1st_half,),
         )
         .await
         .unwrap();
 
     let (read_datetime,) = session
-        .query_unpaged("SELECT val from time_datetime_tests", &[])
+        .query_unpaged("SELECT c_timestamp FROM scalar_types", &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -1197,14 +1036,14 @@ async fn test_offset_date_time_03() {
     .assume_utc();
     session
         .query_unpaged(
-            "INSERT INTO time_datetime_tests (id, val) VALUES (0, ?)",
+            "INSERT INTO scalar_types (id, c_timestamp) VALUES (0, ?)",
             (nanosecond_precision_2nd_half,),
         )
         .await
         .unwrap();
 
     let (read_datetime,) = session
-        .query_unpaged("SELECT val from time_datetime_tests", &[])
+        .query_unpaged("SELECT c_timestamp FROM scalar_types", &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -1212,18 +1051,9 @@ async fn test_offset_date_time_03() {
         .first_row::<(OffsetDateTime,)>()
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_2nd_half_rounded);
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
 }
 
-#[tokio::test]
-async fn test_timeuuid() {
-    setup_tracing();
-    let session: Session = init_test("timeuuid_tests", "timeuuid").await;
-
+async fn check_timeuuid(session: &Session) {
     // A few random timeuuids generated manually
     let tests = [
         (
@@ -1250,14 +1080,14 @@ async fn test_timeuuid() {
         // Insert timeuuid as a string and verify that it matches
         session
             .query_unpaged(
-                format!("INSERT INTO timeuuid_tests (id, val) VALUES (0, {timeuuid_str})"),
+                format!("INSERT INTO scalar_types (id, c_timeuuid) VALUES (0, {timeuuid_str})"),
                 &[],
             )
             .await
             .unwrap();
 
         let (read_timeuuid,): (CqlTimeuuid,) = session
-            .query_unpaged("SELECT val from timeuuid_tests", &[])
+            .query_unpaged("SELECT c_timeuuid FROM scalar_types", &[])
             .await
             .unwrap()
             .into_rows_result()
@@ -1271,14 +1101,14 @@ async fn test_timeuuid() {
         let test_uuid: CqlTimeuuid = CqlTimeuuid::from_slice(timeuuid_bytes.as_ref()).unwrap();
         session
             .query_unpaged(
-                "INSERT INTO timeuuid_tests (id, val) VALUES (0, ?)",
+                "INSERT INTO scalar_types (id, c_timeuuid) VALUES (0, ?)",
                 (test_uuid,),
             )
             .await
             .unwrap();
 
         let (read_timeuuid,): (CqlTimeuuid,) = session
-            .query_unpaged("SELECT val from timeuuid_tests", &[])
+            .query_unpaged("SELECT c_timeuuid FROM scalar_types", &[])
             .await
             .unwrap()
             .into_rows_result()
@@ -1288,11 +1118,6 @@ async fn test_timeuuid() {
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
     }
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
 }
 
 #[tokio::test]
@@ -1382,11 +1207,7 @@ async fn test_timeuuid_ordering() {
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
-#[tokio::test]
-async fn test_inet() {
-    setup_tracing();
-    let session: Session = init_test("inet_tests", "inet").await;
-
+async fn check_inet(session: &Session) {
     let tests = [
         ("0.0.0.0", IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
         ("127.0.0.1", IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
@@ -1424,56 +1245,10 @@ async fn test_inet() {
         ),
     ];
 
-    for (inet_str, inet) in &tests {
-        // Insert inet as a string and verify that it matches
-        session
-            .query_unpaged(
-                format!("INSERT INTO inet_tests (id, val) VALUES (0, '{inet_str}')"),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let (read_inet,): (IpAddr,) = session
-            .query_unpaged("SELECT val from inet_tests WHERE id = 0", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(IpAddr,)>()
-            .unwrap();
-
-        assert_eq!(read_inet, *inet);
-
-        // Insert inet as a bound value and verify that it matches
-        session
-            .query_unpaged("INSERT INTO inet_tests (id, val) VALUES (0, ?)", (inet,))
-            .await
-            .unwrap();
-
-        let (read_inet,): (IpAddr,) = session
-            .query_unpaged("SELECT val from inet_tests WHERE id = 0", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(IpAddr,)>()
-            .unwrap();
-
-        assert_eq!(read_inet, *inet);
-    }
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    run_literal_and_bound_tests(session, "scalar_types", "c_inet", true, tests).await;
 }
 
-#[tokio::test]
-async fn test_blob() {
-    setup_tracing();
-    let session: Session = init_test("blob_tests", "blob").await;
-
+async fn check_blob(session: &Session) {
     let long_blob: Vec<u8> = vec![0x11; 1234];
     let mut long_blob_str: String = "0x".to_string();
     long_blob_str.extend(std::iter::repeat_n('1', 2 * 1234));
@@ -1499,49 +1274,7 @@ async fn test_blob() {
         (&long_blob_str, long_blob),
     ];
 
-    for (blob_str, blob) in &tests {
-        // Insert blob as a string and verify that it matches
-        session
-            .query_unpaged(
-                format!("INSERT INTO blob_tests (id, val) VALUES (0, {blob_str})"),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let (read_blob,): (Vec<u8>,) = session
-            .query_unpaged("SELECT val from blob_tests WHERE id = 0", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(Vec<u8>,)>()
-            .unwrap();
-
-        assert_eq!(read_blob, *blob);
-
-        // Insert blob as a bound value and verify that it matches
-        session
-            .query_unpaged("INSERT INTO blob_tests (id, val) VALUES (0, ?)", (blob,))
-            .await
-            .unwrap();
-
-        let (read_blob,): (Vec<u8>,) = session
-            .query_unpaged("SELECT val from blob_tests WHERE id = 0", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(Vec<u8>,)>()
-            .unwrap();
-
-        assert_eq!(read_blob, *blob);
-    }
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    run_literal_and_bound_tests(session, "scalar_types", "c_blob", false, tests).await;
 }
 
 #[tokio::test]
