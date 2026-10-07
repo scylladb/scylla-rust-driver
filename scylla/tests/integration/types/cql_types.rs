@@ -59,59 +59,6 @@ async fn init_test(table_name: &str, type_name: &str) -> Session {
     init_test_maybe_without_tablets(table_name, type_name, None).await
 }
 
-// This function tests serialization and deserialization mechanisms by sending insert and select
-// queries to running Scylla instance.
-// To do so, it:
-// Prepares a table for tests (by creating test keyspace and table {table_name} using init_test)
-// Runs a test that, for every element of `tests`:
-// - inserts 2 values (one encoded as string and one as bound values) into table {type_name}
-// - selects this 2 values and compares them with expected value
-// Expected values and bound values are computed using T::from_str
-async fn run_tests<T>(tests: &[&str], type_name: &str)
-where
-    T: SerializeValue + DeserializeOwnedValue + FromStr + Debug + Clone + PartialEq,
-{
-    let session: Session = init_test(type_name, type_name).await;
-    session.await_schema_agreement().await.unwrap();
-
-    for test in tests.iter() {
-        let insert_string_encoded_value =
-            format!("INSERT INTO {type_name} (id, val) VALUES (0, {test})");
-        session
-            .query_unpaged(insert_string_encoded_value, &[])
-            .await
-            .unwrap();
-
-        let insert_bound_value = format!("INSERT INTO {type_name} (id, val) VALUES (1, ?)");
-        let value_to_bound = T::from_str(test).ok().unwrap();
-        session
-            .query_unpaged(insert_bound_value, (value_to_bound,))
-            .await
-            .unwrap();
-
-        let select_values = format!("SELECT val from {type_name}");
-        let read_values: Vec<T> = session
-            .query_unpaged(select_values, &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .rows::<(T,)>()
-            .unwrap()
-            .map(Result::unwrap)
-            .map(|row| row.0)
-            .collect::<Vec<_>>();
-
-        let expected_value = T::from_str(test).ok().unwrap();
-        assert_eq!(read_values, vec![expected_value.clone(), expected_value]);
-    }
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
-}
-
 // Runs a table-driven serialization/deserialization test for one type.
 //
 // For every `(literal, expected)` pair it inserts the value written as a CQL
@@ -220,6 +167,24 @@ async fn run_literal_and_bound_tests<T>(
     .await;
 }
 
+// `run_literal_and_bound_tests` on the `scalar_types` table, for a type whose
+// unquoted literal parses into the expected value with `FromStr`.
+async fn run_from_str_tests<T>(session: &Session, column: &str, tests: &[&str])
+where
+    T: SerializeValue + DeserializeOwnedValue + FromStr + Debug + Clone + PartialEq,
+{
+    run_literal_and_bound_tests(
+        session,
+        "scalar_types",
+        column,
+        false,
+        tests
+            .iter()
+            .map(|literal| (*literal, T::from_str(literal).ok().unwrap())),
+    )
+    .await;
+}
+
 #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
 fn varint_test_cases() -> Vec<&'static str> {
     vec![
@@ -240,24 +205,18 @@ fn varint_test_cases() -> Vec<&'static str> {
 }
 
 #[cfg(feature = "num-bigint-03")]
-#[tokio::test]
-async fn test_varint03() {
-    setup_tracing();
+async fn check_varint03(session: &Session) {
     let tests = varint_test_cases();
-    run_tests::<num_bigint_03::BigInt>(&tests, "varint").await;
+    run_from_str_tests::<num_bigint_03::BigInt>(session, "c_varint", &tests).await;
 }
 
 #[cfg(feature = "num-bigint-04")]
-#[tokio::test]
-async fn test_varint04() {
-    setup_tracing();
+async fn check_varint04(session: &Session) {
     let tests = varint_test_cases();
-    run_tests::<num_bigint_04::BigInt>(&tests, "varint").await;
+    run_from_str_tests::<num_bigint_04::BigInt>(session, "c_varint", &tests).await;
 }
 
-#[tokio::test]
-async fn test_cql_varint() {
-    setup_tracing();
+async fn check_cql_varint(session: &Session) {
     let tests = [
         vec![0x00],       // 0
         vec![0x01],       // 1
@@ -276,32 +235,12 @@ async fn test_cql_varint() {
         ], // -123456789012345678901234567890
     ];
 
-    let table_name = "cql_varint_tests";
-    let session: Session = create_new_session_builder().build().await.unwrap();
-    let ks = unique_keyspace_name();
-
-    session
-        .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = \
-            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
-        ))
-        .await
-        .unwrap();
-    session.use_keyspace(&ks, false).await.unwrap();
-
-    session
-        .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {table_name} (id int PRIMARY KEY, val varint)"
-        ))
-        .await
-        .unwrap();
-
     let prepared_insert = session
-        .prepare(format!("INSERT INTO {table_name} (id, val) VALUES (0, ?)"))
+        .prepare("INSERT INTO scalar_types (id, c_varint) VALUES (0, ?)")
         .await
         .unwrap();
     let prepared_select = session
-        .prepare(format!("SELECT val FROM {table_name} WHERE id = 0"))
+        .prepare("SELECT c_varint FROM scalar_types WHERE id = 0")
         .await
         .unwrap();
 
@@ -326,14 +265,10 @@ async fn test_cql_varint() {
 
         assert_eq!(read_values, vec![cql_varint])
     }
-
-    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[cfg(feature = "bigdecimal-04")]
-#[tokio::test]
-async fn test_decimal() {
-    setup_tracing();
+async fn check_decimal(session: &Session) {
     let tests = [
         "4.2",
         "0",
@@ -343,20 +278,16 @@ async fn test_decimal() {
         "-123456789012345678901234567890.1234567890",
     ];
 
-    run_tests::<bigdecimal_04::BigDecimal>(&tests, "decimal").await;
+    run_from_str_tests::<bigdecimal_04::BigDecimal>(session, "c_decimal", &tests).await;
 }
 
-#[tokio::test]
-async fn test_bool() {
-    setup_tracing();
+async fn check_bool(session: &Session) {
     let tests = ["true", "false"];
 
-    run_tests::<bool>(&tests, "boolean").await;
+    run_from_str_tests::<bool>(session, "c_boolean", &tests).await;
 }
 
-#[tokio::test]
-async fn test_float() {
-    setup_tracing();
+async fn check_float(session: &Session) {
     let max = f32::MAX.to_string();
     let min = f32::MIN.to_string();
     let tests = [
@@ -369,7 +300,7 @@ async fn test_float() {
         min.as_str(),
     ];
 
-    run_tests::<f32>(&tests, "float").await;
+    run_from_str_tests::<f32>(session, "c_float", &tests).await;
 }
 
 #[tokio::test]
@@ -425,6 +356,10 @@ const SCALAR_TYPES_COLUMNS: &[(&str, &str)] = &[
     ("c_timeuuid", "timeuuid"),
     ("c_inet", "inet"),
     ("c_blob", "blob"),
+    ("c_boolean", "boolean"),
+    ("c_float", "float"),
+    ("c_decimal", "decimal"),
+    ("c_varint", "varint"),
 ];
 
 /// Serialization and deserialization of the scalar CQL types.
@@ -478,6 +413,17 @@ async fn test_scalar_types() {
     check_timeuuid(&session).await;
     check_inet(&session).await;
     check_blob(&session).await;
+
+    check_bool(&session).await;
+    check_float(&session).await;
+    #[cfg(feature = "bigdecimal-04")]
+    check_decimal(&session).await;
+
+    check_cql_varint(&session).await;
+    #[cfg(feature = "num-bigint-03")]
+    check_varint03(&session).await;
+    #[cfg(feature = "num-bigint-04")]
+    check_varint04(&session).await;
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
