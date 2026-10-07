@@ -9,7 +9,7 @@ use crate::serialize::writers::WrittenCellProof;
 use crate::serialize::{CellWriter, SerializationError};
 use crate::value::{
     Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint,
-    Emptiable, MaybeEmpty, MaybeUnset, Unset,
+    CqlVarintBorrowed, Emptiable, MaybeEmpty, MaybeUnset, Unset,
 };
 
 use std::borrow::Cow;
@@ -785,9 +785,8 @@ fn counter_serialization() {
     );
 }
 
-fn cql_varint_normalization_test_cases() -> [(Vec<u8>, Vec<u8>); 11] {
+fn cql_varint_normalization_test_cases() -> [(Vec<u8>, Vec<u8>); 10] {
     [
-        (vec![], vec![0x00]),                 // 0
         (vec![0x00], vec![0x00]),             // 0
         (vec![0x00, 0x00], vec![0x00]),       // 0
         (vec![0x01], vec![0x01]),             // 1
@@ -812,6 +811,18 @@ fn cql_varint_normalization() {
         assert_eq!(non_normalized, normalized);
         assert_eq!(compute_hash(&non_normalized), compute_hash(&normalized));
     }
+}
+
+#[test]
+fn cql_varint_empty_is_not_zero() {
+    assert_ne!(
+        CqlVarint::from_signed_bytes_be(vec![]),
+        CqlVarint::from_signed_bytes_be(vec![0x00])
+    );
+    assert_ne!(
+        CqlVarintBorrowed::from_signed_bytes_be_slice(&[]),
+        CqlVarintBorrowed::from_signed_bytes_be_slice(&[0x00])
+    );
 }
 
 #[cfg(feature = "num-bigint-03")]

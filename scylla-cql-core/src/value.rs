@@ -353,6 +353,7 @@ impl std::hash::Hash for CqlTimeuuid {
 ///
 /// The implementation of [`PartialEq`], however, normalizes the underlying bytes
 /// before comparison. For details, check [examples](#impl-PartialEq-for-CqlVarint).
+/// Empty bytes represent the CQL empty value, which is not equal to 0.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Eq, Debug)]
 pub struct CqlVarint(Vec<u8>);
@@ -444,9 +445,8 @@ impl<V: AsVarintSlice> AsNormalizedVarintSlice for V {
     fn as_normalized_slice(&self) -> &[u8] {
         let digits = self.as_slice();
         if digits.is_empty() {
-            // num-bigint crate normalizes empty vector to 0.
-            // We will follow the same approach.
-            return &[0];
+            // The CQL empty value. The database treats it as distinct from 0.
+            return digits;
         }
 
         let non_zero_position = match digits.iter().position(|b| *b != 0) {
