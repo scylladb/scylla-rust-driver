@@ -392,12 +392,7 @@ impl_strict_type!(
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
-        if val.is_empty() {
-            return Err(mk_deser_err::<Self>(
-                typ,
-                BuiltinDeserializationErrorKind::ExpectedNonEmpty,
-            ));
-        }
+        let val = ensure_not_empty::<Self>(typ, val)?;
         Ok(num_bigint_03::BigInt::from_signed_bytes_be(val))
     }
 );
@@ -408,12 +403,7 @@ impl_strict_type!(
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
-        if val.is_empty() {
-            return Err(mk_deser_err::<Self>(
-                typ,
-                BuiltinDeserializationErrorKind::ExpectedNonEmpty,
-            ));
-        }
+        let val = ensure_not_empty::<Self>(typ, val)?;
         Ok(num_bigint_04::BigInt::from_signed_bytes_be(val))
     }
 );
