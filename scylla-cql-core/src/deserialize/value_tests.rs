@@ -2611,6 +2611,8 @@ fn test_bigint04_rejects_empty_varint() {
 #[test]
 fn test_decimal_rejects_empty() {
     let empty = make_bytes(&[]);
+    // Scale only, no unscaled value.
+    let scale_only = make_bytes(&[0, 0, 0, 2]);
     let typ = ColumnType::Native(Decimal);
 
     assert_deser_error!(
@@ -2625,6 +2627,18 @@ fn test_decimal_rejects_empty() {
         typ,
         BuiltinDeserializationErrorKind::ExpectedNonEmpty
     );
+    assert_deser_error!(
+        &scale_only,
+        CqlDecimal,
+        typ,
+        BuiltinDeserializationErrorKind::EmptyDecimalUnscaledValue
+    );
+    assert_deser_error!(
+        &scale_only,
+        CqlDecimalBorrowed,
+        typ,
+        BuiltinDeserializationErrorKind::EmptyDecimalUnscaledValue
+    );
 }
 
 #[cfg(feature = "bigdecimal-04")]
@@ -2635,6 +2649,13 @@ fn test_bigdecimal04_rejects_empty() {
         bigdecimal_04::BigDecimal,
         ColumnType::Native(Decimal),
         BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+    // Scale only, no unscaled value.
+    assert_deser_error!(
+        &make_bytes(&[0, 0, 0, 2]),
+        bigdecimal_04::BigDecimal,
+        ColumnType::Native(Decimal),
+        BuiltinDeserializationErrorKind::EmptyDecimalUnscaledValue
     );
 }
 

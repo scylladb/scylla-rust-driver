@@ -420,6 +420,14 @@ fn get_unscaled_and_scale_from_decimal_column<'frame, T>(
             BuiltinDeserializationErrorKind::BadDecimalScale(err.into()),
         )
     })?;
+    // Such a decimal is malformed: the database accepts it on write,
+    // but fails to interpret it later.
+    if val.is_empty() {
+        return Err(mk_deser_err::<T>(
+            typ,
+            BuiltinDeserializationErrorKind::EmptyDecimalUnscaledValue,
+        ));
+    }
     Ok((val, scale))
 }
 
@@ -2595,6 +2603,9 @@ pub enum BuiltinDeserializationErrorKind {
     /// Failed to deserialize decimal's scale.
     BadDecimalScale(LowLevelDeserializationError),
 
+    /// Decimal has a scale, but its unscaled value is empty.
+    EmptyDecimalUnscaledValue,
+
     /// Failed to deserialize raw bytes of cql value.
     RawCqlBytesReadError(LowLevelDeserializationError),
 
@@ -2648,6 +2659,9 @@ impl Display for BuiltinDeserializationErrorKind {
             ),
             BuiltinDeserializationErrorKind::BadDecimalScale(err) => {
                 write!(f, "malformed decimal's scale: {err}")
+            }
+            BuiltinDeserializationErrorKind::EmptyDecimalUnscaledValue => {
+                f.write_str("decimal's unscaled value is empty")
             }
             BuiltinDeserializationErrorKind::RawCqlBytesReadError(err) => {
                 write!(f, "failed to read raw cql value bytes: {err}")
