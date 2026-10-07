@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 use crate::utils::{
     PerformDDL, calculate_proxy_host_ids, create_new_session_builder, setup_tracing,
-    unique_keyspace_name,
+    unique_keyspace_name, wait_until_all_shards_are_connected,
 };
 
 #[tokio::test]
@@ -155,6 +155,10 @@ async fn test_exposed_request_coordinator() {
     let mut statement =
         Statement::new("SELECT host_id, rpc_address FROM system.local WHERE key='local'");
     let mut prepared = session.prepare(statement.clone()).await.unwrap();
+
+    // Otherwise a request for a shard without a connection yet goes to another shard,
+    // and `Coordinator` correctly reports that other shard.
+    wait_until_all_shards_are_connected(&session).await;
 
     let cluster_state = session.get_cluster_state();
     for node in cluster_state.get_nodes_info() {
