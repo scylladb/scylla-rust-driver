@@ -3391,31 +3391,18 @@ mod tests {
         // A dry-mode proxy that allows finishing creation of a Session.
         // It performs the whole handshake on all connections, but responds to all
         // QUERY, PREPARE and EXECUTE requests with an error.
-        let proxy_rules = vec![
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Options),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_supported(frame.params, &HashMap::default()).unwrap()
-                })),
-            ),
-            RequestRule(
-                Condition::or(
-                    Condition::RequestOpcode(RequestOpcode::Startup),
-                    Condition::RequestOpcode(RequestOpcode::Register),
-                ),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_ready(frame.params)
-                })),
-            ),
-            RequestRule(
+        let proxy_rules = [
+            dry_mode_handshake_rules(),
+            vec![RequestRule(
                 Condition::any([
                     Condition::RequestOpcode(RequestOpcode::Query),
                     Condition::RequestOpcode(RequestOpcode::Prepare),
                     Condition::RequestOpcode(RequestOpcode::Execute),
                 ]),
                 RequestReaction::forge().server_error(),
-            ),
-        ];
+            )],
+        ]
+        .concat();
 
         let proxy = Proxy::builder()
             .with_node(
@@ -3510,39 +3497,31 @@ mod tests {
             )
         };
 
-        let request_rules = vec![
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Options),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
-                })),
-            ),
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Startup),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_ready(frame.params)
-                })),
-            ),
-            mk_rule(
-                SUCCESSFUL_QUERY,
-                RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
-                    ResponseFrame::new(
-                        params.for_response(),
-                        ResponseOpcode::Result,
-                        Bytes::from_static(&[0, 0, 0, 1]), // Void response
-                    )
-                })),
-            ),
-            mk_rule(DROP_QUERY, RequestReaction::drop_frame()),
-            mk_rule(
-                DELAY_HALF_THRESHOLD_QUERY,
-                make_delayed_response(super::OLD_AGE_ORPHAN_THRESHOLD / 2),
-            ),
-            mk_rule(
-                DELAY_DOUBLE_THRESHOLD_QUERY,
-                make_delayed_response(2 * super::OLD_AGE_ORPHAN_THRESHOLD),
-            ),
-        ];
+        let request_rules = [
+            dry_mode_handshake_rules(),
+            vec![
+                mk_rule(
+                    SUCCESSFUL_QUERY,
+                    RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
+                        ResponseFrame::new(
+                            params.for_response(),
+                            ResponseOpcode::Result,
+                            Bytes::from_static(&[0, 0, 0, 1]), // Void response
+                        )
+                    })),
+                ),
+                mk_rule(DROP_QUERY, RequestReaction::drop_frame()),
+                mk_rule(
+                    DELAY_HALF_THRESHOLD_QUERY,
+                    make_delayed_response(super::OLD_AGE_ORPHAN_THRESHOLD / 2),
+                ),
+                mk_rule(
+                    DELAY_DOUBLE_THRESHOLD_QUERY,
+                    make_delayed_response(2 * super::OLD_AGE_ORPHAN_THRESHOLD),
+                ),
+            ],
+        ]
+        .concat();
 
         let proxy = Proxy::builder()
             .with_node(
