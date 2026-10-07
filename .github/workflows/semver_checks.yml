@@ -62,10 +62,9 @@ jobs:
     - name: Setup rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
     - name: Install semver-checks
-    # This is a temporary workaround because current cargo-semver-checks doesn't work with this repo,
-    # and needs a fix. After the bug is fixed, we should revert to using taiki-e/install-action.
-    # See: https://github.com/obi1kenobi/cargo-semver-checks/issues/1379
-      run: cargo install --git https://github.com/Lorak-mmk/cargo-semver-checks.git cargo-semver-checks --branch main
+      uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+      with:
+        tool: cargo-semver-checks
     - name: Verify the API compatibilty with PR base
       id: semver-pr-check
       run: |
@@ -153,7 +152,7 @@ jobs:
     - name: Setup rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
     - name: Install semver-checks
-      uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
+      uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
       with:
         tool: cargo-semver-checks
     - name: Run semver-checks to see if it agrees with version updates
