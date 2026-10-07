@@ -13,12 +13,6 @@ final-status-level = "slow"
 # Here their main purpose is configuring timeouts. First override that matches given
 # test is chosen, so they should be ordered from most specific to least specific.
 
-# Some tests in scylla package are still DB tests (in other
-# words, they use real Scylla). This makes them slower.
-[[profile.default.overrides]]
-filter = 'binary_id(scylla) & (test(network::connection::) | test(client::caching_session::) | test(network::connection_pool::))'
-slow-timeout = { period = "20s", terminate-after = 6 }
-
 # Client-routes topology-change tests do decommission + add or
 # stop + resume which can easily exceed the default timeout.
 [[profile.default.overrides]]
