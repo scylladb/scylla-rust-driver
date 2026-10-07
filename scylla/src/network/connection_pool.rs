@@ -1601,7 +1601,9 @@ mod tests {
     use crate::observability::metrics::Metrics;
     use crate::policies::reconnect::{ExponentialReconnectPolicy, ReconnectPolicy as _};
     use crate::routing::{Shard, ShardCount, ShardInfo, Sharder};
-    use crate::test_utils::{CapturedLogs, capturing_errors, setup_tracing};
+    use crate::test_utils::{
+        CapturedLogs, capturing_errors, dry_mode_handshake_rules, setup_tracing,
+    };
     use assert_matches::assert_matches;
     use bytes::Bytes;
     use futures::{FutureExt, StreamExt};
@@ -1610,7 +1612,7 @@ mod tests {
         RequestReaction, RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, WorkerError,
     };
     use std::collections::HashMap;
-    use std::net::{SocketAddr, ToSocketAddrs};
+    use std::net::SocketAddr;
     use std::sync::{Arc, RwLock};
     use std::time::Duration;
     use tokio::sync::{Notify, mpsc};
@@ -2071,11 +2073,19 @@ mod tests {
     async fn test_many_connections_with_config(connection_config: HostConnectionConfig) {
         let connections_number = 400;
 
-        let connect_address: SocketAddr = std::env::var("SCYLLA_URI")
-            .unwrap_or_else(|_| "172.42.0.2:9042".to_string())
-            .to_socket_addrs()
-            .unwrap()
-            .next()
+        // The node only has to accept the connections. They go over real sockets,
+        // because port collisions are reported by the OS.
+        let connect_address = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+        let proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .proxy_address(connect_address)
+                    .request_rules(dry_mode_handshake_rules())
+                    .build_dry_mode(),
+            )
+            .build()
+            .run()
+            .await
             .unwrap();
 
         // This does not have to be the real sharder,
@@ -2092,7 +2102,13 @@ mod tests {
             open_connection_to_shard_aware_port(&endpoint, 0, sharder.clone(), &connection_config)
         });
 
-        let _joined = futures::future::try_join_all(conns).await.unwrap();
+        let joined = futures::future::try_join_all(conns).await.unwrap();
+        drop(joined);
+
+        match proxy.finish().await {
+            Ok(()) | Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => {}
+            Err(err) => panic!("{err}"),
+        }
     }
 
     // Open many connections to a node
