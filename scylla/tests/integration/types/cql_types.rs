@@ -422,6 +422,9 @@ const SCALAR_TYPES_COLUMNS: &[(&str, &str)] = &[
     ("c_date", "date"),
     ("c_time", "time"),
     ("c_timestamp", "timestamp"),
+    ("c_timeuuid", "timeuuid"),
+    ("c_inet", "inet"),
+    ("c_blob", "blob"),
 ];
 
 /// Serialization and deserialization of the scalar CQL types.
@@ -471,6 +474,10 @@ async fn test_scalar_types() {
     check_date_time_04(&session).await;
     #[cfg(feature = "time-03")]
     check_offset_date_time_03(&session).await;
+
+    check_timeuuid(&session).await;
+    check_inet(&session).await;
+    check_blob(&session).await;
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
@@ -1031,11 +1038,7 @@ async fn check_offset_date_time_03(session: &Session) {
     assert_eq!(read_datetime, nanosecond_precision_2nd_half_rounded);
 }
 
-#[tokio::test]
-async fn test_timeuuid() {
-    setup_tracing();
-    let session: Session = init_test("timeuuid_tests", "timeuuid").await;
-
+async fn check_timeuuid(session: &Session) {
     // A few random timeuuids generated manually
     let tests = [
         (
@@ -1062,14 +1065,14 @@ async fn test_timeuuid() {
         // Insert timeuuid as a string and verify that it matches
         session
             .query_unpaged(
-                format!("INSERT INTO timeuuid_tests (id, val) VALUES (0, {timeuuid_str})"),
+                format!("INSERT INTO scalar_types (id, c_timeuuid) VALUES (0, {timeuuid_str})"),
                 &[],
             )
             .await
             .unwrap();
 
         let (read_timeuuid,): (CqlTimeuuid,) = session
-            .query_unpaged("SELECT val from timeuuid_tests", &[])
+            .query_unpaged("SELECT c_timeuuid FROM scalar_types", &[])
             .await
             .unwrap()
             .into_rows_result()
@@ -1083,14 +1086,14 @@ async fn test_timeuuid() {
         let test_uuid: CqlTimeuuid = CqlTimeuuid::from_slice(timeuuid_bytes.as_ref()).unwrap();
         session
             .query_unpaged(
-                "INSERT INTO timeuuid_tests (id, val) VALUES (0, ?)",
+                "INSERT INTO scalar_types (id, c_timeuuid) VALUES (0, ?)",
                 (test_uuid,),
             )
             .await
             .unwrap();
 
         let (read_timeuuid,): (CqlTimeuuid,) = session
-            .query_unpaged("SELECT val from timeuuid_tests", &[])
+            .query_unpaged("SELECT c_timeuuid FROM scalar_types", &[])
             .await
             .unwrap()
             .into_rows_result()
@@ -1100,11 +1103,6 @@ async fn test_timeuuid() {
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
     }
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
 }
 
 #[tokio::test]
@@ -1194,11 +1192,7 @@ async fn test_timeuuid_ordering() {
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
-#[tokio::test]
-async fn test_inet() {
-    setup_tracing();
-    let session: Session = init_test("inet_tests", "inet").await;
-
+async fn check_inet(session: &Session) {
     let tests = [
         ("0.0.0.0", IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
         ("127.0.0.1", IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
@@ -1236,19 +1230,10 @@ async fn test_inet() {
         ),
     ];
 
-    run_literal_and_bound_tests(&session, "inet_tests", "val", true, tests).await;
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    run_literal_and_bound_tests(session, "scalar_types", "c_inet", true, tests).await;
 }
 
-#[tokio::test]
-async fn test_blob() {
-    setup_tracing();
-    let session: Session = init_test("blob_tests", "blob").await;
-
+async fn check_blob(session: &Session) {
     let long_blob: Vec<u8> = vec![0x11; 1234];
     let mut long_blob_str: String = "0x".to_string();
     long_blob_str.extend(std::iter::repeat_n('1', 2 * 1234));
@@ -1274,12 +1259,7 @@ async fn test_blob() {
         (&long_blob_str, long_blob),
     ];
 
-    run_literal_and_bound_tests(&session, "blob_tests", "val", false, tests).await;
-
-    session
-        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
-        .await
-        .unwrap();
+    run_literal_and_bound_tests(session, "scalar_types", "c_blob", false, tests).await;
 }
 
 #[tokio::test]
