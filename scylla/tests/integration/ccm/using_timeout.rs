@@ -105,16 +105,15 @@ async fn test_control_connection_using_timeout_without_shard_awareness() {
         // effect, i.e. the driver does NOT see the node as shard-aware. This is
         // the precondition that makes the test meaningful: despite the missing
         // shard awareness, `USING TIMEOUT` must still be sent.
-        let sharder = session
-            .get_cluster_state()
-            .get_nodes_info()
-            .first()
-            .and_then(|node| node.sharder());
+        let cluster_state = session.get_cluster_state();
+        let node = cluster_state.get_nodes_info().first().unwrap();
+        let sharder = node.sharder();
         assert!(
             sharder.is_none(),
             "Expected node to NOT be shard-aware (allow_shard_aware_drivers: false), \
              but a sharder was found: {sharder:?}"
         );
+        assert_eq!(node.is_scylladb(), Some(true));
 
         // Stop the rules so that no further frames race into the channel after
         // we start draining it.
