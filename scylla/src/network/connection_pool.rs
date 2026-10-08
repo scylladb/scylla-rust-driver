@@ -321,6 +321,18 @@ impl NodeConnectionPool {
         .unwrap_or(None)
     }
 
+    pub(crate) fn is_to_scylladb(&self) -> Option<bool> {
+        self.with_connections(|pool_conns| {
+            let conn = match pool_conns {
+                PoolConnections::NotSharded(conns) => conns.first(),
+                PoolConnections::Sharded { connections, .. } => connections.iter().flatten().next(),
+            };
+            conn.map(|conn| conn.is_to_scylladb())
+        })
+        .ok()
+        .flatten()
+    }
+
     pub(crate) fn connection_for_shard(
         &self,
         shard: Shard,

@@ -120,3 +120,14 @@ async fn test_connection_failure() {
         Err(err) => println!("Connection error (it was expected): {err:?}"),
     }
 }
+
+#[tokio::test]
+async fn is_scylladb_matches_cluster_type() {
+    setup_tracing();
+
+    let session = create_new_session_builder().build().await.unwrap();
+
+    for node in session.get_cluster_state().get_nodes_info() {
+        assert_eq!(node.is_scylladb(), Some(!cfg!(cassandra_tests)));
+    }
+}

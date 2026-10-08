@@ -198,6 +198,16 @@ impl Node {
         self.pool.as_ref()?.sharder()
     }
 
+    /// Whether this node is ScyllaDB, judged by the ScyllaDB-specific extensions
+    /// it advertised in `SUPPORTED`. Unlike [`sharder`](Self::sharder), this also
+    /// recognizes ScyllaDB with `enable_shard_aware_drivers: false`.
+    ///
+    /// Returns `None` if the node is [disabled](Self::is_enabled) or has no
+    /// [open connections](Self::is_connected).
+    pub fn is_scylladb(&self) -> Option<bool> {
+        self.pool.as_ref()?.is_to_scylladb()
+    }
+
     /// Get a connection targetting the given shard
     /// If such connection is broken, get any random connection to this `Node`
     pub(crate) async fn connection_for_shard(
