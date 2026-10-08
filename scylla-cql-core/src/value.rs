@@ -346,7 +346,8 @@ impl std::hash::Hash for CqlTimeuuid {
 /// # DB data format
 /// Notice that [constructors](CqlVarint#impl-CqlVarint)
 /// don't perform any normalization on the provided data.
-/// This means that underlying bytes may contain leading zeros.
+/// This means that underlying bytes may contain redundant leading
+/// sign bytes (0x00 for positive numbers, 0xff for negative ones).
 ///
 /// Currently, Scylla and Cassandra support non-normalized `varint` values.
 /// Bytes provided by the user via constructor are passed to DB as is.
@@ -444,35 +445,14 @@ trait AsNormalizedVarintSlice {
 impl<V: AsVarintSlice> AsNormalizedVarintSlice for V {
     fn as_normalized_slice(&self) -> &[u8] {
         let digits = self.as_slice();
-        if digits.is_empty() {
-            // The CQL empty value. The database treats it as distinct from 0.
-            return digits;
-        }
-
-        let non_zero_position = match digits.iter().position(|b| *b != 0) {
-            Some(pos) => pos,
-            None => {
-                // Vector is filled with zeros. Represent it as 0.
-                return &[0];
-            }
-        };
-
-        if non_zero_position > 0 {
-            // There were some leading zeros.
-            // Now, there are two cases:
-            let zeros_to_remove = if digits[non_zero_position] > 0x7f {
-                // Most significant bit is 1, so we need to include one of the leading
-                // zeros as originally it represented a positive number.
-                non_zero_position - 1
-            } else {
-                // Most significant bit is 0 - positive number with no leading zeros.
-                non_zero_position
-            };
-            return &digits[zeros_to_remove..];
-        }
-
-        // There were no leading zeros at all - leave as is.
-        digits
+        // A leading byte is redundant if it only repeats the sign of the next byte:
+        // 0x00 before a byte with the top bit clear, or 0xff before a byte with it set.
+        // Empty digits (the CQL empty value) stay empty, so they don't equal 0.
+        let redundant = digits
+            .array_windows()
+            .take_while(|&&[a, b]| (a == 0x00 && b < 0x80) || (a == 0xff && b >= 0x80))
+            .count();
+        &digits[redundant..]
     }
 }
 

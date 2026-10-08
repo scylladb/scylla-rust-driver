@@ -785,18 +785,23 @@ fn counter_serialization() {
     );
 }
 
-fn cql_varint_normalization_test_cases() -> [(Vec<u8>, Vec<u8>); 10] {
+fn cql_varint_normalization_test_cases() -> [(Vec<u8>, Vec<u8>); 15] {
     [
-        (vec![0x00], vec![0x00]),             // 0
-        (vec![0x00, 0x00], vec![0x00]),       // 0
-        (vec![0x01], vec![0x01]),             // 1
-        (vec![0x00, 0x01], vec![0x01]),       // 1
-        (vec![0x7f], vec![0x7f]),             // 127
-        (vec![0x00, 0x7f], vec![0x7f]),       // 127
-        (vec![0x80], vec![0x80]),             // -128
-        (vec![0x00, 0x80], vec![0x00, 0x80]), // 128
-        (vec![0xff], vec![0xff]),             // -1
-        (vec![0x00, 0xff], vec![0x00, 0xff]), // 255
+        (vec![0x00], vec![0x00]),                   // 0
+        (vec![0x00, 0x00], vec![0x00]),             // 0
+        (vec![0x01], vec![0x01]),                   // 1
+        (vec![0x00, 0x01], vec![0x01]),             // 1
+        (vec![0x7f], vec![0x7f]),                   // 127
+        (vec![0x00, 0x7f], vec![0x7f]),             // 127
+        (vec![0x80], vec![0x80]),                   // -128
+        (vec![0x00, 0x80], vec![0x00, 0x80]),       // 128
+        (vec![0xff], vec![0xff]),                   // -1
+        (vec![0x00, 0xff], vec![0x00, 0xff]),       // 255
+        (vec![0xff, 0xff], vec![0xff]),             // -1
+        (vec![0xff, 0xff, 0xff], vec![0xff]),       // -1
+        (vec![0xff, 0x80], vec![0x80]),             // -128
+        (vec![0xff, 0x7f], vec![0xff, 0x7f]),       // -129
+        (vec![0xff, 0xff, 0x7f], vec![0xff, 0x7f]), // -129
     ]
 }
 
