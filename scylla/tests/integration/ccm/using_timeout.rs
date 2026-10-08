@@ -1,12 +1,12 @@
 //! CCM test verifying that the control connection still appends a
 //! `USING TIMEOUT` directive to its metadata queries even when ScyllaDB is
-//! started with `allow_shard_aware_drivers: false`.
+//! started with `enable_shard_aware_drivers: false`.
 //!
 //! Rationale: the driver only appends `USING TIMEOUT` (a ScyllaDB-only
 //! extension) to control-connection queries when it recognizes the peer as a
 //! ScyllaDB node. That recognition (`Connection::is_to_scylladb`) is based on
 //! several advertised features, one of which is shard awareness. With
-//! `allow_shard_aware_drivers: false`, ScyllaDB stops advertising shard
+//! `enable_shard_aware_drivers: false`, ScyllaDB stops advertising shard
 //! awareness, so this test guards against a regression where the driver would
 //! then fail to recognize the node as ScyllaDB and stop sending `USING
 //! TIMEOUT` (the other ScyllaDB feature flags should keep `is_to_scylladb`
@@ -66,7 +66,7 @@ async fn test_control_connection_using_timeout_without_shard_awareness() {
             .real_address(real_addr)
             .proxy_address(proxy_addr)
             // Faithfully forward whatever the node advertises about shard
-            // awareness. With `allow_shard_aware_drivers: false` the node
+            // awareness. With `enable_shard_aware_drivers: false` the node
             // advertises nothing, so QueryNode transparently falls back to
             // shard-unaware behavior.
             .shard_awareness(ShardAwareness::QueryNode)
@@ -101,7 +101,7 @@ async fn test_control_connection_using_timeout_without_shard_awareness() {
             .await
             .unwrap();
 
-        // Sanity check: confirm that `allow_shard_aware_drivers: false` took
+        // Sanity check: confirm that `enable_shard_aware_drivers: false` took
         // effect, i.e. the driver does NOT see the node as shard-aware. This is
         // the precondition that makes the test meaningful: despite the missing
         // shard awareness, `USING TIMEOUT` must still be sent.
@@ -112,7 +112,7 @@ async fn test_control_connection_using_timeout_without_shard_awareness() {
             .and_then(|node| node.sharder());
         assert!(
             sharder.is_none(),
-            "Expected node to NOT be shard-aware (allow_shard_aware_drivers: false), \
+            "Expected node to NOT be shard-aware (enable_shard_aware_drivers: false), \
              but a sharder was found: {sharder:?}"
         );
 
@@ -163,7 +163,7 @@ async fn test_control_connection_using_timeout_without_shard_awareness() {
             cluster
                 .updateconf([("enable_shard_aware_drivers", "false")])
                 .await
-                .expect("Failed to set allow_shard_aware_drivers: false");
+                .expect("Failed to set enable_shard_aware_drivers: false");
             cluster
         },
         test,

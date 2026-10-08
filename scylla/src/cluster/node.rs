@@ -190,11 +190,10 @@ impl Node {
 
     /// Retrieves the sharder for this node, if it has one.
     ///
-    /// If the node is disabled (i.e., it has no connection pool),
-    /// or the node is not sharded (i.e., it's not a ScyllaDB node), this will return `None`.
-    ///
-    /// If the node [is enabled](Self::is_enabled) and does not have a sharder,
-    /// this means it's not a ScyllaDB node.
+    /// Returns `None` if the node is [disabled](Self::is_enabled), has no
+    /// [open connections](Self::is_connected), or did not report sharding
+    /// information. The last is always the case for a node that is not ScyllaDB,
+    /// but also for ScyllaDB with `enable_shard_aware_drivers: false`.
     pub fn sharder(&self) -> Option<Sharder> {
         self.pool.as_ref()?.sharder()
     }
