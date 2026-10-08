@@ -11,7 +11,7 @@
 - [ ] All commit messages clearly explain what they change and why.
 - [ ] I added relevant tests for new features and bug fixes.
   - [ ] N/A (Nothing to add tests for)
-- [ ] All commits compile, pass static checks and pass test.
+- [ ] All commits compile, pass static checks and pass tests.
 - [ ] PR description sums up the changes and reasons why they should be introduced.
 - [ ] I have provided docstrings for the public items that I want to introduce.
   - [ ] N/A (No public items were introduced / modified)
