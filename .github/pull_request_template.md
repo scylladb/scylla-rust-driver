@@ -5,6 +5,9 @@
     Put 'x' into those boxes which apply.
     You can also create the PR now and click on all relevant checkboxes.
     See CONTRIBUTING.md for more details.
+
+    Do not remove any items from the list.
+    Do not modify existing text of the list. If needed, add more text to existing points.
 -->
 
 - [ ] I have split my patch into logically separate commits.
