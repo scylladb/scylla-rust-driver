@@ -11,6 +11,8 @@
 - [ ] All commit messages clearly explain what they change and why.
 - [ ] All commits compile, pass static checks and pass tests.
 - [ ] PR description sums up the changes and reasons why they should be introduced.
+- [ ] I (human) have personally reviewed every change in this PR. I understand what it does and can explain why each change was made.
+- [ ] I take full ownership of this code. "The AI wrote it" is not an acceptable answer to questions about it.
 - [ ] I added relevant tests for new features and bug fixes.
   - [ ] N/A (Nothing to add tests for)
 - [ ] I have provided docstrings for the public items that I want to introduce.
