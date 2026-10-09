@@ -5,13 +5,22 @@
     Put 'x' into those boxes which apply.
     You can also create the PR now and click on all relevant checkboxes.
     See CONTRIBUTING.md for more details.
+
+    Do not remove any items from the list.
+    Do not modify existing text of the list. If needed, add more text to existing points.
 -->
 
 - [ ] I have split my patch into logically separate commits.
 - [ ] All commit messages clearly explain what they change and why.
-- [ ] I added relevant tests for new features and bug fixes.
-- [ ] All commits compile, pass static checks and pass test.
+- [ ] All commits compile, pass static checks and pass tests.
 - [ ] PR description sums up the changes and reasons why they should be introduced.
+- [ ] I (human) have personally reviewed every change in this PR. I understand what it does and can explain why each change was made.
+- [ ] I take full ownership of this code. "The AI wrote it" is not an acceptable answer to questions about it.
+- [ ] I added relevant tests for new features and bug fixes.
+  - [ ] N/A (Nothing to add tests for)
 - [ ] I have provided docstrings for the public items that I want to introduce.
+  - [ ] N/A (No public items were introduced / modified)
 - [ ] I have adjusted the documentation in `./docs/source/`.
+  - [ ] N/A (The PR doesn't need any docs changes)
 - [ ] I added appropriate `Fixes:` annotations to PR description.
+  - [ ] N/A (The PR doesn't need an issue)
