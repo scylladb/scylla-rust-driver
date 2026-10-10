@@ -1,0 +1,70 @@
+# Fallthrough retry policy
+
+The `FalthroughRetryPolicy` never retries, returns errors straight to the user. Useful for debugging.
+
+## Examples
+
+To use in `Session`:
+
+```rust
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::FallthroughRetryPolicy;
+
+let handle = ExecutionProfile::builder()
+    .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
+    .build()
+    .into_handle();
+
+let session: Session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .default_execution_profile_handle(handle)
+    .build()
+    .await?;
+```
+
+To use in an [unprepared statement](https://rust-driver.docs.scylladb.com/v1.3.1/statements/unprepared.md):
+
+```rust
+use scylla::statement::unprepared::Statement;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::FallthroughRetryPolicy;
+
+let handle = ExecutionProfile::builder()
+    .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
+    .build()
+    .into_handle();
+
+// Create a Statement manually and set the retry policy
+let mut my_statement: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
+my_statement.set_execution_profile_handle(Some(handle));
+
+// Execute the statement using this retry policy
+let to_insert: i32 = 12345;
+session.query_unpaged(my_statement, (to_insert,)).await?;
+```
+
+To use in a [prepared statement](https://rust-driver.docs.scylladb.com/v1.3.1/statements/prepared.md):
+
+```rust
+use scylla::statement::prepared::PreparedStatement;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::FallthroughRetryPolicy;
+
+let handle = ExecutionProfile::builder()
+    .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
+    .build()
+    .into_handle();
+
+// Create PreparedStatement manually and set the retry policy
+let mut prepared: PreparedStatement = session
+    .prepare("INSERT INTO ks.tab (a) VALUES(?)")
+    .await?;
+
+prepared.set_execution_profile_handle(Some(handle));
+
+// Run the query using this retry policy
+let to_insert: i32 = 12345;
+session.execute_unpaged(&prepared, (to_insert,)).await?;
+```
