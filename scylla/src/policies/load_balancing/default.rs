@@ -1554,7 +1554,7 @@ mod tests {
                 .collect::<Vec<_>>();
 
             let info = Metadata {
-                peers,
+                topology: crate::cluster::metadata::Topology::Peers(peers),
                 keyspaces: HashMap::new(),
                 client_routes: None,
                 cluster_name: Some("TestCluster".into()),
