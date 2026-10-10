@@ -25,7 +25,7 @@ use crate::value::{
 #[cfg(feature = "chrono-04")]
 use crate::value::ValueOverflow;
 
-use super::writers::WrittenCellProof;
+use super::writers::{SizeLessCellError, WrittenCellProof, cell_payload};
 use super::{CellValueBuilder, CellWriter, SerializationError};
 
 /// A type that can be serialized and sent along with a CQL statement.
@@ -992,6 +992,11 @@ pub fn serialize_next_constant_length_elem_unstable<'t, T: SerializeValue + 't>(
     serialize_next_constant_length_elem(rust_name, element_type, typ, builder, element)
 }
 
+/// Serializes one element of a constant-width vector, looking the width up
+/// from the element type. `serialize_vector` reads the width once for the whole
+/// vector and calls [`serialize_next_elem_of_width`] directly, so this exists
+/// only for the unstable entry point above.
+#[cfg(all(scylla_unstable, feature = "unstable-python-rs"))]
 pub(crate) fn serialize_next_constant_length_elem<'t, T: SerializeValue + 't>(
     rust_name: &'static str,
     element_type: &ColumnType,
@@ -999,6 +1004,48 @@ pub(crate) fn serialize_next_constant_length_elem<'t, T: SerializeValue + 't>(
     builder: &mut CellValueBuilder,
     element: &'t T,
 ) -> Result<(), SerializationError> {
+    let expected = match element_type.type_size_for_vector() {
+        Some(size) if size > 0 => size,
+        // Reachable only through the unstable entry point above, or from a
+        // hand-built `ColumnType`. `serialize_vector` never routes a type
+        // without a fixed non-zero width here.
+        _ => {
+            return Err(mk_ser_err_named(
+                rust_name,
+                typ,
+                VectorSerializationErrorKind::ElementTypeNotConstantLength,
+            ));
+        }
+    };
+    serialize_next_elem_of_width(rust_name, element_type, typ, builder, element, expected)
+}
+
+/// Serializes one element of a constant-width vector, given the width its type
+/// requires. `serialize_vector` reads the width once for the whole vector, so
+/// this stays off the per-element path.
+///
+/// A constant-width vector element is a bare payload: no length header, so no
+/// room for a null or unset sentinel and no room for a payload of the wrong
+/// width. [`CellWriter::set_null`] and [`CellWriter::set_unset`] are infallible
+/// and consume the writer, so the element serializer cannot be stopped from
+/// reaching for them. What a size-less writer does instead is write nothing at
+/// all in those two cases, which turns "is this element representable" into
+/// "did it write exactly the number of bytes its type requires".
+///
+/// That works because the required width is never zero, so null and unset can
+/// never coincide with a valid payload. Inspecting the bytes instead would be
+/// unsound in the other direction: a null in a `vector<int, n>` writes the same
+/// four bytes as the perfectly legal value -1.
+fn serialize_next_elem_of_width<'t, T: SerializeValue + 't>(
+    rust_name: &'static str,
+    element_type: &ColumnType,
+    typ: &ColumnType,
+    builder: &mut CellValueBuilder,
+    element: &'t T,
+    expected: usize,
+) -> Result<(), SerializationError> {
+    debug_assert!(expected > 0);
+    let before = builder.content_len();
     T::serialize(
         element,
         element_type,
@@ -1011,6 +1058,25 @@ pub(crate) fn serialize_next_constant_length_elem<'t, T: SerializeValue + 't>(
             VectorSerializationErrorKind::ElementSerializationFailed(err),
         )
     })?;
+    let written = builder.content_len() - before;
+
+    if written != expected {
+        return Err(mk_ser_err_named(
+            rust_name,
+            typ,
+            if written == 0 {
+                // Null and unset write nothing, and so does an empty value.
+                // Which of the three it was is not recoverable here, and the
+                // consequence is the same: the element has no encoding.
+                VectorSerializationErrorKind::ElementIsNotRepresentable
+            } else {
+                VectorSerializationErrorKind::ElementSizeMismatch {
+                    expected,
+                    actual: written,
+                }
+            },
+        ));
+    }
     Ok(())
 }
 
@@ -1033,8 +1099,14 @@ pub(crate) fn serialize_next_variable_length_elem<'t, T: SerializeValue + 't>(
     builder: &mut CellValueBuilder,
     element: &'t T,
 ) -> Result<(), SerializationError> {
+    // Here the length check that guards the constant-length path above is no
+    // help: a variable-length element may legitimately be any length including
+    // zero, so an empty payload and a null are the same observation. Serialize
+    // through a normal, sized writer into the scratch buffer instead and read
+    // the 4 byte header, which names null and unset outright. The header is
+    // then dropped and only the payload is re-encoded behind its vint length.
     let mut element_buffer = Vec::new();
-    let inner_writer = CellWriter::new_without_size(&mut element_buffer);
+    let inner_writer = CellWriter::new(&mut element_buffer);
     T::serialize(element, element_type, inner_writer).map_err(|err| {
         mk_ser_err_named(
             rust_name,
@@ -1042,13 +1114,25 @@ pub(crate) fn serialize_next_variable_length_elem<'t, T: SerializeValue + 't>(
             VectorSerializationErrorKind::ElementSerializationFailed(err),
         )
     })?;
+    let element_payload = cell_payload(&element_buffer).map_err(|err| {
+        mk_ser_err_named(
+            rust_name,
+            typ,
+            match err {
+                SizeLessCellError::Null | SizeLessCellError::Unset => {
+                    VectorSerializationErrorKind::ElementIsNullOrUnset
+                }
+                SizeLessCellError::Malformed => VectorSerializationErrorKind::ElementIsMalformed,
+            },
+        )
+    })?;
     let mut element_length_buffer = Vec::new();
     unsigned_vint_encode(
-        element_buffer.len().try_into().unwrap(),
+        element_payload.len().try_into().unwrap(),
         &mut element_length_buffer,
     );
     builder.append_bytes(element_length_buffer.as_slice());
-    builder.append_bytes(element_buffer.as_slice());
+    builder.append_bytes(element_payload);
     Ok(())
 }
 
@@ -1070,16 +1154,29 @@ fn serialize_vector<'t, 'b, T: SerializeValue + 't>(
     }
     let mut builder = writer.into_value_builder();
     match element_type.type_size_for_vector() {
-        Some(_) => {
+        // The width is read once here, not once per element.
+        Some(element_width) if element_width > 0 => {
             for element in iter {
-                serialize_next_constant_length_elem(
+                serialize_next_elem_of_width(
                     rust_name,
                     element_type,
                     typ,
                     &mut builder,
                     element,
+                    element_width,
                 )?;
             }
+        }
+        // A zero-width element type has no usable encoding: the payload would
+        // be empty however many elements the vector holds, so the elements
+        // could never be recovered. Only reachable from a hand-built
+        // `ColumnType` such as `vector<vector<float, 0>, n>`.
+        Some(_) => {
+            return Err(mk_ser_err_named(
+                rust_name,
+                typ,
+                VectorSerializationErrorKind::ElementTypeNotConstantLength,
+            ));
         }
         None => {
             for element in iter {
@@ -1463,6 +1560,47 @@ pub enum VectorSerializationErrorKind {
     /// One of the elements of the vector failed to serialize.
     #[error("failed to serialize one of the elements: {0}")]
     ElementSerializationFailed(SerializationError),
+
+    /// One of the elements of a constant-width vector serialized to nothing.
+    /// Null, unset and an empty value all do that, and none of the three has a
+    /// vector element encoding: the element carries no length header, so there
+    /// is nowhere to put a sentinel and no way to be zero bytes wide.
+    #[error(
+        "one of the elements serialized to nothing, which happens for null, unset and empty values, none of which a vector element can represent"
+    )]
+    ElementIsNotRepresentable,
+
+    /// One of the elements of a variable-width vector serialized to null or to
+    /// an unset value. Neither has a vector element encoding: the sentinel
+    /// bytes would be read back as payload.
+    #[error(
+        "one of the elements serialized to null or unset, which a vector element cannot represent"
+    )]
+    ElementIsNullOrUnset,
+
+    /// One of the elements of a constant-length vector serialized to the wrong
+    /// number of bytes. The element type fixes the width, so any other length
+    /// shifts every element that follows.
+    #[error(
+        "one of the elements serialized to {actual} bytes, but its type requires exactly {expected}"
+    )]
+    ElementSizeMismatch {
+        /// The width the element type requires.
+        expected: usize,
+        /// The width the element serializer actually produced.
+        actual: usize,
+    },
+
+    /// A constant-length element was requested for a type that has no fixed,
+    /// non-zero width, so it has no size-less encoding.
+    #[error("the element type has no fixed, non-zero width and no size-less encoding")]
+    ElementTypeNotConstantLength,
+
+    /// One of the elements produced a malformed cell, which happens when a
+    /// [`CellValueBuilder`] is leaked without calling
+    /// [`finish`](CellValueBuilder::finish).
+    #[error("one of the elements serialized to a malformed cell")]
+    ElementIsMalformed,
 }
 
 /// Describes why type checking of a tuple failed.
