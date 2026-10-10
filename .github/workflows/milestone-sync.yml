@@ -17,6 +17,10 @@ permissions:
   issues: write
   pull-requests: read
 
+# The reusable workflow restores an npm cache while holding the Jira secret.
+# Unprivileged jobs running on main can write that cache, so don't restore it.
+cache-mode: none
+
 jobs:
   sync-manual:
     if: github.event_name == 'workflow_dispatch'
