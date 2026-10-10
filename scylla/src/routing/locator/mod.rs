@@ -21,7 +21,7 @@ use crate::frame::response::result::TableSpec;
 use rand::{Rng, seq::IteratorRandom};
 pub use token_ring::TokenRing;
 
-use self::tablets::{TabletVersion, TabletsInfo};
+use self::tablets::{MaskBits, TabletVersion, TabletsInfo};
 
 use crate::cluster::metadata::Strategy;
 use crate::cluster::{Node, NodeRef};
@@ -46,11 +46,19 @@ use tracing::debug;
 #[derive(Debug, Clone)]
 pub struct ReplicaLocator {
     /// The data based on which `ReplicaLocator` computes replica sets.
-    replication_data: ReplicationInfo,
+    ///
+    /// Behind an `Arc` so that cloning the locator (which happens on every
+    /// tablet update) does not copy the token rings.
+    replication_data: Arc<ReplicationInfo>,
 
-    precomputed_replicas: PrecomputedReplicas,
+    /// Behind an `Arc` for the same reason as `replication_data`: it holds a
+    /// replica list per ring token and strategy, so it is the largest part of
+    /// the locator to copy.
+    precomputed_replicas: Arc<PrecomputedReplicas>,
 
-    datacenters: Vec<String>,
+    /// Names of all datacenters in the ring. Shared for the same reason as
+    /// the fields above.
+    datacenters: Arc<[String]>,
 
     pub(crate) tablets: TabletsInfo,
 }
@@ -64,9 +72,11 @@ impl ReplicaLocator {
         precompute_replica_sets_for: impl Iterator<Item = &'a Strategy>,
         tablets: TabletsInfo,
     ) -> Self {
-        let replication_data = ReplicationInfo::new(ring_iter);
-        let precomputed_replicas =
-            PrecomputedReplicas::compute(&replication_data, precompute_replica_sets_for);
+        let replication_data = Arc::new(ReplicationInfo::new(ring_iter));
+        let precomputed_replicas = Arc::new(PrecomputedReplicas::compute(
+            &replication_data,
+            precompute_replica_sets_for,
+        ));
 
         let datacenters = replication_data
             .get_global_ring()
@@ -109,19 +119,22 @@ impl ReplicaLocator {
         table_spec: &TableSpec,
     ) -> ReplicaSet<'a> {
         if let Some(tablets) = self.tablets.tablets_for_table(table_spec) {
-            let replicas: Option<&[(Arc<Node>, Shard)]> = if let Some(datacenter) = datacenter {
-                tablets.dc_replicas_for_token(token, datacenter)
-            } else {
-                tablets.replicas_for_token(token)
+            let inner = match datacenter {
+                Some(datacenter) => {
+                    let (replicas, mask) = tablets
+                        .dc_replicas_for_token(token, datacenter)
+                        // The tablet owning the token is not known yet: empty set.
+                        .unwrap_or((&[], &[]));
+                    ReplicaSetInner::MaskedSharded { replicas, mask }
+                }
+                None => ReplicaSetInner::PlainSharded(
+                    tablets
+                        .replicas_for_token(token)
+                        // The tablet owning the token is not known yet: empty set.
+                        .unwrap_or(&[]),
+                ),
             };
-            ReplicaSet {
-                inner: ReplicaSetInner::PlainSharded(replicas.unwrap_or(
-                    // The table is a tablet table, but we don't have information for given token.
-                    // Let's just return empty set in this case.
-                    &[],
-                )),
-                token,
-            }
+            ReplicaSet { inner, token }
         } else {
             match strategy {
                 Strategy::SimpleStrategy { replication_factor } => {
@@ -238,7 +251,7 @@ impl ReplicaLocator {
 
     /// Gives a list of all known datacenters.
     pub fn datacenter_names(&self) -> &[String] {
-        self.datacenters.as_slice()
+        &self.datacenters
     }
 
     /// Gives a list of all nodes in a specified datacenter ring (which is created by filtering the
@@ -322,6 +335,15 @@ enum ReplicaSetInner<'a> {
         datacenter: &'a str,
     },
 
+    // Represents a subset of tablet replicas (those in a specified datacenter):
+    // bit `i` of `mask` (see `MaskBits`) is set iff `replicas[i]` belongs to the
+    // set. Bits are consumed in ascending order, so iteration keeps the tablet's
+    // replica order.
+    MaskedSharded {
+        replicas: &'a [(Arc<Node>, Shard)],
+        mask: &'a [u64],
+    },
+
     // Represents a set of NetworkTopologyStrategy replicas that is not limited to any specific
     // datacenter. The set is constructed lazily, by invoking
     // `locator.get_network_strategy_replicas()`.
@@ -381,6 +403,7 @@ impl<'a> ReplicaSet<'a> {
                 .iter()
                 .filter(|node| node.datacenter.as_deref() == Some(*datacenter))
                 .count(),
+            ReplicaSetInner::MaskedSharded { mask, .. } => MaskBits::new(mask).len(),
             ReplicaSetInner::ChainedNTS {
                 datacenter_repfactors,
                 locator,
@@ -421,6 +444,10 @@ impl<'a> ReplicaSet<'a> {
                 ReplicaSetInner::PlainSharded(replicas) => {
                     replicas.get(index).map(|(node, shard)| (node, *shard))
                 }
+                ReplicaSetInner::MaskedSharded { replicas, mask } => MaskBits::new(mask)
+                    .nth(index)
+                    .and_then(|idx| replicas.get(idx))
+                    .map(|(node, shard)| (node, *shard)),
                 ReplicaSetInner::FilteredSimple {
                     replicas,
                     datacenter,
@@ -487,6 +514,12 @@ impl<'a> IntoIterator for ReplicaSet<'a> {
                 datacenter,
                 idx: 0,
             },
+            ReplicaSetInner::MaskedSharded { replicas, mask } => {
+                ReplicaSetIteratorInner::MaskedSharded {
+                    replicas,
+                    bits: MaskBits::new(mask),
+                }
+            }
             ReplicaSetInner::ChainedNTS {
                 datacenter_repfactors,
                 locator,
@@ -537,6 +570,12 @@ enum ReplicaSetIteratorInner<'a> {
         replicas: ReplicasArray<'a>,
         datacenter: &'a str,
         idx: usize,
+    },
+    /// Tablets, specific datacenter. `bits` yields the positions in
+    /// `replicas` not yet visited, ascending.
+    MaskedSharded {
+        replicas: &'a [(Arc<Node>, Shard)],
+        bits: MaskBits<'a>,
     },
     /// Token ring with NetworkTopologyStrategy
     ChainedNTS {
@@ -592,6 +631,10 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
 
                 None
             }
+            ReplicaSetIteratorInner::MaskedSharded { replicas, bits } => bits
+                .next()
+                .and_then(|idx| replicas.get(idx))
+                .map(|(replica, shard)| (replica, *shard)),
             ReplicaSetIteratorInner::ChainedNTS {
                 replicas,
                 replicas_idx,
@@ -636,6 +679,7 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
                 datacenter: _,
                 idx,
             } => (0, Some(replicas.len() - *idx)),
+            ReplicaSetIteratorInner::MaskedSharded { bits, .. } => bits.size_hint(),
             ReplicaSetIteratorInner::ChainedNTS {
                 replicas,
                 replicas_idx,
@@ -684,6 +728,10 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
 
                 self.next()
             }
+            ReplicaSetIteratorInner::MaskedSharded { replicas, bits } => bits
+                .nth(n)
+                .and_then(|idx| replicas.get(idx))
+                .map(|(replica, shard)| (replica, *shard)),
             ReplicaSetIteratorInner::ChainedNTS {
                 replicas,
                 replicas_idx,
@@ -752,8 +800,8 @@ pub struct ReplicasOrderedIterator<'a> {
 
 enum ReplicasOrderedIteratorInner<'a> {
     AlreadyRingOrdered {
-        // In case of Plain, PlainSharded and FilteredSimple variants,
-        // ReplicaSetIterator respects ring order.
+        // In case of Plain, FilteredSimple, PlainSharded and MaskedSharded variants,
+        // ReplicaSetIterator respects ring (or tablet) order.
         replica_set_iter: ReplicaSetIterator<'a>,
     },
     PolyDatacenterNTS {
@@ -940,7 +988,7 @@ impl<'a> IntoIterator for ReplicasOrdered<'a> {
                         replica_set_iter: replica_set.into_iter(),
                     }
                 }
-                ReplicaSetInner::PlainSharded(_) => {
+                ReplicaSetInner::PlainSharded(_) | ReplicaSetInner::MaskedSharded { .. } => {
                     ReplicasOrderedIteratorInner::AlreadyRingOrdered {
                         replica_set_iter: replica_set.into_iter(),
                     }
@@ -966,7 +1014,60 @@ impl<'a> IntoIterator for ReplicasOrdered<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use rand::SeedableRng as _;
+    use rand_chacha::ChaCha8Rng;
+    use uuid::Uuid;
+
+    use super::{ReplicaSet, ReplicaSetInner};
+    use crate::cluster::Node;
     use crate::{routing::Token, routing::locator::test::*, test_utils::setup_tracing};
+
+    // A datacenter-scoped tablet replica set whose mask spans several words:
+    // every operation must see exactly the masked replicas, in order.
+    #[test]
+    fn masked_sharded_replica_set_spans_words() {
+        setup_tracing();
+        let replicas: Vec<(Arc<Node>, u32)> = (0..150u64)
+            .map(|i| {
+                let node = Node::new_for_test(Some(Uuid::from_u64_pair(1, i)), None, None, None);
+                (Arc::new(node), i as u32)
+            })
+            .collect();
+        // Positions 0, 63, 64, 130 and 149.
+        let mask = [1 | 1 << 63, 1, 1 << 2 | 1 << 21];
+        let expected = [0, 63, 64, 130, 149];
+        let set = || ReplicaSet {
+            inner: ReplicaSetInner::MaskedSharded {
+                replicas: &replicas,
+                mask: &mask,
+            },
+            token: Token::new(0),
+        };
+        let shards =
+            |set: ReplicaSet<'_>| set.into_iter().map(|(_, shard)| shard).collect::<Vec<_>>();
+
+        assert_eq!(set().len(), expected.len());
+        assert_eq!(shards(set()), expected);
+
+        let mut iter = set().into_iter();
+        assert_eq!(iter.size_hint(), (5, Some(5)));
+        assert_eq!(iter.nth(2).map(|(_, shard)| shard), Some(64));
+        assert_eq!(iter.size_hint(), (2, Some(2)));
+        assert_eq!(iter.nth(1).map(|(_, shard)| shard), Some(149));
+        assert_eq!(iter.size_hint(), (0, Some(0)));
+        assert_eq!(iter.next(), None);
+
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let mut chosen = std::collections::HashSet::new();
+        for _ in 0..100 {
+            let (_, shard) = set().choose_filtered(&mut rng, |_| true).unwrap();
+            assert!(expected.contains(&shard));
+            chosen.insert(shard);
+        }
+        assert_eq!(chosen.len(), expected.len());
+    }
 
     #[tokio::test]
     async fn test_replicas_ordered() {
