@@ -1230,21 +1230,58 @@ mod test_utils {
             }
 
             if !no_metadata {
-                if let Some(spec) = global_table_spec {
-                    serialize_table_spec(spec, buf)?;
-                }
-
-                for col_spec in self.col_specs() {
-                    if global_table_spec.is_none() {
-                        serialize_table_spec(col_spec.table_spec(), buf)?;
-                    }
-
-                    types::write_string(col_spec.name(), buf)?;
-                    serialize_column_type(col_spec.typ(), buf)?;
-                }
+                serialize_col_specs(self.col_specs(), global_table_spec, buf)?;
             }
 
             Ok(())
+        }
+    }
+
+    fn serialize_col_specs(
+        col_specs: &[ColumnSpec<'_>],
+        global_table_spec: Option<&TableSpec<'_>>,
+        buf: &mut impl BufMut,
+    ) -> StdResult<(), TryFromIntError> {
+        if let Some(spec) = global_table_spec {
+            serialize_table_spec(spec, buf)?;
+        }
+
+        for col_spec in col_specs {
+            if global_table_spec.is_none() {
+                serialize_table_spec(col_spec.table_spec(), buf)?;
+            }
+
+            types::write_string(col_spec.name(), buf)?;
+            serialize_column_type(col_spec.typ(), buf)?;
+        }
+
+        Ok(())
+    }
+
+    impl Prepared {
+        /// Serializes the response body, without the result kind, in the CQL wire format.
+        ///
+        /// Lets test tooling, like `scylla-proxy`, forge `RESULT::Prepared` responses.
+        /// The result metadata ID is not written, so the response is only valid if
+        /// the ScyllaDB metadata ID extension was not negotiated.
+        pub fn serialize(&self, buf: &mut impl BufMut) -> StdResult<(), TryFromIntError> {
+            types::write_short_bytes(&self.id, buf)?;
+
+            let metadata = &self.prepared_metadata;
+            // Table specs are always written per column, so no flag is set.
+            types::write_int(0, buf);
+            types::write_int_length(metadata.col_count, buf)?;
+            types::write_int_length(metadata.pk_indexes.len(), buf)?;
+            // `pk_indexes` are sorted by bind marker, but they go on the wire
+            // in the partition key order.
+            let mut pk_indexes = metadata.pk_indexes.clone();
+            pk_indexes.sort_unstable_by_key(|pk_index| pk_index.sequence);
+            for pk_index in pk_indexes {
+                types::write_short(pk_index.index, buf);
+            }
+            serialize_col_specs(&metadata.col_specs, None, buf)?;
+
+            self.result_metadata.serialize(buf, false, false, None)
         }
     }
 
@@ -1300,5 +1337,68 @@ mod test_utils {
                 raw_metadata_and_rows_bytes_size: 0,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::BytesMut;
+
+    use super::*;
+
+    #[test]
+    fn prepared_serialization_roundtrip() {
+        let col_spec = |name: &str| {
+            ColumnSpec::owned(
+                name.to_owned(),
+                ColumnType::Native(NativeType::Int),
+                TableSpec::owned("ks".to_owned(), "t".to_owned()),
+            )
+        };
+        let prepared = Prepared {
+            id: Bytes::from_static(b"id"),
+            prepared_metadata: PreparedMetadata {
+                flags: 0,
+                col_count: 3,
+                // The partition key is (c, a).
+                pk_indexes: vec![
+                    PartitionKeyIndex {
+                        index: 0,
+                        sequence: 1,
+                    },
+                    PartitionKeyIndex {
+                        index: 2,
+                        sequence: 0,
+                    },
+                ],
+                col_specs: vec![col_spec("a"), col_spec("b"), col_spec("c")],
+            },
+            result_metadata: ResultMetadata::new_for_test(1, vec![col_spec("d")]),
+        };
+
+        let mut buf = BytesMut::new();
+        prepared.serialize(&mut buf).unwrap();
+        let deserialized = deser_prepared(&mut &buf[..], &ProtocolFeatures::default()).unwrap();
+
+        assert_eq!(deserialized.id, prepared.id);
+        let pk_indexes = |metadata: &PreparedMetadata| {
+            metadata
+                .pk_indexes
+                .iter()
+                .map(|pk_index| (pk_index.index, pk_index.sequence))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            pk_indexes(&deserialized.prepared_metadata),
+            pk_indexes(&prepared.prepared_metadata)
+        );
+        assert_eq!(
+            deserialized.prepared_metadata.col_specs,
+            prepared.prepared_metadata.col_specs
+        );
+        assert_eq!(
+            deserialized.result_metadata.col_specs(),
+            prepared.result_metadata.col_specs()
+        );
     }
 }

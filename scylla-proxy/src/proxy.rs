@@ -632,6 +632,13 @@ impl RunningProxy {
     }
 }
 
+/// Backlog of the sockets listening for driver's connections.
+///
+/// The backlog of `TcpListener::bind` is 128. Connection attempts that do not fit
+/// in it are dropped, and the client retries them only after a second, which slows
+/// down tests opening many connections at once.
+const LISTEN_BACKLOG: u32 = 1024;
+
 /// A worker corresponding to a particular node. It listens in a loop for driver's connections
 /// on specified proxy bind address, respects ports regarding advanced shard-awareness (if set),
 /// to this end obtaining number of shards from the node (if set), then establishes connection
@@ -659,8 +666,18 @@ impl Doorkeeper {
         error_propagator: ErrorPropagator,
         cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
     ) -> Result<UnboundedSender<(DuplexStream, SocketAddr)>, DoorkeeperError> {
-        let listener = TcpListener::bind(node.proxy_addr())
-            .await
+        let listen = || {
+            let socket = match node.proxy_addr() {
+                SocketAddr::V4(_) => TcpSocket::new_v4(),
+                SocketAddr::V6(_) => TcpSocket::new_v6(),
+            }?;
+            // Like `TcpListener::bind` does.
+            #[cfg(not(windows))]
+            socket.set_reuseaddr(true)?;
+            socket.bind(node.proxy_addr())?;
+            socket.listen(LISTEN_BACKLOG)
+        };
+        let listener = listen()
             .map_err(|err| DoorkeeperError::DriverConnectionAttempt(node.proxy_addr(), err))?;
 
         if let InternalNode::Real {
