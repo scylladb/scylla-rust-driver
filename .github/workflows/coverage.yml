@@ -98,3 +98,38 @@ jobs:
           path: |
             target/llvm-cov/html
             target/llvm-cov/lcov.info
+
+  # A job of its own, so that a refused upload can be re-run without repeating
+  # the cluster and test run above. needs holds it back unless every step of
+  # the coverage job passed: a failed run still writes a partial report, and on
+  # main that would become the baseline later pull requests are compared
+  # against. Pull requests from forks get no secrets and upload without a token,
+  # which Codecov accepts only for their owner:branch form; neither that nor a
+  # Dependabot run, which gets no CODECOV_TOKEN, fails on a refused upload. A
+  # fork's own push runs have no token and no Codecov project, so they skip the
+  # job.
+  codecov:
+    name: Upload coverage to Codecov
+    runs-on: ubuntu-latest
+    needs: coverage
+    if: github.repository == 'scylladb/scylla-rust-driver'
+    timeout-minutes: 10
+    steps:
+      # Codecov matches lcov.info's paths against the checkout's file list.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Download coverage report
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-report
+          path: coverage-report
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage-report/lcov.info
+          disable_search: true
+          # The CLI's gcov, Xcode and coverage.py plugins have nothing to find here.
+          plugins: noop
+          fail_ci_if_error: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
