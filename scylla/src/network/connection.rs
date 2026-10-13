@@ -993,29 +993,6 @@ impl Connection {
         Ok(response)
     }
 
-    #[cfg(test)]
-    async fn execute_raw_unpaged(
-        &self,
-        prepared: &PreparedStatement,
-        values: &SerializedValues,
-    ) -> Result<QueryResponse, RequestAttemptError> {
-        // This method is used only for driver internal queries, so no need to consult execution profile here.
-        self.execute_raw_with_consistency(
-            prepared,
-            values,
-            prepared
-                .config
-                .determine_consistency(self.config.default_consistency),
-            prepared.config.serial_consistency.flatten(),
-            None,
-            PagingState::start(),
-            // A test-only helper executing on one given connection: no cached tablet version
-            // to probe.
-            0,
-        )
-        .await
-    }
-
     fn handle_result_metadata_new_id(
         prepared_statement: &PreparedStatement,
         query_response: &QueryResponse,
@@ -2679,7 +2656,7 @@ mod tests {
     use assert_matches::assert_matches;
     use scylla_proxy::{
         Condition, Node, Proxy, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction,
-        RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, ShardAwareness, WorkerError,
+        RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, WorkerError,
     };
 
     use bytes::Bytes;
@@ -2695,10 +2672,10 @@ mod tests {
         ConnectionError, CqlResponseKind, DbError, NextPageError, NextRowError,
         RequestAttemptError, RequestError,
     };
+    use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
     use crate::statement::prepared::PreparedStatement;
     use crate::statement::unprepared::Statement;
-    use crate::test_utils::setup_tracing;
-    use crate::utils::test_utils::{PerformDDL, resolve_hostname, unique_keyspace_name};
+    use crate::test_utils::{dry_mode_handshake_rules, setup_tracing};
     use futures::{StreamExt, TryStreamExt};
     use std::collections::HashMap;
     use std::net::SocketAddr;
@@ -2706,131 +2683,26 @@ mod tests {
     use std::time::Duration;
     use uuid::Uuid;
 
-    /// Tests for Connection::execute_iter
-    /// 1. SELECT from an empty table.
-    /// 2. Create table and insert ints 0..100.
-    ///    Then use execute_iter with page_size set to 7 to select all 100 rows.
-    ///
-    /// For the failure modes of this path (timeouts, server errors, non-Rows
-    /// responses), see the `connection_execute_iter_*` tests below.
-    #[tokio::test]
-    async fn connection_execute_iter_test() {
-        use crate::client::session_builder::SessionBuilder;
-
-        setup_tracing();
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
-        let addr: SocketAddr = resolve_hostname(&uri).await;
-
-        let (connection, _) = super::open_connection(
-            &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address: addr }),
-            None,
-            &HostConnectionConfig::default(),
-        )
-        .await
-        .unwrap();
-        let connection = Arc::new(connection);
-
-        let ks = unique_keyspace_name();
-        let session = SessionBuilder::new()
-            .known_node_addr(addr)
-            .build()
-            .await
-            .unwrap();
-
-        {
-            // Preparation phase
-            session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone())).await.unwrap();
-            session.use_keyspace(ks.clone(), false).await.unwrap();
-            session
-                .ddl("DROP TABLE IF EXISTS connection_execute_iter_tab")
-                .await
-                .unwrap();
-            session
-                .ddl("CREATE TABLE IF NOT EXISTS connection_execute_iter_tab (p int primary key)")
-                .await
-                .unwrap();
-        }
-
-        connection
-            .use_keyspace(&super::VerifiedKeyspaceName::new(ks.clone(), false).unwrap())
-            .await
-            .unwrap();
-
-        // 1. SELECT from an empty table returns query result where rows are Some(Vec::new())
-        let select_query =
-            Statement::new("SELECT p FROM connection_execute_iter_tab").with_page_size(7);
-        let prepared_select = connection.prepare(&select_query).await.unwrap();
-        let empty_res = connection
-            .clone()
-            .execute_iter(prepared_select.clone(), SerializedValues::new())
-            .await
-            .unwrap()
-            .rows_stream::<(i32,)>()
-            .unwrap()
-            .try_collect::<Vec<_>>()
-            .await
-            .unwrap();
-        assert!(empty_res.is_empty());
-
-        // 2. Insert 100 and select using execute_iter with page_size 7
-        let values: Vec<i32> = (0..100).collect();
-        let insert_query = Statement::new("INSERT INTO connection_execute_iter_tab (p) VALUES (?)")
-            .with_page_size(7);
-        let prepared = connection.prepare(&insert_query).await.unwrap();
-        let mut insert_futures = Vec::new();
-        for v in &values {
-            let fut = async {
-                let values = prepared.serialize_values(&(*v,)).unwrap();
-                connection.execute_raw_unpaged(&prepared, &values).await
-            };
-            insert_futures.push(fut);
-        }
-
-        futures::future::try_join_all(insert_futures).await.unwrap();
-
-        let mut results: Vec<i32> = connection
-            .clone()
-            .execute_iter(prepared_select, SerializedValues::new())
-            .await
-            .unwrap()
-            .rows_stream::<(i32,)>()
-            .unwrap()
-            .map(|ret| ret.unwrap().0)
-            .collect::<Vec<_>>()
-            .await;
-        results.sort_unstable(); // Clippy recommended to use sort_unstable instead of sort()
-        assert_eq!(results, values);
-
-        {
-            // Teardown phase
-            session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
-        }
-    }
-
     /// A fixture for tests of the fixed-connection paging path, i.e.
     /// [`Connection::execute_iter`] -> `SingleConnectionPagingExecutor`.
     ///
-    /// The connection under test goes through a proxy, so that request rules can
-    /// inject delays and errors into particular pages.
+    /// The connection under test goes to a dry-mode proxy, so every page is
+    /// forged (or spoiled) by request rules.
     struct FixedConnectionPagingFixture {
         proxy: scylla_proxy::RunningProxy,
         connection: Arc<super::Connection>,
     }
 
     impl FixedConnectionPagingFixture {
-        async fn setup(request_rules: Vec<RequestRule>) -> Self {
-            let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
-            let node_addr: SocketAddr = resolve_hostname(&uri).await;
+        async fn setup(execute_rules: Vec<RequestRule>) -> Self {
             let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
 
             let proxy = Proxy::builder()
                 .with_node(
                     Node::builder()
                         .proxy_address(proxy_addr)
-                        .real_address(node_addr)
-                        .shard_awareness(ShardAwareness::QueryNode)
-                        .request_rules(request_rules)
-                        .build(),
+                        .request_rules(Self::rules(execute_rules))
+                        .build_dry_mode(),
                 )
                 .build()
                 .run()
@@ -2853,22 +2725,60 @@ mod tests {
             }
         }
 
-        /// Prepares a paged SELECT over a system table, which is guaranteed to
-        /// exist and to contain multiple rows. Page size of 1 makes every row a
-        /// separate page, so that pages 2+ are always fetched.
+        /// Completes `execute_rules` with the rules that let the connection
+        /// be opened and the paged SELECT be prepared.
+        fn rules(execute_rules: Vec<RequestRule>) -> Vec<RequestRule> {
+            let mut rules = dry_mode_handshake_rules();
+            rules.push(RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Prepare),
+                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                    ResponseFrame::forged_prepared(
+                        frame.params,
+                        b"paged_select",
+                        &[],
+                        &paged_select_col_specs(),
+                    )
+                    .unwrap()
+                })),
+            ));
+            rules.extend(execute_rules);
+            rules
+        }
+
         async fn prepare_paged_select(&self) -> PreparedStatement {
-            let select =
-                Statement::new("SELECT keyspace_name FROM system_schema.tables").with_page_size(1);
+            let select = Statement::new("SELECT v FROM ks.t");
             self.connection.prepare(&select).await.unwrap()
         }
 
-        fn change_request_rules(&mut self, rules: Vec<RequestRule>) {
-            self.proxy.running_nodes[0].change_request_rules(Some(rules));
+        fn change_execute_rules(&mut self, rules: Vec<RequestRule>) {
+            self.proxy.running_nodes[0].change_request_rules(Some(Self::rules(rules)));
         }
 
         async fn finish(self) {
             let _ = self.proxy.finish().await;
         }
+    }
+
+    fn paged_select_col_specs() -> [ColumnSpec<'static>; 1] {
+        [ColumnSpec::borrowed(
+            "v",
+            ColumnType::Native(NativeType::Int),
+            TableSpec::borrowed("ks", "t"),
+        )]
+    }
+
+    /// Forges a page of the paged SELECT that consists of the given rows.
+    /// If `paging_state` is `Some`, the page announces that more pages follow.
+    fn forge_page(rows: &'static [i32], paging_state: Option<&'static [u8]>) -> RequestReaction {
+        RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+            ResponseFrame::forged_rows(
+                frame.params,
+                &paged_select_col_specs(),
+                rows.iter().map(|v| (*v,)),
+                paging_state,
+            )
+            .unwrap()
+        }))
     }
 
     /// A rule matching EXECUTE frames only. PREPARE requests must not be
@@ -2877,26 +2787,77 @@ mod tests {
         Condition::RequestOpcode(RequestOpcode::Execute)
     }
 
+    /// Matches requests for the page that follows the one which returned `paging_state`.
+    fn page_after(paging_state: &[u8]) -> Condition {
+        execute_opcode_condition().and(Condition::BodyContainsCaseSensitive(
+            paging_state.to_vec().into_boxed_slice(),
+        ))
+    }
+
+    /// Tests that [`Connection::execute_iter`] fetches all pages, each with
+    /// the paging state returned along with the previous one.
+    ///
+    /// For the failure modes of this path (timeouts, server errors, non-Rows
+    /// responses), see the `connection_execute_iter_*` tests below.
+    #[tokio::test]
+    async fn connection_execute_iter_test() {
+        setup_tracing();
+
+        // Case 1: the result is a single empty page.
+        let mut fixture = FixedConnectionPagingFixture::setup(vec![RequestRule(
+            execute_opcode_condition(),
+            forge_page(&[], None),
+        )])
+        .await;
+
+        let prepared = fixture.prepare_paged_select().await;
+        let connection = Arc::clone(&fixture.connection);
+        let fetch_all = async |prepared: PreparedStatement| {
+            Arc::clone(&connection)
+                .execute_iter(prepared, SerializedValues::new())
+                .await
+                .unwrap()
+                .rows_stream::<(i32,)>()
+                .unwrap()
+                .map_ok(|(v,)| v)
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap()
+        };
+
+        assert!(fetch_all(prepared.clone()).await.is_empty());
+
+        // Case 2: the result spans multiple pages.
+        fixture.change_execute_rules(vec![
+            RequestRule(
+                page_after(b"after_page_1"),
+                forge_page(&[2, 3], Some(b"after_page_2")),
+            ),
+            RequestRule(page_after(b"after_page_2"), forge_page(&[4], None)),
+            RequestRule(
+                execute_opcode_condition(),
+                forge_page(&[0, 1], Some(b"after_page_1")),
+            ),
+        ]);
+
+        assert_eq!(fetch_all(prepared).await, [0, 1, 2, 3, 4]);
+
+        fixture.finish().await;
+    }
+
     /// The timeout configured by the tests below. Its value is arbitrary: those
     /// tests never wait for it to elapse in real time. It is only chosen far
     /// longer than any realistic round trip, so that a timeout firing in the test
     /// can only be the result of the clock being advanced deliberately.
     const PAGING_TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
-    /// Makes the request under test delayed for more than the timeout's duration,
-    /// so that the only possible outcome is the client-side timeout.
-    fn delay_request_for_more_than_timeout() -> RequestReaction {
-        RequestReaction::delay(PAGING_TEST_TIMEOUT + Duration::from_secs(1))
-    }
-
     /// Stops the clock, so that the request timeout no longer elapses on its own.
     ///
     /// From this point on, time only moves when the runtime runs out of work to
     /// do, in which case tokio advances it to the nearest deadline - here, the
-    /// request timeout. Since the request under test is delayed by the proxy for
-    /// significantly longer, the response will not race with that, which makes
-    /// the timeout fire deterministically and at no cost in wall-clock time.
-    /// This is why the tests need no timing margins whatsoever.
+    /// request timeout. Since the request under test is never answered by the
+    /// proxy, this makes the timeout fire deterministically and at no cost in
+    /// wall-clock time. This is why the tests need no timing margins whatsoever.
     ///
     /// Must only be called once all the setup that involves real I/O is done,
     /// as a paused clock would make such I/O race against the advancing time.
@@ -2914,7 +2875,7 @@ mod tests {
 
         let fixture = FixedConnectionPagingFixture::setup(vec![RequestRule(
             execute_opcode_condition(),
-            delay_request_for_more_than_timeout(),
+            RequestReaction::drop_frame(),
         )])
         .await;
 
@@ -2949,34 +2910,30 @@ mod tests {
         setup_tracing();
 
         let fixture = FixedConnectionPagingFixture::setup(vec![
-            // Let the first page through, then delay all subsequent requests.
+            // Serve the first page, then leave all subsequent requests unanswered.
             RequestRule(
                 execute_opcode_condition().and(Condition::TrueForLimitedTimes(1)),
-                RequestReaction::noop(),
+                forge_page(&[0], Some(b"after_page_1")),
             ),
-            RequestRule(
-                execute_opcode_condition(),
-                delay_request_for_more_than_timeout(),
-            ),
+            RequestRule(execute_opcode_condition(), RequestReaction::drop_frame()),
         ])
         .await;
 
         let mut prepared = fixture.prepare_paged_select().await;
         prepared.set_request_timeout(Some(PAGING_TEST_TIMEOUT));
 
-        // The first page is served by the real node, so it is fetched while the
-        // clock still runs. The timeout is armed for it as well, but it is far
-        // too long to elapse - and, being the last thing done in real time, it
-        // cannot be advanced past by accident, either.
+        // The first page is fetched while the clock still runs. The timeout is
+        // armed for it as well, but it is far too long to elapse - and, being
+        // the last thing done in real time, it cannot be advanced past by
+        // accident, either.
         let mut rows_stream = Arc::clone(&fixture.connection)
             .execute_iter(prepared, SerializedValues::new())
             .await
             .unwrap()
-            .rows_stream::<(String,)>()
+            .rows_stream::<(i32,)>()
             .unwrap();
 
-        // The first page consists of exactly one row, which must arrive intact.
-        let (_ks_name,) = rows_stream.next().await.unwrap().unwrap();
+        assert_eq!(rows_stream.next().await.unwrap().unwrap(), (0,));
 
         stop_the_clock();
 
@@ -3044,11 +3001,11 @@ mod tests {
 
         // Case 2: a subsequent page fetch fails with a server error. The error
         // must reach the user through the page channel, with the same mapping.
-        fixture.change_request_rules(vec![
-            // Let the first page through, then fail all subsequent ones.
+        fixture.change_execute_rules(vec![
+            // Serve the first page, then fail all subsequent ones.
             RequestRule(
                 execute_opcode_condition().and(Condition::TrueForLimitedTimes(1)),
-                RequestReaction::noop(),
+                forge_page(&[0], Some(b"after_page_1")),
             ),
             RequestRule(
                 execute_opcode_condition(),
@@ -3062,10 +3019,10 @@ mod tests {
             .execute_iter(prepared, SerializedValues::new())
             .await
             .unwrap()
-            .rows_stream::<(String,)>()
+            .rows_stream::<(i32,)>()
             .unwrap();
 
-        let (_ks_name,) = rows_stream.next().await.unwrap().unwrap();
+        assert_eq!(rows_stream.next().await.unwrap().unwrap(), (0,));
 
         let err = rows_stream.next().await.unwrap().unwrap_err();
         assert_matches!(
@@ -3137,11 +3094,11 @@ mod tests {
 
         // Case 2: a subsequent page is not of Rows kind. The error must reach the
         // user through the page channel, with the same mapping.
-        fixture.change_request_rules(vec![
-            // Let the first page through, then spoil all subsequent ones.
+        fixture.change_execute_rules(vec![
+            // Serve the first page, then spoil all subsequent ones.
             RequestRule(
                 execute_opcode_condition().and(Condition::TrueForLimitedTimes(1)),
-                RequestReaction::noop(),
+                forge_page(&[0], Some(b"after_page_1")),
             ),
             RequestRule(execute_opcode_condition(), forge_void_result()),
         ]);
@@ -3150,149 +3107,15 @@ mod tests {
             .execute_iter(prepared, SerializedValues::new())
             .await
             .unwrap()
-            .rows_stream::<(String,)>()
+            .rows_stream::<(i32,)>()
             .unwrap();
 
-        let (_ks_name,) = rows_stream.next().await.unwrap().unwrap();
+        assert_eq!(rows_stream.next().await.unwrap().unwrap(), (0,));
 
         let err = rows_stream.next().await.unwrap().unwrap_err();
         assert_unexpected_response(err);
 
         fixture.finish().await;
-    }
-
-    #[tokio::test]
-    async fn test_coalescing() {
-        use std::num::NonZeroU64;
-
-        use super::WriteCoalescingDelay;
-        use crate::client::session_builder::SessionBuilder;
-
-        setup_tracing();
-        // It's difficult to write a reliable test that checks whether coalescing
-        // works like intended or not. Instead, this is a smoke test which is supposed
-        // to trigger the coalescing logic and check that everything works fine
-        // no matter whether coalescing is enabled or not.
-
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
-        let addr: SocketAddr = resolve_hostname(&uri).await;
-        let ks = unique_keyspace_name();
-
-        let session = SessionBuilder::new()
-            .known_node_addr(addr)
-            .build()
-            .await
-            .unwrap();
-
-        {
-            // Preparation phase
-            session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone())).await.unwrap();
-            session.use_keyspace(ks.clone(), false).await.unwrap();
-            session
-                .ddl("CREATE TABLE IF NOT EXISTS t (p int primary key, v blob)")
-                .await
-                .unwrap();
-        }
-
-        let subtest = |write_coalescing_delay: Option<WriteCoalescingDelay>, ks: String| async move {
-            let (connection, _) = super::open_connection(
-                &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address: addr }),
-                None,
-                &HostConnectionConfig {
-                    write_coalescing_delay,
-                    ..HostConnectionConfig::default()
-                },
-            )
-            .await
-            .unwrap();
-            let connection = Arc::new(connection);
-
-            connection
-                .use_keyspace(&super::VerifiedKeyspaceName::new(ks, false).unwrap())
-                .await
-                .unwrap();
-
-            connection.ddl("TRUNCATE t").await.unwrap();
-
-            let mut futs = Vec::new();
-
-            const NUM_BATCHES: i32 = 10;
-
-            for batch_size in 0..NUM_BATCHES {
-                // Each future should issue more and more queries in the first poll
-                let base = arithmetic_sequence_sum(batch_size);
-                let conn = connection.clone();
-                futs.push(tokio::task::spawn(async move {
-                    let futs = (base..base + batch_size).map(|j| {
-                        let q = Statement::new("INSERT INTO t (p, v) VALUES (?, ?)");
-                        let conn = conn.clone();
-                        async move {
-                            let prepared = conn.prepare(&q).await.unwrap();
-                            let values = prepared
-                                .serialize_values(&(j, vec![j as u8; j as usize]))
-                                .unwrap();
-                            let response =
-                                conn.execute_raw_unpaged(&prepared, &values).await.unwrap();
-                            // QueryResponse might contain an error - make sure that there were no errors
-                            let _nonerror_response =
-                                response.into_non_error_query_response().unwrap();
-                        }
-                    });
-                    let _joined: Vec<()> = futures::future::join_all(futs).await;
-                }));
-
-                tokio::task::yield_now().await;
-            }
-
-            let _joined: Vec<()> = futures::future::try_join_all(futs).await.unwrap();
-
-            // Check that everything was written properly
-            let range_end = arithmetic_sequence_sum(NUM_BATCHES);
-            let mut results = connection
-                .query_unpaged(&"SELECT p, v FROM t".into())
-                .await
-                .unwrap()
-                .into_rows_result()
-                .unwrap()
-                .rows::<(i32, Vec<u8>)>()
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
-            results.sort();
-
-            let expected = (0..range_end)
-                .map(|i| (i, vec![i as u8; i as usize]))
-                .collect::<Vec<_>>();
-
-            assert_eq!(results, expected);
-        };
-
-        // Non-deterministic sub-millisecond delay
-        subtest(
-            Some(WriteCoalescingDelay::SmallNondeterministic),
-            ks.clone(),
-        )
-        .await;
-        // 1ms delay
-        subtest(
-            Some(WriteCoalescingDelay::Milliseconds(
-                NonZeroU64::new(1).unwrap(),
-            )),
-            ks.clone(),
-        )
-        .await;
-        // No delay - coalescing disabled
-        subtest(None, ks.clone()).await;
-
-        {
-            // Teardown phase
-            session.ddl(format!("DROP KEYSPACE {ks} ")).await.unwrap();
-        }
-    }
-
-    // Returns the sum of integral numbers in the range [0..n)
-    fn arithmetic_sequence_sum(n: i32) -> i32 {
-        n * (n - 1) / 2
     }
 
     #[tokio::test]
@@ -3450,41 +3273,60 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn connection_is_closed_on_no_response_to_keepalives() {
         use crate::errors::BrokenConnectionErrorKind;
 
         setup_tracing();
 
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
-        let node_addr: SocketAddr = resolve_hostname(&uri).await;
 
+        let (options_tx, mut options_rx) = mpsc::unbounded_channel();
+        let answer_options_rule = RequestRule(
+            Condition::RequestOpcode(RequestOpcode::Options),
+            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
+            }))
+            .with_feedback_when_performed(options_tx),
+        );
         let drop_options_rule = RequestRule(
             Condition::RequestOpcode(RequestOpcode::Options),
             RequestReaction::drop_frame(),
         );
-
-        let config = HostConnectionConfig {
-            keepalive_interval: Some(Duration::from_millis(500)),
-            keepalive_timeout: Some(Duration::from_secs(1)),
-            ..Default::default()
+        // The first matching rule wins, so `options_rule` overrides the handshake rules.
+        let rules_with = |options_rule| {
+            let mut rules = vec![
+                options_rule,
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Query),
+                    forge_void_result(),
+                ),
+            ];
+            rules.extend(dry_mode_handshake_rules());
+            rules
         };
 
         let mut proxy = Proxy::builder()
             .with_node(
                 Node::builder()
                     .proxy_address(proxy_addr)
-                    .real_address(node_addr)
-                    .shard_awareness(ShardAwareness::QueryNode)
-                    .build(),
+                    .request_rules(rules_with(answer_options_rule))
+                    .build_dry_mode(),
             )
             .build()
             .run()
             .await
             .unwrap();
 
-        // Setup connection normally, without obstruction
+        let config = HostConnectionConfig {
+            keepalive_interval: Some(Duration::from_millis(500)),
+            keepalive_timeout: Some(Duration::from_secs(1)),
+            // With the in-memory transport, the paused clock cannot advance
+            // while a keepalive or its response is in flight.
+            transport_factory: Some(proxy.transport_factory()),
+            ..Default::default()
+        };
+
         let (conn, mut error_receiver) = open_connection(
             &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                 address: proxy_addr,
@@ -3495,9 +3337,12 @@ mod tests {
         .await
         .unwrap();
 
-        // As everything is normal, these queries should succeed.
+        // The first OPTIONS belongs to the handshake.
+        options_rx.recv().await.unwrap();
+
+        // As everything is normal, keepalives are answered and queries should succeed.
         for _ in 0..3 {
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            options_rx.recv().await.unwrap();
             conn.query_unpaged(&"SELECT host_id FROM system.local WHERE key='local'".into())
                 .await
                 .unwrap();
@@ -3508,8 +3353,7 @@ mod tests {
             Err(tokio::sync::oneshot::error::TryRecvError::Empty)
         );
 
-        // Set up proxy to drop keepalive messages
-        proxy.running_nodes[0].change_request_rules(Some(vec![drop_options_rule]));
+        proxy.running_nodes[0].change_request_rules(Some(rules_with(drop_options_rule)));
 
         // Wait until keepaliver gots impatient and terminates router.
         // Then, the error from keepaliver will be propagated to the error receiver.
@@ -3547,31 +3391,18 @@ mod tests {
         // A dry-mode proxy that allows finishing creation of a Session.
         // It performs the whole handshake on all connections, but responds to all
         // QUERY, PREPARE and EXECUTE requests with an error.
-        let proxy_rules = vec![
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Options),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_supported(frame.params, &HashMap::default()).unwrap()
-                })),
-            ),
-            RequestRule(
-                Condition::or(
-                    Condition::RequestOpcode(RequestOpcode::Startup),
-                    Condition::RequestOpcode(RequestOpcode::Register),
-                ),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_ready(frame.params)
-                })),
-            ),
-            RequestRule(
+        let proxy_rules = [
+            dry_mode_handshake_rules(),
+            vec![RequestRule(
                 Condition::any([
                     Condition::RequestOpcode(RequestOpcode::Query),
                     Condition::RequestOpcode(RequestOpcode::Prepare),
                     Condition::RequestOpcode(RequestOpcode::Execute),
                 ]),
                 RequestReaction::forge().server_error(),
-            ),
-        ];
+            )],
+        ]
+        .concat();
 
         let proxy = Proxy::builder()
             .with_node(
@@ -3666,39 +3497,31 @@ mod tests {
             )
         };
 
-        let request_rules = vec![
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Options),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
-                })),
-            ),
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Startup),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_ready(frame.params)
-                })),
-            ),
-            mk_rule(
-                SUCCESSFUL_QUERY,
-                RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
-                    ResponseFrame::new(
-                        params.for_response(),
-                        ResponseOpcode::Result,
-                        Bytes::from_static(&[0, 0, 0, 1]), // Void response
-                    )
-                })),
-            ),
-            mk_rule(DROP_QUERY, RequestReaction::drop_frame()),
-            mk_rule(
-                DELAY_HALF_THRESHOLD_QUERY,
-                make_delayed_response(super::OLD_AGE_ORPHAN_THRESHOLD / 2),
-            ),
-            mk_rule(
-                DELAY_DOUBLE_THRESHOLD_QUERY,
-                make_delayed_response(2 * super::OLD_AGE_ORPHAN_THRESHOLD),
-            ),
-        ];
+        let request_rules = [
+            dry_mode_handshake_rules(),
+            vec![
+                mk_rule(
+                    SUCCESSFUL_QUERY,
+                    RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
+                        ResponseFrame::new(
+                            params.for_response(),
+                            ResponseOpcode::Result,
+                            Bytes::from_static(&[0, 0, 0, 1]), // Void response
+                        )
+                    })),
+                ),
+                mk_rule(DROP_QUERY, RequestReaction::drop_frame()),
+                mk_rule(
+                    DELAY_HALF_THRESHOLD_QUERY,
+                    make_delayed_response(super::OLD_AGE_ORPHAN_THRESHOLD / 2),
+                ),
+                mk_rule(
+                    DELAY_DOUBLE_THRESHOLD_QUERY,
+                    make_delayed_response(2 * super::OLD_AGE_ORPHAN_THRESHOLD),
+                ),
+            ],
+        ]
+        .concat();
 
         let proxy = Proxy::builder()
             .with_node(
