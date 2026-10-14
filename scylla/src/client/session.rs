@@ -1354,7 +1354,7 @@ impl Session {
                 &cluster_state,
                 &routing_info,
                 &exec_params,
-                |connection: Arc<Connection>, consistency: Consistency| async move {
+                &|connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
                         .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
                         .await
@@ -1698,7 +1698,7 @@ impl Session {
                 &cluster_state,
                 &routing_info,
                 &exec_params,
-                |connection: Arc<Connection>, consistency: Consistency| {
+                &|connection: Arc<Connection>, consistency: Consistency| {
                     // Needed to avoid moving query and values into async move block
                     let values_ref = &values;
                     let paging_state_ref = &paging_state;
@@ -2153,7 +2153,7 @@ impl Session {
                 &cluster_state,
                 &routing_info,
                 &exec_params,
-                |connection: Arc<Connection>, consistency: Consistency| async move {
+                &|connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
                         .execute_raw_with_consistency(
                             prepared,
@@ -2505,7 +2505,7 @@ impl Session {
         // its state.
         routing_info: &'a RoutingInfo<'a>,
         exec_params: &RequestExecutionParams<'a>,
-        run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
+        run_request_once: &impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), ExecutionError>
     where

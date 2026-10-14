@@ -431,10 +431,11 @@ impl<'a> RequestExecutionParams<'a> {
     pub(crate) async fn run_request_no_side_effects<Target, QueryFut>(
         &self,
         routing_info: &'a RoutingInfo<'a>,
-        // Taken by reference: an async fn keeps arguments taken by value twice in
-        // its state, and the plan is passed further down to the fibers.
+        // `request_plan` and `run_request_once` are taken by reference: an async fn
+        // keeps arguments taken by value twice in its state, and both are passed
+        // further down to the fibers.
         request_plan: &mut impl Iterator<Item = Target>,
-        run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
+        run_request_once: &impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<RequestExecutionOutcome<Target::Coordinator>, RequestError>
     where
@@ -475,8 +476,7 @@ impl<'a> RequestExecutionParams<'a> {
                             routing_info,
                             request_span,
                         };
-                        let (request_plan, run_request_once) =
-                            (&shared_request_plan, &run_request_once);
+                        let request_plan = &shared_request_plan;
                         async move {
                             self.run_request_speculative_fiber(
                                 request_plan,
@@ -509,13 +509,9 @@ impl<'a> RequestExecutionParams<'a> {
                         routing_info,
                         request_span,
                     };
-                    self.run_request_speculative_fiber(
-                        request_plan,
-                        &run_request_once,
-                        &mut context,
-                    )
-                    .await
-                    .unwrap_or(Err(RequestError::EmptyPlan))
+                    self.run_request_speculative_fiber(request_plan, run_request_once, &mut context)
+                        .await
+                        .unwrap_or(Err(RequestError::EmptyPlan))
                 }
             }
         };

@@ -368,7 +368,7 @@ impl PagingExecutor {
             .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
 
         exec_params
-            .run_request_no_side_effects(routing_info, &mut plan, run_request_once, page_span)
+            .run_request_no_side_effects(routing_info, &mut plan, &run_request_once, page_span)
             .await
     }
 
@@ -602,7 +602,7 @@ impl SingleConnectionPagingExecutor {
         let mut plan = std::iter::once(SingleConnectionTarget::new(Arc::clone(&self.connection)));
 
         exec_params
-            .run_request_no_side_effects(&routing_info, &mut plan, run_request_once, request_span)
+            .run_request_no_side_effects(&routing_info, &mut plan, &run_request_once, request_span)
             .await
     }
 
