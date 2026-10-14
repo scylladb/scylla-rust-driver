@@ -518,12 +518,14 @@ impl<'a, F> Request<'a, F> {
             }
         };
 
-        let result = match self.params.request_timeout {
-            Some(timeout) => tokio::time::timeout(timeout, runner).await.unwrap_or_else(
+        // Matched by reference, so that this future keeps a reference rather
+        // than the duration while waiting.
+        let result = match &self.params.request_timeout {
+            Some(timeout) => tokio::time::timeout(*timeout, runner).await.unwrap_or_else(
                 |_: tokio::time::error::Elapsed| {
                     self.params.inc_request_timeouts();
 
-                    let timeout_error = RequestError::RequestTimeout(timeout);
+                    let timeout_error = RequestError::RequestTimeout(*timeout);
                     trace!(
                         parent: self.span.span(),
                         error = %timeout_error,
