@@ -64,7 +64,7 @@ pub struct PagingState(Option<Arc<[u8]>>);
 impl PagingState {
     /// A start state - the state of a not-yet-started paged query.
     #[inline]
-    pub fn start() -> Self {
+    pub const fn start() -> Self {
         Self(None)
     }
 
