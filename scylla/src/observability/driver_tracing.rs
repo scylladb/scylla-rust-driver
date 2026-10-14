@@ -29,9 +29,11 @@ macro_rules! await_in_span {
             $future.await
         } else {
             // A `match` keeps the temporaries of `$future` alive until it completes.
+            // The closure takes the pinned reference by value, so that this future
+            // doesn't keep it twice.
             match ::std::pin::pin!($future) {
                 mut future => {
-                    ::std::future::poll_fn(|cx| {
+                    ::std::future::poll_fn(move |cx| {
                         let _entered = span.enter();
                         ::std::future::Future::poll(future.as_mut(), cx)
                     })
