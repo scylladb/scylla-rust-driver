@@ -447,10 +447,11 @@ impl<'a, F> Request<'a, F> {
         F: Fn(Arc<Connection>, Consistency) -> QueryFut,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
-        let history_listener_and_id: Option<(&dyn HistoryListener, history::RequestId)> = self
+        // Only the id is kept, as the listener can be read from the parameters.
+        let request_id: Option<history::RequestId> = self
             .params
             .history_listener
-            .map(|hl| (hl, hl.log_request_start()));
+            .map(|hl| hl.log_request_start());
 
         let runner = async {
             match self.params.metrics_and_speculative_policy {
@@ -461,8 +462,11 @@ impl<'a, F> Request<'a, F> {
                     };
 
                     let request_runner_generator = |is_speculative: bool| {
-                        let history_data: Option<HistoryData> =
-                            history_listener_and_id.map(|(listener, request_id)| {
+                        let history_data: Option<HistoryData> = self
+                            .params
+                            .history_listener
+                            .zip(request_id)
+                            .map(|(listener, request_id)| {
                                 let speculative_id: Option<history::SpeculativeId> = is_speculative
                                     .then(|| listener.log_new_speculative_fiber(request_id));
                                 HistoryData {
@@ -497,11 +501,13 @@ impl<'a, F> Request<'a, F> {
                 }
                 _ => {
                     let history_data: Option<HistoryData> =
-                        history_listener_and_id.map(|(listener, request_id)| HistoryData {
-                            listener,
-                            request_id,
-                            speculative_id: None,
-                        });
+                        self.params.history_listener.zip(request_id).map(
+                            |(listener, request_id)| HistoryData {
+                                listener,
+                                request_id,
+                                speculative_id: None,
+                            },
+                        );
                     let mut context = ExecuteRequestContext {
                         retry_session: None,
                         history_data,
@@ -513,12 +519,14 @@ impl<'a, F> Request<'a, F> {
             }
         };
 
-        let result = match self.params.request_timeout {
-            Some(timeout) => tokio::time::timeout(timeout, runner).await.unwrap_or_else(
+        // Matched by reference, so that this future keeps a reference rather
+        // than the duration while waiting.
+        let result = match &self.params.request_timeout {
+            Some(timeout) => tokio::time::timeout(*timeout, runner).await.unwrap_or_else(
                 |_: tokio::time::error::Elapsed| {
                     self.params.inc_request_timeouts();
 
-                    let timeout_error = RequestError::RequestTimeout(timeout);
+                    let timeout_error = RequestError::RequestTimeout(*timeout);
                     trace!(
                         parent: self.span.span(),
                         error = %timeout_error,
@@ -530,7 +538,7 @@ impl<'a, F> Request<'a, F> {
             None => runner.await,
         };
 
-        if let Some((history_listener, request_id)) = history_listener_and_id {
+        if let Some((history_listener, request_id)) = self.params.history_listener.zip(request_id) {
             match &result {
                 Ok(_) => history_listener.log_request_success(request_id),
                 Err(e) => history_listener.log_request_error(request_id, e),
