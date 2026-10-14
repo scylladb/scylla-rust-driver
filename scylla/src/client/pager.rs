@@ -351,7 +351,7 @@ impl PagingExecutor {
             (coordinator.node(), coordinator.shard().unwrap_or(2137))
         });
 
-        let plan = stability_target
+        let mut plan = stability_target
             .into_iter()
             .chain(base_plan.filter(|&(node, shard)| {
                 // Filter out the preselected coordinator - it is tried first.
@@ -368,7 +368,7 @@ impl PagingExecutor {
             .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
 
         exec_params
-            .run_request_no_side_effects(routing_info, plan, run_request_once, page_span)
+            .run_request_no_side_effects(routing_info, &mut plan, run_request_once, page_span)
             .await
     }
 
@@ -599,10 +599,10 @@ impl SingleConnectionPagingExecutor {
             }
         };
 
-        let plan = std::iter::once(SingleConnectionTarget::new(Arc::clone(&self.connection)));
+        let mut plan = std::iter::once(SingleConnectionTarget::new(Arc::clone(&self.connection)));
 
         exec_params
-            .run_request_no_side_effects(&routing_info, plan, run_request_once, request_span)
+            .run_request_no_side_effects(&routing_info, &mut plan, run_request_once, request_span)
             .await
     }
 
