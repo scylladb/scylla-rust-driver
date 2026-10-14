@@ -10,7 +10,7 @@ use crate::authentication::AuthenticatorProvider;
 use crate::client::client_routes::ClientRoutesConfig;
 use crate::client::driver_config::DriverConfigReporter;
 use crate::client::execution::{
-    NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RunRequestResult,
+    NodeAttemptTarget, Request, RequestExecutionOutcome, RequestExecutionParams, RunRequestResult,
     choose_tablet_block_hint,
 };
 use crate::cluster::control_connection::MetadataRequestTimeouts;
@@ -1366,19 +1366,16 @@ impl Session {
                 .await
                 .and_then(QueryResponse::into_non_error_query_response)
         };
+        let request = Request {
+            params: &exec_params,
+            routing_info: &routing_info,
+            run_once: &run_request_once,
+            span: &span,
+        };
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
             Coordinator,
-        ) = await_in_span!(
-            self.run_request(
-                &cluster_state,
-                &routing_info,
-                &exec_params,
-                &run_request_once,
-                &span,
-            ),
-            span.span()
-        )?;
+        ) = await_in_span!(self.run_request(&cluster_state, &request), span.span())?;
 
         let result = match run_request_result {
             RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(coordinator),
@@ -1757,19 +1754,16 @@ impl Session {
                 }
             }
         };
+        let request = Request {
+            params: &exec_params,
+            routing_info: &routing_info,
+            run_once: &run_request_once,
+            span: &span,
+        };
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
             Coordinator,
-        ) = await_in_span!(
-            self.run_request(
-                &cluster_state,
-                &routing_info,
-                &exec_params,
-                &run_request_once,
-                &span,
-            ),
-            span.span()
-        )?;
+        ) = await_in_span!(self.run_request(&cluster_state, &request), span.span())?;
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
@@ -2175,19 +2169,16 @@ impl Session {
                 .await
                 .and_then(QueryResponse::into_non_error_query_response)
         };
+        let request = Request {
+            params: &exec_params,
+            routing_info: &routing_info,
+            run_once: &run_request_once,
+            span: &span,
+        };
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
             Coordinator,
-        ) = await_in_span!(
-            self.run_request(
-                &cluster_state,
-                &routing_info,
-                &exec_params,
-                &run_request_once,
-                &span,
-            ),
-            span.span()
-        )?;
+        ) = await_in_span!(self.run_request(&cluster_state, &request), span.span())?;
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
@@ -2483,8 +2474,8 @@ impl Session {
 
 impl Session {
     /// This method allows to easily run a request using load balancing, retry policy etc.
-    /// Requires some information about the request and a closure.
-    /// The closure is used to execute the request once on a chosen connection.
+    /// The request's `run_once` closure is used to execute the request once on a
+    /// chosen connection.
     /// - query will use connection.query()
     /// - execute will use connection.execute()
     ///
@@ -2492,33 +2483,29 @@ impl Session {
     /// On success, this request's result is returned.
     // I tried to make this closures take a reference instead of an Arc but failed
     // maybe once async closures get stabilized this can be fixed
-    async fn run_request<'a, QueryFut>(
-        &'a self,
+    async fn run_request<F, QueryFut>(
+        &self,
         state: &ClusterState,
         // Taken by reference: an async fn keeps arguments taken by value twice in
         // its state.
-        routing_info: &'a RoutingInfo<'a>,
-        exec_params: &RequestExecutionParams<'a>,
-        run_request_once: &impl Fn(Arc<Connection>, Consistency) -> QueryFut,
-        request_span: &'a RequestSpan,
+        request: &Request<'_, F>,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), ExecutionError>
     where
+        F: Fn(Arc<Connection>, Consistency) -> QueryFut,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
-        let mut request_plan =
-            load_balancing::Plan::new(exec_params.load_balancing_policy, routing_info, state)
-                .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
+        let mut request_plan = load_balancing::Plan::new(
+            request.params.load_balancing_policy,
+            request.routing_info,
+            state,
+        )
+        .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
 
         let RequestExecutionOutcome {
             result,
             coordinator,
-        } = exec_params
-            .run_request_no_side_effects(
-                routing_info,
-                &mut request_plan,
-                run_request_once,
-                request_span,
-            )
+        } = request
+            .run_request_no_side_effects(&mut request_plan)
             .await
             .map_err(RequestError::into_execution_error)?;
 

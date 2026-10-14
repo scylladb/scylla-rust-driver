@@ -18,7 +18,7 @@ use tracing::{Instrument, warn};
 use uuid::Uuid;
 
 use crate::client::execution::{
-    NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RequestPaging,
+    NodeAttemptTarget, Request, RequestExecutionOutcome, RequestExecutionParams, RequestPaging,
     RunRequestResult, SingleConnectionTarget, choose_tablet_block_hint,
 };
 use crate::client::session::Session;
@@ -367,9 +367,13 @@ impl PagingExecutor {
             }))
             .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
 
-        exec_params
-            .run_request_no_side_effects(routing_info, &mut plan, &run_request_once, page_span)
-            .await
+        let request = Request {
+            params: &exec_params,
+            routing_info,
+            run_once: &run_request_once,
+            span: page_span,
+        };
+        request.run_request_no_side_effects(&mut plan).await
     }
 
     fn process_first_page(
@@ -601,9 +605,13 @@ impl SingleConnectionPagingExecutor {
 
         let mut plan = std::iter::once(SingleConnectionTarget::new(Arc::clone(&self.connection)));
 
-        exec_params
-            .run_request_no_side_effects(&routing_info, &mut plan, &run_request_once, request_span)
-            .await
+        let request = Request {
+            params: &exec_params,
+            routing_info: &routing_info,
+            run_once: &run_request_once,
+            span: request_span,
+        };
+        request.run_request_no_side_effects(&mut plan).await
     }
 
     /// Interprets a page outcome. Only Rows responses are valid here.
