@@ -152,11 +152,11 @@ impl LoadBalancingPolicy for DefaultPolicy {
          * for the statement, so that we can pick one of them. */
         let routing_info = self.routing_info(query, cluster);
 
-        if let Some(ref token_with_strategy) = routing_info.token_with_strategy
+        if let Some(ref token_with_keyspace) = routing_info.token_with_keyspace
             && routing_info.preference.datacenter().is_some()
             && !self.permit_dc_failover
             && matches!(
-                token_with_strategy.keyspace.strategy,
+                token_with_keyspace.keyspace.strategy,
                 Strategy::SimpleStrategy { .. }
             )
         {
@@ -178,7 +178,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
         /* Token-aware logic - if routing info is available, we know what are the replicas
          * for the statement. Try to pick one of them. */
-        if let (Some(ts), Some(table_spec)) = (&routing_info.token_with_strategy, query.table) {
+        if let (Some(ts), Some(table_spec)) = (&routing_info.token_with_keyspace, query.table) {
             /* Leader-aware logic - for a strongly-consistent keyspace the leader has to
              * coordinate the request anyway, so it outranks distance and is tried before the
              * locality buckets below. See `leader_to_prefer`. */
@@ -351,7 +351,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
          * - shuffled list in case of non-LWTs,
          * - deterministically ordered in case of LWTs. */
         let maybe_replicas = if let (Some(ts), Some(table_spec)) =
-            (&routing_info.token_with_strategy, query.table)
+            (&routing_info.token_with_keyspace, query.table)
         {
             // The tablet's Raft leader, when leader-aware routing applies to this request. It
             // outranks distance, so it is yielded before the locality-ordered replicas below.
@@ -619,7 +619,7 @@ impl DefaultPolicy {
         let mut routing_info = ProcessedRoutingInfo::new(query, cluster, self.preferences.as_ref());
 
         if !self.is_token_aware {
-            routing_info.token_with_strategy = None;
+            routing_info.token_with_keyspace = None;
         }
 
         routing_info
@@ -655,7 +655,7 @@ impl DefaultPolicy {
     /// cluster state and table spec.
     fn nonfiltered_replica_set<'a>(
         &'a self,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         replica_location: NodeLocationCriteria<'a>,
         cluster: &'a ClusterState,
         table_spec: &TableSpec,
@@ -705,7 +705,7 @@ impl DefaultPolicy {
     /// else returns replicas in arbitrary order.
     fn filtered_replicas<'a, PredicateT: Fn(NodeRef<'a>, Shard) -> bool + 'a>(
         &'a self,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: PredicateT,
         cluster: &'a ClusterState,
@@ -735,7 +735,7 @@ impl DefaultPolicy {
     /// to avoid Paxos contention.
     fn pick_replica<'a>(
         &'a self,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterState,
@@ -773,7 +773,7 @@ impl DefaultPolicy {
     // **iff** it satisfies the predicate or ToBeComputedInFallback otherwise.
     fn pick_first_replica<'a>(
         &'a self,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterState,
@@ -827,7 +827,7 @@ impl DefaultPolicy {
     /// location criteria and the predicate.
     fn pick_random_replica<'a>(
         &'a self,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterState,
@@ -851,7 +851,7 @@ impl DefaultPolicy {
     /// For LWTs, though, the replicas are instead returned in a deterministic order.
     fn maybe_shuffled_replicas<'a, PredicateT: Fn(NodeRef<'a>, Shard) -> bool + 'a>(
         &'a self,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: PredicateT,
         cluster: &'a ClusterState,
@@ -973,7 +973,7 @@ impl DefaultPolicy {
     fn leader_to_prefer<'a>(
         &'a self,
         query: &RoutingInfo,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         routing_info: &ProcessedRoutingInfo<'a>,
         predicate: impl FnOnce(NodeRef<'a>, Shard) -> bool,
         cluster: &'a ClusterState,
@@ -1239,7 +1239,7 @@ impl Default for DefaultPolicyBuilder {
 }
 
 struct ProcessedRoutingInfo<'a> {
-    token_with_strategy: Option<TokenWithStrategy<'a>>,
+    token_with_keyspace: Option<TokenWithKeyspace<'a>>,
     preference: &'a NodeLocationPreference,
 }
 
@@ -1250,25 +1250,23 @@ impl<'a> ProcessedRoutingInfo<'a> {
         policy_preference: Option<&'a NodeLocationPreference>,
     ) -> ProcessedRoutingInfo<'a> {
         Self {
-            token_with_strategy: TokenWithStrategy::new(query, cluster),
+            token_with_keyspace: TokenWithKeyspace::new(query, cluster),
             preference: policy_preference.unwrap_or(query.node_location_preference),
         }
     }
 }
 
-struct TokenWithStrategy<'a> {
-    // The whole keyspace, not just its strategy, so that the keyspace is looked
-    // up once per request.
+struct TokenWithKeyspace<'a> {
     keyspace: &'a Keyspace,
     token: Token,
 }
 
-impl<'a> TokenWithStrategy<'a> {
-    fn new(query: &'a RoutingInfo, cluster: &'a ClusterState) -> Option<TokenWithStrategy<'a>> {
+impl<'a> TokenWithKeyspace<'a> {
+    fn new(query: &'a RoutingInfo, cluster: &'a ClusterState) -> Option<TokenWithKeyspace<'a>> {
         let token = query.token?;
         let keyspace_name = query.table?.ks_name();
         let keyspace = cluster.get_keyspace(keyspace_name)?;
-        Some(TokenWithStrategy { keyspace, token })
+        Some(TokenWithKeyspace { keyspace, token })
     }
 }
 
