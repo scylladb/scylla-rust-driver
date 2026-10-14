@@ -914,24 +914,26 @@ impl Session {
             let values = values;
             prepared.serialize_values(&values)?
         };
-        self.execute_unpaged_nongeneric(prepared, &serialized_values)
-            .await
-    }
-
-    async fn execute_unpaged_nongeneric(
-        &self,
-        prepared: &PreparedStatement,
-        serialized_values: &SerializedValues,
-    ) -> Result<QueryResult, ExecutionError> {
-        let (result, paging_state) = self
+        let response = self
             .execute(
                 prepared,
-                serialized_values,
+                &serialized_values,
                 None,
                 PagingState::start(),
                 RequestPaging::Unpaged,
             )
             .await?;
+        Self::unpaged_prepared_result(response)
+    }
+
+    /// Checks that an unpaged prepared request got its whole result in one page.
+    ///
+    /// A separate function rather than a common async fn calling
+    /// [`Session::execute`], as each async fn layer adds its arguments to the
+    /// future and its own polling to every request.
+    fn unpaged_prepared_result(
+        (result, paging_state): (QueryResult, PagingStateResponse),
+    ) -> Result<QueryResult, ExecutionError> {
         if !paging_state.finished() {
             error!(
                 "Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug."
@@ -990,8 +992,16 @@ impl Session {
         &self,
         bound: &BoundStatement,
     ) -> Result<QueryResult, ExecutionError> {
-        self.execute_unpaged_nongeneric(&bound.prepared, &bound.values)
-            .await
+        let response = self
+            .execute(
+                &bound.prepared,
+                &bound.values,
+                None,
+                PagingState::start(),
+                RequestPaging::Unpaged,
+            )
+            .await?;
+        Self::unpaged_prepared_result(response)
     }
 
     /// Executes a prepared statement, restricting results to single page.
@@ -1062,21 +1072,10 @@ impl Session {
             let values = values;
             prepared.serialize_values(&values)?
         };
-        self.execute_single_page_nongeneric(prepared, &serialized_values, paging_state)
-            .await
-    }
-
-    async fn execute_single_page_nongeneric(
-        &self,
-        prepared: &PreparedStatement,
-        serialized_values: &SerializedValues,
-        paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let page_size = prepared.get_validated_page_size();
         self.execute(
             prepared,
-            serialized_values,
-            Some(page_size),
+            &serialized_values,
+            Some(prepared.get_validated_page_size()),
             paging_state,
             RequestPaging::Manual,
         )
@@ -1147,8 +1146,14 @@ impl Session {
         bound: &BoundStatement,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        self.execute_single_page_nongeneric(&bound.prepared, &bound.values, paging_state)
-            .await
+        self.execute(
+            &bound.prepared,
+            &bound.values,
+            Some(bound.prepared.get_validated_page_size()),
+            paging_state,
+            RequestPaging::Manual,
+        )
+        .await
     }
 
     /// Execute a prepared statement with paging.
