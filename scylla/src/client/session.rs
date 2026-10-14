@@ -1360,7 +1360,7 @@ impl Session {
 
         let span = RequestSpan::new_batch();
 
-        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| async move {
+        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| async move {
             connection
                 .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
                 .await
@@ -2155,7 +2155,7 @@ impl Session {
             span.record_replicas(replicas)
         }
 
-        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| async move {
+        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| async move {
             connection
                 .execute_raw_with_consistency(
                     prepared,
