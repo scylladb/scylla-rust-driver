@@ -1410,7 +1410,8 @@ If you are using this API, you are probably doing something wrong."
                     tracing_id: None,
                     warnings: Box::default(),
                 };
-                session.handle_set_keyspace_response(&response).await?;
+                // Rare, so boxed to keep it out of every pager's future.
+                Box::pin(session.handle_set_keyspace_response(&response)).await?;
                 // The stream will be empty.
                 RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
             }
@@ -1429,8 +1430,8 @@ If you are using this API, you are probably doing something wrong."
                     tracing_id: None,
                     warnings: Box::default(),
                 };
-                session
-                    .handle_auto_await_schema_agreement(&response, coordinator_id)
+                // Rare, so boxed to keep it out of every pager's future.
+                Box::pin(session.handle_auto_await_schema_agreement(&response, coordinator_id))
                     .await?;
                 // The stream will be empty.
                 RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
