@@ -72,6 +72,10 @@ use uuid::Uuid;
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 
+/// Lent to unpaged requests. A constant rather than a temporary, which the
+/// caller's future would keep while the request runs.
+const START_PAGING_STATE: &PagingState = &PagingState::start();
+
 // Query used for schema agreement checks
 const SCHEMA_VERSION_QUERY_STR: &str = "SELECT schema_version FROM system.local WHERE key='local'";
 
@@ -914,7 +918,7 @@ impl Session {
                 prepared,
                 &serialized_values,
                 None,
-                &PagingState::start(),
+                START_PAGING_STATE,
                 RequestPaging::Unpaged,
             )
             .await?;
@@ -992,7 +996,7 @@ impl Session {
                 &bound.prepared,
                 &bound.values,
                 None,
-                &PagingState::start(),
+                START_PAGING_STATE,
                 RequestPaging::Unpaged,
             )
             .await?;
