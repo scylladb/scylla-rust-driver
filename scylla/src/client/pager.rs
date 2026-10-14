@@ -261,14 +261,16 @@ impl PagingExecutor {
         &mut self,
         request_span: &RequestSpan,
         routing_info: &RoutingInfo<'_>,
-        page_query: QueryFunc,
+        // Taken by reference: an async fn keeps arguments taken by value twice in
+        // its state.
+        page_query: &QueryFunc,
     ) -> Result<(FirstReceivedPage, ShouldFetchMorePages), RequestError>
     where
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
         let fetch_result = await_in_span!(
-            self.fetch_one_page(routing_info, request_span, &page_query),
+            self.fetch_one_page(routing_info, request_span, page_query),
             request_span.span()
         );
 
@@ -1068,7 +1070,7 @@ If you are using this API, you are probably doing something wrong."
             let request_span = create_span(&statement.contents);
 
             executor
-                .query_first_page(&request_span, &routing_info, page_query)
+                .query_first_page(&request_span, &routing_info, &page_query)
                 .await
                 .map_err(NextPageError::RequestFailure)?
         };
@@ -1239,7 +1241,7 @@ If you are using this API, you are probably doing something wrong."
         };
 
         let (first_page, should_fetch_more_pages) = executor
-            .query_first_page(&request_span, &routing_info, page_query)
+            .query_first_page(&request_span, &routing_info, &page_query)
             .await
             .map_err(NextPageError::RequestFailure)?;
 
