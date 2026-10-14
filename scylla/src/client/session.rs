@@ -908,7 +908,12 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
-        let serialized_values = prepared.serialize_values(&values)?;
+        // Moved into a block, so that the values are dropped once serialized:
+        // borrowing the argument would keep it in this future's state.
+        let serialized_values = {
+            let values = values;
+            prepared.serialize_values(&values)?
+        };
         self.execute_unpaged_nongeneric(prepared, &serialized_values)
             .await
     }
@@ -1051,7 +1056,12 @@ impl Session {
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let serialized_values = prepared.serialize_values(&values)?;
+        // Moved into a block, so that the values are dropped once serialized:
+        // borrowing the argument would keep it in this future's state.
+        let serialized_values = {
+            let values = values;
+            prepared.serialize_values(&values)?
+        };
         self.execute_single_page_nongeneric(prepared, &serialized_values, paging_state)
             .await
     }
@@ -1185,8 +1195,14 @@ impl Session {
         prepared: impl Into<PreparedStatement>,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
-        let prepared = prepared.into();
-        let serialized_values = prepared.serialize_values(&values)?;
+        // Scoped, so that the values are dropped once serialized: borrowed, the
+        // values and the statement would be kept in this future's state.
+        let (prepared, serialized_values) = {
+            let values = values;
+            let prepared = prepared.into();
+            let serialized_values = prepared.serialize_values(&values)?;
+            (prepared, serialized_values)
+        };
 
         self.execute_iter_nongeneric(prepared, serialized_values)
             .await
