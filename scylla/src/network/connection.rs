@@ -1106,9 +1106,69 @@ impl Connection {
             tablet_version_block,
         };
 
-        let query_response = self
+        // Scoped, so that the response is not kept in this future's state while
+        // repreparing.
+        {
+            let query_response = self
+                .send_request(
+                    &execute_frame,
+                    true,
+                    prepared_statement.config.tracing,
+                    cached_metadata_params.cached_metadata,
+                )
+                .await?;
+
+            if let Some(spec) = prepared_statement.get_table_spec()
+                && let Err(e) = self
+                    .update_tablets_from_response(spec, &query_response)
+                    .await
+            {
+                tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
+            }
+
+            Self::handle_result_metadata_new_id(prepared_statement, &query_response);
+
+            let ResponseWithDeserializedMetadata::Error(frame::response::Error {
+                error: DbError::Unprepared { statement_id },
+                ..
+            }) = &query_response.response
+            else {
+                return Ok(query_response);
+            };
+            debug!(
+                "Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}",
+                statement_id
+            );
+        }
+
+        // Repreparing is rare, so it is boxed to keep its state out of every
+        // request's future.
+        Box::pin(self.reprepare_and_execute(prepared_statement, execute_frame)).await
+    }
+
+    /// Reprepares the statement and sends `execute_frame` again, after the
+    /// server did not recognize the statement id.
+    async fn reprepare_and_execute(
+        &self,
+        prepared_statement: &PreparedStatement,
+        execute_frame: execute::ExecuteV2<'_>,
+    ) -> Result<QueryResponse, RequestAttemptError> {
+        self.reprepare(prepared_statement.get_statement(), prepared_statement)
+            .await?;
+        // Metadata may have changed in reprepare, or in some concurrent execution
+        let current_result_metadata = prepared_statement.get_current_result_metadata();
+        let cached_metadata_params =
+            self.calculate_cached_metadata_params(prepared_statement, &current_result_metadata);
+        let new_response = self
             .send_request(
-                &execute_frame,
+                &execute::ExecuteV2 {
+                    result_metadata_id: cached_metadata_params.result_metadata_id.map(Into::into),
+                    parameters: QueryParameters {
+                        skip_metadata: cached_metadata_params.skip_metadata,
+                        ..execute_frame.parameters
+                    },
+                    ..execute_frame
+                },
                 true,
                 prepared_statement.config.tracing,
                 cached_metadata_params.cached_metadata,
@@ -1116,61 +1176,14 @@ impl Connection {
             .await?;
 
         if let Some(spec) = prepared_statement.get_table_spec()
-            && let Err(e) = self
-                .update_tablets_from_response(spec, &query_response)
-                .await
+            && let Err(e) = self.update_tablets_from_response(spec, &new_response).await
         {
             tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
         }
 
-        Self::handle_result_metadata_new_id(prepared_statement, &query_response);
+        Self::handle_result_metadata_new_id(prepared_statement, &new_response);
 
-        match &query_response.response {
-            ResponseWithDeserializedMetadata::Error(frame::response::Error {
-                error: DbError::Unprepared { statement_id },
-                ..
-            }) => {
-                debug!(
-                    "Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}",
-                    statement_id
-                );
-                // Repreparation of a statement is needed
-                self.reprepare(prepared_statement.get_statement(), prepared_statement)
-                    .await?;
-                // Metadata may have changed in reprepare, or in some concurrent execution
-                let current_result_metadata = prepared_statement.get_current_result_metadata();
-                let cached_metadata_params = self
-                    .calculate_cached_metadata_params(prepared_statement, &current_result_metadata);
-                let new_response = self
-                    .send_request(
-                        &execute::ExecuteV2 {
-                            result_metadata_id: cached_metadata_params
-                                .result_metadata_id
-                                .map(Into::into),
-                            parameters: QueryParameters {
-                                skip_metadata: cached_metadata_params.skip_metadata,
-                                ..execute_frame.parameters
-                            },
-                            ..execute_frame
-                        },
-                        true,
-                        prepared_statement.config.tracing,
-                        cached_metadata_params.cached_metadata,
-                    )
-                    .await?;
-
-                if let Some(spec) = prepared_statement.get_table_spec()
-                    && let Err(e) = self.update_tablets_from_response(spec, &new_response).await
-                {
-                    tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
-                }
-
-                Self::handle_result_metadata_new_id(prepared_statement, &new_response);
-
-                Ok(new_response)
-            }
-            _ => Ok(query_response),
-        }
+        Ok(new_response)
     }
 
     /// Executes a prepared statements and fetches its results over multiple pages, using
