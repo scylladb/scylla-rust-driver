@@ -108,7 +108,10 @@ pub mod cow_bytes {
 pub struct ResultMetadata<'a> {
     id: Option<cow_bytes::CowBytes<'a>>,
     col_count: usize,
-    col_specs: Vec<ColumnSpec<'a>>,
+    // A boxed slice is smaller than a `Vec`, and the specs never change after
+    // parsing. The parsed `Vec`s have exact capacity, so converting doesn't
+    // reallocate.
+    col_specs: Box<[ColumnSpec<'a>]>,
 }
 
 impl<'a> ResultMetadata<'a> {
@@ -138,7 +141,7 @@ impl<'a> ResultMetadata<'a> {
         Self {
             id: None,
             col_count: 0,
-            col_specs: Vec::new(),
+            col_specs: Box::default(),
         }
     }
 
@@ -761,7 +764,7 @@ fn deser_result_metadata(
     let metadata = ResultMetadata {
         id: new_metadata_id,
         col_count,
-        col_specs,
+        col_specs: col_specs.into_boxed_slice(),
     };
     Ok((metadata, paging_state))
 }
@@ -863,7 +866,7 @@ impl RawMetadataAndRawRows {
                 ResultMetadata {
                     id: new_metadata_id,
                     col_count,
-                    col_specs,
+                    col_specs: col_specs.into_boxed_slice(),
                 }
             };
             Ok(server_metadata)
@@ -1199,7 +1202,7 @@ mod test_utils {
             Self {
                 id: None,
                 col_count,
-                col_specs,
+                col_specs: col_specs.into_boxed_slice(),
             }
         }
 
