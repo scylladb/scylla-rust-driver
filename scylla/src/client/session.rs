@@ -72,6 +72,10 @@ use uuid::Uuid;
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 
+/// Lent to unpaged requests. A constant rather than a temporary, which the
+/// caller's future would keep while the request runs.
+const START_PAGING_STATE: &PagingState = &PagingState::start();
+
 // Query used for schema agreement checks
 const SCHEMA_VERSION_QUERY_STR: &str = "SELECT schema_version FROM system.local WHERE key='local'";
 
@@ -914,7 +918,7 @@ impl Session {
                 prepared,
                 &serialized_values,
                 None,
-                PagingState::start(),
+                START_PAGING_STATE,
                 RequestPaging::Unpaged,
             )
             .await?;
@@ -992,7 +996,7 @@ impl Session {
                 &bound.prepared,
                 &bound.values,
                 None,
-                PagingState::start(),
+                START_PAGING_STATE,
                 RequestPaging::Unpaged,
             )
             .await?;
@@ -1071,7 +1075,7 @@ impl Session {
             prepared,
             &serialized_values,
             Some(prepared.get_validated_page_size()),
-            paging_state,
+            &paging_state,
             RequestPaging::Manual,
         )
         .await
@@ -1145,7 +1149,7 @@ impl Session {
             &bound.prepared,
             &bound.values,
             Some(bound.prepared.get_validated_page_size()),
-            paging_state,
+            &paging_state,
             RequestPaging::Manual,
         )
         .await
@@ -2082,7 +2086,7 @@ impl Session {
             prepared,
             serialized_values,
             page_size,
-            paging_state,
+            &paging_state,
             request_paging,
         )
         .await
@@ -2103,11 +2107,11 @@ impl Session {
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
         page_size: Option<PageSize>,
-        paging_state: PagingState,
+        // Taken by reference: an async fn keeps arguments taken by value twice in
+        // its state.
+        paging_state: &PagingState,
         request_paging: RequestPaging,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let paging_state_ref = &paging_state;
-
         // Scoped, so that the partition key, needed only for the span, is not kept
         // in this future's state while the request runs.
         let (token, span) = {
@@ -2169,7 +2173,7 @@ impl Session {
                 consistency,
                 serial_consistency,
                 page_size,
-                paging_state: paging_state_ref,
+                paging_state,
                 tablet_block_hint,
             };
             async move {
