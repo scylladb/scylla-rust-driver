@@ -15,7 +15,7 @@ use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::request::query::PagingStateResponse;
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types;
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::{result::Result as StdResult, str};
@@ -770,11 +770,12 @@ impl RawMetadataAndRawRows {
     /// Deserializes flags and paging state; the other part of result metadata
     /// as well as rows remain serialized.
     fn deserialize(
-        frame: &mut FrameSlice,
+        mut frame: Bytes,
         cached_metadata: Option<Arc<ResultMetadata<'static>>>,
         features: &ProtocolFeatures,
     ) -> StdResult<(Self, PagingStateResponse), RawRowsAndPagingStateResponseParseError> {
-        let flags = types::read_int(frame.as_slice_mut())
+        let buf = &mut &*frame;
+        let flags = types::read_int(buf)
             .map_err(|err| RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into()))?;
         let global_tables_spec = flags & 0x0001 != 0;
         let has_more_pages = flags & 0x0002 != 0;
@@ -790,23 +791,26 @@ impl RawMetadataAndRawRows {
             (false, false) => MetadataPresence::JustMetadata,
         };
 
-        let col_count = types::read_int_length(frame.as_slice_mut())
+        let col_count = types::read_int_length(buf)
             .map_err(RawRowsAndPagingStateResponseParseError::ColumnCountParseError)?;
 
         let raw_paging_state = has_more_pages
             .then(|| {
-                types::read_bytes(frame.as_slice_mut())
+                types::read_bytes(buf)
                     .map_err(RawRowsAndPagingStateResponseParseError::PagingStateParseError)
             })
             .transpose()?;
 
         let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
 
+        let unparsed_len = buf.len();
+        skip_parsed(&mut frame, unparsed_len);
+
         let raw_rows = Self {
             col_count,
             global_tables_spec,
             metadata_presence: metadata_presense,
-            raw_metadata_and_rows: frame.to_bytes(),
+            raw_metadata_and_rows: frame,
             cached_metadata,
         };
 
@@ -906,15 +910,17 @@ impl RawMetadataAndRawRows {
             }
         };
 
-        let mut frame_slice = FrameSlice::new(&row_count_and_raw_rows);
-
-        let rows_count: usize = types::read_int_length(frame_slice.as_slice_mut())
+        let mut raw_rows = row_count_and_raw_rows;
+        let buf = &mut &*raw_rows;
+        let rows_count: usize = types::read_int_length(buf)
             .map_err(ResultMetadataAndRowsCountParseError::RowsCountParseError)?;
+        let unparsed_len = buf.len();
+        skip_parsed(&mut raw_rows, unparsed_len);
 
         Ok(DeserializedMetadataAndRawRows {
             metadata: metadata_deserialized,
             rows_count,
-            raw_rows: frame_slice.to_bytes(),
+            raw_rows,
             raw_metadata_and_rows_bytes_size,
         })
     }
@@ -957,14 +963,22 @@ fn deser_prepared_metadata(
     })
 }
 
+/// Drops the already parsed prefix of `bytes`, given the length of the part
+/// that is left unparsed.
+///
+/// Unlike slicing, this doesn't clone `bytes`. The first clone of `Bytes`
+/// created from a `Vec`, which response bodies are, allocates a shared header.
+fn skip_parsed(bytes: &mut Bytes, unparsed_len: usize) {
+    bytes.advance(bytes.len() - unparsed_len);
+}
+
 fn deser_rows(
     buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
     features: &ProtocolFeatures,
 ) -> StdResult<(RawMetadataAndRawRows, PagingStateResponse), RawRowsAndPagingStateResponseParseError>
 {
-    let mut frame_slice = FrameSlice::new(&buf_bytes);
-    RawMetadataAndRawRows::deserialize(&mut frame_slice, cached_metadata.cloned(), features)
+    RawMetadataAndRawRows::deserialize(buf_bytes, cached_metadata.cloned(), features)
 }
 
 fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspaceParseError> {
@@ -1034,11 +1048,12 @@ pub fn deserialize_with_features(
             .map_err(|err| CqlResultParseError::ResultIdParseError(err.into()))?
         {
             0x0001 => Void,
-            0x0002 => Rows(deser_rows(
-                buf_bytes.slice_ref(buf),
-                cached_metadata,
-                features,
-            )?),
+            0x0002 => {
+                let unparsed_len = buf.len();
+                let mut rows = buf_bytes;
+                skip_parsed(&mut rows, unparsed_len);
+                Rows(deser_rows(rows, cached_metadata, features)?)
+            }
             0x0003 => SetKeyspace(deser_set_keyspace(buf)?),
             0x0004 => Prepared(deser_prepared(buf, features)?),
             0x0005 => SchemaChange(deser_schema_change(buf)?),
@@ -1275,7 +1290,7 @@ mod test_utils {
             };
 
             let (raw_rows, _paging_state_response) = Self::deserialize(
-                &mut FrameSlice::new(&raw_result_rows),
+                raw_result_rows,
                 cached_metadata,
                 &ProtocolFeatures::default(),
             )
