@@ -1950,7 +1950,14 @@ impl Connection {
                 table.table_name(),
                 tablet
             );
-            let _ = sender.send((table.to_owned(), tablet)).await;
+            match sender.try_send((table.to_owned(), tablet)) {
+                Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => {}
+                Err(mpsc::error::TrySendError::Full(tablet_info)) => {
+                    // The channel is rarely full, so waiting for it is boxed to keep
+                    // the send out of every request's future.
+                    let _ = Box::pin(sender.send(tablet_info)).await;
+                }
+            }
         }
 
         Ok(())
