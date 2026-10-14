@@ -19,7 +19,11 @@ pub(crate) struct QueryResponse {
     pub(crate) tracing_id: Option<Uuid>,
     pub(crate) warnings: Vec<String>,
     // This is not exposed to user (yet?)
-    pub(crate) custom_payload: Option<HashMap<String, Bytes>>,
+    #[expect(
+        clippy::box_collection,
+        reason = "keeps the response, moved through several layers, small; the payload is rarely present"
+    )]
+    pub(crate) custom_payload: Option<Box<HashMap<String, Bytes>>>,
 }
 
 // A QueryResponse in which response can not be Response::Error
