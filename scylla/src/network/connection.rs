@@ -34,7 +34,7 @@ use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::QueryResult;
 use crate::response::{NonErrorAuthResponse, NonErrorStartupResponse, PagingState, QueryResponse};
-use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
+use crate::routing::locator::tablets::RawTablet;
 use crate::routing::{Shard, ShardAwarePortRange, ShardInfo, Sharder, ShardingError};
 use crate::serialize::batch::{BatchValues, BatchValuesIterator};
 use crate::serialize::raw_batch::RawBatchValuesAdapter;
@@ -1112,14 +1112,27 @@ impl Connection {
                 };
 
                 let task_response = self.router_handle.send_request(request).await?;
-                let query_response = self.parse_task_response(task_response, cached_metadata)?;
-
-                if let Some(spec) = prepared_statement.get_table_spec()
-                    && let Err(e) = self
-                        .update_tablets_from_response(spec, &query_response)
-                        .await
+                let mut query_response =
+                    self.parse_task_response(task_response, cached_metadata)?;
+                // Only responses with a custom payload can carry tablet info. They are
+                // rare, so updating tablets from them is boxed, together with the
+                // response.
+                //
+                // `matches!` reads the payload without taking a reference. Once a local
+                // is borrowed, even briefly (as by `is_some()`), the compiler keeps it in
+                // this future's state until the end of its scope, also across the await
+                // below, while it is moved out. That would put the whole response into
+                // every prepared request's future. See
+                // https://github.com/rust-lang/rust/issues/59087.
+                #[expect(
+                    clippy::redundant_pattern_matching,
+                    reason = "is_some() would borrow query_response, keeping it in this future's state across the await (rust-lang/rust#59087)"
+                )]
+                if matches!(query_response.custom_payload, Some(_))
+                    && let Some(spec) = prepared_statement.get_table_spec()
                 {
-                    tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
+                    query_response =
+                        Box::pin(self.update_tablets_from_response(spec, query_response)).await;
                 }
 
                 Self::handle_result_metadata_new_id(prepared_statement, &query_response);
@@ -1909,30 +1922,37 @@ impl Connection {
         self.router_handle.keepalive_hint.notify_one();
     }
 
+    /// Passes the tablet info carried by the response, if any, to the tablet
+    /// updater, waiting for room if its channel is full.
+    ///
+    /// Takes the response and gives it back, so that the caller can box this
+    /// future together with the response.
     async fn update_tablets_from_response(
         &self,
         table: &TableSpec<'_>,
-        response: &QueryResponse,
-    ) -> Result<(), TabletParsingError> {
+        response: QueryResponse,
+    ) -> QueryResponse {
         if let (Some(sender), Some(tablet_data)) = (
             self.config.tablet_sender.as_ref(),
             response.custom_payload.as_deref(),
         ) {
-            let tablet = match RawTablet::from_custom_payload(tablet_data) {
-                Some(Ok(v)) => v,
-                Some(Err(e)) => return Err(e),
-                None => return Ok(()),
-            };
-            tracing::trace!(
-                "Received tablet info for table {}.{} in custom payload: {:?}",
-                table.ks_name(),
-                table.table_name(),
-                tablet
-            );
-            let _ = sender.send((table.to_owned(), tablet)).await;
+            match RawTablet::from_custom_payload(tablet_data) {
+                Some(Ok(tablet)) => {
+                    tracing::trace!(
+                        "Received tablet info for table {}.{} in custom payload: {:?}",
+                        table.ks_name(),
+                        table.table_name(),
+                        tablet
+                    );
+                    let _ = sender.send((table.to_owned(), tablet)).await;
+                }
+                Some(Err(e)) => {
+                    tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
+                }
+                None => {}
+            }
         }
-
-        Ok(())
+        response
     }
 
     #[cfg(test)]
