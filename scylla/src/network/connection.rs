@@ -1940,25 +1940,31 @@ impl Connection {
             self.config.tablet_sender.as_ref(),
             response.custom_payload.as_deref(),
         ) {
-            let tablet = match RawTablet::from_custom_payload(tablet_data) {
-                Some(Ok(v)) => v,
-                Some(Err(e)) => return Err(e),
-                None => return Ok(()),
+            // Scoped, as the tablet is borrowed for logging, which would keep it
+            // in this future's state while waiting below.
+            let tablet_info = {
+                let tablet = match RawTablet::from_custom_payload(tablet_data) {
+                    Some(Ok(v)) => v,
+                    Some(Err(e)) => return Err(e),
+                    None => return Ok(()),
+                };
+                tracing::trace!(
+                    "Received tablet info for table {}.{} in custom payload: {:?}",
+                    table.ks_name(),
+                    table.table_name(),
+                    tablet
+                );
+                (table.to_owned(), tablet)
             };
-            tracing::trace!(
-                "Received tablet info for table {}.{} in custom payload: {:?}",
-                table.ks_name(),
-                table.table_name(),
-                tablet
-            );
-            match sender.try_send((table.to_owned(), tablet)) {
-                Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => {}
-                Err(mpsc::error::TrySendError::Full(tablet_info)) => {
-                    // The channel is rarely full, so waiting for it is boxed to keep
-                    // the send out of every request's future.
-                    let _ = Box::pin(sender.send(tablet_info)).await;
-                }
-            }
+            // A `match` would keep the `try_send` result in this future's state
+            // while waiting.
+            let Err(mpsc::error::TrySendError::Full(tablet_info)) = sender.try_send(tablet_info)
+            else {
+                return Ok(());
+            };
+            // The channel is rarely full, so waiting for it is boxed to keep
+            // the send out of every request's future.
+            let _ = Box::pin(sender.send(tablet_info)).await;
         }
 
         Ok(())
