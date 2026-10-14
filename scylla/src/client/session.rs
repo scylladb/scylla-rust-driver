@@ -29,7 +29,7 @@ use crate::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErr
 use crate::frame::response::result;
 use crate::network::tls::TlsProvider;
 use crate::network::{
-    Connection, ConnectionConfig, PoolConfig, TcpSocketOptions, VerifiedKeyspaceName,
+    Connection, ConnectionConfig, ExecuteArgs, PoolConfig, TcpSocketOptions, VerifiedKeyspaceName,
 };
 use crate::observability::driver_tracing::{RequestSpan, await_in_span};
 use crate::observability::metrics::Metrics;
@@ -1740,15 +1740,15 @@ impl Session {
 
                     span_ref.record_request_size(serialized.buffer_size());
                     connection
-                        .execute_raw_with_consistency(
-                            &prepared,
-                            &serialized,
+                        .execute_raw_with_consistency(&ExecuteArgs {
+                            prepared_statement: &prepared,
+                            values: &serialized,
                             consistency,
                             serial_consistency,
                             page_size,
-                            paging_state_ref.clone(),
-                            tablet_hint,
-                        )
+                            paging_state: paging_state_ref,
+                            tablet_block_hint: tablet_hint,
+                        })
                         .await
                         .and_then(QueryResponse::into_non_error_query_response)
                 }
@@ -2155,19 +2155,24 @@ impl Session {
             span.record_replicas(replicas)
         }
 
-        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| async move {
-            connection
-                .execute_raw_with_consistency(
-                    prepared,
-                    serialized_values,
-                    consistency,
-                    serial_consistency,
-                    page_size,
-                    paging_state_ref.clone(),
-                    tablet_block_hint,
-                )
-                .await
-                .and_then(QueryResponse::into_non_error_query_response)
+        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| {
+            // Built outside of the attempt's future, which then keeps only the
+            // arguments, not also the values they are built from.
+            let args = ExecuteArgs {
+                prepared_statement: prepared,
+                values: serialized_values,
+                consistency,
+                serial_consistency,
+                page_size,
+                paging_state: paging_state_ref,
+                tablet_block_hint,
+            };
+            async move {
+                connection
+                    .execute_raw_with_consistency(&args)
+                    .await
+                    .and_then(QueryResponse::into_non_error_query_response)
+            }
         };
         let request = Request {
             params: &exec_params,

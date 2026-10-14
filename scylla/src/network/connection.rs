@@ -448,6 +448,19 @@ impl HostConnectionConfig {
 // Used to listen for fatal error in connection
 pub(crate) type ErrorReceiver = tokio::sync::oneshot::Receiver<ConnectionError>;
 
+/// Arguments of [`Connection::execute_raw_with_consistency`]. Bundled, so that
+/// they are passed by a single reference: an async fn keeps arguments taken by
+/// value twice in its state, and the caller's future keeps them too.
+pub(crate) struct ExecuteArgs<'a> {
+    pub(crate) prepared_statement: &'a PreparedStatement,
+    pub(crate) values: &'a SerializedValues,
+    pub(crate) consistency: Consistency,
+    pub(crate) serial_consistency: Option<SerialConsistency>,
+    pub(crate) page_size: Option<PageSize>,
+    pub(crate) paging_state: &'a PagingState,
+    pub(crate) tablet_block_hint: u8,
+}
+
 struct CachedMetadataParameters<'statement> {
     cached_metadata: Option<&'statement Arc<ResultMetadata<'static>>>,
     skip_metadata: bool,
@@ -933,19 +946,19 @@ impl Connection {
         values: &SerializedValues,
     ) -> Result<QueryResponse, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
-        self.execute_raw_with_consistency(
-            prepared,
+        self.execute_raw_with_consistency(&ExecuteArgs {
+            prepared_statement: prepared,
             values,
-            prepared
+            consistency: prepared
                 .config
                 .determine_consistency(self.config.default_consistency),
-            prepared.config.serial_consistency.flatten(),
-            None,
-            PagingState::start(),
+            serial_consistency: prepared.config.serial_consistency.flatten(),
+            page_size: None,
+            paging_state: &PagingState::start(),
             // A test-only helper executing on one given connection: no cached tablet version
             // to probe.
-            0,
-        )
+            tablet_block_hint: 0,
+        })
         .await
     }
 
@@ -1057,17 +1070,11 @@ impl Connection {
         }
     }
 
-    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn execute_raw_with_consistency(
         &self,
-        prepared_statement: &PreparedStatement,
-        values: &SerializedValues,
-        consistency: Consistency,
-        serial_consistency: Option<SerialConsistency>,
-        page_size: Option<PageSize>,
-        mut paging_state: PagingState,
-        tablet_block_hint: u8,
+        args: &ExecuteArgs<'_>,
     ) -> Result<QueryResponse, RequestAttemptError> {
+        let prepared_statement = args.prepared_statement;
         let get_timestamp_from_gen = || {
             self.config
                 .timestamp_generator
@@ -1090,7 +1097,7 @@ impl Connection {
             .features
             .protocol_features
             .tablets_v2_supported
-            .then_some(tablet_block_hint);
+            .then_some(args.tablet_block_hint);
 
         // The request is sent again after repreparing, if the server didn't
         // recognize the statement id.
@@ -1110,30 +1117,24 @@ impl Connection {
 
                 // Serialized before sending, so that the frame is not kept in this
                 // future's state.
-                let request;
-                (request, paging_state) = {
-                    let execute_frame = execute::ExecuteV2 {
+                let request = self.serialize_request(
+                    &execute::ExecuteV2 {
                         id: prepared_statement.get_id().as_ref().into(),
                         result_metadata_id: result_metadata_id.map(Into::into),
                         parameters: query::QueryParameters {
-                            consistency,
-                            serial_consistency,
-                            values: Cow::Borrowed(values),
-                            page_size: page_size.map(Into::into),
+                            consistency: args.consistency,
+                            serial_consistency: args.serial_consistency,
+                            values: Cow::Borrowed(args.values),
+                            page_size: args.page_size.map(Into::into),
                             timestamp,
                             skip_metadata,
-                            paging_state,
+                            paging_state: args.paging_state.clone(),
                         },
                         tablet_version_block,
-                    };
-                    let request = self.serialize_request(
-                        &execute_frame,
-                        true,
-                        prepared_statement.config.tracing,
-                    )?;
-                    // Taken back, in case the request is sent again.
-                    (request, execute_frame.parameters.paging_state)
-                };
+                    },
+                    true,
+                    prepared_statement.config.tracing,
+                )?;
 
                 let task_response = self.router_handle.send_request(request).await?;
                 let query_response = self.parse_task_response(task_response, cached_metadata)?;
