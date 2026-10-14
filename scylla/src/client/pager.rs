@@ -11,9 +11,9 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use futures::Stream;
+use slot_channel::{SlotReceiver, SlotSender, slot_channel};
 use std::result::Result;
 use thiserror::Error;
-use tokio::sync::mpsc;
 use tracing::{Instrument, warn};
 use uuid::Uuid;
 
@@ -191,7 +191,7 @@ impl PagingExecutor {
     }
 
     /// Fetches remaining pages (pages 2+) in a background task.
-    /// Sends each page through the mpsc channel.
+    /// Sends each page through the slot channel.
     ///
     /// A fresh query plan is constructed for each page, preventing plan
     /// exhaustion for long-running multi-page queries.
@@ -201,7 +201,7 @@ impl PagingExecutor {
     /// for retry.
     async fn query_remaining_pages<QueryFunc, QueryFut, SpanCreator>(
         mut self,
-        sender: mpsc::Sender<ResultNextPage>,
+        sender: SlotSender<ResultNextPage>,
         page_query: QueryFunc,
         routing_info: RoutingInfo<'_>,
         span_creator: SpanCreator,
@@ -647,7 +647,7 @@ impl SingleConnectionPagingExecutor {
     async fn fetch_remaining_pages(
         self,
         mut paging_state: PagingState,
-        sender: mpsc::Sender<ResultNextPage>,
+        sender: SlotSender<ResultNextPage>,
     ) {
         loop {
             let request_span = self.make_span();
@@ -690,6 +690,176 @@ impl SingleConnectionPagingExecutor {
     }
 }
 
+/// A channel holding a single item, through which a pager's worker hands
+/// pages over to the [`QueryPager`].
+///
+/// It behaves like a tokio `mpsc` channel of capacity 1, which would allocate
+/// about 15 KB here: tokio allocates `mpsc` slots in blocks of 32.
+mod slot_channel {
+    use std::fmt;
+    use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll, Waker};
+
+    pub(super) fn slot_channel<T>() -> (SlotSender<T>, SlotReceiver<T>) {
+        let shared = Arc::new(Mutex::new(SlotState {
+            item: None,
+            sender_waker: None,
+            receiver_waker: None,
+            sender_dropped: false,
+            receiver_dropped: false,
+        }));
+        (
+            SlotSender {
+                shared: Arc::clone(&shared),
+            },
+            SlotReceiver { shared },
+        )
+    }
+
+    struct SlotState<T> {
+        item: Option<T>,
+        /// Woken when the item is taken, or the receiver is dropped.
+        sender_waker: Option<Waker>,
+        /// Woken when an item is put, or the sender is dropped.
+        receiver_waker: Option<Waker>,
+        sender_dropped: bool,
+        receiver_dropped: bool,
+    }
+
+    fn register(waker: &mut Option<Waker>, cx: &Context<'_>) {
+        match waker {
+            Some(waker) => waker.clone_from(cx.waker()),
+            None => *waker = Some(cx.waker().clone()),
+        }
+    }
+
+    fn wake(waker: Option<Waker>) {
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
+
+    /// The receiver was dropped, so no more items can be sent.
+    #[derive(Debug)]
+    pub(super) struct ReceiverDropped;
+
+    pub(super) struct SlotSender<T> {
+        shared: Arc<Mutex<SlotState<T>>>,
+    }
+
+    impl<T> SlotSender<T> {
+        /// Waits until the slot is empty, and puts `item` in it.
+        pub(super) async fn send(&self, item: T) -> Result<(), ReceiverDropped> {
+            let mut item = Some(item);
+            std::future::poll_fn(|cx| {
+                let mut state = self.shared.lock().unwrap();
+                if state.receiver_dropped {
+                    return Poll::Ready(Err(ReceiverDropped));
+                }
+                if state.item.is_some() {
+                    register(&mut state.sender_waker, cx);
+                    return Poll::Pending;
+                }
+                state.item = item.take();
+                let receiver_waker = state.receiver_waker.take();
+                drop(state);
+                wake(receiver_waker);
+                Poll::Ready(Ok(()))
+            })
+            .await
+        }
+    }
+
+    impl<T> Drop for SlotSender<T> {
+        fn drop(&mut self) {
+            let mut state = self.shared.lock().unwrap();
+            state.sender_dropped = true;
+            let receiver_waker = state.receiver_waker.take();
+            drop(state);
+            wake(receiver_waker);
+        }
+    }
+
+    pub(super) struct SlotReceiver<T> {
+        shared: Arc<Mutex<SlotState<T>>>,
+    }
+
+    impl<T> SlotReceiver<T> {
+        /// Takes the item from the slot. Returns `None` once the sender is dropped
+        /// and the slot is empty.
+        pub(super) fn poll_recv(&mut self, cx: &Context<'_>) -> Poll<Option<T>> {
+            let mut state = self.shared.lock().unwrap();
+            if let Some(item) = state.item.take() {
+                let sender_waker = state.sender_waker.take();
+                drop(state);
+                wake(sender_waker);
+                return Poll::Ready(Some(item));
+            }
+            if state.sender_dropped {
+                return Poll::Ready(None);
+            }
+            register(&mut state.receiver_waker, cx);
+            Poll::Pending
+        }
+    }
+
+    impl<T> Drop for SlotReceiver<T> {
+        fn drop(&mut self) {
+            let mut state = self.shared.lock().unwrap();
+            state.receiver_dropped = true;
+            let sender_waker = state.sender_waker.take();
+            drop(state);
+            wake(sender_waker);
+        }
+    }
+
+    impl<T> fmt::Debug for SlotReceiver<T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("SlotReceiver").finish_non_exhaustive()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::future::poll_fn;
+
+        use assert_matches::assert_matches;
+
+        use super::{ReceiverDropped, slot_channel};
+
+        #[tokio::test]
+        async fn slot_channel_hands_over_items_one_at_a_time() {
+            let (sender, mut receiver) = slot_channel();
+            sender.send(1).await.unwrap();
+
+            // The slot is full, so the next send waits until the item is taken.
+            let mut second = Box::pin(sender.send(2));
+            assert!(futures::poll!(&mut second).is_pending());
+            assert_eq!(poll_fn(|cx| receiver.poll_recv(cx)).await, Some(1));
+            second.await.unwrap();
+            assert_eq!(poll_fn(|cx| receiver.poll_recv(cx)).await, Some(2));
+
+            // The item left in the slot is still received after the sender is dropped.
+            sender.send(3).await.unwrap();
+            drop(sender);
+            assert_eq!(poll_fn(|cx| receiver.poll_recv(cx)).await, Some(3));
+            assert_eq!(poll_fn(|cx| receiver.poll_recv(cx)).await, None);
+        }
+
+        #[tokio::test]
+        async fn slot_channel_send_fails_after_receiver_is_dropped() {
+            let (sender, receiver) = slot_channel();
+            sender.send(1).await.unwrap();
+            let mut second = Box::pin(sender.send(2));
+            assert!(futures::poll!(&mut second).is_pending());
+
+            drop(receiver);
+            assert_matches!(second.await, Err(ReceiverDropped));
+            assert_matches!(sender.send(3).await, Err(ReceiverDropped));
+        }
+    }
+}
+
 /// Returns the list of page coordinators, holding the first page's one.
 ///
 /// When more pages follow, room for several is reserved, to spare most of
@@ -718,7 +888,7 @@ fn first_page_coordinators(first: Option<Coordinator>, more_pages: bool) -> Vec<
 pub struct QueryPager {
     current_page: RawRowLendingIterator,
     // `None` if the first page was the only one.
-    page_receiver: Option<mpsc::Receiver<Result<NextReceivedPage, NextPageError>>>,
+    page_receiver: Option<SlotReceiver<ResultNextPage>>,
     tracing_ids: Vec<Uuid>,
     request_coordinators: Vec<Coordinator>,
 }
@@ -803,7 +973,7 @@ impl QueryPager {
         let Some(page_receiver) = s.page_receiver.as_mut() else {
             return Poll::Ready(None);
         };
-        let received_page = ready_some_ok!(Pin::new(page_receiver).poll_recv(cx));
+        let received_page = ready_some_ok!(page_receiver.poll_recv(cx));
 
         s.current_page = RawRowLendingIterator::new(received_page.rows);
 
@@ -902,7 +1072,7 @@ If you are using this API, you are probably doing something wrong."
             ShouldFetchMorePages::NoMorePages => None,
             ShouldFetchMorePages::MorePages => {
                 /* REMAINING PAGES */
-                let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
+                let (sender, receiver) = slot_channel::<ResultNextPage>();
                 let node_location_preference = Arc::clone(session.get_node_location_preference());
                 let worker_task = async move {
                     let routing_info = RoutingInfo {
@@ -1065,7 +1235,7 @@ If you are using this API, you are probably doing something wrong."
             ShouldFetchMorePages::NoMorePages => None,
             ShouldFetchMorePages::MorePages => {
                 /* REMAINING PAGES */
-                let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
+                let (sender, receiver) = slot_channel::<ResultNextPage>();
                 let node_location_preference = Arc::clone(session.get_node_location_preference());
                 let worker_task = async move {
                     let partition_key = if prepared.is_token_aware() {
@@ -1186,7 +1356,7 @@ If you are using this API, you are probably doing something wrong."
             PagingStateResponse::NoMorePages => None,
             PagingStateResponse::HasMorePages { state } => {
                 /* REMAINING PAGES */
-                let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
+                let (sender, receiver) = slot_channel::<ResultNextPage>();
                 let parent_span = tracing::Span::current();
                 let worker_task =
                     async move { executor.fetch_remaining_pages(state, sender).await }
@@ -1212,7 +1382,7 @@ If you are using this API, you are probably doing something wrong."
 
     async fn new_from_first_page(
         first_page: FirstReceivedPage,
-        receiver: Option<mpsc::Receiver<ResultNextPage>>,
+        receiver: Option<SlotReceiver<ResultNextPage>>,
         session: &Session,
     ) -> Result<Self, PagerExecutionError> {
         let tracing_ids = Vec::from_iter(first_page.tracing_id);
