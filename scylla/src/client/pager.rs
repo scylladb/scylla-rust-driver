@@ -36,7 +36,7 @@ use crate::frame::response::result::{
     DeserializedMetadataAndRawRows, SchemaChange, SetKeyspace, TableSpec,
 };
 use crate::frame::types::{Consistency, SerialConsistency};
-use crate::network::Connection;
+use crate::network::{Connection, ExecuteArgs};
 use crate::observability::driver_tracing::{RequestSpan, await_in_span};
 use crate::observability::history::HistoryListener;
 use crate::observability::metrics::Metrics;
@@ -584,20 +584,20 @@ impl SingleConnectionPagingExecutor {
         };
 
         let run_request_once = |connection: Arc<Connection>, consistency: Consistency| {
-            let paging_state = paging_state.clone();
+            let args = ExecuteArgs {
+                prepared_statement: &self.prepared,
+                values: &self.values,
+                consistency,
+                serial_consistency: self.serial_consistency,
+                page_size: Some(self.page_size),
+                paging_state,
+                // This API executes on one given connection and has no `ClusterState`
+                // to consult, so there is no cached tablet version to probe.
+                tablet_block_hint: 0,
+            };
             async move {
                 connection
-                    .execute_raw_with_consistency(
-                        &self.prepared,
-                        &self.values,
-                        consistency,
-                        self.serial_consistency,
-                        Some(self.page_size),
-                        paging_state,
-                        // This API executes on one given connection and has no `ClusterState`
-                        // to consult, so there is no cached tablet version to probe.
-                        0,
-                    )
+                    .execute_raw_with_consistency(&args)
                     .await
                     .and_then(QueryResponse::into_non_error_query_response)
             }
@@ -1274,15 +1274,15 @@ If you are using this API, you are probably doing something wrong."
                                consistency: Consistency,
                                paging_state: PagingState| async move {
             connection
-                .execute_raw_with_consistency(
-                    prepared_ref,
-                    values_ref,
+                .execute_raw_with_consistency(&ExecuteArgs {
+                    prepared_statement: prepared_ref,
+                    values: values_ref,
                     consistency,
                     serial_consistency,
-                    Some(page_size),
-                    paging_state,
+                    page_size: Some(page_size),
+                    paging_state: &paging_state,
                     tablet_block_hint,
-                )
+                })
                 .await
         };
 
@@ -1334,15 +1334,15 @@ If you are using this API, you are probably doing something wrong."
                               consistency: Consistency,
                               paging_state: PagingState| async move {
                             connection
-                                .execute_raw_with_consistency(
-                                    prepared,
-                                    values_ref,
+                                .execute_raw_with_consistency(&ExecuteArgs {
+                                    prepared_statement: prepared,
+                                    values: values_ref,
                                     consistency,
                                     serial_consistency,
-                                    Some(page_size),
-                                    paging_state,
+                                    page_size: Some(page_size),
+                                    paging_state: &paging_state,
                                     tablet_block_hint,
-                                )
+                                })
                                 .await
                         };
 
