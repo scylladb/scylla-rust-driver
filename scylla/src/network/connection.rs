@@ -12,11 +12,10 @@ use crate::errors::{
     InternalRequestError, RequestAttemptError, ResponseParseError, TranslationError,
     UseKeyspaceError,
 };
-use crate::frame::frame_errors::CqlResponseParseError;
+use crate::frame::frame_errors::{CqlRequestSerializationError, CqlResponseParseError};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::request::CqlRequestKind;
 use crate::frame::request::options::{self, Options};
-use crate::frame::request::query::QueryParameters;
 use crate::frame::request::register::RegisterV2 as Register;
 use crate::frame::response::authenticate::Authenticate;
 use crate::frame::response::result::{ResultMetadata, ResultWithDeserializedMetadata, TableSpec};
@@ -130,22 +129,28 @@ struct RouterHandle {
 impl RouterHandle {
     async fn send_request(
         &self,
-        request: &impl SerializableRequest,
-        compression: Option<Compression>,
-        tracing: bool,
+        request: SerializedRequest,
     ) -> Result<TaskResponse, InternalRequestError> {
-        let mut serialized_request = SerializedRequest::make(request, compression, tracing)?;
         // Dropping `stream` (e.g. when this future is cancelled) releases the
         // stream id, or marks it as orphaned if the request was already submitted.
         let mut stream = self.streams.allocate().ok_or_else(|| {
             error!("Could not allocate stream id");
             InternalRequestError::UnableToAllocStreamId
         })?;
-        serialized_request.set_stream(stream.id());
+        // Moved into a block, as borrowing the argument would keep a copy of it
+        // in this future's state.
+        let request = {
+            let mut request = request;
+            request.set_stream(stream.id());
+            request
+        };
 
-        self.submit_channel.send(serialized_request).await.map_err(
-            |_| -> BrokenConnectionError { BrokenConnectionErrorKind::ChannelError.into() },
-        )?;
+        self.submit_channel
+            .send(request)
+            .await
+            .map_err(|_| -> BrokenConnectionError {
+                BrokenConnectionErrorKind::ChannelError.into()
+            })?;
         // `send` returns in the same poll in which it enqueues the request, so
         // `stream` cannot be dropped in between.
         stream.mark_submitted();
@@ -1060,7 +1065,7 @@ impl Connection {
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
-        paging_state: PagingState,
+        mut paging_state: PagingState,
         tablet_block_hint: u8,
     ) -> Result<QueryResponse, RequestAttemptError> {
         let get_timestamp_from_gen = || {
@@ -1072,10 +1077,6 @@ impl Connection {
         let timestamp = prepared_statement
             .get_timestamp()
             .or_else(get_timestamp_from_gen);
-
-        let current_result_metadata = prepared_statement.get_current_result_metadata();
-        let cached_metadata_params =
-            self.calculate_cached_metadata_params(prepared_statement, &current_result_metadata);
 
         // On a connection that negotiated TABLETS_ROUTING_V2 the server reads exactly one
         // tablet-version block byte after the query parameters for every EXECUTE. Enforce
@@ -1091,99 +1092,84 @@ impl Connection {
             .tablets_v2_supported
             .then_some(tablet_block_hint);
 
-        let execute_frame = execute::ExecuteV2 {
-            id: prepared_statement.get_id().as_ref().into(),
-            result_metadata_id: cached_metadata_params.result_metadata_id.map(Into::into),
-            parameters: query::QueryParameters {
-                consistency,
-                serial_consistency,
-                values: Cow::Borrowed(values),
-                page_size: page_size.map(Into::into),
-                timestamp,
-                skip_metadata: cached_metadata_params.skip_metadata,
-                paging_state,
-            },
-            tablet_version_block,
-        };
-
-        // Scoped, so that the response is not kept in this future's state while
-        // repreparing.
-        {
-            let query_response = self
-                .send_request(
-                    &execute_frame,
-                    true,
-                    prepared_statement.config.tracing,
-                    cached_metadata_params.cached_metadata,
-                )
-                .await?;
-
-            if let Some(spec) = prepared_statement.get_table_spec()
-                && let Err(e) = self
-                    .update_tablets_from_response(spec, &query_response)
-                    .await
+        // The request is sent again after repreparing, if the server didn't
+        // recognize the statement id.
+        let mut reprepared = false;
+        loop {
+            // Scoped, so that the response is not kept in this future's state
+            // while repreparing.
             {
-                tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
+                // Metadata may have changed in reprepare, or in some concurrent execution.
+                let current_result_metadata = prepared_statement.get_current_result_metadata();
+                let CachedMetadataParameters {
+                    cached_metadata,
+                    skip_metadata,
+                    result_metadata_id,
+                } = self
+                    .calculate_cached_metadata_params(prepared_statement, &current_result_metadata);
+
+                // Serialized before sending, so that the frame is not kept in this
+                // future's state.
+                let request;
+                (request, paging_state) = {
+                    let execute_frame = execute::ExecuteV2 {
+                        id: prepared_statement.get_id().as_ref().into(),
+                        result_metadata_id: result_metadata_id.map(Into::into),
+                        parameters: query::QueryParameters {
+                            consistency,
+                            serial_consistency,
+                            values: Cow::Borrowed(values),
+                            page_size: page_size.map(Into::into),
+                            timestamp,
+                            skip_metadata,
+                            paging_state,
+                        },
+                        tablet_version_block,
+                    };
+                    let request = self.serialize_request(
+                        &execute_frame,
+                        true,
+                        prepared_statement.config.tracing,
+                    )?;
+                    // Taken back, in case the request is sent again.
+                    (request, execute_frame.parameters.paging_state)
+                };
+
+                let task_response = self.router_handle.send_request(request).await?;
+                let query_response = self.parse_task_response(task_response, cached_metadata)?;
+
+                if let Some(spec) = prepared_statement.get_table_spec()
+                    && let Err(e) = self
+                        .update_tablets_from_response(spec, &query_response)
+                        .await
+                {
+                    tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
+                }
+
+                Self::handle_result_metadata_new_id(prepared_statement, &query_response);
+
+                let ResponseWithDeserializedMetadata::Error(frame::response::Error {
+                    error: DbError::Unprepared { statement_id },
+                    ..
+                }) = &query_response.response
+                else {
+                    return Ok(query_response);
+                };
+                if reprepared {
+                    return Ok(query_response);
+                }
+                debug!(
+                    "Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}",
+                    statement_id
+                );
             }
 
-            Self::handle_result_metadata_new_id(prepared_statement, &query_response);
-
-            let ResponseWithDeserializedMetadata::Error(frame::response::Error {
-                error: DbError::Unprepared { statement_id },
-                ..
-            }) = &query_response.response
-            else {
-                return Ok(query_response);
-            };
-            debug!(
-                "Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}",
-                statement_id
-            );
+            // Repreparing is rare, so it is boxed to keep its state out of every
+            // request's future.
+            Box::pin(self.reprepare(prepared_statement.get_statement(), prepared_statement))
+                .await?;
+            reprepared = true;
         }
-
-        // Repreparing is rare, so it is boxed to keep its state out of every
-        // request's future.
-        Box::pin(self.reprepare_and_execute(prepared_statement, execute_frame)).await
-    }
-
-    /// Reprepares the statement and sends `execute_frame` again, after the
-    /// server did not recognize the statement id.
-    async fn reprepare_and_execute(
-        &self,
-        prepared_statement: &PreparedStatement,
-        execute_frame: execute::ExecuteV2<'_>,
-    ) -> Result<QueryResponse, RequestAttemptError> {
-        self.reprepare(prepared_statement.get_statement(), prepared_statement)
-            .await?;
-        // Metadata may have changed in reprepare, or in some concurrent execution
-        let current_result_metadata = prepared_statement.get_current_result_metadata();
-        let cached_metadata_params =
-            self.calculate_cached_metadata_params(prepared_statement, &current_result_metadata);
-        let new_response = self
-            .send_request(
-                &execute::ExecuteV2 {
-                    result_metadata_id: cached_metadata_params.result_metadata_id.map(Into::into),
-                    parameters: QueryParameters {
-                        skip_metadata: cached_metadata_params.skip_metadata,
-                        ..execute_frame.parameters
-                    },
-                    ..execute_frame
-                },
-                true,
-                prepared_statement.config.tracing,
-                cached_metadata_params.cached_metadata,
-            )
-            .await?;
-
-        if let Some(spec) = prepared_statement.get_table_spec()
-            && let Err(e) = self.update_tablets_from_response(spec, &new_response).await
-        {
-            tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
-        }
-
-        Self::handle_result_metadata_new_id(prepared_statement, &new_response);
-
-        Ok(new_response)
     }
 
     /// Executes a prepared statements and fetches its results over multiple pages, using
@@ -1427,17 +1413,30 @@ impl Connection {
         tracing: bool,
         cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
     ) -> Result<QueryResponse, InternalRequestError> {
+        let request = self.serialize_request(request, compress, tracing)?;
+        let task_response = self.router_handle.send_request(request).await?;
+        self.parse_task_response(task_response, cached_metadata)
+    }
+
+    fn serialize_request(
+        &self,
+        request: &impl SerializableRequest,
+        compress: bool,
+        tracing: bool,
+    ) -> Result<SerializedRequest, CqlRequestSerializationError> {
         let compression = if compress {
             self.config.compression
         } else {
             None
         };
+        SerializedRequest::make(request, compression, tracing)
+    }
 
-        let task_response = self
-            .router_handle
-            .send_request(request, compression, tracing)
-            .await?;
-
+    fn parse_task_response(
+        &self,
+        task_response: TaskResponse,
+        cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
+    ) -> Result<QueryResponse, InternalRequestError> {
         let response = Self::parse_response(
             task_response,
             self.config.compression,
@@ -1755,13 +1754,16 @@ impl Connection {
         async fn issue_keepalive_query(
             router_handle: &RouterHandle,
         ) -> Result<(), BrokenConnectionError> {
+            let keepalive_error = |req_err: InternalRequestError| -> BrokenConnectionError {
+                BrokenConnectionErrorKind::KeepaliveRequestError(Arc::new(req_err)).into()
+            };
+            let request = SerializedRequest::make(&Options, None, false)
+                .map_err(|e| keepalive_error(e.into()))?;
             router_handle
-                .send_request(&Options, None, false)
+                .send_request(request)
                 .await
                 .map(|_| ())
-                .map_err(|req_err| {
-                    BrokenConnectionErrorKind::KeepaliveRequestError(Arc::new(req_err)).into()
-                })
+                .map_err(keepalive_error)
         }
 
         if let Some(keepalive_interval) = keepalive_interval {
