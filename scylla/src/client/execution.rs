@@ -431,7 +431,9 @@ impl<'a> RequestExecutionParams<'a> {
     pub(crate) async fn run_request_no_side_effects<Target, QueryFut>(
         &self,
         routing_info: &'a RoutingInfo<'a>,
-        request_plan: impl Iterator<Item = Target>,
+        // Taken by reference: an async fn keeps arguments taken by value twice in
+        // its state, and the plan is passed further down to the fibers.
+        request_plan: &mut impl Iterator<Item = Target>,
         run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<RequestExecutionOutcome<Target::Coordinator>, RequestError>
