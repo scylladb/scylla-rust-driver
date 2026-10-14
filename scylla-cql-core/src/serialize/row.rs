@@ -521,7 +521,16 @@ impl SerializedValues {
         ctx: &RowSerializationContext,
         row: &T,
     ) -> Result<Self, SerializationError> {
-        Self::from_closure(|writer| row.serialize(ctx, writer)).map(|(sr, _)| sr)
+        // Each value is an [int] length followed by its bytes. Reserving the lengths
+        // and the bytes of fixed-size types up front saves growing the buffer, fully
+        // when no column has a variable size.
+        let expected_size = ctx
+            .columns()
+            .iter()
+            .map(|spec| size_of::<i32>() + spec.typ().type_size_for_vector().unwrap_or(0))
+            .sum();
+        Self::from_closure_with_capacity(expected_size, |writer| row.serialize(ctx, writer))
+            .map(|(sr, _)| sr)
     }
 
     /// Constructs `SerializedValues` via given closure.
@@ -529,7 +538,17 @@ impl SerializedValues {
     where
         F: FnOnce(&mut RowWriter) -> Result<R, SerializationError>,
     {
-        let mut data = Vec::new();
+        Self::from_closure_with_capacity(0, f)
+    }
+
+    fn from_closure_with_capacity<F, R>(
+        capacity: usize,
+        f: F,
+    ) -> Result<(Self, R), SerializationError>
+    where
+        F: FnOnce(&mut RowWriter) -> Result<R, SerializationError>,
+    {
+        let mut data = Vec::with_capacity(capacity);
         let mut writer = RowWriter::new(&mut data);
         let ret = f(&mut writer)?;
         let element_count = match writer.value_count().try_into() {
