@@ -1372,9 +1372,9 @@ impl Session {
                 .and_then(QueryResponse::into_non_error_query_response)
         };
         let request = Request {
-            params: &exec_params,
-            routing_info: &routing_info,
-            run_once: &run_request_once,
+            params: exec_params,
+            routing_info,
+            run_once: run_request_once,
             span: &span,
         };
         let (run_request_result, coordinator): (
@@ -1760,9 +1760,9 @@ impl Session {
             }
         };
         let request = Request {
-            params: &exec_params,
-            routing_info: &routing_info,
-            run_once: &run_request_once,
+            params: exec_params,
+            routing_info,
+            run_once: run_request_once,
             span: &span,
         };
         let (run_request_result, coordinator): (
@@ -2180,9 +2180,9 @@ impl Session {
             }
         };
         let request = Request {
-            params: &exec_params,
-            routing_info: &routing_info,
-            run_once: &run_request_once,
+            params: exec_params,
+            routing_info,
+            run_once: run_request_once,
             span: &span,
         };
         let (run_request_result, coordinator): (
@@ -2506,7 +2506,7 @@ impl Session {
     {
         let mut request_plan = load_balancing::Plan::new(
             request.params.load_balancing_policy,
-            request.routing_info,
+            &request.routing_info,
             state,
         )
         .map(|(node, shard)| NodeAttemptTarget::new(node, shard));

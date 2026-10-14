@@ -191,11 +191,11 @@ impl<'a> RequestExecutionParams<'a> {
 /// The execution layers take it by a single reference, as an async fn keeps
 /// each of its arguments in its state.
 pub(crate) struct Request<'a, F> {
-    pub(crate) params: &'a RequestExecutionParams<'a>,
-    pub(crate) routing_info: &'a RoutingInfo<'a>,
+    pub(crate) params: RequestExecutionParams<'a>,
+    pub(crate) routing_info: RoutingInfo<'a>,
     /// Performs a single attempt, on the given connection and with the given
     /// consistency.
-    pub(crate) run_once: &'a F,
+    pub(crate) run_once: F,
     pub(crate) span: &'a RequestSpan,
 }
 
@@ -610,7 +610,7 @@ impl<'a, F> Request<'a, F> {
                         context.log_attempt_success(&attempt_id);
                         target.on_attempt_success(
                             self.params.load_balancing_policy,
-                            self.routing_info,
+                            &self.routing_info,
                             elapsed,
                         );
                         return Some(Ok(RequestExecutionOutcome {
@@ -627,7 +627,7 @@ impl<'a, F> Request<'a, F> {
                         self.params.inc_failed_queries();
                         target.on_attempt_failure(
                             self.params.load_balancing_policy,
-                            self.routing_info,
+                            &self.routing_info,
                             elapsed,
                             &e,
                         );
