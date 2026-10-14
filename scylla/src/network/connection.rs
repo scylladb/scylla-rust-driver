@@ -2455,6 +2455,7 @@ impl StreamSlots {
                         streams: self,
                         id,
                         submitted: false,
+                        released: false,
                     });
                 }
             }
@@ -2577,9 +2578,11 @@ struct AllocatedStream<'a> {
     streams: &'a StreamSlots,
     id: i16,
     submitted: bool,
+    /// Set once the response is taken, which releases the stream id.
+    released: bool,
 }
 
-impl AllocatedStream<'_> {
+impl<'a> AllocatedStream<'a> {
     fn id(&self) -> i16 {
         self.id
     }
@@ -2589,16 +2592,27 @@ impl AllocatedStream<'_> {
         self.submitted = true;
     }
 
-    async fn response(self) -> Result<TaskResponse, BrokenConnectionError> {
-        let response = std::future::poll_fn(|cx| self.streams.poll_response(self.id, cx)).await;
-        // Taking the response released the stream id.
-        std::mem::forget(self);
-        response
+    /// Waits for the response.
+    // Not an async fn, which would keep `self` twice in its state.
+    fn response(
+        mut self,
+    ) -> impl Future<Output = Result<TaskResponse, BrokenConnectionError>> + use<'a> {
+        std::future::poll_fn(move |cx| {
+            // Borrowed as a whole, so that the closure owns the whole stream,
+            // rather than copies of its fields.
+            let this = &mut self;
+            let response = std::task::ready!(this.streams.poll_response(this.id, cx));
+            this.released = true;
+            Poll::Ready(response)
+        })
     }
 }
 
 impl Drop for AllocatedStream<'_> {
     fn drop(&mut self) {
+        if self.released {
+            return;
+        }
         let mut state = self.streams.slot(self.id).lock().unwrap();
         if self.submitted && matches!(*state, SlotState::Waiting(_)) {
             // The reader releases the stream id when the response arrives.
