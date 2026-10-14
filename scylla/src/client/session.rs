@@ -1204,8 +1204,7 @@ impl Session {
             (prepared, serialized_values)
         };
 
-        self.execute_iter_nongeneric(prepared, serialized_values)
-            .await
+        QueryPager::new_for_prepared_statement(self, prepared, serialized_values).await
     }
 
     /// Execute a bound statement with paging.
@@ -1257,8 +1256,7 @@ impl Session {
         &self,
         bound: BoundStatement,
     ) -> Result<QueryPager, PagerExecutionError> {
-        self.execute_iter_nongeneric(bound.prepared, bound.values)
-            .await
+        QueryPager::new_for_prepared_statement(self, bound.prepared, bound.values).await
     }
 
     /// Execute a batch statement.
@@ -1863,7 +1861,7 @@ impl Session {
             // we fully prepare a statement beforehand.
             let prepared = self.prepare_nongeneric(&statement).await?;
             let values = prepared.serialize_values(&values)?;
-            self.execute_iter_nongeneric(prepared, values).await
+            QueryPager::new_for_prepared_statement(self, prepared, values).await
         }
     }
 
@@ -2199,32 +2197,9 @@ impl Session {
         Ok((result, paging_state_response))
     }
 
-    /// Does the same as [`Session::execute_iter`], but without generics.
-    /// This is to reduce code bloat.
-    ///
-    /// Additionally, this function accepts only `SerializedValues`,
-    /// so the caller is responsible for serializing the values beforehand.
-    /// This:
-    /// - on one hand introduces a risk of misusing the API (passing values
-    ///   that don't match the prepared statement) - therefore this API
-    ///   must not be leaked to end users;
-    /// - on the other hand allows manual preserialization of values, which
-    ///   we need in wrapper drivers (e.g. C#-RS Driver) - for them we expose
-    ///   a dedicated API endpoint using this function, conditionally compiled
-    ///   if special compile flag is passed.
-    async fn execute_iter_nongeneric(
-        &self,
-        prepared: PreparedStatement,
-        values: SerializedValues,
-    ) -> Result<QueryPager, PagerExecutionError> {
-        QueryPager::new_for_prepared_statement(self, prepared, values).await
-    }
-
-    /// This is essentially the same as `execute_iter_nongeneric`, but it is *public*
-    /// and only available when the `unstable-csharp-rs` feature is enabled.
-    /// Rationale: I don't know a way to make a function conditionally public,
-    /// based on a compile-time flag, so I added a new wrapper function
-    /// that is conditionally compiled and is public.
+    /// Does the same as [`Session::execute_iter`], but takes values serialized
+    /// by the caller, which wrapper drivers (e.g. C#-RS Driver) need. It is only
+    /// available when the `unstable-csharp-rs` feature is enabled.
     ///
     /// This function is intended to be used by the C#-RS Driver's internals
     /// and it's potentially a footgun: if a user passes `SerializedValues`
@@ -2238,7 +2213,7 @@ impl Session {
         prepared: PreparedStatement,
         values: SerializedValues,
     ) -> Result<QueryPager, PagerExecutionError> {
-        self.execute_iter_nongeneric(prepared, values).await
+        QueryPager::new_for_prepared_statement(self, prepared, values).await
     }
 
     /// Prepares all statements within the batch and returns a new batch where every
