@@ -560,7 +560,9 @@ impl<'a> RequestExecutionParams<'a> {
         Target: AttemptTarget,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
-        let mut last_error: Option<RequestError> = None;
+        // Boxed, as it is set only after a failed attempt: inline, its size and
+        // 16-byte alignment would weigh on the future of every request.
+        let mut last_error: Option<Box<RequestError>> = None;
         let mut current_consistency: Consistency = self.consistency;
 
         'targets_in_plan: for target in request_plan {
@@ -575,7 +577,7 @@ impl<'a> RequestExecutionParams<'a> {
                             error = %e,
                             "Choosing connection failed"
                         );
-                        last_error = Some(e.into());
+                        last_error = Some(Box::new(e.into()));
                         // Broken connection doesn't count as a failed request, don't log in metrics
                         continue 'targets_in_plan;
                     }
@@ -648,7 +650,7 @@ impl<'a> RequestExecutionParams<'a> {
 
                 context.log_attempt_error(&attempt_id, &request_error, &retry_decision);
 
-                last_error = Some(request_error.into());
+                last_error = Some(Box::new(request_error.into()));
 
                 match retry_decision {
                     RetryDecision::RetrySameTarget(new_cl) => {
@@ -672,6 +674,6 @@ impl<'a> RequestExecutionParams<'a> {
             }
         }
 
-        last_error.map(Result::Err)
+        last_error.map(|error| Err(*error))
     }
 }
