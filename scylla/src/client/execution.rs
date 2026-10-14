@@ -334,54 +334,26 @@ pub(crate) struct RequestExecutionOutcome<C> {
     pub(crate) coordinator: C,
 }
 
-/// History data threaded through a single fiber.
-struct HistoryData<'a> {
-    listener: &'a dyn HistoryListener,
+/// History data threaded through a single fiber. Its listener is the
+/// request's [`RequestExecutionParams::history_listener`].
+struct HistoryData {
     request_id: history::RequestId,
     speculative_id: Option<history::SpeculativeId>,
 }
 
 /// Per-fiber execution context.
-struct ExecuteRequestContext<'a> {
+struct ExecuteRequestContext {
     /// Created lazily, upon the first attempt error, in order to avoid
     /// an allocation on the happy path (where no retry is ever needed).
     retry_session: Option<Box<dyn RetrySession>>,
-    history_data: Option<HistoryData<'a>>,
+    history_data: Option<HistoryData>,
 }
 
-impl ExecuteRequestContext<'_> {
+impl ExecuteRequestContext {
     fn retry_session(&mut self, retry_policy: &dyn RetryPolicy) -> &mut dyn RetrySession {
         self.retry_session
             .get_or_insert_with(|| retry_policy.new_session())
             .as_mut()
-    }
-
-    fn log_attempt_start(&self, node_addr: SocketAddr) -> Option<history::AttemptId> {
-        self.history_data.as_ref().map(|hd| {
-            hd.listener
-                .log_attempt_start(hd.request_id, hd.speculative_id, node_addr)
-        })
-    }
-
-    fn log_attempt_success(&self, attempt_id_opt: &Option<history::AttemptId>) {
-        let (Some(history_data), Some(attempt_id)) = (&self.history_data, attempt_id_opt) else {
-            return;
-        };
-        history_data.listener.log_attempt_success(*attempt_id);
-    }
-
-    fn log_attempt_error(
-        &self,
-        attempt_id_opt: &Option<history::AttemptId>,
-        error: &RequestAttemptError,
-        retry_decision: &RetryDecision,
-    ) {
-        let (Some(history_data), Some(attempt_id)) = (&self.history_data, attempt_id_opt) else {
-            return;
-        };
-        history_data
-            .listener
-            .log_attempt_error(*attempt_id, error, retry_decision);
     }
 }
 
@@ -424,6 +396,40 @@ impl RequestExecutionParams<'_> {
         if let Some((metrics, _)) = self.metrics_and_speculative_policy {
             let _ = metrics.log_query_latency(latency_ms);
         }
+    }
+
+    fn log_attempt_start(
+        &self,
+        history_data: &Option<HistoryData>,
+        node_addr: SocketAddr,
+    ) -> Option<history::AttemptId> {
+        let (Some(listener), Some(history_data)) = (self.history_listener, history_data) else {
+            return None;
+        };
+        Some(listener.log_attempt_start(
+            history_data.request_id,
+            history_data.speculative_id,
+            node_addr,
+        ))
+    }
+
+    fn log_attempt_success(&self, attempt_id: Option<history::AttemptId>) {
+        let (Some(listener), Some(attempt_id)) = (self.history_listener, attempt_id) else {
+            return;
+        };
+        listener.log_attempt_success(attempt_id);
+    }
+
+    fn log_attempt_error(
+        &self,
+        attempt_id: Option<history::AttemptId>,
+        error: &RequestAttemptError,
+        retry_decision: &RetryDecision,
+    ) {
+        let (Some(listener), Some(attempt_id)) = (self.history_listener, attempt_id) else {
+            return;
+        };
+        listener.log_attempt_error(attempt_id, error, retry_decision);
     }
 }
 
@@ -470,7 +476,6 @@ impl<'a, F> Request<'a, F> {
                                 let speculative_id: Option<history::SpeculativeId> = is_speculative
                                     .then(|| listener.log_new_speculative_fiber(request_id));
                                 HistoryData {
-                                    listener,
                                     request_id,
                                     speculative_id,
                                 }
@@ -501,13 +506,10 @@ impl<'a, F> Request<'a, F> {
                 }
                 _ => {
                     let history_data: Option<HistoryData> =
-                        self.params.history_listener.zip(request_id).map(
-                            |(listener, request_id)| HistoryData {
-                                listener,
-                                request_id,
-                                speculative_id: None,
-                            },
-                        );
+                        request_id.map(|request_id| HistoryData {
+                            request_id,
+                            speculative_id: None,
+                        });
                     let mut context = ExecuteRequestContext {
                         retry_session: None,
                         history_data,
@@ -559,7 +561,7 @@ impl<'a, F> Request<'a, F> {
         request_plan: impl Iterator<Item = Target>,
         // Taken by reference: an async fn keeps arguments taken by value twice in
         // its state.
-        context: &mut ExecuteRequestContext<'a>,
+        context: &mut ExecuteRequestContext,
     ) -> Option<Result<RequestExecutionOutcome<Target::Coordinator>, RequestError>>
     where
         Target: AttemptTarget,
@@ -602,7 +604,8 @@ impl<'a, F> Request<'a, F> {
                         connection = %connect_address,
                         "Sending"
                     );
-                    context.log_attempt_start(connect_address)
+                    self.params
+                        .log_attempt_start(&context.history_data, connect_address)
                 };
 
                 let coordinator = target.coordinator(&connection);
@@ -615,7 +618,7 @@ impl<'a, F> Request<'a, F> {
                     Ok(response) => {
                         trace!(parent: &span, "Request succeeded");
                         self.params.log_query_latency(elapsed.as_millis() as u64);
-                        context.log_attempt_success(&attempt_id);
+                        self.params.log_attempt_success(attempt_id);
                         target.on_attempt_success(
                             self.params.load_balancing_policy,
                             &self.routing_info,
@@ -658,7 +661,8 @@ impl<'a, F> Request<'a, F> {
                     retry_decision = ?retry_decision
                 );
 
-                context.log_attempt_error(&attempt_id, &request_error, &retry_decision);
+                self.params
+                    .log_attempt_error(attempt_id, &request_error, &retry_decision);
 
                 last_error = Some(Box::new(request_error.into()));
 
