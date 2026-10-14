@@ -1206,16 +1206,21 @@ impl Connection {
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResponse, RequestAttemptError> {
+        // Set only if some statements had to be prepared. Boxed, as a `Cow` would
+        // take a whole `Batch` in this future's state even when borrowing.
+        let prepared_batch: Box<Batch>;
         // Scoped, as checking the statements to prepare borrows them, which would
         // keep them in this future's state.
         let batch = {
             let to_prepare = Self::batch_statements_to_prepare(init_batch, &values);
             if to_prepare.is_empty() {
-                Cow::Borrowed(init_batch)
+                init_batch
             } else {
                 // Rare, as values for unprepared statements are discouraged, so it
                 // is boxed to keep its state out of every request's future.
-                Cow::Owned(Box::pin(self.prepare_batch(init_batch, to_prepare)).await?)
+                prepared_batch =
+                    Box::new(Box::pin(self.prepare_batch(init_batch, to_prepare)).await?);
+                &prepared_batch
             }
         };
 
