@@ -465,17 +465,23 @@ impl<'a> RequestExecutionParams<'a> {
                             request_span.inc_speculative_executions();
                         }
 
-                        self.run_request_speculative_fiber(
-                            &shared_request_plan,
-                            &run_request_once,
-                            ExecuteRequestContext {
-                                retry_policy: self.retry_policy,
-                                retry_session: None,
-                                history_data,
-                                routing_info,
-                                request_span,
-                            },
-                        )
+                        let mut context = ExecuteRequestContext {
+                            retry_policy: self.retry_policy,
+                            retry_session: None,
+                            history_data,
+                            routing_info,
+                            request_span,
+                        };
+                        let (request_plan, run_request_once) =
+                            (&shared_request_plan, &run_request_once);
+                        async move {
+                            self.run_request_speculative_fiber(
+                                request_plan,
+                                run_request_once,
+                                &mut context,
+                            )
+                            .await
+                        }
                     };
 
                     let context = speculative_execution::Context {
@@ -493,16 +499,17 @@ impl<'a> RequestExecutionParams<'a> {
                             request_id,
                             speculative_id: None,
                         });
+                    let mut context = ExecuteRequestContext {
+                        retry_policy: self.retry_policy,
+                        retry_session: None,
+                        history_data,
+                        routing_info,
+                        request_span,
+                    };
                     self.run_request_speculative_fiber(
                         request_plan,
                         &run_request_once,
-                        ExecuteRequestContext {
-                            retry_policy: self.retry_policy,
-                            retry_session: None,
-                            history_data,
-                            routing_info,
-                            request_span,
-                        },
+                        &mut context,
                     )
                     .await
                     .unwrap_or(Err(RequestError::EmptyPlan))
@@ -547,7 +554,9 @@ impl<'a> RequestExecutionParams<'a> {
         &self,
         request_plan: impl Iterator<Item = Target>,
         run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
-        mut context: ExecuteRequestContext<'a>,
+        // Taken by reference: an async fn keeps arguments taken by value twice in
+        // its state.
+        context: &mut ExecuteRequestContext<'a>,
     ) -> Option<Result<RequestExecutionOutcome<Target::Coordinator>, RequestError>>
     where
         Target: AttemptTarget,
