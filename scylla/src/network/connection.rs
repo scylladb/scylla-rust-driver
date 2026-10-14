@@ -145,14 +145,29 @@ impl RouterHandle {
             request
         };
 
-        self.submit_channel
-            .send(request)
-            .await
-            .map_err(|_| -> BrokenConnectionError {
-                BrokenConnectionErrorKind::ChannelError.into()
-            })?;
-        // `send` returns in the same poll in which it enqueues the request, so
-        // `stream` cannot be dropped in between.
+        let channel_error =
+            || -> BrokenConnectionError { BrokenConnectionErrorKind::ChannelError.into() };
+        // The channel is rarely full, so waiting for it is boxed to keep the
+        // send's future (200 bytes) out of every request's future. Decided before
+        // awaiting, so that `try_send`'s result is not kept while waiting, and
+        // scoped, so that nothing of it is kept while waiting for the response.
+        {
+            let full_channel_send = match self.submit_channel.try_send(request) {
+                Ok(()) => None,
+                Err(mpsc::error::TrySendError::Full(request)) => {
+                    Some(Box::pin(self.submit_channel.send(request)))
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    return Err(channel_error().into());
+                }
+            };
+            if let Some(send) = full_channel_send {
+                send.await.map_err(|_| channel_error())?;
+            }
+        }
+        // `try_send` enqueues the request immediately, and `send` returns in the
+        // same poll in which it enqueues it, so `stream` cannot be dropped in
+        // between.
         stream.mark_submitted();
 
         Ok(stream.response().await?)
