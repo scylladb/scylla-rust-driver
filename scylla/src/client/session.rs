@@ -2511,7 +2511,7 @@ impl Session {
     where
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
-        let request_plan =
+        let mut request_plan =
             load_balancing::Plan::new(exec_params.load_balancing_policy, routing_info, state)
                 .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
 
@@ -2519,7 +2519,12 @@ impl Session {
             result,
             coordinator,
         } = exec_params
-            .run_request_no_side_effects(routing_info, request_plan, run_request_once, request_span)
+            .run_request_no_side_effects(
+                routing_info,
+                &mut request_plan,
+                run_request_once,
+                request_span,
+            )
             .await
             .map_err(RequestError::into_execution_error)?;
 
