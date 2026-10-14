@@ -586,17 +586,19 @@ impl<'a, F> Request<'a, F> {
                 self.params.inc_total_queries();
                 let request_start = Instant::now();
 
-                let connect_address = connection.get_connect_address();
-                trace!(
-                    parent: &span,
-                    connection = %connect_address,
-                    "Sending"
-                );
+                // Scoped, as logging borrows the address, which would keep it in
+                // this future's state during the attempt.
+                let attempt_id: Option<history::AttemptId> = {
+                    let connect_address = connection.get_connect_address();
+                    trace!(
+                        parent: &span,
+                        connection = %connect_address,
+                        "Sending"
+                    );
+                    context.log_attempt_start(connect_address)
+                };
 
                 let coordinator = target.coordinator(&connection);
-
-                let attempt_id: Option<history::AttemptId> =
-                    context.log_attempt_start(connect_address);
 
                 let request_result: Result<NonErrorQueryResponse, RequestAttemptError> =
                     await_in_span!((self.run_once)(connection, current_consistency), &span);
