@@ -13,6 +13,26 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tracing::trace_span;
 
+/// Awaits a future inside a span, like `future.instrument(span.clone()).await`.
+///
+/// Wrapping a future in `Instrumented` copies it into the wrapper, and enters
+/// the span on every poll. The driver's request spans are TRACE level, so they
+/// are usually disabled, and then the future is awaited directly.
+///
+/// `$future` appears in both branches, so it must not contain closure literals
+/// (each copy would be a distinct type, compiled separately).
+macro_rules! await_in_span {
+    ($future:expr, $span:expr) => {{
+        let span: &::tracing::Span = $span;
+        if span.is_disabled() {
+            $future.await
+        } else {
+            ::tracing::Instrument::instrument($future, span.clone()).await
+        }
+    }};
+}
+pub(crate) use await_in_span;
+
 pub(crate) struct RequestSpan {
     span: tracing::Span,
     speculative_executions: AtomicUsize,
