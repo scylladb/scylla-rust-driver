@@ -2533,10 +2533,12 @@ impl Session {
 
         // Automatically handle meaningful responses. Checked before awaiting, so
         // that other responses don't pay for constructing the handlers' future.
+        // Such responses are rare, so the future is boxed to keep it out of every
+        // request's future.
         if let RunRequestResult::Completed(ref response) = result
             && (response.as_set_keyspace().is_some() || response.as_schema_change().is_some())
         {
-            self.handle_response_side_effects(response, coordinator.node().host_id)
+            Box::pin(self.handle_response_side_effects(response, coordinator.node().host_id))
                 .await?;
         }
 
