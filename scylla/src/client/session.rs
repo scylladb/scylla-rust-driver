@@ -1763,7 +1763,7 @@ impl Session {
                     result::ResultWithDeserializedMetadata::Void,
                 ),
                 tracing_id: None,
-                warnings: Vec::new(),
+                warnings: Box::default(),
             },
             RunRequestResult::Completed(response) => response,
         };
@@ -2181,7 +2181,7 @@ impl Session {
                     result::ResultWithDeserializedMetadata::Void,
                 ),
                 tracing_id: None,
-                warnings: Vec::new(),
+                warnings: Box::default(),
             },
             RunRequestResult::Completed(response) => response,
         };
