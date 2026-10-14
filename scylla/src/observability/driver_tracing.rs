@@ -15,9 +15,10 @@ use tracing::trace_span;
 
 /// Awaits a future inside a span, like `future.instrument(span.clone()).await`.
 ///
-/// Wrapping a future in `Instrumented` copies it into the wrapper, and enters
-/// the span on every poll. The driver's request spans are TRACE level, so they
-/// are usually disabled, and then the future is awaited directly.
+/// The span is entered on every poll of the future. The driver's request spans
+/// are TRACE level, so they are usually disabled, and then the future is awaited
+/// directly. Unlike `Instrumented`, which would hold a clone of the span, this
+/// borrows the span, and it doesn't enter the span while dropping the future.
 ///
 /// `$future` appears in both branches, so it must not contain closure literals
 /// (each copy would be a distinct type, compiled separately).
@@ -27,7 +28,16 @@ macro_rules! await_in_span {
         if span.is_disabled() {
             $future.await
         } else {
-            ::tracing::Instrument::instrument($future, span.clone()).await
+            // A `match` keeps the temporaries of `$future` alive until it completes.
+            match ::std::pin::pin!($future) {
+                mut future => {
+                    ::std::future::poll_fn(|cx| {
+                        let _entered = span.enter();
+                        ::std::future::Future::poll(future.as_mut(), cx)
+                    })
+                    .await
+                }
+            }
         }
     }};
 }
