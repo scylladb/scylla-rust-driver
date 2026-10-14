@@ -1180,7 +1180,9 @@ If you are using this API, you are probably doing something wrong."
         let consistency = executor.consistency;
         let serial_consistency = executor.serial_consistency;
 
-        type Replicas = smallvec::SmallVec<[(Arc<Node>, Shard); 8]>;
+        // Computed only if some span is enabled, so allocating doesn't matter, while
+        // a `SmallVec` would make the pager's futures bigger.
+        type Replicas = Vec<(Arc<Node>, Shard)>;
 
         fn create_span(
             partition_key: &Option<PartitionKey>,
