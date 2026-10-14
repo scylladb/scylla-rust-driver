@@ -73,14 +73,22 @@ impl SerializedRequest {
         tracing: bool,
     ) -> Result<SerializedRequest, CqlRequestSerializationError> {
         let mut flags = 0;
-        let mut data = vec![0; HEADER_SIZE];
+        let mut data;
 
         if let Some(compression) = compression {
             flags |= flag::COMPRESSION;
             let body = req.to_bytes()?;
+            data = vec![0; HEADER_SIZE];
             compress_append(&body, compression, &mut data)?;
         } else {
+            let body_size = req.serialized_size();
+            data = Vec::with_capacity(HEADER_SIZE + body_size.unwrap_or(0));
+            data.resize(HEADER_SIZE, 0);
             req.serialize(&mut data)?;
+            debug_assert!(
+                body_size.is_none_or(|size| size == data.len() - HEADER_SIZE),
+                "serialized_size() does not match the serialized body"
+            );
         }
 
         if tracing {
