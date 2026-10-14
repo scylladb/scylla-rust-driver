@@ -181,21 +181,48 @@ pub async fn read_response_frame(
     // TODO: Guard from frames that are too large
     let length = buf.get_u32() as usize;
 
-    let mut raw_body = Vec::with_capacity(length).limit(length);
-    while raw_body.has_remaining_mut() {
-        let n = reader.read_buf(&mut raw_body).await.map_err(|err| {
-            FrameHeaderParseError::BodyChunkIoError(raw_body.remaining_mut(), err)
-        })?;
+    // Every successful write gets a RESULT Void response, so serving its body
+    // from a static buffer saves an allocation per write.
+    let body = if opcode == ResponseOpcode::Result && length == VOID_RESULT_BODY.len() {
+        let mut raw_body = [0u8; VOID_RESULT_BODY.len()];
+        read_response_body(reader, &mut raw_body[..], length).await?;
+        if raw_body == VOID_RESULT_BODY {
+            Bytes::from_static(&VOID_RESULT_BODY)
+        } else {
+            Bytes::copy_from_slice(&raw_body)
+        }
+    } else {
+        let mut raw_body = Vec::with_capacity(length).limit(length);
+        read_response_body(reader, &mut raw_body, length).await?;
+        raw_body.into_inner().into()
+    };
+
+    Ok((frame_params, opcode, body))
+}
+
+/// Body of a RESULT response of kind Void.
+static VOID_RESULT_BODY: [u8; 4] = 0x0001_i32.to_be_bytes();
+
+/// Fills `body` from `reader`. `length` is the length of the whole body.
+async fn read_response_body(
+    reader: &mut (impl AsyncRead + Unpin),
+    mut body: impl BufMut,
+    length: usize,
+) -> Result<(), FrameHeaderParseError> {
+    while body.has_remaining_mut() {
+        let n = reader
+            .read_buf(&mut body)
+            .await
+            .map_err(|err| FrameHeaderParseError::BodyChunkIoError(body.remaining_mut(), err))?;
         if n == 0 {
             // EOF, too early
             return Err(FrameHeaderParseError::ConnectionClosed(
-                raw_body.remaining_mut(),
+                body.remaining_mut(),
                 length,
             ));
         }
     }
-
-    Ok((frame_params, opcode, raw_body.into_inner().into()))
+    Ok(())
 }
 
 /// Represents the already parsed response body extensions,
