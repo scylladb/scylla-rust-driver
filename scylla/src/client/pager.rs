@@ -1170,17 +1170,36 @@ If you are using this API, you are probably doing something wrong."
             span
         }
 
-        let (partition_key, token) =
-            match prepared.extract_partition_key_and_calculate_token(&values) {
-                Ok(res) => res.unzip(),
-                Err(err) => {
-                    return Err(PagerExecutionError::NextPageError(
-                        NextPageError::PartitionKeyError(err),
-                    ));
-                }
-            };
-
+        let serialized_values_size = values.buffer_size();
         let table_spec = prepared.get_table_spec();
+
+        // Shared by the first page and every remaining page, so that the replica set is
+        // computed at most once - and only if at least one of those spans is enabled.
+        let replicas: OnceCell<Option<Replicas>> = OnceCell::new();
+
+        // Scoped, so that the partition key, needed only for the span, is not kept
+        // in this future's state while the first page is fetched.
+        let (token, request_span) = {
+            let (partition_key, token) =
+                match prepared.extract_partition_key_and_calculate_token(&values) {
+                    Ok(res) => res.unzip(),
+                    Err(err) => {
+                        return Err(PagerExecutionError::NextPageError(
+                            NextPageError::PartitionKeyError(err),
+                        ));
+                    }
+                };
+            let request_span = create_span(
+                &partition_key,
+                token,
+                serialized_values_size,
+                &executor.cluster_state,
+                table_spec,
+                &replicas,
+            );
+            (token, request_span)
+        };
+
         let routing_info = RoutingInfo {
             consistency,
             serial_consistency,
@@ -1213,28 +1232,10 @@ If you are using this API, you are probably doing something wrong."
                 .await
         };
 
-        let serialized_values_size = values.buffer_size();
-
-        // Shared by the first page and every remaining page, so that the replica set is
-        // computed at most once - and only if at least one of those spans is enabled.
-        let replicas: OnceCell<Option<Replicas>> = OnceCell::new();
-
-        let request_span = create_span(
-            &partition_key,
-            token,
-            serialized_values_size,
-            &executor.cluster_state,
-            table_spec,
-            &replicas,
-        );
-
         let (first_page, should_fetch_more_pages) = executor
             .query_first_page(&request_span, &routing_info, page_query)
             .await
             .map_err(NextPageError::RequestFailure)?;
-
-        // Required to end the borrow of `partition_key`, so `config` can be moved into the worker task.
-        std::mem::drop(partition_key);
 
         /* PROCESS FIRST PAGE */
         let receiver = match should_fetch_more_pages {
