@@ -2526,14 +2526,30 @@ impl Session {
             .await
             .map_err(RequestError::into_execution_error)?;
 
-        // Automatically handle meaningful responses.
-        if let RunRequestResult::Completed(ref response) = result {
-            self.handle_set_keyspace_response(response).await?;
-            self.handle_auto_await_schema_agreement(response, coordinator.node().host_id)
+        // Automatically handle meaningful responses. Checked before awaiting, so
+        // that other responses don't pay for constructing the handlers' future.
+        if let RunRequestResult::Completed(ref response) = result
+            && (response.as_set_keyspace().is_some() || response.as_schema_change().is_some())
+        {
+            self.handle_response_side_effects(response, coordinator.node().host_id)
                 .await?;
         }
 
         Ok((result, coordinator))
+    }
+
+    // Awaiting both handlers through one future keeps `run_request`'s result
+    // alive across a single await point, so the compiler can overlap it with
+    // the request's future instead of reserving separate space for it.
+    async fn handle_response_side_effects(
+        &self,
+        response: &NonErrorQueryResponse,
+        coordinator_id: Uuid,
+    ) -> Result<(), ExecutionError> {
+        self.handle_set_keyspace_response(response).await?;
+        self.handle_auto_await_schema_agreement(response, coordinator_id)
+            .await?;
+        Ok(())
     }
 }
 
