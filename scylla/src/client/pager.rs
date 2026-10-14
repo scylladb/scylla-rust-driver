@@ -700,7 +700,8 @@ impl SingleConnectionPagingExecutor {
 #[derive(Debug)]
 pub struct QueryPager {
     current_page: RawRowLendingIterator,
-    page_receiver: mpsc::Receiver<Result<NextReceivedPage, NextPageError>>,
+    // `None` if the first page was the only one.
+    page_receiver: Option<mpsc::Receiver<Result<NextReceivedPage, NextPageError>>>,
     tracing_ids: Vec<Uuid>,
     request_coordinators: Vec<Coordinator>,
 }
@@ -782,7 +783,10 @@ impl QueryPager {
     ) -> Poll<Option<Result<(), NextRowError>>> {
         let mut s = self.as_mut();
 
-        let received_page = ready_some_ok!(Pin::new(&mut s.page_receiver).poll_recv(cx));
+        let Some(page_receiver) = s.page_receiver.as_mut() else {
+            return Poll::Ready(None);
+        };
+        let received_page = ready_some_ok!(Pin::new(page_receiver).poll_recv(cx));
 
         s.current_page = RawRowLendingIterator::new(received_page.rows);
 
@@ -875,14 +879,13 @@ If you are using this API, you are probably doing something wrong."
         };
 
         /* PROCESS FIRST PAGE */
-        let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
-        match should_fetch_more_pages {
-            ShouldFetchMorePages::NoMorePages => {
-                // No more pages - we are done, return the first page and an empty receiver.
-                std::mem::drop(sender);
-            }
+        let receiver = match should_fetch_more_pages {
+            // No more pages - we are done, return just the first page. The channel
+            // is only created when needed, as many results fit in a single page.
+            ShouldFetchMorePages::NoMorePages => None,
             ShouldFetchMorePages::MorePages => {
                 /* REMAINING PAGES */
+                let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
                 let node_location_preference = Arc::clone(session.get_node_location_preference());
                 let worker_task = async move {
                     let routing_info = RoutingInfo {
@@ -917,8 +920,9 @@ If you are using this API, you are probably doing something wrong."
                         .await;
                 };
                 let _worker_handle = tokio::task::spawn(worker_task);
+                Some(receiver)
             }
-        }
+        };
 
         Self::new_from_first_page(first_page, receiver, session).await
     }
@@ -1038,14 +1042,13 @@ If you are using this API, you are probably doing something wrong."
         std::mem::drop(partition_key);
 
         /* PROCESS FIRST PAGE */
-        let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
-        match should_fetch_more_pages {
-            ShouldFetchMorePages::NoMorePages => {
-                // No more pages - we are done, return the first page and an empty receiver.
-                std::mem::drop(sender);
-            }
+        let receiver = match should_fetch_more_pages {
+            // No more pages - we are done, return just the first page. The channel
+            // is only created when needed, as many results fit in a single page.
+            ShouldFetchMorePages::NoMorePages => None,
             ShouldFetchMorePages::MorePages => {
                 /* REMAINING PAGES */
+                let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
                 let node_location_preference = Arc::clone(session.get_node_location_preference());
                 let worker_task = async move {
                     let partition_key = if prepared.is_token_aware() {
@@ -1109,6 +1112,7 @@ If you are using this API, you are probably doing something wrong."
                         .await;
                 };
                 let _worker_handle = tokio::task::spawn(worker_task);
+                Some(receiver)
             }
         };
 
@@ -1159,21 +1163,21 @@ If you are using this API, you are probably doing something wrong."
             SingleConnectionPagingExecutor::page_from_outcome(outcome)?;
 
         /* PROCESS FIRST PAGE */
-        let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
-        match paging_state_response {
-            PagingStateResponse::NoMorePages => {
-                // No more pages - we are done, return the first page and an empty receiver.
-                std::mem::drop(sender);
-            }
+        let receiver = match paging_state_response {
+            // No more pages - we are done, return just the first page. The channel
+            // is only created when needed, as many results fit in a single page.
+            PagingStateResponse::NoMorePages => None,
             PagingStateResponse::HasMorePages { state } => {
                 /* REMAINING PAGES */
+                let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
                 let parent_span = tracing::Span::current();
                 let worker_task =
                     async move { executor.fetch_remaining_pages(state, sender).await }
                         .instrument(parent_span);
                 let _worker_handle = tokio::task::spawn(worker_task);
+                Some(receiver)
             }
-        }
+        };
 
         let NextReceivedPage {
             rows,
@@ -1191,7 +1195,7 @@ If you are using this API, you are probably doing something wrong."
 
     async fn new_from_first_page(
         first_page: FirstReceivedPage,
-        receiver: mpsc::Receiver<ResultNextPage>,
+        receiver: Option<mpsc::Receiver<ResultNextPage>>,
         session: &Session,
     ) -> Result<Self, PagerExecutionError> {
         let tracing_ids = Vec::from_iter(first_page.tracing_id);
