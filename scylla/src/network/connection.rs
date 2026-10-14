@@ -461,6 +461,19 @@ impl HostConnectionConfig {
 // Used to listen for fatal error in connection
 pub(crate) type ErrorReceiver = tokio::sync::oneshot::Receiver<ConnectionError>;
 
+/// Arguments of [`Connection::execute_raw_with_consistency`]. Bundled, so that
+/// they are passed by a single reference: an async fn keeps arguments taken by
+/// value twice in its state, and the caller's future keeps them too.
+pub(crate) struct ExecuteArgs<'a> {
+    pub(crate) prepared_statement: &'a PreparedStatement,
+    pub(crate) values: &'a SerializedValues,
+    pub(crate) consistency: Consistency,
+    pub(crate) serial_consistency: Option<SerialConsistency>,
+    pub(crate) page_size: Option<PageSize>,
+    pub(crate) paging_state: &'a PagingState,
+    pub(crate) tablet_block_hint: u8,
+}
+
 struct CachedMetadataParameters<'statement> {
     cached_metadata: Option<&'statement Arc<ResultMetadata<'static>>>,
     skip_metadata: bool,
@@ -1040,17 +1053,11 @@ impl Connection {
         }
     }
 
-    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn execute_raw_with_consistency(
         &self,
-        prepared_statement: &PreparedStatement,
-        values: &SerializedValues,
-        consistency: Consistency,
-        serial_consistency: Option<SerialConsistency>,
-        page_size: Option<PageSize>,
-        mut paging_state: PagingState,
-        tablet_block_hint: u8,
+        args: &ExecuteArgs<'_>,
     ) -> Result<QueryResponse, RequestAttemptError> {
+        let prepared_statement = args.prepared_statement;
         let get_timestamp_from_gen = || {
             self.config
                 .timestamp_generator
@@ -1073,7 +1080,7 @@ impl Connection {
             .features
             .protocol_features
             .tablets_v2_supported
-            .then_some(tablet_block_hint);
+            .then_some(args.tablet_block_hint);
 
         // If the server doesn't know the statement id (e.g. it evicted the
         // statement from its cache), it responds with `Unprepared`. The
@@ -1097,30 +1104,24 @@ impl Connection {
 
                 // Serialized before sending, so that the frame is not kept in this
                 // future's state.
-                let request;
-                (request, paging_state) = {
-                    let execute_frame = execute::Execute {
+                let request = self.serialize_request(
+                    &execute::Execute {
                         id: prepared_statement.get_id().as_ref().into(),
                         result_metadata_id: result_metadata_id.map(Into::into),
                         parameters: query::QueryParameters {
-                            consistency,
-                            serial_consistency,
-                            values: Cow::Borrowed(values),
-                            page_size: page_size.map(Into::into),
+                            consistency: args.consistency,
+                            serial_consistency: args.serial_consistency,
+                            values: Cow::Borrowed(args.values),
+                            page_size: args.page_size.map(Into::into),
                             timestamp,
                             skip_metadata,
-                            paging_state,
+                            paging_state: args.paging_state.clone(),
                         },
                         tablet_version_block,
-                    };
-                    let request = self.serialize_request(
-                        &execute_frame,
-                        true,
-                        prepared_statement.config.tracing,
-                    )?;
-                    // Taken back, in case the request is sent again.
-                    (request, execute_frame.parameters.paging_state)
-                };
+                    },
+                    true,
+                    prepared_statement.config.tracing,
+                )?;
 
                 let task_response = self.router_handle.send_request(request).await?;
                 let mut query_response =
