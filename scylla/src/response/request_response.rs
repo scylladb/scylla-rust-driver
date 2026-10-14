@@ -17,7 +17,7 @@ use crate::response::query_result::QueryResult;
 pub(crate) struct QueryResponse {
     pub(crate) response: ResponseWithDeserializedMetadata,
     pub(crate) tracing_id: Option<Uuid>,
-    pub(crate) warnings: Vec<String>,
+    pub(crate) warnings: Box<[String]>,
     // This is not exposed to user (yet?)
     #[expect(
         clippy::box_collection,
@@ -30,7 +30,7 @@ pub(crate) struct QueryResponse {
 pub(crate) struct NonErrorQueryResponse {
     pub(crate) response: NonErrorResponseWithDeserializedMetadata,
     pub(crate) tracing_id: Option<Uuid>,
-    pub(crate) warnings: Vec<String>,
+    pub(crate) warnings: Box<[String]>,
 }
 
 impl QueryResponse {

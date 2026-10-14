@@ -1213,7 +1213,7 @@ If you are using this API, you are probably doing something wrong."
                         result::ResultWithDeserializedMetadata::SetKeyspace(set_keyspace),
                     ),
                     tracing_id: None,
-                    warnings: Vec::new(),
+                    warnings: Box::default(),
                 };
                 session.handle_set_keyspace_response(&response).await?;
                 // The stream will be empty.
@@ -1232,7 +1232,7 @@ If you are using this API, you are probably doing something wrong."
                         result::ResultWithDeserializedMetadata::SchemaChange(schema_change),
                     ),
                     tracing_id: None,
-                    warnings: Vec::new(),
+                    warnings: Box::default(),
                 };
                 session
                     .handle_auto_await_schema_agreement(&response, coordinator_id)
