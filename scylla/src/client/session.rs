@@ -914,7 +914,7 @@ impl Session {
                 prepared,
                 &serialized_values,
                 None,
-                PagingState::start(),
+                &PagingState::start(),
                 RequestPaging::Unpaged,
             )
             .await?;
@@ -992,7 +992,7 @@ impl Session {
                 &bound.prepared,
                 &bound.values,
                 None,
-                PagingState::start(),
+                &PagingState::start(),
                 RequestPaging::Unpaged,
             )
             .await?;
@@ -1071,7 +1071,7 @@ impl Session {
             prepared,
             &serialized_values,
             Some(prepared.get_validated_page_size()),
-            paging_state,
+            &paging_state,
             RequestPaging::Manual,
         )
         .await
@@ -1145,7 +1145,7 @@ impl Session {
             &bound.prepared,
             &bound.values,
             Some(bound.prepared.get_validated_page_size()),
-            paging_state,
+            &paging_state,
             RequestPaging::Manual,
         )
         .await
@@ -2082,7 +2082,7 @@ impl Session {
             prepared,
             serialized_values,
             page_size,
-            paging_state,
+            &paging_state,
             request_paging,
         )
         .await
@@ -2103,11 +2103,11 @@ impl Session {
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
         page_size: Option<PageSize>,
-        paging_state: PagingState,
+        // Taken by reference: an async fn keeps arguments taken by value twice in
+        // its state.
+        paging_state: &PagingState,
         request_paging: RequestPaging,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let paging_state_ref = &paging_state;
-
         // Scoped, so that the partition key, needed only for the span, is not kept
         // in this future's state while the request runs.
         let (token, span) = {
@@ -2169,7 +2169,7 @@ impl Session {
                 consistency,
                 serial_consistency,
                 page_size,
-                paging_state: paging_state_ref,
+                paging_state,
                 tablet_block_hint,
             };
             async move {
