@@ -1352,8 +1352,8 @@ impl Session {
         ) = self
             .run_request(
                 &cluster_state,
-                routing_info,
-                exec_params,
+                &routing_info,
+                &exec_params,
                 |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
                         .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
@@ -1696,8 +1696,8 @@ impl Session {
         ) = self
             .run_request(
                 &cluster_state,
-                routing_info,
-                exec_params,
+                &routing_info,
+                &exec_params,
                 |connection: Arc<Connection>, consistency: Consistency| {
                     // Needed to avoid moving query and values into async move block
                     let values_ref = &values;
@@ -2151,8 +2151,8 @@ impl Session {
         ) = self
             .run_request(
                 &cluster_state,
-                routing_info,
-                exec_params,
+                &routing_info,
+                &exec_params,
                 |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
                         .execute_raw_with_consistency(
@@ -2501,8 +2501,10 @@ impl Session {
     async fn run_request<'a, QueryFut>(
         &'a self,
         state: &ClusterState,
-        routing_info: RoutingInfo<'a>,
-        exec_params: RequestExecutionParams<'a>,
+        // Taken by reference: an async fn keeps arguments taken by value twice in
+        // its state.
+        routing_info: &'a RoutingInfo<'a>,
+        exec_params: &RequestExecutionParams<'a>,
         run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), ExecutionError>
@@ -2510,19 +2512,14 @@ impl Session {
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
         let request_plan =
-            load_balancing::Plan::new(exec_params.load_balancing_policy, &routing_info, state)
+            load_balancing::Plan::new(exec_params.load_balancing_policy, routing_info, state)
                 .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
 
         let RequestExecutionOutcome {
             result,
             coordinator,
         } = exec_params
-            .run_request_no_side_effects(
-                &routing_info,
-                request_plan,
-                run_request_once,
-                request_span,
-            )
+            .run_request_no_side_effects(routing_info, request_plan, run_request_once, request_span)
             .await
             .map_err(RequestError::into_execution_error)?;
 
