@@ -1122,6 +1122,10 @@ If you are using this API, you are probably doing something wrong."
         Self::new_from_first_page(first_page, receiver, session).await
     }
 
+    /// Executes a prepared statement and fetches its first page.
+    ///
+    /// The values are not checked to match the statement, so this must not be
+    /// exposed to end users. It isn't generic, to reduce code bloat.
     pub(crate) async fn new_for_prepared_statement(
         session: &Session,
         prepared: PreparedStatement,
