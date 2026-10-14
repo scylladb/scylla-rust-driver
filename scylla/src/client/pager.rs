@@ -331,7 +331,7 @@ impl PagingExecutor {
         // Adapt the paging-aware `page_query` to the two-argument closure
         // expected by the execution core, injecting the current paging state
         // and normalizing error responses.
-        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| async move {
+        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| async move {
             page_query(connection, consistency, self.paging_state.clone())
                 .await
                 .and_then(QueryResponse::into_non_error_query_response)
@@ -1222,9 +1222,9 @@ If you are using this API, you are probably doing something wrong."
         // first page and reused as-is for every remaining page.
         let tablet_block_hint =
             choose_tablet_block_hint(&executor.cluster_state, table_spec, token);
-        let page_query = |connection: Arc<Connection>,
-                          consistency: Consistency,
-                          paging_state: PagingState| async move {
+        let page_query = move |connection: Arc<Connection>,
+                               consistency: Consistency,
+                               paging_state: PagingState| async move {
             connection
                 .execute_raw_with_consistency(
                     prepared_ref,
@@ -1282,9 +1282,9 @@ If you are using this API, you are probably doing something wrong."
                     let prepared = &prepared;
                     let values_ref = &values;
                     let page_query =
-                        |connection: Arc<Connection>,
-                         consistency: Consistency,
-                         paging_state: PagingState| async move {
+                        move |connection: Arc<Connection>,
+                              consistency: Consistency,
+                              paging_state: PagingState| async move {
                             connection
                                 .execute_raw_with_consistency(
                                     prepared,
