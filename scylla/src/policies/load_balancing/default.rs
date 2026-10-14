@@ -7,7 +7,7 @@ use crate::frame::response::result::TableSpec;
 use crate::frame::types::Consistency;
 use crate::routing::NodeLocationPreference;
 use crate::{
-    cluster::metadata::{ConsistencyMode, Strategy},
+    cluster::metadata::{ConsistencyMode, Keyspace, Strategy},
     cluster::node::Node,
     errors::RequestAttemptError,
     routing::locator::ReplicaSet,
@@ -156,7 +156,7 @@ impl LoadBalancingPolicy for DefaultPolicy {
             && routing_info.preference.datacenter().is_some()
             && !self.permit_dc_failover
             && matches!(
-                token_with_strategy.strategy,
+                token_with_strategy.keyspace.strategy,
                 Strategy::SimpleStrategy { .. }
             )
         {
@@ -662,9 +662,12 @@ impl DefaultPolicy {
     ) -> ReplicaSet<'a> {
         let datacenter = replica_location.datacenter();
 
-        cluster
-            .replica_locator()
-            .replicas_for_token(ts.token, ts.strategy, datacenter, table_spec)
+        cluster.replica_locator().replicas_for_token(
+            ts.token,
+            &ts.keyspace.strategy,
+            datacenter,
+            table_spec,
+        )
     }
 
     /// Wraps the provided predicate, adding the requirement for rack to match.
@@ -938,15 +941,9 @@ impl DefaultPolicy {
     ///
     /// Whether the tablet's leader is *known* is a separate question, answered by
     /// [`Self::leader_to_prefer`], which is this predicate's only caller.
-    fn should_route_to_leader(query: &RoutingInfo, cluster: &ClusterState) -> bool {
-        let Some(table_spec) = query.table else {
-            return false;
-        };
-
+    fn should_route_to_leader(query: &RoutingInfo, keyspace: &Keyspace) -> bool {
         // Note: For the time being, only global consistency is implemented in Scylla.
-        let strongly_consistent = cluster
-            .get_keyspace(table_spec.ks_name())
-            .is_some_and(|ks| ks.consistency_mode == ConsistencyMode::Global);
+        let strongly_consistent = keyspace.consistency_mode == ConsistencyMode::Global;
 
         if !strongly_consistent {
             return false;
@@ -982,7 +979,7 @@ impl DefaultPolicy {
         cluster: &'a ClusterState,
         table_spec: &TableSpec,
     ) -> Option<(NodeRef<'a>, Shard)> {
-        if !Self::should_route_to_leader(query, cluster) {
+        if !Self::should_route_to_leader(query, ts.keyspace) {
             return None;
         }
 
@@ -1260,7 +1257,9 @@ impl<'a> ProcessedRoutingInfo<'a> {
 }
 
 struct TokenWithStrategy<'a> {
-    strategy: &'a Strategy,
+    // The whole keyspace, not just its strategy, so that the keyspace is looked
+    // up once per request.
+    keyspace: &'a Keyspace,
     token: Token,
 }
 
@@ -1269,8 +1268,7 @@ impl<'a> TokenWithStrategy<'a> {
         let token = query.token?;
         let keyspace_name = query.table?.ks_name();
         let keyspace = cluster.get_keyspace(keyspace_name)?;
-        let strategy = &keyspace.strategy;
-        Some(TokenWithStrategy { strategy, token })
+        Some(TokenWithStrategy { keyspace, token })
     }
 }
 
