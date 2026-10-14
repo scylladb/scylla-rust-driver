@@ -690,6 +690,23 @@ impl SingleConnectionPagingExecutor {
     }
 }
 
+/// Returns the list of page coordinators, holding the first page's one.
+///
+/// When more pages follow, room for several is reserved, to spare most of
+/// the reallocations of a list growing by one coordinator per page.
+fn first_page_coordinators(first: Option<Coordinator>, more_pages: bool) -> Vec<Coordinator> {
+    const MULTI_PAGE_INITIAL_CAPACITY: usize = 8;
+
+    let capacity = if more_pages {
+        MULTI_PAGE_INITIAL_CAPACITY
+    } else {
+        usize::from(first.is_some())
+    };
+    let mut coordinators = Vec::with_capacity(capacity);
+    coordinators.extend(first);
+    coordinators
+}
+
 /// An intermediate object that allows to construct a stream over a query
 /// that is asynchronously paged in the background.
 ///
@@ -1187,9 +1204,9 @@ If you are using this API, you are probably doing something wrong."
 
         Ok(Self {
             current_page: RawRowLendingIterator::new(rows),
+            request_coordinators: first_page_coordinators(request_coordinator, receiver.is_some()),
             page_receiver: receiver,
             tracing_ids: Vec::from_iter(tracing_id),
-            request_coordinators: Vec::from_iter(request_coordinator),
         })
     }
 
@@ -1200,7 +1217,8 @@ If you are using this API, you are probably doing something wrong."
     ) -> Result<Self, PagerExecutionError> {
         let tracing_ids = Vec::from_iter(first_page.tracing_id);
         let coordinator_id = first_page.request_coordinator.node().host_id;
-        let request_coordinators = vec![first_page.request_coordinator];
+        let request_coordinators =
+            first_page_coordinators(Some(first_page.request_coordinator), receiver.is_some());
 
         let first_page = match first_page.content {
             FirstPageContent::Rows { rows } => RawRowLendingIterator::new(rows),
