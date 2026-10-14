@@ -1212,7 +1212,23 @@ impl Connection {
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResponse, RequestAttemptError> {
-        let batch = self.prepare_batch(init_batch, &values).await?;
+        // Set only if some statements had to be prepared. Boxed, as a `Cow` would
+        // take a whole `Batch` in this future's state even when borrowing.
+        let prepared_batch: Box<Batch>;
+        // Scoped, as checking the statements to prepare borrows them, which would
+        // keep them in this future's state.
+        let batch = {
+            let to_prepare = Self::batch_statements_to_prepare(init_batch, &values);
+            if to_prepare.is_empty() {
+                init_batch
+            } else {
+                // Rare, as values for unprepared statements are discouraged, so it
+                // is boxed to keep its state out of every request's future.
+                prepared_batch =
+                    Box::new(Box::pin(self.prepare_batch(init_batch, to_prepare)).await?);
+                &prepared_batch
+            }
+        };
 
         let contexts = batch.statements.iter().map(|bs| match bs {
             BatchStatement::Query(_) => RowSerializationContext::empty(),
@@ -1241,65 +1257,66 @@ impl Connection {
         };
 
         loop {
-            let query_response = self
-                .send_request(&batch_frame, true, batch.config.tracing, None)
-                .await
-                .map_err(RequestAttemptError::from)?;
+            // Scoped, so that the response is not kept in this future's state
+            // while repreparing.
+            let statement_id = {
+                let query_response = self
+                    .send_request(&batch_frame, true, batch.config.tracing, None)
+                    .await
+                    .map_err(RequestAttemptError::from)?;
 
-            return match query_response.response {
-                ResponseWithDeserializedMetadata::Error(err) => match err.error {
-                    DbError::Unprepared { statement_id } => {
-                        debug!(
-                            "Connection::batch: got DbError::Unprepared - repreparing statement with id {:?}",
-                            statement_id
-                        );
-                        let prepared_statement = batch.statements.iter().find_map(|s| match s {
-                            BatchStatement::PreparedStatement(s) if *s.get_id() == statement_id => {
-                                Some(s)
-                            }
-                            _ => None,
-                        });
-                        if let Some(p) = prepared_statement {
-                            self.reprepare(p.get_statement(), p).await?;
-                            continue;
-                        } else {
-                            return Err(RequestAttemptError::RepreparedIdMissingInBatch);
-                        }
+                match query_response.response {
+                    ResponseWithDeserializedMetadata::Error(err) => match err.error {
+                        DbError::Unprepared { statement_id } => statement_id,
+                        _ => return Err(err.into()),
+                    },
+                    ResponseWithDeserializedMetadata::Result(_) => return Ok(query_response),
+                    _ => {
+                        return Err(RequestAttemptError::UnexpectedResponse(
+                            query_response.response.to_response_kind(),
+                        ));
                     }
-                    _ => Err(err.into()),
-                },
-                ResponseWithDeserializedMetadata::Result(_) => Ok(query_response),
-                _ => Err(RequestAttemptError::UnexpectedResponse(
-                    query_response.response.to_response_kind(),
-                )),
+                }
             };
+            debug!(
+                "Connection::batch: got DbError::Unprepared - repreparing statement with id {:?}",
+                statement_id
+            );
+            let Some(prepared_statement) = batch.statements.iter().find_map(|s| match s {
+                BatchStatement::PreparedStatement(s) if *s.get_id() == statement_id => Some(s),
+                _ => None,
+            }) else {
+                return Err(RequestAttemptError::RepreparedIdMissingInBatch);
+            };
+            // Repreparing is rare, so it is boxed to keep its state out of every
+            // request's future.
+            Box::pin(self.reprepare(prepared_statement.get_statement(), prepared_statement))
+                .await?;
         }
     }
 
-    async fn prepare_batch<'b>(
-        &self,
-        init_batch: &'b Batch,
-        values: impl BatchValues,
-    ) -> Result<Cow<'b, Batch>, RequestAttemptError> {
+    /// Returns the unprepared statements of the batch that have values, which
+    /// have to be prepared before sending the batch.
+    fn batch_statements_to_prepare(batch: &Batch, values: impl BatchValues) -> HashSet<&str> {
         let mut to_prepare = HashSet::<&str>::new();
-
-        {
-            let mut values_iter = values.batch_values_iter();
-            for stmt in &init_batch.statements {
-                if let BatchStatement::Query(query) = stmt {
-                    if let Some(false) = values_iter.is_empty_next() {
-                        to_prepare.insert(&query.contents);
-                    }
-                } else {
-                    values_iter.skip_next();
+        let mut values_iter = values.batch_values_iter();
+        for stmt in &batch.statements {
+            if let BatchStatement::Query(query) = stmt {
+                if let Some(false) = values_iter.is_empty_next() {
+                    to_prepare.insert(&query.contents);
                 }
+            } else {
+                values_iter.skip_next();
             }
         }
+        to_prepare
+    }
 
-        if to_prepare.is_empty() {
-            return Ok(Cow::Borrowed(init_batch));
-        }
-
+    async fn prepare_batch(
+        &self,
+        init_batch: &Batch,
+        to_prepare: HashSet<&str>,
+    ) -> Result<Batch, RequestAttemptError> {
         let mut prepared_queries = HashMap::<&str, PreparedStatement>::new();
 
         for query in &to_prepare {
@@ -1307,16 +1324,16 @@ impl Connection {
             prepared_queries.insert(query, prepared);
         }
 
-        let mut batch: Cow<Batch> = Cow::Owned(Batch::new_from(init_batch));
+        let mut batch = Batch::new_from(init_batch);
         for stmt in &init_batch.statements {
             match stmt {
                 BatchStatement::Query(query) => match prepared_queries.get(query.contents.as_str())
                 {
-                    Some(prepared) => batch.to_mut().append_statement(prepared.clone()),
-                    None => batch.to_mut().append_statement(query.clone()),
+                    Some(prepared) => batch.append_statement(prepared.clone()),
+                    None => batch.append_statement(query.clone()),
                 },
                 BatchStatement::PreparedStatement(prepared) => {
-                    batch.to_mut().append_statement(prepared.clone());
+                    batch.append_statement(prepared.clone());
                 }
             }
         }
