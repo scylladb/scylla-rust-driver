@@ -2093,10 +2093,20 @@ impl Session {
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         let paging_state_ref = &paging_state;
 
-        let (partition_key, token) = prepared
-            .extract_partition_key_and_calculate_token(serialized_values)
-            .map_err(PartitionKeyError::into_execution_error)?
-            .unzip();
+        // Scoped, so that the partition key, needed only for the span, is not kept
+        // in this future's state while the request runs.
+        let (token, span) = {
+            let (partition_key, token) = prepared
+                .extract_partition_key_and_calculate_token(serialized_values)
+                .map_err(PartitionKeyError::into_execution_error)?
+                .unzip();
+            let span = RequestSpan::new_prepared(
+                partition_key.as_ref().map(|pk| pk.iter()),
+                token,
+                serialized_values.buffer_size(),
+            );
+            (token, span)
+        };
 
         let execution_profile = prepared
             .get_execution_profile_handle()
@@ -2127,12 +2137,6 @@ impl Session {
 
         let tablet_block_hint =
             choose_tablet_block_hint(&cluster_state, routing_info.table, routing_info.token);
-
-        let span = RequestSpan::new_prepared(
-            partition_key.as_ref().map(|pk| pk.iter()),
-            token,
-            serialized_values.buffer_size(),
-        );
 
         if !span.span().is_disabled()
             && let (Some(table_spec), Some(token)) = (routing_info.table, token)
