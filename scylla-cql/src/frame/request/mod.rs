@@ -84,9 +84,18 @@ pub trait SerializableRequest {
     /// Serializes the request into the provided buffer.
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError>;
 
+    /// Returns the exact number of bytes [`serialize`](Self::serialize) writes,
+    /// or `None` if it is not known up front. If Some, it needs to be correct,
+    /// otherwise `debug_assert!` will be triggered.
+    ///
+    /// Used to allocate the serialization buffer once, instead of growing it.
+    fn serialized_size(&self) -> Option<usize> {
+        None
+    }
+
     /// Serializes the request into a heap-allocated `Bytes` object.
     fn to_bytes(&self) -> Result<Bytes, CqlRequestSerializationError> {
-        let mut v = Vec::new();
+        let mut v = Vec::with_capacity(self.serialized_size().unwrap_or(0));
         self.serialize(&mut v)?;
         Ok(v.into())
     }
@@ -296,6 +305,7 @@ mod tests {
         {
             let mut buf = Vec::new();
             query.serialize(&mut buf).unwrap();
+            assert_eq!(query.serialized_size(), Some(buf.len()));
 
             let query_deserialized =
                 Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
@@ -348,6 +358,7 @@ mod tests {
         {
             let mut buf = Vec::new();
             execute_with_id.serialize(&mut buf).unwrap();
+            assert_eq!(execute_with_id.serialized_size(), Some(buf.len()));
 
             let features = {
                 let mut default = ProtocolFeatures::default();

@@ -54,6 +54,12 @@ impl SerializableRequest for Query<'_> {
             .map_err(QuerySerializationError::QueryParametersSerialization)?;
         Ok(())
     }
+
+    fn serialized_size(&self) -> Option<usize> {
+        let long_string = size_of::<i32>() + self.contents.len();
+        let params = self.parameters.serialized_size();
+        Some(long_string + params)
+    }
 }
 
 impl DeserializableRequest for Query<'_> {
@@ -173,6 +179,30 @@ impl QueryParameters<'_> {
         }
 
         Ok(())
+    }
+
+    /// Returns the number of bytes [`Self::serialize`] writes.
+    pub(crate) fn serialized_size(&self) -> usize {
+        // Consistency and flags.
+        let mut size = size_of::<u16>() + size_of::<u8>();
+        if !self.values.is_empty() {
+            // Value count, then the values.
+            size += size_of::<u16>() + self.values.buffer_size();
+        }
+        if self.page_size.is_some() {
+            size += size_of::<i32>();
+        }
+        if let Some(paging_state_bytes) = self.paging_state.as_bytes_slice() {
+            // [bytes]
+            size += size_of::<i32>() + paging_state_bytes.len();
+        }
+        if self.serial_consistency.is_some() {
+            size += size_of::<u16>();
+        }
+        if self.timestamp.is_some() {
+            size += size_of::<i64>();
+        }
+        size
     }
 }
 
