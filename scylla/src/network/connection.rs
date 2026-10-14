@@ -1484,7 +1484,7 @@ impl Connection {
             response,
             warnings: body_with_ext.warnings,
             tracing_id: body_with_ext.trace_id,
-            custom_payload: body_with_ext.custom_payload,
+            custom_payload: body_with_ext.custom_payload.map(Box::new),
         })
     }
 
@@ -1937,7 +1937,7 @@ impl Connection {
     ) -> Result<(), TabletParsingError> {
         if let (Some(sender), Some(tablet_data)) = (
             self.config.tablet_sender.as_ref(),
-            response.custom_payload.as_ref(),
+            response.custom_payload.as_deref(),
         ) {
             let tablet = match RawTablet::from_custom_payload(tablet_data) {
                 Some(Ok(v)) => v,
