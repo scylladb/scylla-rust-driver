@@ -17,7 +17,7 @@ use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types;
 use bytes::Bytes;
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::{result::Result as StdResult, str};
 
 /// Represents a CQL `RESULT::SetKeyspace` response.
@@ -165,7 +165,14 @@ impl<'a> ResultMetadata<'a> {
 #[derive(Debug, Clone)]
 pub enum ResultMetadataHolder {
     /// [ResultMetadata] that is self-borrowed from the RESULT:Rows frame.
-    SelfBorrowed(SelfBorrowedMetadataContainer),
+    ///
+    /// Boxed, because the container is several times larger than the other
+    /// variant, and every RESULT:Rows response holds a [ResultMetadataHolder].
+    /// The box allocates only for responses that carry metadata, which already
+    /// allocate its column specs. Responses to prepared statements usually don't
+    /// carry it, if the server supports ScyllaDB's metadata id extension or cached
+    /// result metadata is enabled.
+    SelfBorrowed(Box<SelfBorrowedMetadataContainer>),
     /// [ResultMetadata] that is shared and cached in PreparedStatement.
     SharedCached(Arc<ResultMetadata<'static>>),
 }
@@ -194,7 +201,10 @@ impl ResultMetadataHolder {
     /// Creates an empty [ResultMetadataHolder].
     #[inline]
     pub fn mock_empty() -> Self {
-        Self::SelfBorrowed(SelfBorrowedMetadataContainer::mock_empty())
+        // Shared, so that creating it doesn't allocate.
+        static EMPTY: LazyLock<Arc<ResultMetadata<'static>>> =
+            LazyLock::new(|| Arc::new(ResultMetadata::mock_empty()));
+        Self::SharedCached(Arc::clone(&EMPTY))
     }
 }
 
@@ -419,9 +429,7 @@ impl DeserializedMetadataAndRawRows {
     #[inline]
     pub fn mock_empty() -> Self {
         Self {
-            metadata: ResultMetadataHolder::SelfBorrowed(
-                SelfBorrowedMetadataContainer::mock_empty(),
-            ),
+            metadata: ResultMetadataHolder::mock_empty(),
             rows_count: 0,
             raw_rows: Bytes::new(),
             raw_metadata_and_rows_bytes_size: 0,
@@ -917,7 +925,7 @@ impl RawMetadataAndRawRows {
                         Self::metadata_deserializer(self.col_count, self.global_tables_spec, metadata_changed),
                     )?;
                 (
-                    ResultMetadataHolder::SelfBorrowed(metadata_container),
+                    ResultMetadataHolder::SelfBorrowed(Box::new(metadata_container)),
                     raw_rows_with_count,
                 )
             }
