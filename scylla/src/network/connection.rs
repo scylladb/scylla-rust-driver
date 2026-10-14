@@ -45,7 +45,9 @@ use crate::statement::prepared::{PreparedStatement, RawPreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;
-use futures::{FutureExt, future::RemoteHandle};
+use futures::FutureExt;
+use futures::future::{BoxFuture, RemoteHandle};
+use futures::stream::{FuturesUnordered, TryStreamExt};
 use socket2::{SockRef, TcpKeepalive};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -1540,7 +1542,7 @@ impl Connection {
 
     async fn router(
         config: HostConnectionConfig,
-        stream: impl AsyncRead + AsyncWrite,
+        stream: impl AsyncRead + AsyncWrite + Send,
         mut receiver: mpsc::Receiver<SerializedRequest>,
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
         router_handle: Arc<RouterHandle>,
@@ -1571,7 +1573,14 @@ impl Connection {
         );
         let o = Self::orphaner(streams);
 
-        let result = futures::try_join!(r, w, o, k);
+        // Unlike `try_join!`, this gives each future its own waker, so a wakeup
+        // polls only the futures that were woken. Reads and writes then don't
+        // poll the idle timers of the orphaner and keepaliver.
+        let tasks: FuturesUnordered<BoxFuture<'_, Result<(), BrokenConnectionError>>> =
+            [r.boxed(), w.boxed(), o.boxed(), k.boxed()]
+                .into_iter()
+                .collect();
+        let result: Result<(), BrokenConnectionError> = tasks.try_collect().await;
 
         let error: BrokenConnectionError = match result {
             Ok(_) => return, // Connection was dropped, we can return
