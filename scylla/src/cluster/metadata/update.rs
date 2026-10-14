@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -368,20 +369,13 @@ pub(crate) struct SchemaUpdate {
 }
 
 /// What a partial schema fetch established about one keyspace.
-// Storing `Keyspace` object directly is something we do normally,
-// for example in `Metadata` / `ClusterState`. Here clippy complains
-// only because there is a second, smaller variant. If we boxed the
-// keyspace here, we would then have to unbox it to get it into
-// `ClusterState`. This will change if / when we decide to put keyspaces
-// in `ClusterState` inside `Arc`. Until then, let's just ignore clippy.
-#[expect(clippy::large_enum_variant)]
 pub(crate) enum FetchedKeyspace {
     /// The keyspace exists; this is its freshly read metadata.
     ///
     /// The `Result` layer is the one of [`Metadata::keyspaces`]: a keyspace
     /// whose fetched metadata turned out inconsistent is reported as an error
     /// rather than silently replaced.
-    Present(Result<Keyspace, SingleKeyspaceMetadataError>),
+    Present(Result<Arc<Keyspace>, SingleKeyspaceMetadataError>),
     /// The keyspace does not exist: its last event dropped it, or the fetch
     /// found no row for it.
     Absent,
@@ -419,6 +413,7 @@ mod tests {
     // ---------------------------------------------------------------
 
     use std::collections::HashMap;
+    use std::sync::Arc;
     use uuid::Uuid;
 
     use crate::client::client_routes::{
@@ -803,8 +798,8 @@ mod tests {
 
     // Keyspaces are told apart by `durable_writes`, which is all it takes to
     // tell which reading of a keyspace a merge kept.
-    fn keyspace(durable_writes: bool) -> Keyspace {
-        Keyspace {
+    fn keyspace(durable_writes: bool) -> Arc<Keyspace> {
+        Arc::new(Keyspace {
             strategy: Strategy::LocalStrategy,
             durable_writes,
             tablet_based: false,
@@ -812,16 +807,18 @@ mod tests {
             tables: HashMap::new(),
             views: HashMap::new(),
             user_defined_types: HashMap::new(),
-        }
+        })
     }
 
     // The per-keyspace result of a fetch that read the keyspace but could not
     // process what it read.
-    fn broken() -> Result<Keyspace, SingleKeyspaceMetadataError> {
+    fn broken() -> Result<Arc<Keyspace>, SingleKeyspaceMetadataError> {
         Err(SingleKeyspaceMetadataError::IncompletePartitionKey(0))
     }
 
-    fn metadata(keyspaces: Vec<(&str, Result<Keyspace, SingleKeyspaceMetadataError>)>) -> Metadata {
+    fn metadata(
+        keyspaces: Vec<(&str, Result<Arc<Keyspace>, SingleKeyspaceMetadataError>)>,
+    ) -> Metadata {
         Metadata {
             peers: Vec::new(),
             keyspaces: keyspaces
