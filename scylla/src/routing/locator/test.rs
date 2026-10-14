@@ -3,7 +3,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use uuid::Uuid;
 
-use super::tablets::TabletsInfo;
+use super::tablets::{RawTablet, Tablet, TabletsInfo};
 use super::{ReplicaLocator, ReplicaSet};
 use crate::cluster::Node;
 use crate::cluster::metadata::{ConsistencyMode, Keyspace, Metadata, Peer, Strategy};
@@ -790,4 +790,96 @@ fn test_replica_set_iterator_nth_large_n_regression(locator: &ReplicaLocator) {
         assert_eq!(iter.size_hint(), (0, Some(0)));
         assert_eq!(port(iter.next()), None);
     }
+}
+
+// Datacenter-scoped replica sets of a tablet table must keep the tablet's
+// replica order, carry the tablet's shards and behave like the other replica
+// set variants.
+#[tokio::test]
+async fn test_tablet_replica_sets() {
+    setup_tracing();
+    let ring: Vec<_> = create_ring(&mock_metadata_for_token_aware_tests()).collect();
+    let node_by_id = |id: u16| {
+        ring.iter()
+            .map(|(_, node)| node)
+            .find(|node| node.address.port() == id)
+            .unwrap()
+    };
+
+    // Replicas in payload order, spanning both datacenters, each on its own shard.
+    let replicas = [(A, 1), (D, 2), (G, 3), (E, 4)];
+    let raw = RawTablet::new_for_test(
+        0,
+        1000,
+        replicas
+            .iter()
+            .map(|&(id, shard)| (node_by_id(id).host_id, shard))
+            .collect(),
+        None,
+    );
+    let tablet = Tablet::from_raw_tablet(raw, |host_id| {
+        ring.iter()
+            .map(|(_, node)| node)
+            .find(|node| node.host_id == host_id)
+            .cloned()
+    })
+    .unwrap();
+    let mut tablets = TabletsInfo::new();
+    tablets.add_tablet(TABLE_NTS_RF_2.clone(), tablet);
+    let locator = ReplicaLocator::new(ring.iter().cloned(), std::iter::empty(), tablets);
+
+    // The strategy is ignored for tablet tables.
+    let strategy = Strategy::LocalStrategy;
+    let set = |datacenter| {
+        locator.replicas_for_token(Token::new(500), &strategy, datacenter, TABLE_NTS_RF_2)
+    };
+    let ids = |set: ReplicaSet<'_>| {
+        set.into_iter()
+            .map(|(node, shard)| (node.address.port(), shard))
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(ids(set(None)), replicas);
+    assert_eq!(set(Some("eu")).len(), 2);
+    assert_eq!(ids(set(Some("eu"))), [(A, 1), (G, 3)]);
+    assert_eq!(ids(set(Some("us"))), [(D, 2), (E, 4)]);
+    assert!(set(Some("asia")).is_empty());
+    assert!(ids(set(Some("asia"))).is_empty());
+
+    // Ordered iteration keeps the tablet's order as well.
+    let ordered: Vec<_> = set(Some("us"))
+        .into_replicas_ordered()
+        .into_iter()
+        .map(|(node, shard)| (node.address.port(), shard))
+        .collect();
+    assert_eq!(ordered, [(D, 2), (E, 4)]);
+
+    // `choose` picks among the datacenter's replicas only.
+    let mut rng = ChaCha8Rng::seed_from_u64(1);
+    for _ in 0..20 {
+        let (node, shard) = set(Some("us")).choose_filtered(&mut rng, |_| true).unwrap();
+        assert!([(D, 2), (E, 4)].contains(&(node.address.port(), shard)));
+    }
+    assert!(
+        set(Some("asia"))
+            .choose_filtered(&mut rng, |_| true)
+            .is_none()
+    );
+
+    // `nth` and `size_hint` of the datacenter-scoped iterator.
+    let mut iter = set(Some("eu")).into_iter();
+    assert_eq!(iter.size_hint(), (2, Some(2)));
+    assert_eq!(port(iter.nth(1)), Some(G));
+    assert_eq!(iter.size_hint(), (0, Some(0)));
+    assert_eq!(port(iter.next()), None);
+    let mut iter = set(Some("eu")).into_iter();
+    assert_eq!(port(iter.nth(usize::MAX)), None);
+    assert_eq!(iter.size_hint(), (0, Some(0)));
+
+    // A token no tablet is known for yields an empty set.
+    assert!(
+        locator
+            .replicas_for_token(Token::new(2000), &strategy, Some("eu"), TABLE_NTS_RF_2)
+            .is_empty()
+    );
 }
