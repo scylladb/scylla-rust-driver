@@ -12,7 +12,7 @@ use crate::errors::{
     InternalRequestError, RequestAttemptError, ResponseParseError, TranslationError,
     UseKeyspaceError,
 };
-use crate::frame::frame_errors::CqlResponseParseError;
+use crate::frame::frame_errors::{CqlRequestSerializationError, CqlResponseParseError};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::request::CqlRequestKind;
 use crate::frame::request::options::{self, Options};
@@ -130,11 +130,8 @@ struct RouterHandle {
 impl RouterHandle {
     async fn send_request(
         &self,
-        request: &impl SerializableRequest,
-        compression: Option<Compression>,
-        tracing: bool,
+        request: SerializedRequest,
     ) -> Result<TaskResponse, InternalRequestError> {
-        let serialized_request = SerializedRequest::make(request, compression, tracing)?;
         // Room in the channel is reserved before the stream id, so that requests
         // waiting for the writer don't hold stream ids.
         let permit = self
@@ -144,7 +141,7 @@ impl RouterHandle {
             .map_err(|_| -> BrokenConnectionError {
                 BrokenConnectionErrorKind::ChannelError.into()
             })?;
-        let response = self.submit(permit, serialized_request)?;
+        let response = self.submit(permit, request)?;
 
         Ok(response.await?)
     }
@@ -1399,17 +1396,30 @@ impl Connection {
         tracing: bool,
         cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
     ) -> Result<QueryResponse, InternalRequestError> {
+        let request = self.serialize_request(request, compress, tracing)?;
+        let task_response = self.router_handle.send_request(request).await?;
+        self.parse_task_response(task_response, cached_metadata)
+    }
+
+    fn serialize_request(
+        &self,
+        request: &impl SerializableRequest,
+        compress: bool,
+        tracing: bool,
+    ) -> Result<SerializedRequest, CqlRequestSerializationError> {
         let compression = if compress {
             self.config.compression
         } else {
             None
         };
+        SerializedRequest::make(request, compression, tracing)
+    }
 
-        let task_response = self
-            .router_handle
-            .send_request(request, compression, tracing)
-            .await?;
-
+    fn parse_task_response(
+        &self,
+        task_response: TaskResponse,
+        cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
+    ) -> Result<QueryResponse, InternalRequestError> {
         let response = Self::parse_response(
             task_response,
             self.config.compression,
@@ -1727,13 +1737,16 @@ impl Connection {
         async fn issue_keepalive_query(
             router_handle: &RouterHandle,
         ) -> Result<(), BrokenConnectionError> {
+            let keepalive_error = |req_err: InternalRequestError| -> BrokenConnectionError {
+                BrokenConnectionErrorKind::KeepaliveRequestError(Arc::new(req_err)).into()
+            };
+            let request = SerializedRequest::make(&Options, None, false)
+                .map_err(|e| keepalive_error(e.into()))?;
             router_handle
-                .send_request(&Options, None, false)
+                .send_request(request)
                 .await
                 .map(|_| ())
-                .map_err(|req_err| {
-                    BrokenConnectionErrorKind::KeepaliveRequestError(Arc::new(req_err)).into()
-                })
+                .map_err(keepalive_error)
         }
 
         if let Some(keepalive_interval) = keepalive_interval {
