@@ -36,6 +36,12 @@ pub(crate) struct NodeConfig {
     pub(crate) metrics: Metrics,
 }
 
+/// Keyspaces by name.
+///
+/// `DefaultPolicy` looks keyspaces up on every request, so the map uses a faster
+/// hasher than std's default SipHash.
+pub(crate) type KeyspaceMap = HashMap<String, Keyspace, hashbrown::DefaultHashBuilder>;
+
 /// Represents the state of the cluster, including known nodes, keyspaces, and replica locator.
 ///
 /// It is immutable after creation, and is replaced atomically upon a metadata refresh.
@@ -57,7 +63,7 @@ pub struct ClusterState {
 
     /// All keyspaces in the cluster, accessible by their name.
     /// Often refered to as "schema metadata".
-    pub(crate) keyspaces: HashMap<String, Keyspace>,
+    pub(crate) keyspaces: KeyspaceMap,
 
     /// The entity which provides a way to find the set of owning nodes (+shards, in case of ScyllaDB)
     /// for a given (token, replication strategy, table) tuple.
@@ -178,7 +184,8 @@ impl ClusterState {
         let (new_known_nodes, ring) =
             Self::calculate_new_topology(metadata.peers, &HashMap::new(), node_config, host_filter);
 
-        let keyspaces = Self::resolve_metadata_keyspaces(metadata.keyspaces, &HashMap::new());
+        let keyspaces =
+            Self::resolve_metadata_keyspaces(metadata.keyspaces, &KeyspaceMap::default());
 
         let mut tablets = TabletsInfo::new();
         // Perform maintenance to create empty entries for all tablets-based tables.
@@ -291,7 +298,7 @@ impl ClusterState {
     /// Applies a partial schema update onto the schema metadata of `self`:
     /// replaces the metadata of the re-read keyspaces and removes those that
     /// ceased to exist, keeping every keyspace the update does not mention.
-    fn updated_keyspaces(&self, schema: SchemaUpdate) -> HashMap<String, Keyspace> {
+    fn updated_keyspaces(&self, schema: SchemaUpdate) -> KeyspaceMap {
         let mut new_keyspaces = self.keyspaces.clone();
 
         for (name, keyspace) in schema.keyspaces {
@@ -390,8 +397,8 @@ impl ClusterState {
     /// broken keyspaces and warns about it.
     fn resolve_metadata_keyspaces(
         meta_keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
-        old_keyspaces: &HashMap<String, Keyspace>,
-    ) -> HashMap<String, Keyspace> {
+        old_keyspaces: &KeyspaceMap,
+    ) -> KeyspaceMap {
         meta_keyspaces
             .into_iter()
             .filter_map(|(ks_name, ks)| {
@@ -406,7 +413,7 @@ impl ClusterState {
     fn resolve_metadata_keyspace(
         ks_name: &str,
         ks: Result<Keyspace, SingleKeyspaceMetadataError>,
-        old_keyspaces: &HashMap<String, Keyspace>,
+        old_keyspaces: &KeyspaceMap,
     ) -> Option<Keyspace> {
         match ks {
             Ok(ks) => Some(ks),
@@ -435,7 +442,7 @@ impl ClusterState {
         tablets: &mut TabletsInfo,
         old_known_nodes: &KnownNodes,
         new_known_nodes: &KnownNodes,
-        keyspaces: &HashMap<String, Keyspace>,
+        keyspaces: &KeyspaceMap,
     ) {
         let removed_nodes = {
             let mut removed_nodes = HashSet::new();
@@ -465,10 +472,10 @@ impl ClusterState {
     }
 
     async fn calculate_new_locator(
-        keyspaces: HashMap<String, Keyspace>,
+        keyspaces: KeyspaceMap,
         ring: Ring,
         tablets: TabletsInfo,
-    ) -> (ReplicaLocator, HashMap<String, Keyspace>) {
+    ) -> (ReplicaLocator, KeyspaceMap) {
         tokio::task::spawn_blocking(move || {
             let keyspace_strategies = keyspaces
                 .values()
