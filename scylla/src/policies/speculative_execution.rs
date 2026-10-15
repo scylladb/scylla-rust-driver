@@ -204,7 +204,9 @@ where
     let sleep = tokio::time::sleep(retry_interval).fuse();
     tokio::pin!(sleep);
 
-    let mut last_error = None;
+    // Boxed, as it is set only after an ignored error: inline, its size and
+    // 16-byte alignment would weigh on the future of every request.
+    let mut last_error: Option<Box<Result<T, RequestError>>> = None;
     loop {
         futures::select! {
             _ = &mut sleep => {
@@ -221,7 +223,7 @@ where
                     if !can_be_ignored(&r) {
                         return r;
                     } else {
-                        last_error = Some(r)
+                        last_error = Some(Box::new(r))
                     }
                 } else {
                     // The only case where None is returned is when execution plan was exhausted.
@@ -230,9 +232,7 @@ where
                     retries_remaining = 0;
                 }
                 if async_tasks.is_empty() && retries_remaining == 0 {
-                    return last_error.unwrap_or({
-                        Err(EMPTY_PLAN_ERROR)
-                    });
+                    return last_error.map_or(Err(EMPTY_PLAN_ERROR), |result| *result);
                 }
             }
         }
