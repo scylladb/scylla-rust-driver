@@ -12,7 +12,7 @@ use crate::errors::{
     InternalRequestError, RequestAttemptError, ResponseParseError, TranslationError,
     UseKeyspaceError,
 };
-use crate::frame::frame_errors::CqlResponseParseError;
+use crate::frame::frame_errors::{CqlRequestSerializationError, CqlResponseParseError};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::request::CqlRequestKind;
 use crate::frame::request::options::{self, Options};
@@ -130,22 +130,22 @@ struct RouterHandle {
 impl RouterHandle {
     async fn send_request(
         &self,
-        request: &impl SerializableRequest,
-        compression: Option<Compression>,
-        tracing: bool,
+        mut request: SerializedRequest,
     ) -> Result<TaskResponse, InternalRequestError> {
-        let mut serialized_request = SerializedRequest::make(request, compression, tracing)?;
         // Dropping `stream` (e.g. when this future is cancelled) releases the
         // stream id, or marks it as orphaned if the request was already submitted.
         let mut stream = self.streams.allocate().ok_or_else(|| {
             error!("Could not allocate stream id");
             InternalRequestError::UnableToAllocStreamId
         })?;
-        serialized_request.set_stream(stream.id());
+        request.set_stream(stream.id());
 
-        self.submit_channel.send(serialized_request).await.map_err(
-            |_| -> BrokenConnectionError { BrokenConnectionErrorKind::ChannelError.into() },
-        )?;
+        self.submit_channel
+            .send(request)
+            .await
+            .map_err(|_| -> BrokenConnectionError {
+                BrokenConnectionErrorKind::ChannelError.into()
+            })?;
         // `send` returns in the same poll in which it enqueues the request, so
         // `stream` cannot be dropped in between.
         stream.mark_submitted();
@@ -1414,17 +1414,30 @@ impl Connection {
         tracing: bool,
         cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
     ) -> Result<QueryResponse, InternalRequestError> {
+        let request = self.serialize_request(request, compress, tracing)?;
+        let task_response = self.router_handle.send_request(request).await?;
+        self.parse_task_response(task_response, cached_metadata)
+    }
+
+    fn serialize_request(
+        &self,
+        request: &impl SerializableRequest,
+        compress: bool,
+        tracing: bool,
+    ) -> Result<SerializedRequest, CqlRequestSerializationError> {
         let compression = if compress {
             self.config.compression
         } else {
             None
         };
+        SerializedRequest::make(request, compression, tracing)
+    }
 
-        let task_response = self
-            .router_handle
-            .send_request(request, compression, tracing)
-            .await?;
-
+    fn parse_task_response(
+        &self,
+        task_response: TaskResponse,
+        cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
+    ) -> Result<QueryResponse, InternalRequestError> {
         let response = Self::parse_response(
             task_response,
             self.config.compression,
@@ -1742,13 +1755,16 @@ impl Connection {
         async fn issue_keepalive_query(
             router_handle: &RouterHandle,
         ) -> Result<(), BrokenConnectionError> {
+            let keepalive_error = |req_err: InternalRequestError| -> BrokenConnectionError {
+                BrokenConnectionErrorKind::KeepaliveRequestError(Arc::new(req_err)).into()
+            };
+            let request = SerializedRequest::make(&Options, None, false)
+                .map_err(|e| keepalive_error(e.into()))?;
             router_handle
-                .send_request(&Options, None, false)
+                .send_request(request)
                 .await
                 .map(|_| ())
-                .map_err(|req_err| {
-                    BrokenConnectionErrorKind::KeepaliveRequestError(Arc::new(req_err)).into()
-                })
+                .map_err(keepalive_error)
         }
 
         if let Some(keepalive_interval) = keepalive_interval {
