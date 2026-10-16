@@ -307,6 +307,41 @@ impl ColumnType<'_> {
         }
     }
 
+    /// Returns the size in bytes of a serialized non-empty value of this type, if
+    /// all such values have the same size.
+    ///
+    /// Unlike [`type_size_for_vector`](Self::type_size_for_vector), this covers all
+    /// fixed-size native types.
+    pub(crate) fn size(&self) -> Option<usize> {
+        match self {
+            ColumnType::Native(native) => match native {
+                NativeType::Boolean | NativeType::TinyInt => Some(1),
+                NativeType::SmallInt => Some(2),
+                NativeType::Date | NativeType::Float | NativeType::Int => Some(4),
+                NativeType::BigInt
+                | NativeType::Counter
+                | NativeType::Double
+                | NativeType::Time
+                | NativeType::Timestamp => Some(8),
+                NativeType::Timeuuid | NativeType::Uuid => Some(16),
+                NativeType::Ascii
+                | NativeType::Blob
+                | NativeType::Decimal
+                | NativeType::Duration
+                | NativeType::Inet
+                | NativeType::Text
+                | NativeType::Varint => None,
+            },
+            // A vector prefixes each element with its length if Cassandra doesn't
+            // treat the element type as fixed size. The size of such vectors is not
+            // computed.
+            ColumnType::Vector { .. } => self.type_size_for_vector(),
+            ColumnType::Collection { .. }
+            | ColumnType::Tuple(_)
+            | ColumnType::UserDefinedType { .. } => None,
+        }
+    }
+
     /// Returns true if the type allows a special, empty value in addition to its
     /// natural representation. For example, bigint represents a 64-bit integer,
     /// but it can also hold a 0-bit empty value.

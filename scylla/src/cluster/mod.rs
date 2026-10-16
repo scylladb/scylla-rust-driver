@@ -22,6 +22,7 @@ pub(crate) use worker::{
 
 mod state;
 pub use state::ClusterState;
+pub(crate) use state::KeyspaceMap;
 #[cfg(test)]
 pub(crate) use state::NodeConfig;
 
