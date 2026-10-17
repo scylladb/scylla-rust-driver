@@ -585,6 +585,26 @@ impl Default for SessionConfig {
     }
 }
 
+#[cfg(all(
+    scylla_unstable,
+    feature = "unstable-cpp-rs",
+    feature = "unstable-client-routes"
+))]
+impl SessionConfig {
+    /// Sets the routing configuration for Scylla Cloud (Client Routes).
+    ///
+    /// Intended for use in CPP RS Driver only. That driver builds
+    /// [`SessionConfig`] directly, without a session builder. Other users
+    /// should use [`ClientRoutesSessionBuilder`](crate::client::session_builder::ClientRoutesSessionBuilder).
+    ///
+    /// This function does not change other options. In particular, it does not
+    /// set [`SessionConfig::disallow_shard_aware_port`]. `ClientRoutesSessionBuilder`
+    /// sets that option to `true`.
+    pub fn set_client_routes_config(&mut self, config: Option<ClientRoutesConfig>) {
+        self.client_routes_config = config;
+    }
+}
+
 impl SessionConfig {
     /// The socket options connections are opened with, mapping the individual
     /// `tcp_*` fields in one place rather than at the use site.
