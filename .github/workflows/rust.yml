@@ -129,7 +129,7 @@ jobs:
 
       # cargo-deny checks (licenses, advisories, bans, sources) based on deny.toml
       - name: cargo-deny check
-        uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
 
   scylla_tests:
     runs-on: ubuntu-latest
