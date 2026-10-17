@@ -381,8 +381,13 @@ pub struct SessionConfig {
 
     /// Routing configuration for Scylla Cloud. If set, Session will connect
     /// to Scylla Cloud clusters using custom routing based on `system.client_routes`.
+    ///
+    /// Prefer [`ClientRoutesSessionBuilder`](crate::client::session_builder::ClientRoutesSessionBuilder)
+    /// to setting this field directly. Setting this field does not change other options.
+    /// In particular, it does not set [`SessionConfig::disallow_shard_aware_port`].
+    /// `ClientRoutesSessionBuilder` sets that option to `true`.
     #[cfg(feature = "unstable-client-routes")]
-    pub(crate) client_routes_config: Option<super::client_routes::ClientRoutesConfig>,
+    pub client_routes_config: Option<super::client_routes::ClientRoutesConfig>,
 
     /// The host filter decides whether any connections should be opened
     /// to the node or not. The driver will also avoid filtered out nodes when
