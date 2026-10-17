@@ -57,7 +57,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y valgrind
     - name: Install cargo-binstall
-      uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
+      uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4
       with:
         tool: cargo-binstall
     - name: Setup 3-node ScyllaDB cluster
