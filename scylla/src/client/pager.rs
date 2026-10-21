@@ -11,14 +11,14 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use futures::Stream;
+use slot_channel::{SlotReceiver, SlotSender, slot_channel};
 use std::result::Result;
 use thiserror::Error;
-use tokio::sync::mpsc;
 use tracing::{Instrument, warn};
 use uuid::Uuid;
 
 use crate::client::execution::{
-    NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RequestPaging,
+    NodeAttemptTarget, Request, RequestExecutionOutcome, RequestExecutionParams, RequestPaging,
     RunRequestResult, SingleConnectionTarget, choose_tablet_block_hint,
 };
 use crate::client::session::Session;
@@ -36,8 +36,8 @@ use crate::frame::response::result::{
     DeserializedMetadataAndRawRows, SchemaChange, SetKeyspace, TableSpec,
 };
 use crate::frame::types::{Consistency, SerialConsistency};
-use crate::network::Connection;
-use crate::observability::driver_tracing::RequestSpan;
+use crate::network::{Connection, ExecuteArgs};
+use crate::observability::driver_tracing::{RequestSpan, await_in_span};
 use crate::observability::history::HistoryListener;
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
@@ -191,7 +191,7 @@ impl PagingExecutor {
     }
 
     /// Fetches remaining pages (pages 2+) in a background task.
-    /// Sends each page through the mpsc channel.
+    /// Sends each page through the slot channel.
     ///
     /// A fresh query plan is constructed for each page, preventing plan
     /// exhaustion for long-running multi-page queries.
@@ -201,7 +201,7 @@ impl PagingExecutor {
     /// for retry.
     async fn query_remaining_pages<QueryFunc, QueryFut, SpanCreator>(
         mut self,
-        sender: mpsc::Sender<ResultNextPage>,
+        sender: SlotSender<ResultNextPage>,
         page_query: QueryFunc,
         routing_info: RoutingInfo<'_>,
         span_creator: SpanCreator,
@@ -214,10 +214,10 @@ impl PagingExecutor {
         loop {
             let page_span = span_creator(&self.cluster_state);
 
-            let page_res = self
-                .fetch_one_page(&routing_info, &page_span, &page_query)
-                .instrument(page_span.span().clone())
-                .await;
+            let page_res = await_in_span!(
+                self.fetch_one_page(&routing_info, &page_span, &page_query),
+                page_span.span()
+            );
 
             let page_res = match page_res {
                 Ok(RequestExecutionOutcome {
@@ -261,16 +261,18 @@ impl PagingExecutor {
         &mut self,
         request_span: &RequestSpan,
         routing_info: &RoutingInfo<'_>,
-        page_query: QueryFunc,
+        // Taken by reference: an async fn keeps arguments taken by value twice in
+        // its state.
+        page_query: &QueryFunc,
     ) -> Result<(FirstReceivedPage, ShouldFetchMorePages), RequestError>
     where
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
-        let fetch_result = self
-            .fetch_one_page(routing_info, request_span, &page_query)
-            .instrument(request_span.span().clone())
-            .await;
+        let fetch_result = await_in_span!(
+            self.fetch_one_page(routing_info, request_span, page_query),
+            request_span.span()
+        );
 
         match fetch_result {
             Err(e) => Err(e),
@@ -331,7 +333,7 @@ impl PagingExecutor {
         // Adapt the paging-aware `page_query` to the two-argument closure
         // expected by the execution core, injecting the current paging state
         // and normalizing error responses.
-        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| async move {
+        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| async move {
             page_query(connection, consistency, self.paging_state.clone())
                 .await
                 .and_then(QueryResponse::into_non_error_query_response)
@@ -351,7 +353,7 @@ impl PagingExecutor {
             (coordinator.node(), coordinator.shard().unwrap_or(2137))
         });
 
-        let plan = stability_target
+        let mut plan = stability_target
             .into_iter()
             .chain(base_plan.filter(|&(node, shard)| {
                 // Filter out the preselected coordinator - it is tried first.
@@ -367,9 +369,13 @@ impl PagingExecutor {
             }))
             .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
 
-        exec_params
-            .run_request_no_side_effects(routing_info, plan, run_request_once, page_span)
-            .await
+        let request = Request {
+            params: exec_params,
+            routing_info: routing_info.clone(),
+            run_once: run_request_once,
+            span: page_span,
+        };
+        request.run_request_no_side_effects(&mut plan).await
     }
 
     fn process_first_page(
@@ -580,30 +586,34 @@ impl SingleConnectionPagingExecutor {
         };
 
         let run_request_once = |connection: Arc<Connection>, consistency: Consistency| {
-            let paging_state = paging_state.clone();
+            let args = ExecuteArgs {
+                prepared_statement: &self.prepared,
+                values: &self.values,
+                consistency,
+                serial_consistency: self.serial_consistency,
+                page_size: Some(self.page_size),
+                paging_state,
+                // This API executes on one given connection and has no `ClusterState`
+                // to consult, so there is no cached tablet version to probe.
+                tablet_block_hint: 0,
+            };
             async move {
                 connection
-                    .execute_raw_with_consistency(
-                        &self.prepared,
-                        &self.values,
-                        consistency,
-                        self.serial_consistency,
-                        Some(self.page_size),
-                        paging_state,
-                        // This API executes on one given connection and has no `ClusterState`
-                        // to consult, so there is no cached tablet version to probe.
-                        0,
-                    )
+                    .execute_raw_with_consistency(&args)
                     .await
                     .and_then(QueryResponse::into_non_error_query_response)
             }
         };
 
-        let plan = std::iter::once(SingleConnectionTarget::new(Arc::clone(&self.connection)));
+        let mut plan = std::iter::once(SingleConnectionTarget::new(Arc::clone(&self.connection)));
 
-        exec_params
-            .run_request_no_side_effects(&routing_info, plan, run_request_once, request_span)
-            .await
+        let request = Request {
+            params: exec_params,
+            routing_info,
+            run_once: run_request_once,
+            span: request_span,
+        };
+        request.run_request_no_side_effects(&mut plan).await
     }
 
     /// Interprets a page outcome. Only Rows responses are valid here.
@@ -647,14 +657,14 @@ impl SingleConnectionPagingExecutor {
     async fn fetch_remaining_pages(
         self,
         mut paging_state: PagingState,
-        sender: mpsc::Sender<ResultNextPage>,
+        sender: SlotSender<ResultNextPage>,
     ) {
         loop {
             let request_span = self.make_span();
-            let outcome = self
-                .fetch_one_page(&paging_state, &request_span)
-                .instrument(request_span.span().clone())
-                .await;
+            let outcome = await_in_span!(
+                self.fetch_one_page(&paging_state, &request_span),
+                request_span.span()
+            );
 
             let outcome = match outcome {
                 Ok(outcome) => outcome,
@@ -690,6 +700,193 @@ impl SingleConnectionPagingExecutor {
     }
 }
 
+/// A channel holding a single item, through which a pager's worker hands
+/// pages over to the [`QueryPager`].
+///
+/// It behaves like a tokio `mpsc` channel of capacity 1, which would allocate
+/// about 15 KB here: tokio allocates `mpsc` slots in blocks of 32.
+mod slot_channel {
+    use std::fmt;
+    use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll, Waker};
+
+    pub(super) fn slot_channel<T>() -> (SlotSender<T>, SlotReceiver<T>) {
+        let shared = Arc::new(Mutex::new(SlotState {
+            item: None,
+            sender_waker: None,
+            receiver_waker: None,
+            sender_dropped: false,
+            receiver_dropped: false,
+        }));
+        (
+            SlotSender {
+                shared: Arc::clone(&shared),
+            },
+            SlotReceiver { shared },
+        )
+    }
+
+    struct SlotState<T> {
+        item: Option<T>,
+        /// Woken when the item is taken, or the receiver is dropped.
+        sender_waker: Option<Waker>,
+        /// Woken when an item is put, or the sender is dropped.
+        receiver_waker: Option<Waker>,
+        sender_dropped: bool,
+        receiver_dropped: bool,
+    }
+
+    fn register(waker: &mut Option<Waker>, cx: &Context<'_>) {
+        match waker {
+            Some(waker) => waker.clone_from(cx.waker()),
+            None => *waker = Some(cx.waker().clone()),
+        }
+    }
+
+    fn wake(waker: Option<Waker>) {
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
+
+    /// The receiver was dropped, so no more items can be sent.
+    #[derive(Debug)]
+    pub(super) struct ReceiverDropped;
+
+    pub(super) struct SlotSender<T> {
+        shared: Arc<Mutex<SlotState<T>>>,
+    }
+
+    impl<T> SlotSender<T> {
+        /// Waits until the slot is empty, and puts `item` in it.
+        pub(super) async fn send(&self, item: T) -> Result<(), ReceiverDropped> {
+            let mut item = Some(item);
+            std::future::poll_fn(|cx| {
+                let mut state = self.shared.lock().unwrap();
+                if state.receiver_dropped {
+                    return Poll::Ready(Err(ReceiverDropped));
+                }
+                if state.item.is_some() {
+                    register(&mut state.sender_waker, cx);
+                    return Poll::Pending;
+                }
+                state.item = item.take();
+                let receiver_waker = state.receiver_waker.take();
+                drop(state);
+                wake(receiver_waker);
+                Poll::Ready(Ok(()))
+            })
+            .await
+        }
+    }
+
+    impl<T> Drop for SlotSender<T> {
+        fn drop(&mut self) {
+            let mut state = self.shared.lock().unwrap();
+            state.sender_dropped = true;
+            let receiver_waker = state.receiver_waker.take();
+            drop(state);
+            wake(receiver_waker);
+        }
+    }
+
+    pub(super) struct SlotReceiver<T> {
+        shared: Arc<Mutex<SlotState<T>>>,
+    }
+
+    impl<T> SlotReceiver<T> {
+        /// Takes the item from the slot. Returns `None` once the sender is dropped
+        /// and the slot is empty.
+        pub(super) fn poll_recv(&mut self, cx: &Context<'_>) -> Poll<Option<T>> {
+            let mut state = self.shared.lock().unwrap();
+            if let Some(item) = state.item.take() {
+                let sender_waker = state.sender_waker.take();
+                drop(state);
+                wake(sender_waker);
+                return Poll::Ready(Some(item));
+            }
+            if state.sender_dropped {
+                return Poll::Ready(None);
+            }
+            register(&mut state.receiver_waker, cx);
+            Poll::Pending
+        }
+    }
+
+    impl<T> Drop for SlotReceiver<T> {
+        fn drop(&mut self) {
+            let mut state = self.shared.lock().unwrap();
+            state.receiver_dropped = true;
+            let sender_waker = state.sender_waker.take();
+            drop(state);
+            wake(sender_waker);
+        }
+    }
+
+    impl<T> fmt::Debug for SlotReceiver<T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("SlotReceiver").finish_non_exhaustive()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::future::poll_fn;
+
+        use assert_matches::assert_matches;
+
+        use super::{ReceiverDropped, slot_channel};
+
+        #[tokio::test]
+        async fn slot_channel_hands_over_items_one_at_a_time() {
+            let (sender, mut receiver) = slot_channel();
+            sender.send(1).await.unwrap();
+
+            // The slot is full, so the next send waits until the item is taken.
+            let mut second = Box::pin(sender.send(2));
+            assert!(futures::poll!(&mut second).is_pending());
+            assert_eq!(poll_fn(|cx| receiver.poll_recv(cx)).await, Some(1));
+            second.await.unwrap();
+            assert_eq!(poll_fn(|cx| receiver.poll_recv(cx)).await, Some(2));
+
+            // The item left in the slot is still received after the sender is dropped.
+            sender.send(3).await.unwrap();
+            drop(sender);
+            assert_eq!(poll_fn(|cx| receiver.poll_recv(cx)).await, Some(3));
+            assert_eq!(poll_fn(|cx| receiver.poll_recv(cx)).await, None);
+        }
+
+        #[tokio::test]
+        async fn slot_channel_send_fails_after_receiver_is_dropped() {
+            let (sender, receiver) = slot_channel();
+            sender.send(1).await.unwrap();
+            let mut second = Box::pin(sender.send(2));
+            assert!(futures::poll!(&mut second).is_pending());
+
+            drop(receiver);
+            assert_matches!(second.await, Err(ReceiverDropped));
+            assert_matches!(sender.send(3).await, Err(ReceiverDropped));
+        }
+    }
+}
+
+/// Returns the list of page coordinators, holding the first page's one.
+///
+/// When more pages follow, room for several is reserved, to spare most of
+/// the reallocations of a list growing by one coordinator per page.
+fn first_page_coordinators(first: Option<Coordinator>, more_pages: bool) -> Vec<Coordinator> {
+    const MULTI_PAGE_INITIAL_CAPACITY: usize = 8;
+
+    let capacity = if more_pages {
+        MULTI_PAGE_INITIAL_CAPACITY
+    } else {
+        usize::from(first.is_some())
+    };
+    let mut coordinators = Vec::with_capacity(capacity);
+    coordinators.extend(first);
+    coordinators
+}
+
 /// An intermediate object that allows to construct a stream over a query
 /// that is asynchronously paged in the background.
 ///
@@ -700,7 +897,8 @@ impl SingleConnectionPagingExecutor {
 #[derive(Debug)]
 pub struct QueryPager {
     current_page: RawRowLendingIterator,
-    page_receiver: mpsc::Receiver<Result<NextReceivedPage, NextPageError>>,
+    // `None` if the first page was the only one.
+    page_receiver: Option<SlotReceiver<ResultNextPage>>,
     tracing_ids: Vec<Uuid>,
     request_coordinators: Vec<Coordinator>,
 }
@@ -782,7 +980,10 @@ impl QueryPager {
     ) -> Poll<Option<Result<(), NextRowError>>> {
         let mut s = self.as_mut();
 
-        let received_page = ready_some_ok!(Pin::new(&mut s.page_receiver).poll_recv(cx));
+        let Some(page_receiver) = s.page_receiver.as_mut() else {
+            return Poll::Ready(None);
+        };
+        let received_page = ready_some_ok!(page_receiver.poll_recv(cx));
 
         s.current_page = RawRowLendingIterator::new(received_page.rows);
 
@@ -869,20 +1070,19 @@ If you are using this API, you are probably doing something wrong."
             let request_span = create_span(&statement.contents);
 
             executor
-                .query_first_page(&request_span, &routing_info, page_query)
+                .query_first_page(&request_span, &routing_info, &page_query)
                 .await
                 .map_err(NextPageError::RequestFailure)?
         };
 
         /* PROCESS FIRST PAGE */
-        let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
-        match should_fetch_more_pages {
-            ShouldFetchMorePages::NoMorePages => {
-                // No more pages - we are done, return the first page and an empty receiver.
-                std::mem::drop(sender);
-            }
+        let receiver = match should_fetch_more_pages {
+            // No more pages - we are done, return just the first page. The channel
+            // is only created when needed, as many results fit in a single page.
+            ShouldFetchMorePages::NoMorePages => None,
             ShouldFetchMorePages::MorePages => {
                 /* REMAINING PAGES */
+                let (sender, receiver) = slot_channel::<ResultNextPage>();
                 let node_location_preference = Arc::clone(session.get_node_location_preference());
                 let worker_task = async move {
                     let routing_info = RoutingInfo {
@@ -917,12 +1117,17 @@ If you are using this API, you are probably doing something wrong."
                         .await;
                 };
                 let _worker_handle = tokio::task::spawn(worker_task);
+                Some(receiver)
             }
-        }
+        };
 
         Self::new_from_first_page(first_page, receiver, session).await
     }
 
+    /// Executes a prepared statement and fetches its first page.
+    ///
+    /// The values are not checked to match the statement, so this must not be
+    /// exposed to end users. It isn't generic, to reduce code bloat.
     pub(crate) async fn new_for_prepared_statement(
         session: &Session,
         prepared: PreparedStatement,
@@ -933,7 +1138,9 @@ If you are using this API, you are probably doing something wrong."
         let consistency = executor.consistency;
         let serial_consistency = executor.serial_consistency;
 
-        type Replicas = smallvec::SmallVec<[(Arc<Node>, Shard); 8]>;
+        // Computed only if some span is enabled, so allocating doesn't matter, while
+        // a `SmallVec` would make the pager's futures bigger.
+        type Replicas = Vec<(Arc<Node>, Shard)>;
 
         fn create_span(
             partition_key: &Option<PartitionKey>,
@@ -971,17 +1178,36 @@ If you are using this API, you are probably doing something wrong."
             span
         }
 
-        let (partition_key, token) =
-            match prepared.extract_partition_key_and_calculate_token(&values) {
-                Ok(res) => res.unzip(),
-                Err(err) => {
-                    return Err(PagerExecutionError::NextPageError(
-                        NextPageError::PartitionKeyError(err),
-                    ));
-                }
-            };
-
+        let serialized_values_size = values.buffer_size();
         let table_spec = prepared.get_table_spec();
+
+        // Shared by the first page and every remaining page, so that the replica set is
+        // computed at most once - and only if at least one of those spans is enabled.
+        let replicas: OnceCell<Option<Replicas>> = OnceCell::new();
+
+        // Scoped, so that the partition key, needed only for the span, is not kept
+        // in this future's state while the first page is fetched.
+        let (token, request_span) = {
+            let (partition_key, token) =
+                match prepared.extract_partition_key_and_calculate_token(&values) {
+                    Ok(res) => res.unzip(),
+                    Err(err) => {
+                        return Err(PagerExecutionError::NextPageError(
+                            NextPageError::PartitionKeyError(err),
+                        ));
+                    }
+                };
+            let request_span = create_span(
+                &partition_key,
+                token,
+                serialized_values_size,
+                &executor.cluster_state,
+                table_spec,
+                &replicas,
+            );
+            (token, request_span)
+        };
+
         let routing_info = RoutingInfo {
             consistency,
             serial_consistency,
@@ -998,54 +1224,35 @@ If you are using this API, you are probably doing something wrong."
         // first page and reused as-is for every remaining page.
         let tablet_block_hint =
             choose_tablet_block_hint(&executor.cluster_state, table_spec, token);
-        let page_query = |connection: Arc<Connection>,
-                          consistency: Consistency,
-                          paging_state: PagingState| async move {
+        let page_query = move |connection: Arc<Connection>,
+                               consistency: Consistency,
+                               paging_state: PagingState| async move {
             connection
-                .execute_raw_with_consistency(
-                    prepared_ref,
-                    values_ref,
+                .execute_raw_with_consistency(&ExecuteArgs {
+                    prepared_statement: prepared_ref,
+                    values: values_ref,
                     consistency,
                     serial_consistency,
-                    Some(page_size),
-                    paging_state,
+                    page_size: Some(page_size),
+                    paging_state: &paging_state,
                     tablet_block_hint,
-                )
+                })
                 .await
         };
 
-        let serialized_values_size = values.buffer_size();
-
-        // Shared by the first page and every remaining page, so that the replica set is
-        // computed at most once - and only if at least one of those spans is enabled.
-        let replicas: OnceCell<Option<Replicas>> = OnceCell::new();
-
-        let request_span = create_span(
-            &partition_key,
-            token,
-            serialized_values_size,
-            &executor.cluster_state,
-            table_spec,
-            &replicas,
-        );
-
         let (first_page, should_fetch_more_pages) = executor
-            .query_first_page(&request_span, &routing_info, page_query)
+            .query_first_page(&request_span, &routing_info, &page_query)
             .await
             .map_err(NextPageError::RequestFailure)?;
 
-        // Required to end the borrow of `partition_key`, so `config` can be moved into the worker task.
-        std::mem::drop(partition_key);
-
         /* PROCESS FIRST PAGE */
-        let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
-        match should_fetch_more_pages {
-            ShouldFetchMorePages::NoMorePages => {
-                // No more pages - we are done, return the first page and an empty receiver.
-                std::mem::drop(sender);
-            }
+        let receiver = match should_fetch_more_pages {
+            // No more pages - we are done, return just the first page. The channel
+            // is only created when needed, as many results fit in a single page.
+            ShouldFetchMorePages::NoMorePages => None,
             ShouldFetchMorePages::MorePages => {
                 /* REMAINING PAGES */
+                let (sender, receiver) = slot_channel::<ResultNextPage>();
                 let node_location_preference = Arc::clone(session.get_node_location_preference());
                 let worker_task = async move {
                     let partition_key = if prepared.is_token_aware() {
@@ -1077,19 +1284,19 @@ If you are using this API, you are probably doing something wrong."
                     let prepared = &prepared;
                     let values_ref = &values;
                     let page_query =
-                        |connection: Arc<Connection>,
-                         consistency: Consistency,
-                         paging_state: PagingState| async move {
+                        move |connection: Arc<Connection>,
+                              consistency: Consistency,
+                              paging_state: PagingState| async move {
                             connection
-                                .execute_raw_with_consistency(
-                                    prepared,
-                                    values_ref,
+                                .execute_raw_with_consistency(&ExecuteArgs {
+                                    prepared_statement: prepared,
+                                    values: values_ref,
                                     consistency,
                                     serial_consistency,
-                                    Some(page_size),
-                                    paging_state,
+                                    page_size: Some(page_size),
+                                    paging_state: &paging_state,
                                     tablet_block_hint,
-                                )
+                                })
                                 .await
                         };
 
@@ -1109,6 +1316,7 @@ If you are using this API, you are probably doing something wrong."
                         .await;
                 };
                 let _worker_handle = tokio::task::spawn(worker_task);
+                Some(receiver)
             }
         };
 
@@ -1150,30 +1358,30 @@ If you are using this API, you are probably doing something wrong."
 
         // Fetch the first page on the caller task (no spawning).
         let request_span = executor.make_span();
-        let outcome = executor
-            .fetch_one_page(&PagingState::start(), &request_span)
-            .instrument(request_span.span().clone())
-            .await
-            .map_err(NextPageError::RequestFailure)?;
+        let outcome = await_in_span!(
+            executor.fetch_one_page(&PagingState::start(), &request_span),
+            request_span.span()
+        )
+        .map_err(NextPageError::RequestFailure)?;
         let (first_page, paging_state_response) =
             SingleConnectionPagingExecutor::page_from_outcome(outcome)?;
 
         /* PROCESS FIRST PAGE */
-        let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
-        match paging_state_response {
-            PagingStateResponse::NoMorePages => {
-                // No more pages - we are done, return the first page and an empty receiver.
-                std::mem::drop(sender);
-            }
+        let receiver = match paging_state_response {
+            // No more pages - we are done, return just the first page. The channel
+            // is only created when needed, as many results fit in a single page.
+            PagingStateResponse::NoMorePages => None,
             PagingStateResponse::HasMorePages { state } => {
                 /* REMAINING PAGES */
+                let (sender, receiver) = slot_channel::<ResultNextPage>();
                 let parent_span = tracing::Span::current();
                 let worker_task =
                     async move { executor.fetch_remaining_pages(state, sender).await }
                         .instrument(parent_span);
                 let _worker_handle = tokio::task::spawn(worker_task);
+                Some(receiver)
             }
-        }
+        };
 
         let NextReceivedPage {
             rows,
@@ -1183,20 +1391,21 @@ If you are using this API, you are probably doing something wrong."
 
         Ok(Self {
             current_page: RawRowLendingIterator::new(rows),
+            request_coordinators: first_page_coordinators(request_coordinator, receiver.is_some()),
             page_receiver: receiver,
             tracing_ids: Vec::from_iter(tracing_id),
-            request_coordinators: Vec::from_iter(request_coordinator),
         })
     }
 
     async fn new_from_first_page(
         first_page: FirstReceivedPage,
-        receiver: mpsc::Receiver<ResultNextPage>,
+        receiver: Option<SlotReceiver<ResultNextPage>>,
         session: &Session,
     ) -> Result<Self, PagerExecutionError> {
         let tracing_ids = Vec::from_iter(first_page.tracing_id);
         let coordinator_id = first_page.request_coordinator.node().host_id;
-        let request_coordinators = vec![first_page.request_coordinator];
+        let request_coordinators =
+            first_page_coordinators(Some(first_page.request_coordinator), receiver.is_some());
 
         let first_page = match first_page.content {
             FirstPageContent::Rows { rows } => RawRowLendingIterator::new(rows),
@@ -1213,9 +1422,10 @@ If you are using this API, you are probably doing something wrong."
                         result::ResultWithDeserializedMetadata::SetKeyspace(set_keyspace),
                     ),
                     tracing_id: None,
-                    warnings: Vec::new(),
+                    warnings: Box::default(),
                 };
-                session.handle_set_keyspace_response(&response).await?;
+                // Rare, so boxed to keep it out of every pager's future.
+                Box::pin(session.handle_set_keyspace_response(&response)).await?;
                 // The stream will be empty.
                 RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
             }
@@ -1232,10 +1442,10 @@ If you are using this API, you are probably doing something wrong."
                         result::ResultWithDeserializedMetadata::SchemaChange(schema_change),
                     ),
                     tracing_id: None,
-                    warnings: Vec::new(),
+                    warnings: Box::default(),
                 };
-                session
-                    .handle_auto_await_schema_agreement(&response, coordinator_id)
+                // Rare, so boxed to keep it out of every pager's future.
+                Box::pin(session.handle_auto_await_schema_agreement(&response, coordinator_id))
                     .await?;
                 // The stream will be empty.
                 RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
