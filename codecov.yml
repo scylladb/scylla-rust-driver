@@ -8,6 +8,15 @@ codecov:
   notify:
     wait_for_ci: false
 
+# Test-support and tooling crates, not part of the driver. Paths are anchored at
+# the repository root. cargo-llvm-cov already leaves out tests/, examples/ and
+# benches/ directories.
+ignore:
+  - "scylla-proxy"
+  - "scylla-ccm-bridge"
+  - "benchmarks"
+  - "utils"
+
 coverage:
   status:
     # Informational: report the delta, never fail a pull request on it. The
