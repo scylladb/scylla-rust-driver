@@ -37,7 +37,7 @@ use crate::frame::response::result::{
 };
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::network::Connection;
-use crate::observability::driver_tracing::RequestSpan;
+use crate::observability::driver_tracing::{RequestSpan, await_in_span};
 use crate::observability::history::HistoryListener;
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
@@ -214,10 +214,10 @@ impl PagingExecutor {
         loop {
             let page_span = span_creator(&self.cluster_state);
 
-            let page_res = self
-                .fetch_one_page(&routing_info, &page_span, &page_query)
-                .instrument(page_span.span().clone())
-                .await;
+            let page_res = await_in_span!(
+                self.fetch_one_page(&routing_info, &page_span, &page_query),
+                page_span.span()
+            );
 
             let page_res = match page_res {
                 Ok(RequestExecutionOutcome {
@@ -267,10 +267,10 @@ impl PagingExecutor {
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
-        let fetch_result = self
-            .fetch_one_page(routing_info, request_span, &page_query)
-            .instrument(request_span.span().clone())
-            .await;
+        let fetch_result = await_in_span!(
+            self.fetch_one_page(routing_info, request_span, &page_query),
+            request_span.span()
+        );
 
         match fetch_result {
             Err(e) => Err(e),
@@ -651,10 +651,10 @@ impl SingleConnectionPagingExecutor {
     ) {
         loop {
             let request_span = self.make_span();
-            let outcome = self
-                .fetch_one_page(&paging_state, &request_span)
-                .instrument(request_span.span().clone())
-                .await;
+            let outcome = await_in_span!(
+                self.fetch_one_page(&paging_state, &request_span),
+                request_span.span()
+            );
 
             let outcome = match outcome {
                 Ok(outcome) => outcome,
@@ -1150,11 +1150,11 @@ If you are using this API, you are probably doing something wrong."
 
         // Fetch the first page on the caller task (no spawning).
         let request_span = executor.make_span();
-        let outcome = executor
-            .fetch_one_page(&PagingState::start(), &request_span)
-            .instrument(request_span.span().clone())
-            .await
-            .map_err(NextPageError::RequestFailure)?;
+        let outcome = await_in_span!(
+            executor.fetch_one_page(&PagingState::start(), &request_span),
+            request_span.span()
+        )
+        .map_err(NextPageError::RequestFailure)?;
         let (first_page, paging_state_response) =
             SingleConnectionPagingExecutor::page_from_outcome(outcome)?;
 
@@ -1213,7 +1213,7 @@ If you are using this API, you are probably doing something wrong."
                         result::ResultWithDeserializedMetadata::SetKeyspace(set_keyspace),
                     ),
                     tracing_id: None,
-                    warnings: Vec::new(),
+                    warnings: Box::default(),
                 };
                 session.handle_set_keyspace_response(&response).await?;
                 // The stream will be empty.
@@ -1232,7 +1232,7 @@ If you are using this API, you are probably doing something wrong."
                         result::ResultWithDeserializedMetadata::SchemaChange(schema_change),
                     ),
                     tracing_id: None,
-                    warnings: Vec::new(),
+                    warnings: Box::default(),
                 };
                 session
                     .handle_auto_await_schema_agreement(&response, coordinator_id)

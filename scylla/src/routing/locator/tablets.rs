@@ -63,7 +63,7 @@
 //! [`Keyspace::consistency_mode`]: crate::cluster::metadata::Keyspace::consistency_mode
 //! [`ConsistencyMode::Global`]: crate::cluster::metadata::ConsistencyMode::Global
 
-use crate::cluster::metadata::Keyspace;
+use crate::cluster::KeyspaceMap;
 use crate::deserialize::value::{DeserializeValue, ListlikeIterator};
 use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
@@ -837,7 +837,7 @@ impl TabletsInfo {
     ///   for completeness.
     pub(crate) fn perform_maintenance(
         &mut self,
-        keyspaces: &HashMap<String, Keyspace>,
+        keyspaces: &KeyspaceMap,
         removed_nodes: &HashSet<Uuid>,
         all_current_nodes: &HashMap<Uuid, Arc<Node>>,
         recreated_nodes: &HashMap<Uuid, Arc<Node>>,
@@ -924,7 +924,7 @@ mod tests {
     use crate::test_utils::setup_tracing;
     use crate::value::CqlValue;
 
-    use super::{TableTablets, Tablet, TabletReplicas, TabletsInfo};
+    use super::{KeyspaceMap, TableTablets, Tablet, TabletReplicas, TabletsInfo};
 
     const DC1: &str = "dc1";
     const DC2: &str = "dc2";
@@ -1924,7 +1924,7 @@ mod tests {
             )
         };
 
-        let keyspaces_after = HashMap::from([
+        let keyspaces_after = KeyspaceMap::from_iter([
             spec_to_ks_tuple(TABLE_1),
             spec_to_ks_tuple(TABLE_2),
             spec_to_ks_tuple(TABLE_3),
