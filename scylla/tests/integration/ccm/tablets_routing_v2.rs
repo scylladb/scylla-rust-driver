@@ -1,8 +1,8 @@
 //! End-to-end tests for the `TABLETS_ROUTING_V2` protocol extension.
 //!
 //! The extension is experimental: the server only advertises it (on the wire under the name
-//! `TABLETS_ROUTING_V2_EXPERIMENTAL`) when started with the experimental feature that gates it
-//! (`--experimental-features strongly-consistent-tables`). When the server does not negotiate
+//! `TABLETS_ROUTING_V2_EXPERIMENTAL_V2`) when started with the experimental feature that gates
+//! it (`--experimental-features strongly-consistent-tables`). When the server does not negotiate
 //! it, the V2 tests here skip, exactly like the other feature-gated integration tests in this
 //! suite. The V1 test deliberately does not skip: it hides the extension from every node, so it
 //! exercises the V1 path either way.
@@ -52,7 +52,7 @@ use crate::utils::{
 
 const CUSTOM_PAYLOAD_TABLETS_V2_KEY: &str = "tablets-routing-v2";
 const CUSTOM_PAYLOAD_TABLETS_V1_KEY: &str = "tablets-routing-v1";
-const TABLETS_ROUTING_V2_EXTENSION: &str = "TABLETS_ROUTING_V2_EXPERIMENTAL";
+const TABLETS_ROUTING_V2_EXTENSION: &str = "TABLETS_ROUTING_V2_EXPERIMENTAL_V2";
 
 fn cluster_3_nodes() -> ClusterOptions {
     ClusterOptions {
@@ -78,7 +78,7 @@ async fn enable_strongly_consistent_tables(mut cluster: Cluster) -> Cluster {
 /// use it to decode frames.
 ///
 /// When `skip_if_v2_unsupported` is set and the server did not negotiate
-/// `TABLETS_ROUTING_V2_EXPERIMENTAL`, the test is skipped.
+/// `TABLETS_ROUTING_V2_EXPERIMENTAL_V2`, the test is skipped.
 async fn test_with_3_node_ccm_cluster<F, Fut>(skip_if_v2_unsupported: bool, test: F)
 where
     F: FnOnce([String; 3], HashMap<SocketAddr, SocketAddr>, RunningProxy, ProtocolFeatures) -> Fut,
@@ -143,7 +143,8 @@ where
 
     if skip_if_v2_unsupported && !features.tablets_v2_supported {
         tracing::warn!(
-            "Skipping test because the server did not negotiate TABLETS_ROUTING_V2_EXPERIMENTAL"
+            "Skipping test because the server did not negotiate \
+             TABLETS_ROUTING_V2_EXPERIMENTAL_V2"
         );
         return;
     }
@@ -353,7 +354,7 @@ fn capture_executes_and_results(
     (rx_exec, rx_resp)
 }
 
-/// A proxy rule that strips `TABLETS_ROUTING_V2_EXPERIMENTAL` from a node's SUPPORTED frame
+/// A proxy rule that strips `TABLETS_ROUTING_V2_EXPERIMENTAL_V2` from a node's SUPPORTED frame
 /// so the driver never negotiates V2 on any connection to that node.
 ///
 /// Installed for the whole test, so reconnections stay non-V2 too. This is what lets these
