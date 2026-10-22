@@ -278,8 +278,8 @@ fn response_carries_tablets_payload(frame: ResponseFrame, payload_key: &str) -> 
     }
 }
 
-/// The receiving end of a proxy feedback channel carrying captured `EXECUTE` requests.
-type ExecuteFeedback = mpsc::UnboundedReceiver<(RequestFrame, Option<TargetShard>)>;
+/// The receiving end of a proxy feedback channel carrying captured requests.
+type RequestFeedback = mpsc::UnboundedReceiver<(RequestFrame, Option<TargetShard>)>;
 /// The receiving end of a proxy feedback channel carrying captured `RESULT` responses.
 type ResultFeedback = mpsc::UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>;
 
@@ -329,21 +329,22 @@ fn decode_v2_payload_replicas(frame: ResponseFrame) -> Option<Vec<(Uuid, i32)>> 
     Some(replicas.map(|replica| replica.unwrap()).collect())
 }
 
-/// Installs proxy rules capturing every `EXECUTE` request and every `RESULT` response on every
-/// node, and returns the receiving ends.
+/// Installs proxy rules capturing every request with the given `opcode` and every `RESULT`
+/// response on every node, and returns the receiving ends.
 ///
 /// Rules are prepended, and callers install them only after schema setup, so that just the
 /// measured phase of a test is captured.
-fn capture_executes_and_results(
+fn capture_requests_and_results(
     running_proxy: &mut RunningProxy,
-) -> (ExecuteFeedback, ResultFeedback) {
-    let (tx_exec, rx_exec) = mpsc::unbounded_channel();
+    opcode: RequestOpcode,
+) -> (RequestFeedback, ResultFeedback) {
+    let (tx_req, rx_req) = mpsc::unbounded_channel();
     let (tx_resp, rx_resp) = mpsc::unbounded_channel();
     running_proxy.running_nodes.iter_mut().for_each(|node| {
         node.prepend_request_rules(vec![RequestRule(
             Condition::not(Condition::ConnectionRegisteredAnyEvent)
-                .and(Condition::RequestOpcode(RequestOpcode::Execute)),
-            RequestReaction::noop().with_feedback_when_performed(tx_exec.clone()),
+                .and(Condition::RequestOpcode(opcode)),
+            RequestReaction::noop().with_feedback_when_performed(tx_req.clone()),
         )]);
         node.prepend_response_rules(vec![ResponseRule(
             Condition::not(Condition::ConnectionRegisteredAnyEvent)
@@ -351,7 +352,7 @@ fn capture_executes_and_results(
             ResponseReaction::noop().with_feedback_when_performed(tx_resp.clone()),
         )]);
     });
-    (rx_exec, rx_resp)
+    (rx_req, rx_resp)
 }
 
 /// A proxy rule that strips `TABLETS_ROUTING_V2_EXPERIMENTAL_V2` from a node's SUPPORTED frame
@@ -446,7 +447,8 @@ async fn test_tablets_routing_v2_execute_carries_block_and_converges() {
             // unprepared QUERY carries no tablet-version block and is not token-routed, so today
             // it cannot fill the cache. Capturing from before it anyway keeps the warm-up
             // assertion from silently depending on that.
-            let (mut rx_exec, mut rx_resp) = capture_executes_and_results(&mut running_proxy);
+            let (mut rx_exec, mut rx_resp) =
+                capture_requests_and_results(&mut running_proxy, RequestOpcode::Execute);
 
             session
                 .query_unpaged(format!("INSERT INTO {ks}.t (pk, v) VALUES ({PK}, 1)"), &())
@@ -735,7 +737,8 @@ async fn test_leader_aware_routing_targets_the_raft_leader() {
             // receives disagrees with its own version, so only requests made while the driver's
             // tablet cache is still cold provoke a payload. The very first such request -- the
             // insert below -- is what fills that cache.
-            let (mut rx_exec, mut rx_resp) = capture_executes_and_results(&mut running_proxy);
+            let (mut rx_exec, mut rx_resp) =
+                capture_requests_and_results(&mut running_proxy, RequestOpcode::Execute);
 
             session.execute_unpaged(&insert, (PK, 1)).await.unwrap();
 
@@ -895,7 +898,8 @@ async fn test_tablets_routing_v1_used_when_v2_unavailable() {
                 .await
                 .unwrap();
 
-            let (mut rx_exec, mut rx_resp) = capture_executes_and_results(&mut running_proxy);
+            let (mut rx_exec, mut rx_resp) =
+                capture_requests_and_results(&mut running_proxy, RequestOpcode::Execute);
 
             // Warm the cache, once. V1 teaches the driver a tablet's replicas whenever it
             // contacts a shard that does not own it, so from a cold cache a few requests suffice
