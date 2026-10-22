@@ -380,6 +380,7 @@ mod tests {
                 query.parameters.values.deref().clone(),
                 query.parameters.values.deref().clone(),
             ],
+            routing_hint: None,
         };
         {
             let mut buf = Vec::new();
@@ -454,6 +455,7 @@ mod tests {
             timestamp: None,
 
             values: vec![query.parameters.values.deref().clone()],
+            routing_hint: None,
         };
         {
             let mut buf = Vec::new();
