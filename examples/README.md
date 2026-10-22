@@ -57,6 +57,7 @@ cargo run -p examples --example basic
 | `speculative_execution` | Configuring a speculative execution policy so that one slow replica does not hold up an idempotent request. |
 | `tls_openssl` | Connecting to a cluster over TLS with the `openssl` backend. |
 | `tls_rustls` | Connecting to a cluster over TLS with the `rustls` backend. |
+| `token_ring` | Walking the cluster's token ring and listing the replicas that own each token range. |
 | `tower` | Wrapping a `Session` in a `tower::Service`. |
 | `tracing` | Enabling CQL tracing for queries, prepares, executions, paged reads and batches, and fetching the resulting tracing information. |
 | `user_defined_type` | Mapping a CQL user-defined type onto a Rust struct with `SerializeValue`/`DeserializeValue`. |
