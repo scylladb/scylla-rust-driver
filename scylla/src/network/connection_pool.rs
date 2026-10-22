@@ -1613,7 +1613,9 @@ mod tests {
     use crate::observability::metrics::Metrics;
     use crate::policies::reconnect::{ExponentialReconnectPolicy, ReconnectPolicy as _};
     use crate::routing::{Shard, ShardCount, ShardInfo, Sharder};
-    use crate::test_utils::{CapturedLogs, capturing_errors, setup_tracing};
+    use crate::test_utils::{
+        CapturedLogs, capturing_errors, dry_mode_handshake_rules, setup_tracing,
+    };
     use assert_matches::assert_matches;
     use bytes::Bytes;
     use futures::{FutureExt, StreamExt};
@@ -1622,7 +1624,7 @@ mod tests {
         RequestReaction, RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, WorkerError,
     };
     use std::collections::HashMap;
-    use std::net::{SocketAddr, ToSocketAddrs};
+    use std::net::SocketAddr;
     use std::sync::{Arc, RwLock};
     use std::time::Duration;
     use tokio::sync::{Notify, mpsc};
@@ -1649,24 +1651,14 @@ mod tests {
 
         // Connections always open successfully; only the `USE KEYSPACE` query is manipulated.
         let rules_with_query_reaction = |query_reaction| {
-            vec![
-                RequestRule(
-                    Condition::RequestOpcode(RequestOpcode::Options),
-                    RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
-                        ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
-                    })),
-                ),
-                RequestRule(
-                    Condition::RequestOpcode(RequestOpcode::Startup),
-                    RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
-                        ResponseFrame::forged_ready(frame.params)
-                    })),
-                ),
-                RequestRule(
+            [
+                dry_mode_handshake_rules(),
+                vec![RequestRule(
                     Condition::RequestOpcode(RequestOpcode::Query),
                     query_reaction,
-                ),
+                )],
             ]
+            .concat()
         };
 
         let mut proxy = Proxy::builder()
@@ -1782,25 +1774,16 @@ mod tests {
             .with_node(
                 Node::builder()
                     .proxy_address(proxy_addr)
-                    .request_rules(vec![
-                        RequestRule(
-                            Condition::RequestOpcode(RequestOpcode::Options),
-                            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
-                                ResponseFrame::forged_supported(frame.params, &HashMap::new())
-                                    .unwrap()
-                            })),
-                        ),
-                        RequestRule(
-                            Condition::RequestOpcode(RequestOpcode::Startup),
-                            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
-                                ResponseFrame::forged_ready(frame.params)
-                            })),
-                        ),
-                        RequestRule(
-                            Condition::RequestOpcode(RequestOpcode::Query),
-                            RequestReaction::drop_frame(),
-                        ),
-                    ])
+                    .request_rules(
+                        [
+                            dry_mode_handshake_rules(),
+                            vec![RequestRule(
+                                Condition::RequestOpcode(RequestOpcode::Query),
+                                RequestReaction::drop_frame(),
+                            )],
+                        ]
+                        .concat(),
+                    )
                     .build_dry_mode(),
             )
             .build()
@@ -2083,11 +2066,19 @@ mod tests {
     async fn test_many_connections_with_config(connection_config: HostConnectionConfig) {
         let connections_number = 400;
 
-        let connect_address: SocketAddr = std::env::var("SCYLLA_URI")
-            .unwrap_or_else(|_| "172.42.0.2:9042".to_string())
-            .to_socket_addrs()
-            .unwrap()
-            .next()
+        // The node only has to accept the connections. They go over real sockets,
+        // because port collisions are reported by the OS.
+        let connect_address = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+        let proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .proxy_address(connect_address)
+                    .request_rules(dry_mode_handshake_rules())
+                    .build_dry_mode(),
+            )
+            .build()
+            .run()
+            .await
             .unwrap();
 
         // This does not have to be the real sharder,
@@ -2104,7 +2095,13 @@ mod tests {
             open_connection_to_shard_aware_port(&endpoint, 0, sharder.clone(), &connection_config)
         });
 
-        let _joined = futures::future::try_join_all(conns).await.unwrap();
+        let joined = futures::future::try_join_all(conns).await.unwrap();
+        drop(joined);
+
+        match proxy.finish().await {
+            Ok(()) | Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => {}
+            Err(err) => panic!("{err}"),
+        }
     }
 
     // Open many connections to a node
@@ -2263,20 +2260,7 @@ mod tests {
             msb_ignore: 12,
         };
         let (mut proxy, endpoint) = start_simulated_node(initial_shard_info).await;
-        proxy.running_nodes[0].change_request_rules(Some(vec![
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Options),
-                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
-                    ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
-                })),
-            ),
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Startup),
-                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
-                    ResponseFrame::forged_ready(frame.params)
-                })),
-            ),
-        ]));
+        proxy.running_nodes[0].change_request_rules(Some(dry_mode_handshake_rules()));
         let mut refiller = mock_pool_refiller();
         let metrics = refiller.metrics.clone();
 

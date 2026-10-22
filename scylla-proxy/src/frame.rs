@@ -9,7 +9,7 @@ use scylla_cql::frame::request::{RequestDeserializationError, RequestV2};
 pub use scylla_cql::frame::response::ResponseOpcode;
 use scylla_cql::frame::response::error::DbError;
 use scylla_cql::frame::response::event::SchemaChangeEvent;
-use scylla_cql::frame::response::result::{ColumnSpec, ResultMetadata};
+use scylla_cql::frame::response::result::{ColumnSpec, Prepared, PreparedMetadata, ResultMetadata};
 use scylla_cql::frame::types;
 use scylla_cql::serialize::RowWriter;
 use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow};
@@ -230,6 +230,49 @@ impl ResponseFrame {
         )?;
         types::write_int(i32::try_from(rows_count)?, &mut buf);
         buf.extend_from_slice(&rows_buf);
+
+        Ok(ResponseFrame::new(
+            request_params.for_response(),
+            ResponseOpcode::Result,
+            buf.freeze(),
+        ))
+    }
+
+    /// Creates a `RESULT::Prepared` response frame, as sent by a server after a PREPARE request.
+    ///
+    /// `bind_col_specs` describe the bind markers of the statement, and `result_col_specs`
+    /// the columns of rows returned by executing it. No bind marker is reported to be
+    /// a partition key column.
+    pub fn forged_prepared(
+        request_params: FrameParams,
+        id: &[u8],
+        bind_col_specs: &[ColumnSpec<'_>],
+        result_col_specs: &[ColumnSpec<'_>],
+    ) -> Result<Self, std::num::TryFromIntError> {
+        let into_owned = |col_specs: &[ColumnSpec<'_>]| {
+            col_specs
+                .iter()
+                .cloned()
+                .map(ColumnSpec::into_owned)
+                .collect::<Vec<_>>()
+        };
+        let prepared = Prepared {
+            id: Bytes::copy_from_slice(id),
+            prepared_metadata: PreparedMetadata {
+                flags: 0,
+                col_count: bind_col_specs.len(),
+                pk_indexes: Vec::new(),
+                col_specs: into_owned(bind_col_specs),
+            },
+            result_metadata: ResultMetadata::new_for_test(
+                result_col_specs.len(),
+                into_owned(result_col_specs),
+            ),
+        };
+
+        let mut buf = BytesMut::new();
+        types::write_int(0x0004, &mut buf); // Kind: Prepared.
+        prepared.serialize(&mut buf)?;
 
         Ok(ResponseFrame::new(
             request_params.for_response(),
