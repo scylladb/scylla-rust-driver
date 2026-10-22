@@ -1255,6 +1255,7 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
+        routing_hint: batch::BatchRoutingHint,
     ) -> Result<QueryResponse, RequestAttemptError> {
         let batch = self.prepare_batch(init_batch, &values).await?;
 
@@ -1275,6 +1276,16 @@ impl Connection {
         };
         let timestamp = batch.get_timestamp().or_else(get_timestamp_from_gen);
 
+        // On a connection that negotiated TABLETS_ROUTING_V2 the server requires a routing
+        // hint on every BATCH. As for EXECUTE, the hint's value is entirely the caller's, while
+        // whether one is sent at all is decided only here, because only this connection knows
+        // what it negotiated.
+        let routing_hint = self
+            .features
+            .protocol_features
+            .tablets_v2_supported
+            .then_some(routing_hint);
+
         let batch_frame = batch::Batch {
             statements: Cow::Borrowed(&batch.statements),
             values,
@@ -1282,7 +1293,7 @@ impl Connection {
             consistency,
             serial_consistency,
             timestamp,
-            routing_hint: None,
+            routing_hint,
         };
 
         loop {

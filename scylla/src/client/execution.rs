@@ -58,7 +58,8 @@ pub(crate) enum RunRequestResult<ResT> {
     Completed(ResT),
 }
 
-/// Chooses the `TABLETS_ROUTING_V2` tablet-version block to attach to an `EXECUTE`.
+/// Chooses the `TABLETS_ROUTING_V2` tablet-version block to attach to an `EXECUTE`, or to the
+/// routing hint of a `BATCH`.
 ///
 /// This decides the byte's *value* for every case, so that nothing downstream has to invent one:
 /// - a cached tablet version: a nibble of it, at a random index;
@@ -69,7 +70,7 @@ pub(crate) enum RunRequestResult<ResT> {
 ///   request, so the value is irrelevant and the cheapest one is used.
 ///
 /// Whether a byte is appended at all is a separate, per-connection decision made by
-/// `Connection::execute_raw_with_consistency`.
+/// `Connection::execute_raw_with_consistency` and `Connection::batch_with_consistency`.
 pub(crate) fn choose_tablet_block_hint(
     cluster_state: &ClusterState,
     table_spec: Option<&TableSpec>,
