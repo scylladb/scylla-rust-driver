@@ -11,11 +11,12 @@
 //! - `TABLETS_ROUTING_V2` (experimental; negotiated on the wire as
 //!   `TABLETS_ROUTING_V2_EXPERIMENTAL`): V2 subsumes V1 and adds *tablet-version tracking*.
 //!   The driver attaches a one-byte "tablet-version block" to every `EXECUTE` (see
-//!   [`TabletVersion`]); the server compares it against its own tablet version and returns a
-//!   fresh `tablets-routing-v2` payload only when the driver's cached version is stale. The
-//!   block encodes one randomly chosen nibble of the version, so successive requests probe
-//!   the whole version and detect any change without the driver having to contact a wrong
-//!   replica first.
+//!   [`TabletVersion`]), and a routing hint (the index of the statement the batch was routed
+//!   by, followed by such a block) to every `BATCH`; the server compares the block against its
+//!   own tablet version and returns a fresh `tablets-routing-v2` payload only when the
+//!   driver's cached version is stale. The block encodes one randomly chosen nibble of the
+//!   version, so successive requests probe the whole version and detect any change without
+//!   the driver having to contact a wrong replica first.
 //!
 //! The tablet version is an opaque 64-bit hash of the tablet's ordered replica list (not a
 //! monotonic counter); only its bit pattern is meaningful. Because V2 is experimental its wire

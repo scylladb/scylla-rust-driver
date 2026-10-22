@@ -1296,6 +1296,17 @@ impl Connection {
             routing_hint,
         };
 
+        // Routing information returned for a batch describes the tablet of the statement the
+        // hint named, so it's filed under that statement's table.
+        let routing_table_spec = routing_hint
+            .map(|hint| hint.routing_statement_index)
+            .filter(|&index| index != batch::BatchRoutingHint::NO_ROUTING_STATEMENT)
+            .and_then(|index| batch.statements.get(usize::from(index)))
+            .and_then(|statement| match statement {
+                BatchStatement::PreparedStatement(ps) => ps.get_table_spec(),
+                BatchStatement::Query(_) => None,
+            });
+
         loop {
             let query_response = self
                 .send_request(&batch_frame, true, batch.config.tracing, None)
@@ -1324,7 +1335,20 @@ impl Connection {
                     }
                     _ => Err(err.into()),
                 },
-                ResponseWithDeserializedMetadata::Result(_) => Ok(query_response),
+                ResponseWithDeserializedMetadata::Result(_) => {
+                    if let Some(spec) = routing_table_spec
+                        && let Err(e) = self
+                            .update_tablets_from_response(spec, &query_response)
+                            .await
+                    {
+                        tracing::warn!(
+                            "Error while parsing tablet info from custom payload: {}",
+                            e
+                        );
+                    }
+
+                    Ok(query_response)
+                }
                 _ => Err(RequestAttemptError::UnexpectedResponse(
                     query_response.response.to_response_kind(),
                 )),
