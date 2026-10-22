@@ -57,6 +57,9 @@ where
     ) -> Result<Self, syn::Error> {
         let attrs = Attrs::from_attributes(&input.attrs)?;
 
+        let macro_internal = attrs.macro_internal_path();
+        let constraint_trait = parse_quote!(#macro_internal::#constraint_trait);
+
         // TODO: support structs with unnamed fields.
         // A few things to consider:
         // - such support would necessarily require `enforce_order` and `skip_name_checks` attributes to be passed,
@@ -108,6 +111,7 @@ where
             &self.generics,
             self.constraint_trait.clone(),
             frame_lifetime,
+            metadata_lifetime,
         )
         .chain(generate_default_constraints(&self.fields));
         let trait_: syn::Path = parse_quote!(#macro_internal::#trait_);
@@ -139,34 +143,46 @@ fn generate_default_constraints<Field: DeserializeCommonFieldAttrs>(
 /// other lifetimes and types.
 ///
 /// The original use case is DeserializeValue and DeserializeRow. Both of those traits
-/// are parametrized with a lifetime. If T: DeserializeValue<'a> then this means
+/// are parametrized with a lifetime. If T: DeserializeValue<'a, 'b> then this means
 /// that you can deserialize T as some CQL value from bytes that have
 /// lifetime 'a, similarly for DeserializeRow. In impls for those traits,
 /// an additional lifetime must be introduced and properly constrained.
 fn generate_lifetime_constraints_for_impl<'a>(
     generics: &'a syn::Generics,
     trait_full_name: syn::Path,
-    constraint_lifetime: &'a syn::Lifetime,
+    frame_lifetime: &'a syn::Lifetime,
+    metadata_lifetime: &'a syn::Lifetime,
 ) -> impl Iterator<Item = syn::WherePredicate> + use<'a> {
     // Constrain the new lifetime with the existing lifetime parameters
-    //     'lifetime: 'a + 'b + 'c ...
+    //     'frame_lifetime: 'a + 'b + 'c ...
     let mut lifetimes = generics.lifetimes().map(|l| &l.lifetime).peekable();
     let lifetime_constraints = std::iter::from_fn(move || {
         let lifetimes = lifetimes.by_ref();
         lifetimes
             .peek()
             .is_some()
-            .then::<syn::WherePredicate, _>(|| parse_quote!(#constraint_lifetime: #(#lifetimes)+*))
+            .then::<syn::WherePredicate, _>(|| parse_quote!(#frame_lifetime: #(#lifetimes)+*))
     });
 
     // For each type parameter T, constrain it like this:
-    //     T: DeserializeValue<'lifetime>,
+    //     T: DeserializeValue<'frame_lifetime, 'metadata_lifetime>,
     let type_constraints = generics.type_params().map(move |t| {
         let t_ident = &t.ident;
-        parse_quote!(#t_ident: #trait_full_name<#constraint_lifetime>)
+        parse_quote!(#t_ident: #trait_full_name<#frame_lifetime, #metadata_lifetime>)
     });
 
-    lifetime_constraints.chain(type_constraints)
+    // The struct may already have some `where` constraints
+    // on its definition. We should copy them to the impl.
+    let original_constraints = generics
+        .where_clause
+        .clone()
+        .map(|clause| clause.predicates)
+        .unwrap_or_default()
+        .into_iter();
+
+    lifetime_constraints
+        .chain(type_constraints)
+        .chain(original_constraints)
 }
 
 /// Generates a pair of new lifetime parameters, with a different name to any of the
