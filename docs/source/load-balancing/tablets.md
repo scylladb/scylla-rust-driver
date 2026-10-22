@@ -81,7 +81,7 @@ Compared to V1, this costs one byte on every request and, in exchange:
 
 ```{note}
 `TABLETS_ROUTING_V2` is experimental. A node advertises it (on the wire as
-`TABLETS_ROUTING_V2_EXPERIMENTAL`) only when started with the
+`TABLETS_ROUTING_V2_EXPERIMENTAL_V2`) only when started with the
 `strongly-consistent-tables` experimental feature enabled; otherwise it offers
 only `TABLETS_ROUTING_V1`. Negotiation is per connection, so during a rolling
 upgrade a session can hold V2 connections to some nodes and V1 connections to

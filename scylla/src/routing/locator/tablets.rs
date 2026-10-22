@@ -9,7 +9,7 @@
 //!   tablet, the response carries a `tablets-routing-v1` custom payload describing the tablet
 //!   so the driver can correct its cache.
 //! - `TABLETS_ROUTING_V2` (experimental; negotiated on the wire as
-//!   `TABLETS_ROUTING_V2_EXPERIMENTAL`): V2 subsumes V1 and adds *tablet-version tracking*.
+//!   `TABLETS_ROUTING_V2_EXPERIMENTAL_V2`): V2 subsumes V1 and adds *tablet-version tracking*.
 //!   The driver attaches a one-byte "tablet-version block" to every `EXECUTE` (see
 //!   [`TabletVersion`]), and a routing hint (the index of the statement the batch was routed
 //!   by, followed by such a block) to every `BATCH`; the server compares the block against its
