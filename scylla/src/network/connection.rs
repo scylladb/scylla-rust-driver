@@ -1207,6 +1207,7 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
+        routing_hint: batch::BatchRoutingHint,
     ) -> Result<QueryResponse, RequestAttemptError> {
         // Set only if some statements had to be prepared. Boxed, as a `Cow` would
         // take a whole `Batch` in this future's state even when borrowing.
@@ -1243,6 +1244,14 @@ impl Connection {
         };
         let timestamp = batch.get_timestamp().or_else(get_timestamp_from_gen);
 
+        // On a connection that negotiated TABLETS_ROUTING_V2, the server
+        // requires a routing hint on every BATCH.
+        let routing_hint = self
+            .features
+            .protocol_features
+            .tablets_v2_supported
+            .then_some(routing_hint);
+
         let batch_frame = batch::Batch {
             statements: Cow::Borrowed(&batch.statements),
             values,
@@ -1250,7 +1259,7 @@ impl Connection {
             consistency,
             serial_consistency,
             timestamp,
-            routing_hint: None,
+            routing_hint,
         };
 
         loop {
