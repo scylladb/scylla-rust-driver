@@ -22,8 +22,10 @@ use scylla::policies::retry::{
 };
 use scylla::response::query_result::QueryResult;
 use scylla::routing::Shard;
+use scylla::serialize::batch::BatchValues;
 use scylla::serialize::row::SerializeRow;
 use scylla::serialize::value::SerializeValue;
+use scylla::statement::batch::Batch;
 use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
@@ -645,6 +647,23 @@ pub(crate) async fn execute_prepared_statement_everywhere(
         stmt.set_load_balancing_policy(Some(policy));
 
         session.execute_unpaged(&stmt, values_ref).await
+    })
+    .await
+}
+
+pub(crate) async fn execute_batch_everywhere(
+    session: &Session,
+    cluster: &ClusterState,
+    batch: &Batch,
+    values: &(impl BatchValues + ?Sized),
+) -> Result<Vec<QueryResult>, ExecutionError> {
+    for_each_target_execute(cluster, |node, shard| async move {
+        let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), shard);
+
+        let mut batch = batch.clone();
+        batch.set_load_balancing_policy(Some(policy));
+
+        session.batch(&batch, values).await
     })
     .await
 }

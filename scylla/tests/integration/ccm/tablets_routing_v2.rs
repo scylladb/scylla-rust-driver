@@ -21,17 +21,23 @@ use scylla::cluster::metadata::{CollectionType, ColumnType, NativeType};
 use scylla::deserialize::FrameSlice;
 use scylla::deserialize::value::{DeserializeValue, ListlikeIterator};
 use scylla::routing::Shard;
+use scylla::serialize::batch::BatchValues;
 use scylla::serialize::row::SerializeRow;
 use scylla::statement::Consistency;
+use scylla::statement::batch::Batch;
 use scylla::statement::prepared::PreparedStatement;
 use uuid::Uuid;
 
 use scylla_cql::frame::parse_response_body_extensions;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::request::DeserializableRequest;
+use scylla_cql::frame::request::batch::{
+    Batch as BatchFrame, BatchRoutingHint, BatchStatement as BatchFrameStatement,
+};
 use scylla_cql::frame::request::execute::ExecuteV2;
 use scylla_cql::frame::response::Supported;
 use scylla_cql::frame::types;
+use scylla_cql::serialize::row::SerializedValues;
 
 use scylla_proxy::{
     Condition, Node as ProxyNode, Proxy, ProxyError, Reaction, RequestFrame, RequestOpcode,
@@ -45,9 +51,9 @@ use scylla_ccm_bridge::CLUSTER_VERSION;
 use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
 
 use crate::utils::{
-    PerformDDL, execute_prepared_statement_everywhere, fetch_negotiated_features,
-    scylla_supports_tablets, setup_tracing, supports_feature, unique_keyspace_name,
-    with_migration_retry,
+    PerformDDL, execute_batch_everywhere, execute_prepared_statement_everywhere,
+    fetch_negotiated_features, scylla_supports_tablets, setup_tracing, supports_feature,
+    unique_keyspace_name, with_migration_retry,
 };
 
 const CUSTOM_PAYLOAD_TABLETS_V2_KEY: &str = "tablets-routing-v2";
@@ -264,6 +270,27 @@ fn decode_execute_block(frame: RequestFrame, features: &ProtocolFeatures) -> Opt
     execute.tablet_version_block
 }
 
+/// Decodes a captured `BATCH` request frame with the given negotiated `features` and returns its
+/// trailing routing hint.
+///
+/// Like [`decode_execute_block`], it asserts that the frame decodes with no leftover bytes.
+fn decode_batch_routing_hint(
+    frame: RequestFrame,
+    features: &ProtocolFeatures,
+) -> Option<BatchRoutingHint> {
+    let body = parse_response_body_extensions(frame.params.flags, None, frame.body).unwrap();
+    let mut buf: &[u8] = &body.body;
+    let batch: BatchFrame<'_, BatchFrameStatement<'_>, Vec<SerializedValues>> =
+        BatchFrame::deserialize_with_features(&mut buf, features).unwrap();
+    assert!(
+        buf.is_empty(),
+        "BATCH body had {} leftover byte(s) after decoding with the negotiated features; \
+         the on-wire frame is desynced",
+        buf.len()
+    );
+    batch.routing_hint
+}
+
 /// Returns whether a captured RESULT response carries a fresh tablet-routing payload under
 /// `payload_key`.
 ///
@@ -397,6 +424,59 @@ async fn execute_concurrently(
         Ok::<_, String>(result.request_coordinator().node().host_id)
     }))
     .await
+}
+
+/// Runs `batch` `count` times concurrently, returning the coordinator of each execution.
+async fn batch_concurrently(
+    session: &Session,
+    batch: &Batch,
+    values: &(impl BatchValues + ?Sized),
+    count: usize,
+) -> Result<Vec<Uuid>, String> {
+    try_join_all((0..count).map(|_| async move {
+        let result = session
+            .batch(batch, values)
+            .await
+            .map_err(|e| format!("batch failed: {e}"))?;
+        Ok::<_, String>(result.request_coordinator().node().host_id)
+    }))
+    .await
+}
+
+/// Returns the number of captured `RESULT` responses that carry a `tablets-routing-v2` payload,
+/// draining the channel.
+fn count_v2_payloads(rx_resp: &mut ResultFeedback) -> usize {
+    let mut payloads = 0usize;
+    while let Ok((frame, _shard)) = rx_resp.try_recv() {
+        if response_carries_tablets_payload(frame, CUSTOM_PAYLOAD_TABLETS_V2_KEY) {
+            payloads += 1;
+        }
+    }
+    payloads
+}
+
+/// Decodes every captured `BATCH` request with the V2 `features`, draining the channel, and
+/// checks that each one carries a routing hint naming `expected_index`. Returns the number of
+/// frames checked.
+fn check_batch_routing_hints(
+    rx_batch: &mut RequestFeedback,
+    features: &ProtocolFeatures,
+    expected_index: u16,
+) -> Result<usize, String> {
+    let mut batches = 0usize;
+    while let Ok((frame, _shard)) = rx_batch.try_recv() {
+        match decode_batch_routing_hint(frame, features) {
+            Some(hint) if hint.routing_statement_index == expected_index => batches += 1,
+            Some(hint) => {
+                return Err(format!(
+                    "BATCH named routing statement {}, expected {expected_index}",
+                    hint.routing_statement_index
+                ));
+            }
+            None => return Err("BATCH on a V2 connection must carry a routing hint".to_owned()),
+        }
+    }
+    Ok(batches)
 }
 
 /// On a `TABLETS_ROUTING_V2` connection every `EXECUTE` must carry exactly one trailing
@@ -566,11 +646,11 @@ async fn test_tablets_routing_v2_execute_carries_block_and_converges() {
 
 /// A mixed cluster where one node does not advertise `TABLETS_ROUTING_V2`.
 ///
-/// `EXECUTE` frames sent to the V2 nodes must carry the trailing tablet-version block, while
-/// frames sent to the non-V2 node must carry none. Both framings must stay exactly shaped
-/// (each decodes with no leftover bytes) and every request must succeed. This is exactly the
-/// invariant a retry relies on when it crosses a V2 and a non-V2 connection: neither frame
-/// desyncs.
+/// `EXECUTE` frames sent to the V2 nodes must carry the trailing tablet-version block, and
+/// `BATCH` frames the routing hint, while frames sent to the non-V2 node must carry neither.
+/// Both framings must stay exactly shaped (each decodes with no leftover bytes) and every
+/// request must succeed. This is exactly the invariant a retry relies on when it crosses
+/// a V2 and a non-V2 connection: neither frame desyncs.
 #[tokio::test]
 async fn test_tablets_routing_v2_mixed_feature_connections() {
     setup_tracing();
@@ -613,16 +693,36 @@ async fn test_tablets_routing_v2_mixed_feature_connections() {
                 .await
                 .unwrap();
 
-            // Capture EXECUTEs per node so each frame is decoded with that node's features.
+            let insert = session
+                .prepare(format!("INSERT INTO {ks}.t (pk, v) VALUES (?, ?)"))
+                .await
+                .unwrap();
+            let mut batch = Batch::default();
+            batch.append_statement(insert);
+
+            // Capture EXECUTEs and BATCHes per node so each frame is decoded with that node's
+            // features.
             let mut exec_rxs = Vec::new();
+            let mut batch_rxs = Vec::new();
             for node in running_proxy.running_nodes.iter_mut() {
-                let (tx, rx) = mpsc::unbounded_channel::<(RequestFrame, Option<TargetShard>)>();
-                node.prepend_request_rules(vec![RequestRule(
-                    Condition::not(Condition::ConnectionRegisteredAnyEvent)
-                        .and(Condition::RequestOpcode(RequestOpcode::Execute)),
-                    RequestReaction::noop().with_feedback_when_performed(tx),
-                )]);
-                exec_rxs.push(rx);
+                let (exec_tx, exec_rx) =
+                    mpsc::unbounded_channel::<(RequestFrame, Option<TargetShard>)>();
+                let (batch_tx, batch_rx) =
+                    mpsc::unbounded_channel::<(RequestFrame, Option<TargetShard>)>();
+                node.prepend_request_rules(vec![
+                    RequestRule(
+                        Condition::not(Condition::ConnectionRegisteredAnyEvent)
+                            .and(Condition::RequestOpcode(RequestOpcode::Execute)),
+                        RequestReaction::noop().with_feedback_when_performed(exec_tx),
+                    ),
+                    RequestRule(
+                        Condition::not(Condition::ConnectionRegisteredAnyEvent)
+                            .and(Condition::RequestOpcode(RequestOpcode::Batch)),
+                        RequestReaction::noop().with_feedback_when_performed(batch_tx),
+                    ),
+                ]);
+                exec_rxs.push(exec_rx);
+                batch_rxs.push(batch_rx);
             }
 
             // Force the SELECT onto every node and shard, so the non-V2 node 0 and the V2
@@ -662,6 +762,183 @@ async fn test_tablets_routing_v2_mixed_feature_connections() {
 
             assert!(non_v2_frames >= 1, "the non-V2 node received no EXECUTEs");
             assert!(v2_frames >= 1, "the V2 nodes received no EXECUTEs");
+
+            // The same for BATCH, whose routing hint is likewise V2-only.
+            execute_batch_everywhere(
+                &session,
+                session.get_cluster_state().as_ref(),
+                &batch,
+                &((0i32, 1i32),),
+            )
+            .await
+            .unwrap();
+
+            let mut non_v2_batches = 0usize;
+            while let Ok((frame, _shard)) = batch_rxs[0].try_recv() {
+                assert_eq!(
+                    decode_batch_routing_hint(frame, &non_v2_features),
+                    None,
+                    "BATCH to the non-V2 node must not carry a routing hint"
+                );
+                non_v2_batches += 1;
+            }
+
+            let mut v2_batches = 0usize;
+            for rx in batch_rxs[1..].iter_mut() {
+                v2_batches += check_batch_routing_hints(rx, &features, 0).unwrap();
+            }
+
+            assert!(non_v2_batches >= 1, "the non-V2 node received no BATCHes");
+            assert!(v2_batches >= 1, "the V2 nodes received no BATCHes");
+
+            session
+                .ddl(format!("DROP KEYSPACE IF EXISTS {ks}"))
+                .await
+                .unwrap();
+            running_proxy
+        },
+    )
+    .await;
+}
+
+/// On a `TABLETS_ROUTING_V2` connection every `BATCH` must carry a routing hint naming the
+/// statement the driver routed the batch by, and the routing information the server returns for
+/// it must keep the driver's cache in sync, exactly as for `EXECUTE`.
+///
+/// - A batch whose first statement is prepared is routed by it, so the hint names statement 0.
+///   From a cold cache its block mismatches and the server sends routing information. Once the
+///   driver has filed that under the statement's table, the blocks match and the payloads stop.
+///   A driver that ignored the payloads, or filed them under the wrong table, would never
+///   converge.
+/// - A batch whose first statement is unprepared isn't routed by any statement, so the hint
+///   names none, the server accepts it, and never returns routing information for it.
+#[tokio::test]
+async fn test_tablets_routing_v2_batch_carries_routing_hint_and_converges() {
+    setup_tracing();
+
+    test_with_3_node_ccm_cluster(
+        true,
+        |proxy_uris, translation_map, mut running_proxy, features| async move {
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map))
+                .build()
+                .await
+                .unwrap();
+
+            if !scylla_supports_tablets(&session).await {
+                tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
+                return running_proxy;
+            }
+
+            let ks = unique_keyspace_name();
+
+            create_tablet_table(&session, &ks).await;
+
+            // A single fixed partition key, so every batch targets the same tablet.
+            const PK: i32 = 42;
+
+            let insert = session
+                .prepare(format!("INSERT INTO {ks}.t (pk, v) VALUES (?, ?)"))
+                .await
+                .unwrap();
+            // An unprepared statement without values is sent as query text, not prepared on
+            // the fly, so it can't be the routing statement.
+            let update = format!("UPDATE {ks}.t SET v = 2 WHERE pk = {PK}");
+
+            let mut routed_batch = Batch::default();
+            routed_batch.append_statement(insert.clone());
+            routed_batch.append_statement(update.as_str());
+            let routed_values = ((PK, 1), ());
+
+            let mut unrouted_batch = Batch::default();
+            unrouted_batch.append_statement(update.as_str());
+            unrouted_batch.append_statement(insert);
+            let unrouted_values = ((), (PK, 1));
+
+            // Installed before the first batch, which is what fills the tablet cache: the
+            // server returns routing information only while the driver's cache is cold.
+            let (mut rx_batch, mut rx_resp) =
+                capture_requests_and_results(&mut running_proxy, RequestOpcode::Batch);
+
+            // Phase 1, run once: warm the cache. Each cold batch carries its own random block,
+            // so it mismatches on its own; applying the answers repeatedly is idempotent.
+            const WARMUP: usize = 12;
+            batch_concurrently(&session, &routed_batch, &routed_values, WARMUP)
+                .await
+                .unwrap();
+
+            assert!(
+                count_v2_payloads(&mut rx_resp) > 0,
+                "server never returned a tablets-routing-v2 payload for a BATCH during warm-up"
+            );
+            let warmup_batches = check_batch_routing_hints(&mut rx_batch, &features, 0).unwrap();
+            assert!(
+                warmup_batches >= WARMUP,
+                "expected to capture at least {WARMUP} warm-up BATCH frames, captured \
+                 {warmup_batches}"
+            );
+
+            // Phase 2, retried: with the cache warm, no response may carry a payload. A
+            // migration mid-phase would make the server send one through no fault of the
+            // driver, so retry if the driver's routing view moved.
+            with_migration_retry(
+                async || cached_tablet_routing(&session, &ks, PK).await,
+                async |_| {
+                    drain(&mut rx_batch);
+                    drain(&mut rx_resp);
+
+                    const MEASURED: usize = 60;
+                    batch_concurrently(&session, &routed_batch, &routed_values, MEASURED).await?;
+
+                    let payloads = count_v2_payloads(&mut rx_resp);
+                    if payloads != 0 {
+                        return Err(format!(
+                            "the driver's tablet-version cache did not converge for BATCH: \
+                             {payloads} of {MEASURED} responses still carried a \
+                             tablets-routing-v2 payload"
+                        ));
+                    }
+
+                    let batches = check_batch_routing_hints(&mut rx_batch, &features, 0)?;
+                    if batches < MEASURED {
+                        return Err(format!(
+                            "expected to capture at least {MEASURED} BATCH frames, captured \
+                             {batches}"
+                        ));
+                    }
+
+                    Ok(())
+                },
+            )
+            .await;
+
+            // Phase 3: a batch that isn't routed by any statement. The server ignores its block,
+            // so this is deterministic: no payload, whatever the state of the cache.
+            drain(&mut rx_batch);
+            drain(&mut rx_resp);
+
+            const UNROUTED: usize = 12;
+            batch_concurrently(&session, &unrouted_batch, &unrouted_values, UNROUTED)
+                .await
+                .unwrap();
+
+            assert_eq!(
+                count_v2_payloads(&mut rx_resp),
+                0,
+                "a BATCH that names no routing statement must not get routing information"
+            );
+            let unrouted_batches = check_batch_routing_hints(
+                &mut rx_batch,
+                &features,
+                BatchRoutingHint::NO_ROUTING_STATEMENT,
+            )
+            .unwrap();
+            assert!(
+                unrouted_batches >= UNROUTED,
+                "expected to capture at least {UNROUTED} BATCH frames, captured \
+                 {unrouted_batches}"
+            );
 
             session
                 .ddl(format!("DROP KEYSPACE IF EXISTS {ks}"))
@@ -829,6 +1106,111 @@ async fn test_leader_aware_routing_targets_the_raft_leader() {
                 },
             )
             .await;
+
+            session
+                .ddl(format!("DROP KEYSPACE IF EXISTS {sc_ks}"))
+                .await
+                .unwrap();
+            running_proxy
+        },
+    )
+    .await;
+}
+
+/// A prepared `BEGIN BATCH ... APPLY BATCH` is sent as an `EXECUTE`, like any other prepared
+/// statement, and for a strongly-consistent table the server returns routing information for it.
+/// The driver needs no special handling: it routes the batch by the partition key bind indices
+/// of its `PREPARED` metadata and files the routing information under the table from that
+/// metadata, so its tablet-version cache must converge exactly as for a single statement.
+#[tokio::test]
+async fn test_tablets_routing_v2_prepared_strongly_consistent_batch_converges() {
+    setup_tracing();
+
+    test_with_3_node_ccm_cluster(
+        true,
+        |proxy_uris, translation_map, mut running_proxy, _features| async move {
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map))
+                .build()
+                .await
+                .unwrap();
+
+            if !scylla_supports_tablets(&session).await {
+                tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
+                return running_proxy;
+            }
+
+            let sc_ks = unique_keyspace_name();
+            create_strongly_consistent_tablet_table(&session, &sc_ks).await;
+
+            // A single fixed partition key, so every batch targets the same tablet.
+            const PK: i32 = 5;
+
+            // A strongly-consistent batch must target a single partition. The partition key bind
+            // index of the batch is that of the last marker targeting `pk`, i.e. 3.
+            let mut batch = session
+                .prepare(format!(
+                    "BEGIN BATCH \
+                     INSERT INTO {sc_ks}.t (pk, v) VALUES (?, ?); \
+                     UPDATE {sc_ks}.t SET v = ? WHERE pk = ?; \
+                     APPLY BATCH"
+                ))
+                .await
+                .unwrap();
+            // Writes to a strongly-consistent (Raft) table are rejected unless they use
+            // QUORUM/LOCAL_QUORUM.
+            batch.set_consistency(Consistency::LocalQuorum);
+            assert!(
+                batch.is_token_aware(),
+                "the prepared batch has no partition key bind indices, so it can't be routed"
+            );
+            let values = (PK, 1, 2, PK);
+
+            // Installed before the first execution, which is what fills the tablet cache.
+            let (mut rx_exec, mut rx_resp) =
+                capture_requests_and_results(&mut running_proxy, RequestOpcode::Execute);
+
+            const WARMUP: usize = 12;
+            execute_concurrently(&session, &batch, &values, WARMUP)
+                .await
+                .unwrap();
+            assert!(
+                count_v2_payloads(&mut rx_resp) > 0,
+                "server never returned a tablets-routing-v2 payload for the prepared batch \
+                 during warm-up"
+            );
+
+            // With the cache warm, a measurement must eventually see no payload at all. A
+            // migration or a Raft re-election mid-measurement makes the server re-send routing
+            // information through no fault of the driver; the driver learns from it, so measure
+            // again. A driver that never learned would see payloads in every measurement.
+            //
+            // As in the leader-aware test, this isn't left to `with_migration_retry`: the driver
+            // applies routing information asynchronously, so its cached view may not have moved
+            // yet when a payload has already been seen.
+            const MAX_MEASUREMENTS: usize = 5;
+            const MEASURED: usize = 30;
+            let mut converged = false;
+            for _ in 0..MAX_MEASUREMENTS {
+                drain(&mut rx_exec);
+                drain(&mut rx_resp);
+
+                execute_concurrently(&session, &batch, &values, MEASURED)
+                    .await
+                    .unwrap();
+
+                if count_v2_payloads(&mut rx_resp) == 0 {
+                    converged = true;
+                    break;
+                }
+            }
+            assert!(
+                converged,
+                "the driver's tablet-version cache did not converge for a prepared \
+                 strongly-consistent batch: each of the {MAX_MEASUREMENTS} measurements saw a \
+                 tablets-routing-v2 payload"
+            );
 
             session
                 .ddl(format!("DROP KEYSPACE IF EXISTS {sc_ks}"))
