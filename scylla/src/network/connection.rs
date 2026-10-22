@@ -1262,11 +1262,21 @@ impl Connection {
             routing_hint,
         };
 
+        // Routing information returned for a batch describes the tablet of the statement the
+        // hint named, so it's filed under that statement's table.
+        let routing_table_spec = routing_hint
+            .and_then(|hint| hint.get_routing_statement_index())
+            .and_then(|index| batch.statements.get(usize::from(index)))
+            .and_then(|statement| match statement {
+                BatchStatement::PreparedStatement(ps) => ps.get_shared_table_spec(),
+                BatchStatement::Query(_) => None,
+            });
+
         loop {
             // Scoped, so that the response is not kept in this future's state
             // while repreparing.
             let statement_id = {
-                let query_response = self
+                let mut query_response = self
                     .send_request(&batch_frame, true, batch.config.tracing, None)
                     .await
                     .map_err(RequestAttemptError::from)?;
@@ -1276,7 +1286,30 @@ impl Connection {
                         DbError::Unprepared { statement_id } => statement_id,
                         _ => return Err(err.into()),
                     },
-                    Response::Result(_) => return Ok(query_response),
+                    Response::Result(_) => {
+                        // Only responses with a custom payload can carry tablet info. They are
+                        // rare, so updating tablets from them is boxed, together with the
+                        // response.
+                        //
+                        // `matches!` reads the payload without taking a reference. Once a local
+                        // is borrowed, even briefly (as by `is_some()`), the compiler keeps it in
+                        // this future's state until the end of its scope, also across the await
+                        // below, while it is moved out. That would put the whole response into
+                        // every prepared request's future. See
+                        // https://github.com/rust-lang/rust/issues/59087.
+                        #[expect(
+                            clippy::redundant_pattern_matching,
+                            reason = "is_some() would borrow query_response, keeping it in this future's state across the await (rust-lang/rust#59087)"
+                        )]
+                        if matches!(query_response.custom_payload, Some(_))
+                            && let Some(spec) = routing_table_spec
+                        {
+                            query_response =
+                                Box::pin(self.update_tablets_from_response(spec, query_response))
+                                    .await;
+                        }
+                        return Ok(query_response);
+                    }
                     _ => {
                         return Err(RequestAttemptError::UnexpectedResponse(
                             query_response.response.to_response_kind(),
