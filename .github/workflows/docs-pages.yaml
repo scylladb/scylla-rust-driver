@@ -17,6 +17,9 @@ jobs:
   release:
     permissions:
       contents: write
+    # This job holds a write token, so it must not restore caches: unprivileged
+    # jobs running on main and on tags can write them.
+    cache-mode: none
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -31,7 +34,7 @@ jobs:
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           working-directory: docs
-          enable-cache: true
+          enable-cache: false
 
       - name: Build docs
         run: make -C docs multiversion
