@@ -12,11 +12,11 @@ on:
       - 'branch-*'
     paths:
       - "docs/**"
-      - ".github/workflows/docs-pr.yaml"
+      - ".github/workflows/docs-*.yaml"
   workflow_dispatch:
 
 jobs:
-  sphinx_docs:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -33,7 +33,17 @@ jobs:
           enable-cache: true
 
       - name: Build docs
-        run: make -C docs test
+        id: docs-build
+        shell: bash
+        run: |
+          make -C docs test SPHINXOPTS="-j auto -w $RUNNER_TEMP/docs-warnings.log" \
+            2>&1 | tee "$RUNNER_TEMP/docs-build.log"
+
+      - name: Summarize docs diagnostics
+        if: always()
+        uses: scylladb/sphinx-scylladb-theme/.github/actions/docs-report@0d821fc4038ee9ad6363362c02035132489bf3f6
+        with:
+          build-outcome: ${{ steps.docs-build.outcome }}
 
       - name: Show preprocessing changes
         run: diff -r docs/source docs/_source || true
