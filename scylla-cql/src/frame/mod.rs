@@ -182,20 +182,31 @@ pub async fn read_response_frame(
     let length = buf.get_u32() as usize;
 
     let mut raw_body = Vec::with_capacity(length).limit(length);
-    while raw_body.has_remaining_mut() {
-        let n = reader.read_buf(&mut raw_body).await.map_err(|err| {
-            FrameHeaderParseError::BodyChunkIoError(raw_body.remaining_mut(), err)
-        })?;
+    read_response_body(reader, &mut raw_body, length).await?;
+
+    Ok((frame_params, opcode, raw_body.into_inner().into()))
+}
+
+/// Fills `body` from `reader`. `length` is the length of the whole body.
+async fn read_response_body(
+    reader: &mut (impl AsyncRead + Unpin),
+    mut body: impl BufMut,
+    length: usize,
+) -> Result<(), FrameHeaderParseError> {
+    while body.has_remaining_mut() {
+        let n = reader
+            .read_buf(&mut body)
+            .await
+            .map_err(|err| FrameHeaderParseError::BodyChunkIoError(body.remaining_mut(), err))?;
         if n == 0 {
             // EOF, too early
             return Err(FrameHeaderParseError::ConnectionClosed(
-                raw_body.remaining_mut(),
+                body.remaining_mut(),
                 length,
             ));
         }
     }
-
-    Ok((frame_params, opcode, raw_body.into_inner().into()))
+    Ok(())
 }
 
 /// Represents the already parsed response body extensions,
