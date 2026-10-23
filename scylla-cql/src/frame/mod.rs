@@ -262,34 +262,23 @@ pub fn parse_response_body_extensions(
     }
 
     let trace_id = if flags & flag::TRACING != 0 {
-        let buf = &mut &*body;
-        let trace_id =
-            types::read_uuid(buf).map_err(FrameBodyExtensionsParseError::TraceIdParse)?;
-        body.advance(16);
+        let trace_id = types::parse_prefix(&mut body, types::read_uuid)
+            .map_err(FrameBodyExtensionsParseError::TraceIdParse)?;
         Some(trace_id)
     } else {
         None
     };
 
     let warnings = if flags & flag::WARNING != 0 {
-        let body_len = body.len();
-        let buf = &mut &*body;
-        let warnings = types::read_string_list(buf)
-            .map_err(FrameBodyExtensionsParseError::WarningsListParse)?;
-        let buf_len = buf.len();
-        body.advance(body_len - buf_len);
-        warnings
+        types::parse_prefix(&mut body, types::read_string_list)
+            .map_err(FrameBodyExtensionsParseError::WarningsListParse)?
     } else {
         Vec::new()
     };
 
     let custom_payload = if flags & flag::CUSTOM_PAYLOAD != 0 {
-        let body_len = body.len();
-        let buf = &mut &*body;
-        let payload_map = types::read_bytes_map(buf)
+        let payload_map = types::parse_prefix(&mut body, types::read_bytes_map)
             .map_err(FrameBodyExtensionsParseError::CustomPayloadMapParse)?;
-        let buf_len = buf.len();
-        body.advance(body_len - buf_len);
         Some(payload_map)
     } else {
         None
