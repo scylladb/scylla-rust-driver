@@ -16,7 +16,6 @@ use crate::frame::frame_errors::{CqlRequestSerializationError, CqlResponseParseE
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::request::CqlRequestKind;
 use crate::frame::request::options::{self, Options};
-use crate::frame::request::query::QueryParameters;
 use crate::frame::request::register::Register;
 use crate::frame::response::authenticate::Authenticate;
 use crate::frame::response::result::{ResultMetadata, TableSpec};
@@ -1035,7 +1034,7 @@ impl Connection {
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
-        paging_state: PagingState,
+        mut paging_state: PagingState,
         tablet_block_hint: u8,
     ) -> Result<QueryResponse, RequestAttemptError> {
         let get_timestamp_from_gen = || {
@@ -1047,10 +1046,6 @@ impl Connection {
         let timestamp = prepared_statement
             .get_timestamp()
             .or_else(get_timestamp_from_gen);
-
-        let current_result_metadata = prepared_statement.get_current_result_metadata();
-        let cached_metadata_params =
-            self.calculate_cached_metadata_params(prepared_statement, &current_result_metadata);
 
         // On a connection that negotiated TABLETS_ROUTING_V2 the server reads exactly one
         // tablet-version block byte after the query parameters for every EXECUTE. Enforce
@@ -1066,85 +1061,89 @@ impl Connection {
             .tablets_v2_supported
             .then_some(tablet_block_hint);
 
-        let execute_frame = execute::Execute {
-            id: prepared_statement.get_id().as_ref().into(),
-            result_metadata_id: cached_metadata_params.result_metadata_id.map(Into::into),
-            parameters: query::QueryParameters {
-                consistency,
-                serial_consistency,
-                values: Cow::Borrowed(values),
-                page_size: page_size.map(Into::into),
-                timestamp,
-                skip_metadata: cached_metadata_params.skip_metadata,
-                paging_state,
-            },
-            tablet_version_block,
-        };
-
-        let query_response = self
-            .send_request(
-                &execute_frame,
-                true,
-                prepared_statement.config.tracing,
-                cached_metadata_params.cached_metadata,
-            )
-            .await?;
-
-        if let Some(spec) = prepared_statement.get_shared_table_spec()
-            && let Err(e) = self
-                .update_tablets_from_response(spec, &query_response)
-                .await
-        {
-            tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
-        }
-
-        Self::handle_result_metadata_new_id(prepared_statement, &query_response);
-
-        match &query_response.response {
-            Response::Error(frame::response::Error {
-                error: DbError::Unprepared { statement_id },
-                ..
-            }) => {
-                debug!(
-                    "Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}",
-                    statement_id
-                );
-                // Repreparation of a statement is needed
-                self.reprepare(prepared_statement.get_statement(), prepared_statement)
-                    .await?;
-                // Metadata may have changed in reprepare, or in some concurrent execution
+        // If the server doesn't know the statement id (e.g. it evicted the
+        // statement from its cache), it responds with `Unprepared`. The
+        // statement is then reprepared, and the request is sent again. This is
+        // done only once, so that a server that keeps responding with
+        // `Unprepared` doesn't keep this loop going. The error of the second
+        // attempt is returned, like any other error.
+        let mut reprepared = false;
+        loop {
+            // Scoped, so that the response is not kept in this future's state
+            // while repreparing.
+            {
+                // Metadata may have changed in reprepare, or in some concurrent execution.
                 let current_result_metadata = prepared_statement.get_current_result_metadata();
-                let cached_metadata_params = self
+                let CachedMetadataParameters {
+                    cached_metadata,
+                    skip_metadata,
+                    result_metadata_id,
+                } = self
                     .calculate_cached_metadata_params(prepared_statement, &current_result_metadata);
-                let new_response = self
-                    .send_request(
-                        &execute::Execute {
-                            result_metadata_id: cached_metadata_params
-                                .result_metadata_id
-                                .map(Into::into),
-                            parameters: QueryParameters {
-                                skip_metadata: cached_metadata_params.skip_metadata,
-                                ..execute_frame.parameters
-                            },
-                            ..execute_frame
+
+                // Serialized before sending, so that the frame is not kept in this
+                // future's state.
+                let request;
+                (request, paging_state) = {
+                    let execute_frame = execute::Execute {
+                        id: prepared_statement.get_id().as_ref().into(),
+                        result_metadata_id: result_metadata_id.map(Into::into),
+                        parameters: query::QueryParameters {
+                            consistency,
+                            serial_consistency,
+                            values: Cow::Borrowed(values),
+                            page_size: page_size.map(Into::into),
+                            timestamp,
+                            skip_metadata,
+                            paging_state,
                         },
+                        tablet_version_block,
+                    };
+                    let request = self.serialize_request(
+                        &execute_frame,
                         true,
                         prepared_statement.config.tracing,
-                        cached_metadata_params.cached_metadata,
-                    )
-                    .await?;
+                    )?;
+                    // Taken back, in case the request is sent again.
+                    (request, execute_frame.parameters.paging_state)
+                };
+
+                let task_response = self.router_handle.send_request(request).await?;
+                let query_response = self.parse_task_response(task_response, cached_metadata)?;
 
                 if let Some(spec) = prepared_statement.get_shared_table_spec()
-                    && let Err(e) = self.update_tablets_from_response(spec, &new_response).await
+                    && let Err(e) = self
+                        .update_tablets_from_response(spec, &query_response)
+                        .await
                 {
                     tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
                 }
 
-                Self::handle_result_metadata_new_id(prepared_statement, &new_response);
+                Self::handle_result_metadata_new_id(prepared_statement, &query_response);
 
-                Ok(new_response)
+                // Any response other than `Unprepared` is the result.
+                let Response::Error(frame::response::Error {
+                    error: DbError::Unprepared { statement_id },
+                    ..
+                }) = &query_response.response
+                else {
+                    return Ok(query_response);
+                };
+                // Still `Unprepared` after repreparing: give up, and return it.
+                if reprepared {
+                    return Ok(query_response);
+                }
+                debug!(
+                    "Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}",
+                    statement_id
+                );
             }
-            _ => Ok(query_response),
+
+            // Repreparing is rare, so it is boxed to keep its state out of every
+            // request's future.
+            Box::pin(self.reprepare(prepared_statement.get_statement(), prepared_statement))
+                .await?;
+            reprepared = true;
         }
     }
 
