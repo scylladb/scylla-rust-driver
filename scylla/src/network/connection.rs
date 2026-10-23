@@ -131,16 +131,30 @@ impl RouterHandle {
         &self,
         request: SerializedRequest,
     ) -> Result<TaskResponse, InternalRequestError> {
+        let channel_error =
+            || -> BrokenConnectionError { BrokenConnectionErrorKind::ChannelError.into() };
         // Room in the channel is reserved before the stream id, so that requests
         // waiting for the writer don't hold stream ids.
-        let permit = self
-            .submit_channel
-            .reserve()
-            .await
-            .map_err(|_| -> BrokenConnectionError {
-                BrokenConnectionErrorKind::ChannelError.into()
-            })?;
-        let response = self.submit(permit, request)?;
+        //
+        // The channel is rarely full, so waiting for it is boxed, together with
+        // the request, to keep both out of every request's future.
+        let response = match self.submit_channel.try_reserve() {
+            Ok(permit) => self.submit(permit, request)?,
+            Err(mpsc::error::TrySendError::Full(())) => {
+                Box::pin(async move {
+                    let permit = self
+                        .submit_channel
+                        .reserve()
+                        .await
+                        .map_err(|_| channel_error())?;
+                    self.submit(permit, request)
+                })
+                .await?
+            }
+            Err(mpsc::error::TrySendError::Closed(())) => {
+                return Err(channel_error().into());
+            }
+        };
 
         Ok(response.await?)
     }
