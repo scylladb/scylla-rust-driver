@@ -6,7 +6,9 @@ use uuid::Uuid;
 use super::tablets::TabletsInfo;
 use super::{ReplicaLocator, ReplicaSet};
 use crate::cluster::Node;
-use crate::cluster::metadata::{ConsistencyMode, Keyspace, Metadata, Peer, Strategy};
+use crate::cluster::metadata::{
+    ConsistencyMode, Keyspace, Metadata, Peer, Strategy, Topology, UntranslatedEndpoint,
+};
 use crate::cluster::{NodeAddr, NodeRef};
 use crate::network::PoolConfig;
 use crate::routing::Token;
@@ -168,7 +170,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
     .collect();
 
     Metadata {
-        peers: Vec::from(peers),
+        topology: Topology::Peers(Vec::from(peers)),
         keyspaces,
         cluster_name: Some("TestCluster".into()),
         client_routes: None,
@@ -193,9 +195,12 @@ pub(crate) fn create_ring(metadata: &Metadata) -> impl Iterator<Item = (Token, A
     let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
 
     let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
-    for peer in &metadata.peers {
+    let Topology::Peers(peers) = &metadata.topology else {
+        panic!("locator tests always describe a peer list")
+    };
+    for peer in peers {
         let node = Arc::new(Node::new(
-            peer.to_peer_endpoint(),
+            UntranslatedEndpoint::Peer(peer.to_peer_endpoint()),
             &pool_config,
             connectivity_events_sender.clone(),
             None,
