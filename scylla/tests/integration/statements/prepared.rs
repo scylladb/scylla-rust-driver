@@ -1,5 +1,6 @@
 use assert_matches::assert_matches;
 use itertools::Itertools;
+use scylla::client::caching_session::CachingSession;
 use scylla::client::session::Session;
 use scylla::cluster::metadata::{ColumnType, NativeType};
 use scylla::errors::{DbError, PrepareError, RequestAttemptError};
@@ -269,7 +270,27 @@ async fn test_prepared_partitioner() {
         &PartitionerName::CDC
     );
 
-    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+    // A CachingSession must set the partitioner both when it prepares a statement,
+    // and when it serves the statement from its cache.
+    let caching_session: CachingSession = CachingSession::from(session, 100);
+    let verify_partitioner = || async {
+        let query = Statement::new("SELECT a FROM t2_scylla_cdc_log WHERE \"cdc$stream_id\" = ?");
+        let prepared = caching_session
+            .add_prepared_statement(&query)
+            .await
+            .unwrap();
+        assert_eq!(prepared.get_partitioner_name(), &PartitionerName::CDC);
+    };
+
+    // Using a closure here instead of a loop so that, when the test fails,
+    // one can see which case failed by looking at the full backtrace
+    verify_partitioner().await;
+    verify_partitioner().await;
+
+    caching_session
+        .ddl(format!("DROP KEYSPACE {ks}"))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
