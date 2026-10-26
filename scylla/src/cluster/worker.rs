@@ -426,7 +426,7 @@ impl ClusterWorker {
         // Unlike UP hints, DOWN hints are applied to the *current* state: a keepalive
         // query only makes sense for a node the driver still holds connections to, so
         // there is nothing a freshly built state could add, and waiting for the refresh
-        // (which awaits pool initialization) would only delay the liveness probe.
+        // would only delay the liveness probe.
         update
             .status_hints
             .iter()
@@ -456,27 +456,29 @@ impl ClusterWorker {
             }
             // Partial fetches replace only the aspects they re-read; everything
             // else (schema or topology, tablets, connection pools) is reused.
+            // If they re-read nothing, or nothing that changed, there is no
+            // new state to publish.
             Some(MetadataChanges::Partial(PartialMetadataChanges {
                 peers,
                 schema,
                 client_routes_updates: _, // Already applied above.
-            })) if peers.is_some() || schema.is_some() => {
-                let new_cluster_state = Arc::new(
-                    cluster_state
-                        .new_with_partial_changes(
-                            peers,
-                            schema,
-                            &self.node_config,
-                            self.host_filter.as_deref(),
-                        )
-                        .await,
-                );
-                Some((new_cluster_state, Vec::new()))
+            })) => {
+                let new_cluster_state = cluster_state
+                    .new_with_partial_changes(
+                        peers,
+                        schema,
+                        &self.node_config,
+                        self.host_filter.as_deref(),
+                    )
+                    .await;
+                if new_cluster_state.is_none() {
+                    debug!(
+                        "Partial metadata fetches changed neither topology nor schema, not publishing a new ClusterState"
+                    );
+                }
+                new_cluster_state.map(|state| (Arc::new(state), Vec::new()))
             }
-            None | Some(MetadataChanges::Partial(_)) => {
-                // For now there is nothing that requires publishing new ClusterState.
-                None
-            }
+            None => None,
         };
 
         // Regardless of whether we have a new state, we need to process UP hints.
@@ -495,9 +497,19 @@ impl ClusterWorker {
             &mut self.node_status,
         );
 
-        new_cluster_state
-            .wait_until_all_pools_are_initialized()
-            .await;
+        // The wait keeps a working session from being replaced by one whose
+        // pools are all still connecting. That is only possible when no
+        // connected node carries over, e.g. from dummy initial metadata to
+        // the first real fetch. Otherwise it would just delay every other
+        // update this worker handles.
+        if !cluster_state
+            .topology
+            .shares_enabled_node_with(&new_cluster_state.topology)
+        {
+            new_cluster_state
+                .wait_until_all_pools_are_initialized()
+                .await;
+        }
 
         self.update_cluster_state(new_cluster_state);
 

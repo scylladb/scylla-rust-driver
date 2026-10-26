@@ -186,7 +186,7 @@ impl ControlConnection {
         };
         let peers_and_cluster_name;
         let client_routes: Option<ClientRoutes>;
-        let keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>;
+        let keyspaces: HashMap<String, Result<Arc<Keyspace>, SingleKeyspaceMetadataError>>;
 
         (peers_and_cluster_name, client_routes, keyspaces) =
             tokio::try_join!(peers_query, client_routes_query, keyspaces_query)?;
@@ -760,7 +760,7 @@ impl ControlConnection {
         &self,
         keyspaces_to_fetch: &[String],
         schema_metadata_fetch_mode: SchemaMetadataFetchMode,
-    ) -> Result<PerKeyspaceResult<Keyspace, SingleKeyspaceMetadataError>, MetadataError> {
+    ) -> Result<PerKeyspaceResult<Arc<Keyspace>, SingleKeyspaceMetadataError>, MetadataError> {
         let schema_metadata_fetch_level = match schema_metadata_fetch_mode {
             SchemaMetadataFetchMode::Disabled => return Ok(HashMap::new()),
             SchemaMetadataFetchMode::Enabled(level) => level,
@@ -892,7 +892,7 @@ impl ControlConnection {
                 user_defined_types,
             };
 
-            Ok((keyspace_name, Ok(keyspace)))
+            Ok((keyspace_name, Ok(Arc::new(keyspace))))
         })
         .try_collect()
         .await
