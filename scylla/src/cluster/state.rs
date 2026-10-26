@@ -291,15 +291,7 @@ impl ClusterState {
         host_filter: Option<&dyn HostFilter>,
     ) -> Self {
         let (topology, ring) = match peers {
-            Some(peers) => {
-                let (new_known_nodes, ring) = Self::calculate_new_topology(
-                    peers,
-                    &self.topology.known_nodes,
-                    node_config,
-                    host_filter,
-                );
-                (Arc::new(Topology::new(new_known_nodes)), ring)
-            }
+            Some(peers) => self.updated_topology(peers, node_config, host_filter),
             // The topology is unchanged, so it is shared with `self`. The ring
             // in place is exactly the (token, node) list that it implies, so it
             // is reused as is.
@@ -331,6 +323,23 @@ impl ClusterState {
             locator,
             cluster_name: self.cluster_name.clone(),
         }
+    }
+
+    /// The topology that `peers` describe, with its ring, reusing the `Node`
+    /// objects of `self` where possible.
+    fn updated_topology(
+        &self,
+        peers: Vec<Peer>,
+        node_config: &NodeConfig,
+        host_filter: Option<&dyn HostFilter>,
+    ) -> (Arc<Topology>, Ring) {
+        let (new_known_nodes, ring) = Self::calculate_new_topology(
+            peers,
+            &self.topology.known_nodes,
+            node_config,
+            host_filter,
+        );
+        (Arc::new(Topology::new(new_known_nodes)), ring)
     }
 
     /// Applies a partial schema update onto the schema metadata of `self`:
