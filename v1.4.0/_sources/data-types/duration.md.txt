@@ -1,0 +1,21 @@
+# Duration
+`Duration` is represented as [`CqlDuration`](https://docs.rs/scylla/latest/scylla/frame/value/struct.CqlDuration.html)\
+
+```rust
+use futures::TryStreamExt;
+use scylla::value::CqlDuration;
+
+// Insert some duration into the table
+let to_insert: CqlDuration = CqlDuration { months: 1, days: 2, nanoseconds: 3 };
+session
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read duration from the table
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(CqlDuration,)>()?;
+while let Some((duration_value,)) = iter.try_next().await? {
+    println!("{:?}", duration_value);
+}
+```
