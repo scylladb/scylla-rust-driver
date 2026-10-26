@@ -307,6 +307,54 @@ impl ColumnType<'_> {
         }
     }
 
+    /// Returns the size in bytes of a serialized value of this type, counting each
+    /// part of variable size as 0 bytes. Empty values, and tuples and UDTs with
+    /// null fields, are smaller.
+    ///
+    /// Unlike [`type_size_for_vector`](Self::type_size_for_vector), this counts all
+    /// fixed-size native types.
+    pub(crate) fn size_hint(&self) -> usize {
+        match self {
+            ColumnType::Native(native) => match native {
+                NativeType::Boolean | NativeType::TinyInt => 1,
+                NativeType::SmallInt => 2,
+                NativeType::Date | NativeType::Float | NativeType::Int => 4,
+                NativeType::BigInt
+                | NativeType::Counter
+                | NativeType::Double
+                | NativeType::Time
+                | NativeType::Timestamp => 8,
+                NativeType::Timeuuid | NativeType::Uuid => 16,
+                NativeType::Ascii
+                | NativeType::Blob
+                | NativeType::Decimal
+                | NativeType::Duration
+                | NativeType::Inet
+                | NativeType::Text
+                | NativeType::Varint => 0,
+            },
+            // A vector prefixes each element with its length if Cassandra doesn't
+            // treat the element type as fixed size. Such vectors count as 0 bytes.
+            ColumnType::Vector { .. } => self.type_size_for_vector().unwrap_or(0),
+            ColumnType::Tuple(field_types) => Self::fields_size_hint(field_types.iter()),
+            ColumnType::UserDefinedType { definition, .. } => {
+                Self::fields_size_hint(definition.field_types.iter().map(|(_, typ)| typ))
+            }
+            ColumnType::Collection { .. } => 0,
+        }
+    }
+
+    /// Returns the size hint of a tuple or UDT value with fields of the given types.
+    fn fields_size_hint<'a>(field_types: impl Iterator<Item = &'a Self>) -> usize
+    where
+        Self: 'a,
+    {
+        // Each field is an [int] length followed by its bytes.
+        field_types
+            .map(|typ| size_of::<i32>() + typ.size_hint())
+            .sum()
+    }
+
     /// Returns true if the type allows a special, empty value in addition to its
     /// natural representation. For example, bigint represents a 64-bit integer,
     /// but it can also hold a 0-bit empty value.

@@ -770,43 +770,57 @@ impl RawMetadataAndRawRows {
     /// Deserializes flags and paging state; the other part of result metadata
     /// as well as rows remain serialized.
     fn deserialize(
-        frame: &mut FrameSlice,
+        mut frame: Bytes,
         cached_metadata: Option<Arc<ResultMetadata<'static>>>,
         features: &ProtocolFeatures,
     ) -> StdResult<(Self, PagingStateResponse), RawRowsAndPagingStateResponseParseError> {
-        let flags = types::read_int(frame.as_slice_mut())
-            .map_err(|err| RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into()))?;
-        let global_tables_spec = flags & 0x0001 != 0;
-        let has_more_pages = flags & 0x0002 != 0;
-        let no_metadata = flags & 0x0004 != 0;
-        let metadata_changed = features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
+        let (col_count, global_tables_spec, metadata_presense, paging_state) =
+            types::parse_prefix(&mut frame, |buf| {
+                let flags = types::read_int(buf).map_err(|err| {
+                    RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into())
+                })?;
+                let global_tables_spec = flags & 0x0001 != 0;
+                let has_more_pages = flags & 0x0002 != 0;
+                let no_metadata = flags & 0x0004 != 0;
+                let metadata_changed =
+                    features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
 
-        let metadata_presense = match (no_metadata, metadata_changed) {
-            (true, true) => {
-                return Err(RawRowsAndPagingStateResponseParseError::IdPresentForEmptyMetadata);
-            }
-            (true, false) => MetadataPresence::NoMetadata,
-            (false, true) => MetadataPresence::MetadataWithNewId,
-            (false, false) => MetadataPresence::JustMetadata,
-        };
+                let metadata_presense = match (no_metadata, metadata_changed) {
+                    (true, true) => {
+                        return Err(
+                            RawRowsAndPagingStateResponseParseError::IdPresentForEmptyMetadata,
+                        );
+                    }
+                    (true, false) => MetadataPresence::NoMetadata,
+                    (false, true) => MetadataPresence::MetadataWithNewId,
+                    (false, false) => MetadataPresence::JustMetadata,
+                };
 
-        let col_count = types::read_int_length(frame.as_slice_mut())
-            .map_err(RawRowsAndPagingStateResponseParseError::ColumnCountParseError)?;
+                let col_count = types::read_int_length(buf)
+                    .map_err(RawRowsAndPagingStateResponseParseError::ColumnCountParseError)?;
 
-        let raw_paging_state = has_more_pages
-            .then(|| {
-                types::read_bytes(frame.as_slice_mut())
-                    .map_err(RawRowsAndPagingStateResponseParseError::PagingStateParseError)
-            })
-            .transpose()?;
+                let raw_paging_state = has_more_pages
+                    .then(|| {
+                        types::read_bytes(buf)
+                            .map_err(RawRowsAndPagingStateResponseParseError::PagingStateParseError)
+                    })
+                    .transpose()?;
 
-        let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
+                let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
+
+                Ok((
+                    col_count,
+                    global_tables_spec,
+                    metadata_presense,
+                    paging_state,
+                ))
+            })?;
 
         let raw_rows = Self {
             col_count,
             global_tables_spec,
             metadata_presence: metadata_presense,
-            raw_metadata_and_rows: frame.to_bytes(),
+            raw_metadata_and_rows: frame,
             cached_metadata,
         };
 
@@ -906,15 +920,14 @@ impl RawMetadataAndRawRows {
             }
         };
 
-        let mut frame_slice = FrameSlice::new(&row_count_and_raw_rows);
-
-        let rows_count: usize = types::read_int_length(frame_slice.as_slice_mut())
+        let mut raw_rows = row_count_and_raw_rows;
+        let rows_count = types::parse_prefix(&mut raw_rows, types::read_int_length)
             .map_err(ResultMetadataAndRowsCountParseError::RowsCountParseError)?;
 
         Ok(DeserializedMetadataAndRawRows {
             metadata: metadata_deserialized,
             rows_count,
-            raw_rows: frame_slice.to_bytes(),
+            raw_rows,
             raw_metadata_and_rows_bytes_size,
         })
     }
@@ -963,8 +976,7 @@ fn deser_rows(
     features: &ProtocolFeatures,
 ) -> StdResult<(RawMetadataAndRawRows, PagingStateResponse), RawRowsAndPagingStateResponseParseError>
 {
-    let mut frame_slice = FrameSlice::new(&buf_bytes);
-    RawMetadataAndRawRows::deserialize(&mut frame_slice, cached_metadata.cloned(), features)
+    RawMetadataAndRawRows::deserialize(buf_bytes, cached_metadata.cloned(), features)
 }
 
 fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspaceParseError> {
@@ -1023,25 +1035,20 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeE
 ///
 /// Reuses cached metadata if provided, otherwise deserializes it.
 pub fn deserialize_with_features(
-    buf_bytes: Bytes,
+    mut buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
     features: &ProtocolFeatures,
 ) -> StdResult<Result, CqlResultParseError> {
-    let buf = &mut &*buf_bytes;
     use self::Result::*;
     Ok(
-        match types::read_int(buf)
+        match types::parse_prefix(&mut buf_bytes, types::read_int)
             .map_err(|err| CqlResultParseError::ResultIdParseError(err.into()))?
         {
             0x0001 => Void,
-            0x0002 => Rows(deser_rows(
-                buf_bytes.slice_ref(buf),
-                cached_metadata,
-                features,
-            )?),
-            0x0003 => SetKeyspace(deser_set_keyspace(buf)?),
-            0x0004 => Prepared(deser_prepared(buf, features)?),
-            0x0005 => SchemaChange(deser_schema_change(buf)?),
+            0x0002 => Rows(deser_rows(buf_bytes, cached_metadata, features)?),
+            0x0003 => SetKeyspace(deser_set_keyspace(&mut &*buf_bytes)?),
+            0x0004 => Prepared(deser_prepared(&mut &*buf_bytes, features)?),
+            0x0005 => SchemaChange(deser_schema_change(&mut &*buf_bytes)?),
             id => return Err(CqlResultParseError::UnknownResultId(id)),
         },
     )
@@ -1315,7 +1322,7 @@ mod test_utils {
             };
 
             let (raw_rows, _paging_state_response) = Self::deserialize(
-                &mut FrameSlice::new(&raw_result_rows),
+                raw_result_rows,
                 cached_metadata,
                 &ProtocolFeatures::default(),
             )
