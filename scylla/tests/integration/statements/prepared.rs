@@ -1,17 +1,22 @@
 use assert_matches::assert_matches;
 use itertools::Itertools;
 use scylla::client::caching_session::CachingSession;
+use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::cluster::metadata::{ColumnType, NativeType};
 use scylla::errors::{DbError, PrepareError, RequestAttemptError};
 use scylla::frame::response::result::{ColumnSpec, TableSpec};
-use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
+use scylla::observability::history::{HistoryCollector, HistoryListener};
+use scylla::policies::load_balancing::{
+    DefaultPolicy, LoadBalancingPolicy, NodeIdentifier, SingleTargetLoadBalancingPolicy,
+};
+use scylla::policies::retry::{FallthroughRetryPolicy, RetryPolicy};
 use scylla::response::{PagingState, PagingStateResponse};
 use scylla::routing::Token;
 use scylla::routing::partitioner::PartitionerName;
 use scylla::serialize::row::SerializeRow;
-use scylla::statement::Statement;
 use scylla::statement::prepared::PreparedStatement;
+use scylla::statement::{Consistency, SerialConsistency, Statement};
 use scylla_cql::frame::types;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
@@ -20,6 +25,7 @@ use scylla_proxy::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -192,16 +198,15 @@ async fn test_prepared_statement() {
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
-/// Tests that PreparedStatement inherits the StatementConfig from Statement
-/// that it originates from.
-// Commit message:
-//
-// statement: preserve query configuration during prepare()
-// When preparing a statement based on a Query instance, we should preserve the whole
-// configuration. It’s especially important for CachingSession users, because prepare()
-// happens implicitly in this case, so there’s no other way to customize the configuration
-// for a particular query.
-// Fixes #340
+/// Tests that a `PreparedStatement` inherits the `StatementConfig` of the
+/// `Statement` that it is prepared from.
+///
+/// `prepare()` must keep the whole configuration of the statement. This is
+/// most important for `CachingSession` users. `CachingSession` prepares the
+/// statements implicitly. Thus, the user has no other way to configure one
+/// particular statement.
+///
+/// Regression test for <https://github.com/scylladb/scylla-rust-driver/issues/340>.
 #[tokio::test]
 async fn test_prepared_config() {
     setup_tracing();
@@ -210,11 +215,68 @@ async fn test_prepared_config() {
     let mut query = Statement::new("SELECT * FROM system_schema.tables");
     query.set_is_idempotent(true);
     query.set_page_size(42);
+    query.set_consistency(Consistency::One);
+    query.set_serial_consistency(Some(SerialConsistency::LocalSerial));
+    query.set_tracing(true);
+    query.set_request_timeout(Some(Duration::from_millis(1)));
+    query.set_timestamp(Some(42));
 
-    let prepared_statement = session.prepare(query).await.unwrap();
+    let history_listener: Arc<dyn HistoryListener> = Arc::new(HistoryCollector::new());
+    let load_balancing_policy: Arc<dyn LoadBalancingPolicy> = DefaultPolicy::builder().build();
+    let retry_policy: Arc<dyn RetryPolicy> = Arc::new(FallthroughRetryPolicy::new());
+    // An `ExecutionProfileHandle` cannot be compared. Thus, the profile gets a
+    // request timeout that is not the default, and the test checks that value.
+    let execution_profile_handle = ExecutionProfile::builder()
+        .request_timeout(Some(Duration::from_secs(42)))
+        .build()
+        .into_handle();
+    query.set_history_listener(Arc::clone(&history_listener));
+    query.set_load_balancing_policy(Some(Arc::clone(&load_balancing_policy)));
+    query.set_retry_policy(Some(Arc::clone(&retry_policy)));
+    query.set_execution_profile_handle(Some(execution_profile_handle));
+
+    // The test does not check `skip_result_metadata`. `Statement` has no public
+    // setter for it. Thus, the test cannot set it to a value that is not the
+    // default.
+
+    let mut prepared_statement = session.prepare(query).await.unwrap();
 
     assert!(prepared_statement.get_is_idempotent());
     assert_eq!(prepared_statement.get_page_size(), 42);
+    assert_eq!(prepared_statement.get_consistency(), Some(Consistency::One));
+    assert_eq!(
+        prepared_statement.get_serial_consistency(),
+        Some(SerialConsistency::LocalSerial)
+    );
+    assert!(prepared_statement.get_tracing());
+    assert_eq!(
+        prepared_statement.get_request_timeout(),
+        Some(Duration::from_millis(1))
+    );
+    assert_eq!(prepared_statement.get_timestamp(), Some(42));
+    // `PreparedStatement` has no getter for the history listener. Thus, the
+    // test removes the listener to get it.
+    assert!(Arc::ptr_eq(
+        &prepared_statement.remove_history_listener().unwrap(),
+        &history_listener
+    ));
+    assert!(Arc::ptr_eq(
+        prepared_statement.get_load_balancing_policy().unwrap(),
+        &load_balancing_policy
+    ));
+    assert!(Arc::ptr_eq(
+        prepared_statement.get_retry_policy().unwrap(),
+        &retry_policy
+    ));
+    assert_eq!(
+        prepared_statement
+            .get_execution_profile_handle()
+            .unwrap()
+            .pointee_to_builder()
+            .build()
+            .get_request_timeout(),
+        Some(Duration::from_secs(42))
+    );
 }
 
 #[tokio::test]
