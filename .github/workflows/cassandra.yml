@@ -1,6 +1,9 @@
 # This workflow runs all tests on cassandra to ensure full compatibility
 name: Cassandra tests
 
+permissions:
+  contents: read
+
 on:
   push:
     branches:
