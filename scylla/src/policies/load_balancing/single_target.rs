@@ -76,8 +76,9 @@ impl LoadBalancingPolicy for SingleTargetLoadBalancingPolicy {
     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         let node = match &self.node_identifier {
             NodeIdentifier::Node(node) => Some(node),
-            NodeIdentifier::HostId(host_id) => cluster.known_nodes.get(host_id),
+            NodeIdentifier::HostId(host_id) => cluster.topology.known_nodes.get(host_id),
             NodeIdentifier::NodeAddress(addr) => cluster
+                .topology
                 .all_nodes
                 .iter()
                 .find(|node| SocketAddr::new(node.address.ip(), node.address.port()) == *addr),

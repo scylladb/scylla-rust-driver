@@ -3429,6 +3429,7 @@ mod tests {
 
         let connection = session
             .get_cluster_state()
+            .topology
             .all_nodes
             .first()
             .unwrap()
