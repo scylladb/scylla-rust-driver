@@ -192,16 +192,15 @@ async fn test_prepared_statement() {
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
-/// Tests that PreparedStatement inherits the StatementConfig from Statement
-/// that it originates from.
-// Commit message:
-//
-// statement: preserve query configuration during prepare()
-// When preparing a statement based on a Query instance, we should preserve the whole
-// configuration. It’s especially important for CachingSession users, because prepare()
-// happens implicitly in this case, so there’s no other way to customize the configuration
-// for a particular query.
-// Fixes #340
+/// Tests that a `PreparedStatement` inherits the `StatementConfig` of the
+/// `Statement` that it is prepared from.
+///
+/// `prepare()` must keep the whole configuration of the statement. This is
+/// most important for `CachingSession` users. `CachingSession` prepares the
+/// statements implicitly. Thus, the user has no other way to configure one
+/// particular statement.
+///
+/// Regression test for <https://github.com/scylladb/scylla-rust-driver/issues/340>.
 #[tokio::test]
 async fn test_prepared_config() {
     setup_tracing();
