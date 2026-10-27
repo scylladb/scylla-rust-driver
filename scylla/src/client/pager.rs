@@ -27,7 +27,7 @@ use crate::deserialize::DeserializeOwnedRow;
 use crate::deserialize::result::RawRowLendingIterator;
 use crate::deserialize::row::{ColumnIterator, DeserializeRow};
 use crate::deserialize::{DeserializationError, TypeCheckError};
-use crate::errors::{PagerExecutionError, RequestAttemptError, RequestError};
+use crate::errors::{PagerExecutionError, RequestAttemptError, RequestError, SessionShutDownError};
 use crate::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use crate::frame::request::query::{PagingState, PagingStateResponse};
 use crate::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
@@ -1386,6 +1386,10 @@ pub enum NextPageError {
     /// Failed to type check a received page.
     #[error("Failed to type check a received page: {0}")]
     TypeCheckError(#[from] TypeCheckError),
+
+    /// The session is shut down. It does not accept new requests.
+    #[error(transparent)]
+    SessionShutDown(#[from] SessionShutDownError),
 }
 
 /// An error returned by async pager API.
