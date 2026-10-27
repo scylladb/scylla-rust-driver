@@ -1566,7 +1566,7 @@ impl Session {
 
         if let Some(keyspace_name) = config.used_keyspace {
             session
-                .use_keyspace(keyspace_name, config.keyspace_case_sensitive)
+                .do_use_keyspace(keyspace_name, config.keyspace_case_sensitive)
                 .await?;
         }
 
@@ -1787,7 +1787,7 @@ impl Session {
                 "Detected USE KEYSPACE query, setting session's keyspace to {}",
                 set_keyspace.keyspace_name
             );
-            self.use_keyspace(set_keyspace.keyspace_name.clone(), true)
+            self.do_use_keyspace(set_keyspace.keyspace_name.clone(), true)
                 .await?;
         }
 
@@ -1837,7 +1837,7 @@ impl Session {
             debug!("Auto schema agreement awaiting: schema agreement reached.",);
 
             if self.refresh_metadata_on_auto_schema_agreement {
-                self.refresh_metadata().await?;
+                self.do_refresh_metadata().await?;
             }
         }
 
@@ -2333,7 +2333,18 @@ impl Session {
         keyspace_name: impl Into<String>,
         case_sensitive: bool,
     ) -> Result<(), UseKeyspaceError> {
-        let keyspace_name = keyspace_name.into();
+        self.do_use_keyspace(keyspace_name.into(), case_sensitive)
+            .await
+    }
+
+    /// Implements [`Session::use_keyspace`].
+    /// The driver calls this function directly, when a request that it
+    /// executes needs to change the keyspace.
+    pub(crate) async fn do_use_keyspace(
+        &self,
+        keyspace_name: String,
+        case_sensitive: bool,
+    ) -> Result<(), UseKeyspaceError> {
         self.keyspace_name
             .store(Some(Arc::new(keyspace_name.clone())));
 
@@ -2352,6 +2363,13 @@ impl Session {
     /// Normally this is not needed, the driver should automatically detect
     /// all metadata changes in the cluster.
     pub async fn refresh_metadata(&self) -> Result<(), MetadataError> {
+        self.do_refresh_metadata().await
+    }
+
+    /// Implements [`Session::refresh_metadata`].
+    /// The driver calls this function directly, when a request that it
+    /// executes needs fresh metadata.
+    async fn do_refresh_metadata(&self) -> Result<(), MetadataError> {
         debug!("Session: requested metadata refresh");
         let res = self.cluster.refresh_metadata().await;
         debug!("Session: finished metadata refresh");
