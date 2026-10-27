@@ -92,10 +92,6 @@ impl InFlightRequests {
 
     /// Rejects all requests that try to enter after this call.
     /// It is safe to call this more than once.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Session::shutdown() will use it")
-    )]
     pub(crate) fn close(&self) {
         for shard in &self.shards {
             shard.0.fetch_or(CLOSED, Ordering::AcqRel);
@@ -106,10 +102,6 @@ impl InFlightRequests {
     ///
     /// Call [`close`](Self::close) first. On an open counter, this future
     /// does not wake when the count reaches zero.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Session::shutdown() will use it")
-    )]
     pub(crate) async fn wait_idle(&self) {
         debug_assert!(self.is_closed());
         loop {

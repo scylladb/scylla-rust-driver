@@ -81,6 +81,36 @@ That refresh runs every 60 seconds by default; `cluster_metadata_refresh_interva
 Only the affected keyspaces are re-read, not the whole schema.
 If your cluster's events cannot be relied upon, `periodic_metadata_fetch_mode(PeriodicFetchMode::FullMetadata)` makes each refresh re-read the whole metadata instead.
 
+## Shutting down a Session
+
+`Session::shutdown()` stops a session gracefully:
+1. The session rejects all new requests with a `SessionShutDown` error.
+2. The session waits until the requests in flight complete.
+3. The session stops its background tasks and closes all its connections.
+
+The method takes `&self`, so you can call it through an `Arc<Session>`.
+It waits for the requests in flight without a time limit. To set a limit, use `tokio::time::timeout`:
+```rust
+# extern crate scylla;
+# extern crate tokio;
+# use scylla::client::session::Session;
+# use std::time::Duration;
+# async fn check_only_compiles(session: &Session) {
+if tokio::time::timeout(Duration::from_secs(10), session.shutdown())
+    .await
+    .is_err()
+{
+    eprintln!("Some requests did not complete in 10 seconds");
+}
+# }
+```
+
+If the limit expires, the session continues to reject new requests, but its connections stay open.
+You can then call `shutdown()` again, or drop the session.
+
+A `QueryPager` counts as in flight only while it fetches a page. Thus, a pager that you do not read does not delay the shutdown.
+After the shutdown, the pager returns the rows that it fetched before. When it must fetch a new page, it returns an error.
+
 
 ```{eval-rst}
 .. toctree::
