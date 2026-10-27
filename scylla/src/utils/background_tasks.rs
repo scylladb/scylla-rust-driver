@@ -94,10 +94,6 @@ impl BackgroundTasks {
     /// and waits until they are gone.
     ///
     /// It is safe to call this more than once, also concurrently.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Session::shutdown() will use it")
-    )]
     pub(crate) async fn stop_all(&self) {
         let handles = {
             let mut registry = self.registry.lock().unwrap();
