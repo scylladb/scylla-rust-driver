@@ -21,6 +21,7 @@ use crate::client::execution::{
     NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RequestPaging,
     RunRequestResult, SingleConnectionTarget, choose_tablet_block_hint,
 };
+use crate::client::in_flight::InFlightRequests;
 use crate::client::session::Session;
 use crate::cluster::{ClusterState, Node};
 use crate::deserialize::DeserializeOwnedRow;
@@ -141,6 +142,8 @@ struct PagingExecutor {
     consistency: Consistency,
     serial_consistency: Option<SerialConsistency>,
     metrics: Arc<Metrics>,
+    /// Each page that the background task fetches is a new request.
+    in_flight: Arc<InFlightRequests>,
     history_listener: Option<Arc<dyn HistoryListener>>,
     paging_state: PagingState,
     stable_coordinator: Option<Coordinator>,
@@ -184,6 +187,7 @@ impl PagingExecutor {
                 .serial_consistency
                 .unwrap_or(execution_profile.serial_consistency),
             metrics: session.get_metrics_priv(),
+            in_flight: Arc::clone(session.get_in_flight_requests()),
             history_listener: statement.history_listener.as_ref().map(Arc::clone),
             paging_state: PagingState::start(),
             stable_coordinator: None,
@@ -212,12 +216,22 @@ impl PagingExecutor {
     {
         // Iterates over pages until exhaustion or non-retriable error.
         loop {
+            // After a session shutdown starts, the pager must not send new requests.
+            let Some(request) = self.in_flight.try_enter() else {
+                let _ = sender.send(Err(SessionShutDownError.into())).await;
+                return;
+            };
+
             let page_span = span_creator(&self.cluster_state);
 
             let page_res = self
                 .fetch_one_page(&routing_info, &page_span, &page_query)
                 .instrument(page_span.span().clone())
                 .await;
+
+            // The request is complete. Release it before the page waits in the
+            // channel: a user who does not read the pager must not delay a shutdown.
+            drop(request);
 
             let page_res = match page_res {
                 Ok(RequestExecutionOutcome {
