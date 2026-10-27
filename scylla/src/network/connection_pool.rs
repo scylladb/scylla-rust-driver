@@ -4,7 +4,8 @@ use super::connection::{
 };
 
 use crate::errors::{
-    BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, UseKeyspaceError,
+    BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, SessionShutDownError,
+    UseKeyspaceError,
 };
 #[cfg(test)]
 use crate::policies::reconnect::ExponentialReconnectPolicy;
@@ -431,16 +432,17 @@ impl NodeConnectionPool {
     ) -> Result<(), UseKeyspaceError> {
         let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
 
+        // The other end of these channels is in the PoolRefiller. The refiller can be
+        // gone only when the session or the runtime is shutting down.
         self.use_keyspace_request_sender
             .send(UseKeyspaceRequest {
                 keyspace_name,
                 response_sender,
             })
             .await
-            .expect("Bug in NodeConnectionPool::use_keyspace sending");
-        // Other end of this channel is in the PoolRefiller, can't be dropped while we have &self to _refiller_handle
+            .map_err(|_| SessionShutDownError)?;
 
-        response_receiver.await.unwrap() // PoolRefiller always responds
+        response_receiver.await.map_err(|_| SessionShutDownError)?
     }
 
     // Waits until the pool becomes initialized.
