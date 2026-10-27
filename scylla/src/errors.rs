@@ -597,6 +597,10 @@ pub enum ConnectionPoolError {
     /// A corresponding node was disabled by a host filter.
     #[error("The node has been disabled by a host filter")]
     NodeDisabledByHostFilter,
+
+    /// The pool is closed, because its session was shut down.
+    #[error("The pool is closed, because its session was shut down")]
+    Closed,
 }
 
 /// An error that appeared on a connection level.
