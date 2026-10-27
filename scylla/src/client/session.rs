@@ -2616,6 +2616,9 @@ impl Session {
             SchemaAgreementError::ConnectionPoolError(_)
             | SchemaAgreementError::RequiredHostAbsent(_) => ControlFlow::Continue(()),
 
+            // The session does not accept new requests, so retrying is pointless.
+            SchemaAgreementError::SessionShutDown(_) => ControlFlow::Break(()),
+
             SchemaAgreementError::RequestError(request_attempt_error) => {
                 classify_attempt_error(request_attempt_error)
             }
@@ -2624,7 +2627,9 @@ impl Session {
                 PrepareError::AllAttemptsFailed { first_attempt } => {
                     classify_attempt_error(first_attempt)
                 }
-                PrepareError::PreparedStatementIdsMismatch => ControlFlow::Break(()),
+                PrepareError::PreparedStatementIdsMismatch | PrepareError::SessionShutDown(_) => {
+                    ControlFlow::Break(())
+                }
             },
         }
     }
