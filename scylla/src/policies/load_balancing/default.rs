@@ -3268,9 +3268,9 @@ mod tests {
 }
 
 mod latency_awareness {
-    use futures::{FutureExt, future::RemoteHandle};
     use itertools::Either;
     use tokio::time::{Duration, Instant};
+    use tokio_util::task::AbortOnDropHandle;
     use tracing::{trace, warn};
     use uuid::Uuid;
 
@@ -3394,7 +3394,7 @@ mod latency_awareness {
         // This is Some iff there is an associated updater running on a separate Tokio task
         // For some tests, not to rely on timing, this is None. The updater is then tick'ed
         // explicitly from outside this struct.
-        _updater_handle: Option<RemoteHandle<()>>,
+        _updater_handle: Option<AbortOnDropHandle<()>>,
     }
 
     impl LatencyAwareness {
@@ -3451,15 +3451,13 @@ mod latency_awareness {
                 scale,
             );
 
-            let (updater_fut, updater_handle) = async move {
+            let updater_handle = AbortOnDropHandle::new(tokio::task::spawn(async move {
                 let mut update_scheduler = tokio::time::interval(update_rate);
                 loop {
                     update_scheduler.tick().await;
                     updater.tick().await;
                 }
-            }
-            .remote_handle();
-            tokio::task::spawn(updater_fut);
+            }));
 
             Self {
                 _updater_handle: Some(updater_handle),

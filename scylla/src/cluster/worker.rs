@@ -22,8 +22,9 @@ use crate::routing::locator::tablets::RawTablet;
 
 use crate::frame::response::result::TableSpec;
 use arc_swap::ArcSwap;
+use futures::FutureExt;
 use futures::future::{BoxFuture, OptionFuture, join_all};
-use futures::{FutureExt, future::RemoteHandle};
+use tokio_util::task::AbortOnDropHandle;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -46,8 +47,8 @@ pub(crate) struct Cluster {
     refresh_channel: tokio::sync::mpsc::Sender<RefreshRequest>,
     use_keyspace_channel: tokio::sync::mpsc::Sender<UseKeyspaceRequest>,
 
-    _worker_handle: RemoteHandle<()>,
-    _metadata_worker_handle: RemoteHandle<()>,
+    _worker_handle: AbortOnDropHandle<()>,
+    _metadata_worker_handle: AbortOnDropHandle<()>,
 }
 
 /// Enables printing [Cluster] struct in a neat way, by skipping the rather useless
@@ -181,11 +182,8 @@ impl Cluster {
             host_listener,
         };
 
-        let (fut, worker_handle) = worker.work().remote_handle();
-        tokio::spawn(fut);
-
-        let (metadata_fut, metadata_worker_handle) = metadata_worker.work(cc).remote_handle();
-        tokio::spawn(metadata_fut);
+        let worker_handle = AbortOnDropHandle::new(tokio::spawn(worker.work()));
+        let metadata_worker_handle = AbortOnDropHandle::new(tokio::spawn(metadata_worker.work(cc)));
 
         let result = Cluster {
             state: cluster_state,

@@ -20,11 +20,7 @@ use crate::cluster::{NodeAddr, use_keyspace_broke_connection};
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
 use arc_swap::ArcSwap;
-use futures::{
-    Future, FutureExt, StreamExt,
-    future::{OptionFuture, RemoteHandle},
-    stream::FuturesUnordered,
-};
+use futures::{Future, FutureExt, StreamExt, future::OptionFuture, stream::FuturesUnordered};
 use rand::Rng;
 use std::convert::TryInto;
 use std::num::NonZeroUsize;
@@ -32,6 +28,7 @@ use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
+use tokio_util::task::AbortOnDropHandle;
 use uuid::Uuid;
 
 use tokio::sync::{Notify, mpsc};
@@ -193,7 +190,7 @@ impl std::fmt::Debug for PoolConnections {
 pub(crate) struct NodeConnectionPool {
     conns: Arc<ArcSwap<MaybePoolConnections>>,
     use_keyspace_request_sender: mpsc::Sender<UseKeyspaceRequest>,
-    _refiller_handle: Arc<RemoteHandle<()>>,
+    _refiller_handle: Arc<AbortOnDropHandle<()>>,
     pool_updated_notify: Arc<Notify>,
     /// Signaled to make the pool refiller retry immediately, resetting
     /// its backoff. Used when client routes change makes previously
@@ -251,8 +248,8 @@ impl NodeConnectionPool {
         );
 
         let conns = refiller.get_shared_connections();
-        let (fut, refiller_handle) = refiller.run(use_keyspace_request_receiver).remote_handle();
-        tokio::spawn(fut);
+        let refiller_handle =
+            AbortOnDropHandle::new(tokio::spawn(refiller.run(use_keyspace_request_receiver)));
 
         Self {
             conns,

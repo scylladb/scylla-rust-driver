@@ -45,7 +45,6 @@ use crate::statement::prepared::{PreparedStatement, RawPreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;
-use futures::{FutureExt, future::RemoteHandle};
 use socket2::{SockRef, TcpKeepalive};
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -64,6 +63,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter, spli
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::Instant;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
@@ -96,7 +96,7 @@ pub enum WriteCoalescingDelay {
 }
 
 pub(crate) struct Connection {
-    _worker_handle: RemoteHandle<()>,
+    _worker_handle: AbortOnDropHandle<()>,
 
     connect_address: SocketAddr,
     config: HostConnectionConfig,
@@ -1532,7 +1532,7 @@ impl Connection {
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
         router_handle: Arc<RouterHandle>,
         node_address: SocketAddr,
-    ) -> Result<RemoteHandle<()>, std::io::Error> {
+    ) -> Result<AbortOnDropHandle<()>, std::io::Error> {
         async fn spawn_router_and_get_handle(
             config: HostConnectionConfig,
             stream: impl AsyncRead + AsyncWrite + Send + 'static,
@@ -1541,8 +1541,8 @@ impl Connection {
             orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
             router_handle: Arc<RouterHandle>,
             node_address: SocketAddr,
-        ) -> RemoteHandle<()> {
-            let (task, handle) = Connection::router(
+        ) -> AbortOnDropHandle<()> {
+            AbortOnDropHandle::new(tokio::task::spawn(Connection::router(
                 config,
                 stream,
                 receiver,
@@ -1550,10 +1550,7 @@ impl Connection {
                 orphan_notification_receiver,
                 router_handle,
                 node_address,
-            )
-            .remote_handle();
-            tokio::task::spawn(task);
-            handle
+            )))
         }
 
         if let Some(tls_config) = &config.tls_config {
