@@ -46,15 +46,19 @@ impl InFlightRequests {
 
     /// Rejects all requests that try to enter after this call.
     /// It is safe to call this more than once.
-    #[expect(dead_code, reason = "Session::shutdown() will use it")]
     pub(crate) fn close(&self) {
         self.tracker.close();
     }
 
     /// Waits until the counter is closed and no request is in flight.
-    #[expect(dead_code, reason = "Session::shutdown() will use it")]
     pub(crate) async fn wait_idle(&self) {
         self.tracker.wait().await;
+    }
+
+    /// Returns the number of requests in flight.
+    #[cfg(test)]
+    pub(crate) fn count(&self) -> usize {
+        self.tracker.len()
     }
 }
 
