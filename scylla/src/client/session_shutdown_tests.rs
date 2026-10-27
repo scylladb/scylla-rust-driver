@@ -12,24 +12,13 @@ use scylla_proxy::{
     ResponseFrame, RunningProxy,
 };
 use tokio::task::JoinHandle;
-use uuid::Uuid;
 
 use super::Session;
 use crate::client::session_builder::SessionBuilder;
 use crate::cluster::ClusterState;
-use crate::errors::{
-    ConnectionPoolError, ExecutionError, MetadataError, NextPageError, NextRowError,
-    PagerExecutionError, PrepareError, SchemaAgreementError, TracingError, UseKeyspaceError,
-};
-use crate::frame::request::query::PagingState;
+use crate::errors::{ConnectionPoolError, ExecutionError, NextPageError, NextRowError};
 use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
 use crate::response::query_result::QueryResult;
-#[cfg(all(
-    scylla_unstable,
-    any(feature = "unstable-python-rs", feature = "unstable-csharp-rs")
-))]
-use crate::serialize::row::SerializedValues;
-use crate::statement::batch::Batch;
 use crate::test_utils::{dry_mode_handshake_rules, setup_tracing};
 
 /// The proxy delays the response to this query by `SLOW_RESPONSE_DELAY`.
@@ -38,9 +27,6 @@ const SLOW_RESPONSE_DELAY: Duration = Duration::from_millis(300);
 
 /// The proxy answers this query with pages that never end.
 const PAGED_QUERY: &str = "SELECT a FROM ks.paged";
-
-/// The proxy prepares this query. It rejects all other PREPARE requests.
-const PREPARED_QUERY: &str = "SELECT a FROM ks.prepared";
 
 /// Bounds the waits for the shutdown in tests where the shutdown must not wait.
 const TEST_TIMEOUT: Duration = Duration::from_secs(1);
@@ -81,14 +67,6 @@ async fn connect() -> (Arc<Session>, RunningProxy) {
             PAGED_QUERY,
             RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
                 rows_response(frame, Some(b"next page"))
-            })),
-        ),
-        RequestRule(
-            Condition::RequestOpcode(RequestOpcode::Prepare).and(
-                Condition::BodyContainsCaseSensitive(PREPARED_QUERY.as_bytes().into()),
-            ),
-            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
-                ResponseFrame::forged_prepared(frame.params, b"prepared", &[], &[]).unwrap()
             })),
         ),
         // For example, the metadata queries of the control connection.
@@ -313,14 +291,14 @@ async fn drop_forces_a_shutdown() {
     assert_pools_closed(&cluster_state);
 }
 
+/// The integration test `test_public_methods_fail_after_shutdown` checks that
+/// each public method rejects requests after the shutdown.
 #[tokio::test]
-async fn shutdown_closes_connections_and_rejects_requests() {
+async fn shutdown_closes_connections() {
     let (session, _proxy) = connect().await;
     let cluster_state = session.get_cluster_state();
     assert!(cluster_state.get_nodes_info()[0].is_connected());
     assert!(session.background_tasks.len() > 0);
-    let prepared = session.prepare(PREPARED_QUERY).await.unwrap();
-    let bound = prepared.clone().bind(&()).unwrap();
 
     // Concurrent calls are allowed.
     tokio::time::timeout(TEST_TIMEOUT, async {
@@ -331,112 +309,6 @@ async fn shutdown_closes_connections_and_rejects_requests() {
 
     // The pools release their connections, also in an old ClusterState.
     assert_closed(&session, &cluster_state);
-
-    // No compile-time check makes sure that a public method is counted as
-    // in flight. Thus, this test calls each public method that sends requests.
-    let mut batch = Batch::default();
-    batch.append_statement(SLOW_QUERY);
-    assert_matches!(
-        session.query_unpaged(SLOW_QUERY, ()).await,
-        Err(ExecutionError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session
-            .query_single_page(SLOW_QUERY, (), PagingState::start())
-            .await,
-        Err(ExecutionError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session.query_iter(PAGED_QUERY, ()).await,
-        Err(PagerExecutionError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session.execute_unpaged(&prepared, ()).await,
-        Err(ExecutionError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session
-            .execute_single_page(&prepared, (), PagingState::start())
-            .await,
-        Err(ExecutionError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session.execute_iter(prepared.clone(), ()).await,
-        Err(PagerExecutionError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session.execute_bound_unpaged(&bound).await,
-        Err(ExecutionError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session
-            .execute_bound_single_page(&bound, PagingState::start())
-            .await,
-        Err(ExecutionError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session.execute_bound_iter(bound).await,
-        Err(PagerExecutionError::SessionShutDown(_))
-    );
-    #[cfg(all(scylla_unstable, feature = "unstable-python-rs"))]
-    assert_matches!(
-        session
-            .execute_unstable(
-                &prepared,
-                &SerializedValues::new(),
-                false,
-                PagingState::start()
-            )
-            .await,
-        Err(ExecutionError::SessionShutDown(_))
-    );
-    #[cfg(all(scylla_unstable, feature = "unstable-csharp-rs"))]
-    assert_matches!(
-        session
-            .execute_iter_preserialized(prepared.clone(), SerializedValues::new())
-            .await,
-        Err(PagerExecutionError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session.batch(&batch, ((),)).await,
-        Err(ExecutionError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session.prepare(SLOW_QUERY).await,
-        Err(PrepareError::SessionShutDown(_))
-    );
-    assert_matches!(
-        // Batch does not implement Debug, so match only the error.
-        session.prepare_batch(&batch).await.err(),
-        Some(PrepareError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session.use_keyspace("ks", false).await,
-        Err(UseKeyspaceError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session.refresh_metadata().await,
-        Err(MetadataError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session.get_tracing_info(&Uuid::nil()).await,
-        Err(TracingError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session.await_schema_agreement().await,
-        Err(SchemaAgreementError::SessionShutDown(_))
-    );
-    assert_matches!(
-        session.check_schema_agreement().await,
-        Err(SchemaAgreementError::SessionShutDown(_))
-    );
-    #[cfg(all(scylla_unstable, feature = "unstable-csharp-rs"))]
-    assert_matches!(
-        session
-            .await_schema_agreement_with_required_node_external(None)
-            .await,
-        Err(SchemaAgreementError::SessionShutDown(_))
-    );
 
     // A later call returns at once.
     assert!(futures::poll!(pin!(session.shutdown())).is_ready());
