@@ -253,8 +253,10 @@ impl NodeConnectionPool {
         );
 
         let conns = refiller.get_shared_connections();
-        let refiller_handle =
-            AbortOnDropHandle::new(tokio::spawn(refiller.run(use_keyspace_request_receiver)));
+        let refiller_handle = pool_config
+            .connection_config
+            .background_tasks
+            .spawn(refiller.run(use_keyspace_request_receiver));
 
         Self {
             conns,
