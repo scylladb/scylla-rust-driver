@@ -81,6 +81,7 @@ impl Cluster {
         metrics: Metrics,
         client_routes_config: Option<ClientRoutesConfig>,
     ) -> Result<Cluster, NewSessionError> {
+        let background_tasks = pool_config.connection_config.background_tasks.clone();
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
         // This is unbounded, because there is possibility that many events will be sent quickly,
@@ -182,8 +183,9 @@ impl Cluster {
             host_listener,
         };
 
-        let worker_handle = AbortOnDropHandle::new(tokio::spawn(worker.work()));
-        let metadata_worker_handle = AbortOnDropHandle::new(tokio::spawn(metadata_worker.work(cc)));
+        let worker_handle = background_tasks.spawn_stoppable(worker.work());
+        // The control connection is local to the worker, so it closes when the worker stops.
+        let metadata_worker_handle = background_tasks.spawn_stoppable(metadata_worker.work(cc));
 
         let result = Cluster {
             state: cluster_state,

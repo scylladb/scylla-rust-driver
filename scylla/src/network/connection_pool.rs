@@ -122,6 +122,10 @@ enum MaybePoolConnections {
 
     // The pool has some connections which are usable (or will be removed soon)
     Ready(PoolConnections),
+
+    // The session was shut down. The refiller has stopped, and the pool holds
+    // no connections. It is never refilled.
+    Closed,
 }
 
 impl std::fmt::Debug for MaybePoolConnections {
@@ -130,6 +134,7 @@ impl std::fmt::Debug for MaybePoolConnections {
             MaybePoolConnections::Initializing => write!(f, "Initializing"),
             MaybePoolConnections::Broken(err) => write!(f, "Broken({err:?})"),
             MaybePoolConnections::Ready(conns) => write!(f, "{conns:?}"),
+            MaybePoolConnections::Closed => write!(f, "Closed"),
         }
     }
 }
@@ -248,8 +253,21 @@ impl NodeConnectionPool {
         );
 
         let conns = refiller.get_shared_connections();
-        let refiller_handle =
-            AbortOnDropHandle::new(tokio::spawn(refiller.run(use_keyspace_request_receiver)));
+        let background_tasks = &pool_config.connection_config.background_tasks;
+        let stoppable_refiller =
+            background_tasks.stoppable(refiller.run(use_keyspace_request_receiver));
+        let refiller_handle = background_tasks.spawn({
+            let conns = Arc::clone(&conns);
+            let pool_updated_notify = Arc::clone(&pool_updated_notify);
+            async move {
+                stoppable_refiller.await;
+                // The refiller is gone, so it can not publish connections
+                // again. Release the connections now: user code can hold
+                // this pool (through a Node) after the session shuts down.
+                conns.store(Arc::new(MaybePoolConnections::Closed));
+                pool_updated_notify.notify_waiters();
+            }
+        });
 
         Self {
             conns,
@@ -266,6 +284,7 @@ impl NodeConnectionPool {
         match maybe_conns.as_ref() {
             MaybePoolConnections::Initializing => false,
             MaybePoolConnections::Broken(_) => false,
+            MaybePoolConnections::Closed => false,
             // Here we use the assumption that _pool_connections is always non-empty.
             MaybePoolConnections::Ready(_pool_connections) => true,
         }
@@ -497,6 +516,7 @@ impl NodeConnectionPool {
                 last_connection_error: err.clone(),
             }),
             MaybePoolConnections::Initializing => Err(ConnectionPoolError::Initializing),
+            MaybePoolConnections::Closed => Err(ConnectionPoolError::Closed),
         }
     }
 }
@@ -1273,6 +1293,11 @@ impl PoolRefiller {
                 // Initially we optimistically assumed the node was alive,
                 // now we have a hint that it is not.
                 Some(ConnectivityChangeEvent::Lost { host_id })
+            }
+            (MaybePoolConnections::Closed, _) => {
+                unreachable!(
+                    "The pool is closed only after its refiller stops, so the refiller must not see it"
+                )
             }
         };
 

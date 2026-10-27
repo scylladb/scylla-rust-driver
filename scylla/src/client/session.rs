@@ -55,6 +55,7 @@ use crate::statement::bound::BoundStatement;
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
+use crate::utils::background_tasks::BackgroundTasks;
 use arc_swap::ArcSwapOption;
 use futures::future::join_all;
 use futures::future::try_join_all;
@@ -1499,6 +1500,7 @@ impl Session {
             // connection's config gets the reporter, in
             // `ControlConnectionEstablisher::new`.
             driver_config_reporter: None,
+            background_tasks: BackgroundTasks::new(),
         };
 
         let pool_config = PoolConfig {
