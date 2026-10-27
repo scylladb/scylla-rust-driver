@@ -41,6 +41,7 @@ use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::{PreparedStatement, RawPreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
+use crate::utils::background_tasks::BackgroundTasks;
 use bytes::Bytes;
 use futures::FutureExt;
 use futures::future::BoxFuture;
@@ -329,6 +330,10 @@ pub(crate) struct ConnectionConfig {
     /// [`ControlConnectionEstablisher::new`]:
     ///     crate::cluster::metadata::cc_establisher::ControlConnectionEstablisher::new
     pub(crate) driver_config_reporter: Option<Arc<DriverConfigReporter>>,
+
+    /// Spawns the background tasks of the session: the workers, the pool
+    /// refillers and the connection routers. A graceful shutdown stops them.
+    pub(crate) background_tasks: BackgroundTasks,
 }
 
 impl ConnectionConfig {
@@ -361,6 +366,7 @@ impl ConnectionConfig {
             identity: self.identity.clone(),
             session_id: self.session_id,
             driver_config_reporter: self.driver_config_reporter.clone(),
+            background_tasks: self.background_tasks.clone(),
             #[cfg(test)]
             transport_factory: None,
         }
@@ -394,6 +400,7 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) session_id: Uuid,
     // should be Some only in control connections
     pub(crate) driver_config_reporter: Option<Arc<DriverConfigReporter>>,
+    pub(crate) background_tasks: BackgroundTasks,
 
     #[cfg(test)]
     pub(crate) transport_factory: Option<Arc<scylla_proxy::TransportFactory>>,
@@ -429,6 +436,8 @@ impl Default for HostConnectionConfig {
 
             // Test connections do not report their configuration.
             driver_config_reporter: None,
+
+            background_tasks: BackgroundTasks::new(),
 
             #[cfg(test)]
             transport_factory: None,
@@ -466,6 +475,8 @@ impl Default for ConnectionConfig {
 
             // Test connections do not report their configuration.
             driver_config_reporter: None,
+
+            background_tasks: BackgroundTasks::new(),
         }
     }
 }
@@ -1533,14 +1544,16 @@ impl Connection {
             router_handle: Arc<RouterHandle>,
             node_address: SocketAddr,
         ) -> AbortOnDropHandle<()> {
-            AbortOnDropHandle::new(tokio::task::spawn(Connection::router(
+            // When the router stops, it drops the stream, which closes the socket.
+            let background_tasks = config.background_tasks.clone();
+            background_tasks.spawn(Connection::router(
                 config,
                 stream,
                 receiver,
                 error_sender,
                 router_handle,
                 node_address,
-            )))
+            ))
         }
 
         if let Some(tls_config) = &config.tls_config {
