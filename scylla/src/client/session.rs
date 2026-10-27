@@ -105,6 +105,8 @@ pub struct Session {
     /// Requests that public methods are executing. Pagers share it,
     /// because they fetch pages after the public method returns.
     in_flight: Arc<InFlightRequests>,
+    /// The background tasks of the session, which a shutdown stops.
+    background_tasks: BackgroundTasks,
     schema_agreement_timeout: Duration,
     schema_agreement_automatic_waiting: bool,
     refresh_metadata_on_auto_schema_agreement: bool,
@@ -131,6 +133,7 @@ impl std::fmt::Debug for Session {
 
         d.field("metrics", &self.metrics);
         d.field("in_flight", &self.in_flight);
+        d.field("background_tasks", &self.background_tasks);
 
         d.field(
             "auto_await_schema_agreement_timeout",
@@ -1520,6 +1523,7 @@ impl Session {
             None
         };
 
+        let background_tasks = BackgroundTasks::new();
         let connection_config = ConnectionConfig {
             local_ip_address: config.local_ip_address,
             shard_aware_local_port_range: config.shard_aware_local_port_range,
@@ -1544,7 +1548,7 @@ impl Session {
             // connection's config gets the reporter, in
             // `ControlConnectionEstablisher::new`.
             driver_config_reporter: None,
-            background_tasks: BackgroundTasks::new(),
+            background_tasks: background_tasks.clone(),
         };
 
         let pool_config = PoolConfig {
@@ -1614,6 +1618,7 @@ impl Session {
             schema_agreement_interval: config.schema_agreement_interval,
             metrics,
             in_flight: Arc::new(InFlightRequests::new()),
+            background_tasks,
             schema_agreement_timeout: config.schema_agreement_timeout,
             schema_agreement_automatic_waiting: config.schema_agreement_automatic_waiting,
             refresh_metadata_on_auto_schema_agreement: config
@@ -2454,6 +2459,39 @@ impl Session {
         res
     }
 
+    /// Shuts down the session gracefully.
+    ///
+    /// The shutdown has these steps:
+    /// 1. The session stops accepting new requests. Each method that sends
+    ///    requests to the cluster then returns a `SessionShutDown` error,
+    ///    for example [`ExecutionError::SessionShutDown`].
+    ///    A [`QueryPager`] returns [`NextPageError::SessionShutDown`](crate::errors::NextPageError::SessionShutDown)
+    ///    when it must fetch a new page.
+    /// 2. The session waits until the requests in flight complete.
+    ///    A page that a [`QueryPager`] fetched before the shutdown stays available.
+    ///    The shutdown does not wait until you read it.
+    /// 3. The session stops its background tasks, and closes all its
+    ///    connections, including the control connection.
+    ///
+    /// When this method returns, all connections of the session are closed.
+    /// You can not start the session again. Create a new session instead.
+    ///
+    /// # Timeouts
+    ///
+    /// This method waits for the requests in flight without a time limit.
+    ///
+    /// This method is cancel safe. You can call it more than once, also
+    /// concurrently.
+    pub async fn shutdown(&self) {
+        debug!("Session: shutdown started, rejecting new requests");
+        self.in_flight.close();
+        self.in_flight.wait_idle().await;
+
+        debug!("Session: no requests in flight, stopping background tasks");
+        self.background_tasks.stop_all().await;
+        debug!("Session: shutdown complete");
+    }
+
     /// Access metrics collected by the driver.
     ///
     /// Driver collects various metrics like number of queries or query latencies.
@@ -3020,3 +3058,7 @@ impl Session {
             .await
     }
 }
+
+#[cfg(test)]
+#[path = "session_shutdown_tests.rs"]
+mod shutdown_tests;
