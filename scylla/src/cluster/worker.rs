@@ -10,7 +10,9 @@ use crate::cluster::metadata::update::{
 use crate::cluster::metadata::{PeriodicFetchMode, SchemaMetadataFetchMode};
 use crate::cluster::state::NodeConfig;
 use crate::cluster::{KnownNode, Node};
-use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
+use crate::errors::{
+    MetadataError, NewSessionError, RequestAttemptError, SessionShutDownError, UseKeyspaceError,
+};
 use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::metrics::Metrics;
 use crate::policies::address_translator::AddressTranslator;
@@ -203,18 +205,16 @@ impl Cluster {
     pub(crate) async fn refresh_metadata(&self) -> Result<(), MetadataError> {
         let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
 
+        // The other end of these channels is in MetadataWorker. The worker can be
+        // gone only when the session or the runtime is shutting down.
         self.refresh_channel
             .send(RefreshRequest {
                 response_chan: response_sender,
             })
             .await
-            .expect("Bug in Cluster::refresh_metadata sending");
-        // Other end of this channel is in MetadataWorker, can't be dropped while we have &self to Cluster with _metadata_worker_handle
+            .map_err(|_| SessionShutDownError)?;
 
-        response_receiver
-            .await
-            .expect("Bug in Cluster::refresh_metadata receiving")
-        // The workers always respond
+        response_receiver.await.map_err(|_| SessionShutDownError)?
     }
 
     pub(crate) async fn use_keyspace(
@@ -223,16 +223,17 @@ impl Cluster {
     ) -> Result<(), UseKeyspaceError> {
         let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
 
+        // The other end of these channels is in ClusterWorker. The worker can be
+        // gone only when the session or the runtime is shutting down.
         self.use_keyspace_channel
             .send(UseKeyspaceRequest {
                 keyspace_name,
                 response_chan: response_sender,
             })
             .await
-            .expect("Bug in Cluster::use_keyspace sending");
-        // Other end of this channel is in ClusterWorkers, can't be dropped while we have &self to Cluster with _worker_handle
+            .map_err(|_| SessionShutDownError)?;
 
-        response_receiver.await.unwrap() // ClusterWorker always responds
+        response_receiver.await.map_err(|_| SessionShutDownError)?
     }
 }
 
