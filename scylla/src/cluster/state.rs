@@ -10,6 +10,7 @@ use crate::routing::locator::ReplicaLocator;
 use crate::routing::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use crate::routing::partitioner::{PartitionerName, calculate_token_for_partition_key};
 use crate::routing::{Shard, Token};
+use crate::utils::background_tasks::BackgroundTasks;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
 use crate::frame::response::result::TableSpec;
@@ -268,7 +269,13 @@ impl ClusterState {
             &keyspaces,
         );
 
-        let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
+        let (locator, keyspaces) = Self::calculate_new_locator(
+            keyspaces,
+            ring,
+            tablets,
+            &node_config.connection_config.background_tasks,
+        )
+        .await;
 
         ClusterState {
             topology: Arc::new(Topology::new(new_known_nodes)),
@@ -306,7 +313,13 @@ impl ClusterState {
             &keyspaces,
         );
 
-        let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
+        let (locator, keyspaces) = Self::calculate_new_locator(
+            keyspaces,
+            ring,
+            tablets,
+            &node_config.connection_config.background_tasks,
+        )
+        .await;
 
         ClusterState {
             topology: Arc::new(Topology::new(new_known_nodes)),
@@ -366,7 +379,13 @@ impl ClusterState {
             &keyspaces,
         );
 
-        let (locator, keyspaces) = Self::calculate_new_locator(keyspaces, ring, tablets).await;
+        let (locator, keyspaces) = Self::calculate_new_locator(
+            keyspaces,
+            ring,
+            tablets,
+            &node_config.connection_config.background_tasks,
+        )
+        .await;
 
         Some(ClusterState {
             topology,
@@ -600,17 +619,19 @@ impl ClusterState {
         keyspaces: Arc<KeyspaceMap>,
         ring: Ring,
         tablets: TabletsInfo,
+        background_tasks: &BackgroundTasks,
     ) -> (ReplicaLocator, Arc<KeyspaceMap>) {
-        tokio::task::spawn_blocking(move || {
-            let keyspace_strategies = keyspaces
-                .values()
-                .filter(|ks| !ks.tablet_based)
-                .map(|ks| &ks.strategy);
-            let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies, tablets);
-            (locator, keyspaces)
-        })
-        .await
-        .unwrap()
+        background_tasks
+            .spawn_blocking(move || {
+                let keyspace_strategies = keyspaces
+                    .values()
+                    .filter(|ks| !ks.tablet_based)
+                    .map(|ks| &ks.strategy);
+                let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies, tablets);
+                (locator, keyspaces)
+            })
+            .await
+            .unwrap()
     }
 
     /// Returns the name of the cluster, as reported by the `cluster_name` column in `system.local`.
