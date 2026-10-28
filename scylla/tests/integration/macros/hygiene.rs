@@ -190,7 +190,7 @@ macro_rules! test_crate {
             _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla)]
-        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.89
+        #[expect(dead_code)]
         struct TestStructByName {
             a: ::core::primitive::i32,
             #[scylla(allow_missing)]
@@ -209,7 +209,7 @@ macro_rules! test_crate {
             _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, forbid_excess_udt_fields)]
-        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.89
+        #[expect(dead_code)]
         struct TestStructByNameStrict {
             a: ::core::primitive::i32,
             #[scylla(allow_missing)]
@@ -228,7 +228,7 @@ macro_rules! test_crate {
             _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, flavor = "enforce_order")]
-        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.89
+        #[expect(dead_code)]
         struct TestStructOrdered {
             a: ::core::primitive::i32,
             #[scylla(allow_missing)]
@@ -247,7 +247,7 @@ macro_rules! test_crate {
             _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, flavor = "enforce_order", forbid_excess_udt_fields)]
-        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.89
+        #[expect(dead_code)]
         struct TestStructOrderedStrict {
             a: ::core::primitive::i32,
             #[scylla(allow_missing)]
@@ -266,7 +266,7 @@ macro_rules! test_crate {
             _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, flavor = "enforce_order", skip_name_checks)]
-        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.89
+        #[expect(dead_code)]
         struct TestStructOrderedSkipped {
             a: ::core::primitive::i32,
             b: ::core::primitive::i32,
@@ -284,7 +284,7 @@ macro_rules! test_crate {
             _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, flavor = "enforce_order", skip_name_checks, forbid_excess_udt_fields)]
-        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.89
+        #[expect(dead_code)]
         struct TestStructOrderedStrictSkipped {
             a: ::core::primitive::i32,
             b: ::core::primitive::i32,
@@ -318,7 +318,7 @@ macro_rules! test_crate {
             _scylla::DeserializeRow, _scylla::SerializeRow, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, flavor = "enforce_order")]
-        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.89
+        #[expect(dead_code)]
         struct TestRowByOrder {
             #[scylla(skip)]
             a: ::core::primitive::i32,
@@ -334,7 +334,7 @@ macro_rules! test_crate {
             _scylla::DeserializeRow, _scylla::SerializeRow, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, flavor = "enforce_order", skip_name_checks)]
-        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.89
+        #[expect(dead_code)]
         struct TestRowByOrderSkipped {
             #[scylla(skip)]
             a: ::core::primitive::i32,
