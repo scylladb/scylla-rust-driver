@@ -6,6 +6,7 @@
 use thiserror::Error;
 
 use super::row::SerializedValues;
+use crate::frame::types::unsigned_vint_encode;
 
 /// An interface that facilitates writing values for a CQL query.
 pub struct RowWriter<'buf> {
@@ -82,6 +83,8 @@ pub struct CellWriter<'buf> {
 enum SizePrefix {
     /// An `[int]`, as for values of a row or elements of a collection.
     Int,
+    /// An `[unsigned vint]`, as for variable-length elements of a vector.
+    UnsignedVint,
     /// No size, as for fixed-length elements of a vector.
     Omitted,
 }
@@ -106,6 +109,16 @@ impl<'buf> CellWriter<'buf> {
         Self {
             buf,
             size_prefix: SizePrefix::Omitted,
+        }
+    }
+
+    // Not public: a value with a vint size is only ever an element of a vector,
+    // written with `CellValueBuilder::make_sub_writer_with_vint_size`.
+    #[inline]
+    fn new_with_vint_size(buf: &'buf mut Vec<u8>) -> Self {
+        Self {
+            buf,
+            size_prefix: SizePrefix::UnsignedVint,
         }
     }
 
@@ -136,6 +149,7 @@ impl<'buf> CellWriter<'buf> {
         let value_len: i32 = contents.len().try_into().map_err(|_| CellOverflowError)?;
         match self.size_prefix {
             SizePrefix::Int => self.buf.extend_from_slice(&value_len.to_be_bytes()),
+            SizePrefix::UnsignedVint => unsigned_vint_encode(contents.len() as u64, self.buf),
             SizePrefix::Omitted => {}
         }
         self.buf.extend_from_slice(contents);
@@ -183,6 +197,11 @@ impl<'buf> CellValueBuilder<'buf> {
             // an error on the DB side and the serialized data
             // won't be misinterpreted.
             SizePrefix::Int => buf.extend_from_slice(&(-3i32).to_be_bytes()),
+            // The size is only known once the value is written. A byte is set
+            // aside for it, as most values are shorter than 128 bytes and so
+            // have a one-byte size; `finish` moves longer values to make room.
+            // Not `push`: see `write_vint_size`.
+            SizePrefix::UnsignedVint => buf.extend_from_slice(&[0]),
             SizePrefix::Omitted => {}
         }
         Self {
@@ -212,6 +231,15 @@ impl<'buf> CellValueBuilder<'buf> {
         CellWriter::new_without_size(self.buf)
     }
 
+    /// Appends a sub-value to the end of the current contents of the cell
+    /// and returns an object that allows to fill it in, with its size written
+    /// as an unsigned vint. This is how vectors encode elements of
+    /// variable-length types.
+    #[inline]
+    pub fn make_sub_writer_with_vint_size(&mut self) -> CellWriter<'_> {
+        CellWriter::new_with_vint_size(self.buf)
+    }
+
     /// Finishes serializing the value.
     ///
     /// Fails if the constructed cell size overflows the maximum allowed
@@ -226,9 +254,42 @@ impl<'buf> CellValueBuilder<'buf> {
                 self.buf[self.starting_pos..self.starting_pos + 4]
                     .copy_from_slice(&value_len.to_be_bytes());
             }
+            SizePrefix::UnsignedVint => Self::write_vint_size(self.buf, self.starting_pos)?,
             SizePrefix::Omitted => {}
         }
         Ok(WrittenCellProof::new())
+    }
+
+    // Serializers keep the buffer's length in a register between their writes
+    // only if the compiler can tell that nothing else holds a pointer to the
+    // buffer. Handing the buffer to a function whose body it can't see - like
+    // this one, if it were not `#[inline]`, or `Vec::push`'s growth path in
+    // the standard library - makes it reload the length after every write.
+    // `#[cold]` keeps this out of `finish`, so that `finish` is still inlined.
+    #[cold]
+    #[inline]
+    fn write_vint_size(buf: &mut Vec<u8>, starting_pos: usize) -> Result<(), CellOverflowError> {
+        let contents_start = starting_pos + 1;
+        let contents_end = buf.len();
+        let value_len = contents_end - contents_start;
+        i32::try_from(value_len).map_err(|_| CellOverflowError)?;
+
+        // An unsigned vint takes at most 9 bytes.
+        let mut size = [0; 9];
+        let mut unused = &mut size[..];
+        unsigned_vint_encode(value_len as u64, &mut unused);
+        let unused_len = unused.len();
+        let (first, rest) = size[..size.len() - unused_len].split_at(1);
+        buf[starting_pos] = first[0];
+        if !rest.is_empty() {
+            // Grow the buffer, and move the contents back to make room for the
+            // rest of the size. Not `Vec::splice`: like `push`, it hides from
+            // the compiler that the buffer isn't kept.
+            buf.extend_from_slice(rest);
+            buf.copy_within(contents_start..contents_end, contents_start + rest.len());
+            buf[contents_start..contents_start + rest.len()].copy_from_slice(rest);
+        }
+        Ok(())
     }
 }
 
@@ -311,6 +372,42 @@ mod tests {
                 255, 255, 255, 253, // Invalid value
             ]
         );
+    }
+
+    #[test]
+    fn test_sub_writer_with_vint_size() {
+        let mut data = Vec::new();
+        let mut builder = CellWriter::new(&mut data).into_value_builder();
+        builder
+            .make_sub_writer_with_vint_size()
+            .set_value(&[1, 2, 3])
+            .unwrap();
+        builder
+            .make_sub_writer_with_vint_size()
+            .set_value(&[4; 200])
+            .unwrap();
+        let mut sub_builder = builder
+            .make_sub_writer_with_vint_size()
+            .into_value_builder();
+        sub_builder.append_bytes(&[5, 6]);
+        sub_builder.finish().unwrap();
+        // The size of a value of at least 128 bytes doesn't fit in the byte
+        // set aside for it.
+        let mut sub_builder = builder
+            .make_sub_writer_with_vint_size()
+            .into_value_builder();
+        sub_builder.append_bytes(&[7; 200]);
+        sub_builder.finish().unwrap();
+        builder.finish().unwrap();
+
+        let mut expected = 411i32.to_be_bytes().to_vec(); // Length of inner data
+        expected.extend_from_slice(&[3, 1, 2, 3]);
+        expected.extend_from_slice(&[128, 200]);
+        expected.extend_from_slice(&[4; 200]);
+        expected.extend_from_slice(&[2, 5, 6]);
+        expected.extend_from_slice(&[128, 200]);
+        expected.extend_from_slice(&[7; 200]);
+        assert_eq!(data, expected);
     }
 
     #[test]
