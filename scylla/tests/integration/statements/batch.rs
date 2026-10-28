@@ -4,14 +4,14 @@ use crate::utils::{
 };
 use assert_matches::assert_matches;
 use scylla::client::session::Session;
-use scylla::errors::{BadQuery, ExecutionError, RequestAttemptError};
+use scylla::errors::{BadQuery, DbError, ExecutionError, RequestAttemptError};
 use scylla::frame::frame_errors::{BatchSerializationError, CqlRequestSerializationError};
 use scylla::response::query_result::{QueryResult, QueryRowsResult};
 use scylla::statement::batch::{Batch, BatchStatement, BatchType};
 use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
-use scylla::value::Counter;
-use std::collections::BTreeSet;
+use scylla::value::{Counter, CqlValue, MaybeUnset, Row};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 #[tokio::test]
@@ -658,4 +658,411 @@ async fn test_batch_to_multiple_tables() {
         .unwrap();
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+/// Tests batches of each supported statement kind:
+/// - simple statements,
+/// - prepared statements,
+/// - a batch prepared as a whole,
+/// - statements with unset values,
+/// - statements with named variables,
+/// - a mix of these kinds.
+///
+/// It also tests the batch types that limit which statements a batch can
+/// contain:
+/// - CAS: a batch of conditional (LWT) statements,
+/// - counter,
+/// - logged.
+///
+/// All the cases run in one `#[tokio::test]`. They share one session and one
+/// keyspace. Thus, the test does not burden the shared cluster with one
+/// keyspace for each case. Each case that writes to the shared table uses its
+/// own partition key. Thus, a case does not see the rows of the other cases.
+#[tokio::test]
+async fn test_batches_of_various_statement_kinds() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    // Some cases use counters. Other cases use LWTs. Older ScyllaDB versions
+    // do not support counters or LWTs in tablet keyspaces.
+    let disable_tablets_for_counters =
+        disable_tablets_unless_supported(&session, "COUNTERS_WITH_TABLETS").await;
+    let disable_tablets = if disable_tablets_for_counters.is_empty() {
+        disable_tablets_unless_supported(&session, "LWT_WITH_TABLETS").await
+    } else {
+        disable_tablets_for_counters
+    };
+
+    let create_ks = format!(
+        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}{disable_tablets}"
+    );
+    session.ddl(create_ks).await.unwrap();
+    session
+        .ddl(format!(
+            "CREATE TABLE {ks}.t (k0 text, k1 int, v int, PRIMARY KEY (k0, k1))"
+        ))
+        .await
+        .unwrap();
+    for i in 1..=3 {
+        session
+            .ddl(format!(
+                "CREATE TABLE {ks}.counter{i} (k0 text PRIMARY KEY, c counter)"
+            ))
+            .await
+            .unwrap();
+    }
+
+    batch_of_simple_statements(&session, &ks).await;
+    batch_of_prepared_statements(&session, &ks).await;
+    batch_prepared_as_a_whole(&session, &ks).await;
+    batch_of_bound_statements_with_unset_values(&session, &ks).await;
+    batch_of_bound_statements_with_named_variables(&session, &ks).await;
+    batch_of_mixed_bound_and_simple_statements(&session, &ks).await;
+    cas_batch_is_applied_only_once(&session, &ks).await;
+    counter_batch_increments_counters(&session, &ks).await;
+    logged_batch_rejects_counter_increments(&session, &ks).await;
+    counter_batch_rejects_non_counter_increments(&session, &ks).await;
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+/// Number of statements appended to each of the batches below.
+const BATCH_COUNT: usize = 100;
+
+/// Asserts that the case identified by `partition` inserted exactly
+/// `BATCH_COUNT` rows. Each row must hold `v == k1 + 1`.
+async fn assert_batch_inserted_rows(session: &Session, ks: &str, partition: &str) {
+    let rows: Vec<(String, i32, i32)> = session
+        .query_unpaged(
+            format!("SELECT k0, k1, v FROM {ks}.t WHERE k0 = ?"),
+            (partition,),
+        )
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .rows::<(String, i32, i32)>()
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+
+    assert_eq!(rows.len(), BATCH_COUNT);
+    for (k0, k1, v) in rows {
+        assert_eq!(k0, partition);
+        assert_eq!(v, k1 + 1);
+    }
+}
+
+async fn prepare_insert(session: &Session, ks: &str) -> PreparedStatement {
+    session
+        .prepare(format!("INSERT INTO {ks}.t (k0, k1, v) VALUES (?, ?, ?)"))
+        .await
+        .unwrap()
+}
+
+/// A batch of unprepared statements with all values inlined in their text.
+async fn batch_of_simple_statements(session: &Session, ks: &str) {
+    let partition = "simple_statements";
+
+    let mut batch = Batch::new(BatchType::Unlogged);
+    for i in 0..BATCH_COUNT {
+        batch.append_statement(Statement::new(format!(
+            "INSERT INTO {ks}.t (k0, k1, v) VALUES ('{partition}', {i}, {})",
+            i + 1
+        )));
+    }
+    session.batch(&batch, vec![(); BATCH_COUNT]).await.unwrap();
+
+    assert_batch_inserted_rows(session, ks, partition).await;
+}
+
+/// A batch that repeats one prepared statement. Each copy has its own values.
+async fn batch_of_prepared_statements(session: &Session, ks: &str) {
+    let partition = "prepared_statements";
+
+    let prepared = prepare_insert(session, ks).await;
+    let mut batch = Batch::new(BatchType::Unlogged);
+    let mut values = Vec::with_capacity(BATCH_COUNT);
+    for i in 0..BATCH_COUNT as i32 {
+        batch.append_statement(prepared.clone());
+        values.push((partition, i, i + 1));
+    }
+    session.batch(&batch, values).await.unwrap();
+
+    assert_batch_inserted_rows(session, ks, partition).await;
+}
+
+/// A batch of unprepared statements. [`Session::prepare_batch`] prepares all
+/// of them in one call, not one statement at a time.
+async fn batch_prepared_as_a_whole(session: &Session, ks: &str) {
+    let partition = "prepared_batch";
+
+    let mut batch = Batch::new(BatchType::Unlogged);
+    let mut values = Vec::with_capacity(BATCH_COUNT);
+    for i in 0..BATCH_COUNT as i32 {
+        batch.append_statement(Statement::new(format!(
+            "INSERT INTO {ks}.t (k0, k1, v) VALUES (?, ?, ?)"
+        )));
+        values.push((partition, i, i + 1));
+    }
+    let prepared_batch = session.prepare_batch(&batch).await.unwrap();
+    session.batch(&prepared_batch, values).await.unwrap();
+
+    assert_batch_inserted_rows(session, ks, partition).await;
+}
+
+/// An unset value does not change the column. It does not write NULL to the
+/// column.
+async fn batch_of_bound_statements_with_unset_values(session: &Session, ks: &str) {
+    let partition = "unset_values";
+
+    let prepared = prepare_insert(session, ks).await;
+
+    let mut batch = Batch::new(BatchType::Unlogged);
+    let mut values = Vec::with_capacity(BATCH_COUNT);
+    for i in 0..BATCH_COUNT as i32 {
+        batch.append_statement(prepared.clone());
+        values.push((partition, i, i + 1));
+    }
+    session.batch(&batch, values).await.unwrap();
+
+    // Update v to (k1 + 2). In every 20th row, leave v unset.
+    let mut batch = Batch::new(BatchType::Unlogged);
+    let mut values = Vec::with_capacity(BATCH_COUNT);
+    for i in 0..BATCH_COUNT as i32 {
+        batch.append_statement(prepared.clone());
+        values.push((
+            MaybeUnset::Set(partition),
+            MaybeUnset::Set(i),
+            if i % 20 == 0 {
+                MaybeUnset::Unset
+            } else {
+                MaybeUnset::Set(i + 2)
+            },
+        ));
+    }
+    session.batch(&batch, values).await.unwrap();
+
+    let rows: Vec<(String, i32, i32)> = session
+        .query_unpaged(
+            format!("SELECT k0, k1, v FROM {ks}.t WHERE k0 = ?"),
+            (partition,),
+        )
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .rows::<(String, i32, i32)>()
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+
+    assert_eq!(rows.len(), BATCH_COUNT);
+    for (k0, k1, v) in rows {
+        assert_eq!(k0, partition);
+        // The rows with an unset v keep the value from the first batch.
+        assert_eq!(v, if k1 % 20 == 0 { k1 + 1 } else { k1 + 2 });
+    }
+}
+
+/// The statements in a batch can also take their values by name, not by
+/// position.
+async fn batch_of_bound_statements_with_named_variables(session: &Session, ks: &str) {
+    let partition = "named_variables";
+
+    let prepared = session
+        .prepare(format!(
+            "INSERT INTO {ks}.t (k0, k1, v) VALUES (:k0, :k1, :v)"
+        ))
+        .await
+        .unwrap();
+
+    let mut batch = Batch::new(BatchType::Unlogged);
+    let mut values = Vec::with_capacity(BATCH_COUNT);
+    for i in 0..BATCH_COUNT as i32 {
+        batch.append_statement(prepared.clone());
+        values.push(HashMap::from([
+            ("k0", CqlValue::Text(partition.to_owned())),
+            ("k1", CqlValue::Int(i)),
+            ("v", CqlValue::Int(i + 1)),
+        ]));
+    }
+    session.batch(&batch, values).await.unwrap();
+
+    assert_batch_inserted_rows(session, ks, partition).await;
+}
+
+/// One batch can contain both prepared and unprepared statements.
+async fn batch_of_mixed_bound_and_simple_statements(session: &Session, ks: &str) {
+    let partition = "mixed_statements";
+
+    let prepared = prepare_insert(session, ks).await;
+
+    let mut batch = Batch::new(BatchType::Unlogged);
+    let mut values: Vec<Vec<CqlValue>> = Vec::with_capacity(BATCH_COUNT);
+    for i in 0..BATCH_COUNT as i32 {
+        if i % 2 == 1 {
+            batch.append_statement(Statement::new(format!(
+                "INSERT INTO {ks}.t (k0, k1, v) VALUES ('{partition}', {i}, {})",
+                i + 1
+            )));
+            values.push(vec![]);
+        } else {
+            batch.append_statement(prepared.clone());
+            values.push(vec![
+                CqlValue::Text(partition.to_owned()),
+                CqlValue::Int(i),
+                CqlValue::Int(i + 1),
+            ]);
+        }
+    }
+    session.batch(&batch, values).await.unwrap();
+
+    assert_batch_inserted_rows(session, ks, partition).await;
+}
+
+/// The server applies a CAS batch only if its condition is true. If the test
+/// sends the same batch again, the batch does nothing.
+async fn cas_batch_is_applied_only_once(session: &Session, ks: &str) {
+    let partition = "cas_batch";
+
+    // A CAS batch must not span more than one partition. Thus, all the
+    // statements have conditions on the same partition.
+    let prepared = session
+        .prepare(format!(
+            "INSERT INTO {ks}.t (k0, k1, v) VALUES (?, ?, ?) IF NOT EXISTS"
+        ))
+        .await
+        .unwrap();
+
+    let mut batch = Batch::new(BatchType::Logged);
+    // The first LWT on a fresh table can time out while the server creates
+    // its Paxos state table (see `LwtRetryPolicy`). Such an attempt is not
+    // applied. Thus, a retry still gets the expected `[applied]`.
+    // Do not retry a commit timeout. After it, the batch is already applied.
+    batch.set_retry_policy(Some(Arc::new(LwtRetryPolicy {
+        retry_commit_timeouts: false,
+    })));
+    let mut values = Vec::with_capacity(BATCH_COUNT);
+    for i in 0..BATCH_COUNT as i32 {
+        batch.append_statement(prepared.clone());
+        values.push((partition, i, i + 1));
+    }
+
+    // The response to a CAS batch depends on the database:
+    // - ScyllaDB sends `[applied]` and then the columns of the row.
+    // - Cassandra sends only `[applied]`.
+    // Thus, read the first column and ignore the other columns.
+    let applied = |result: QueryResult| -> bool {
+        let row = result
+            .into_rows_result()
+            .unwrap()
+            .first_row::<Row>()
+            .unwrap();
+        match row.columns.first().unwrap() {
+            Some(CqlValue::Boolean(applied)) => *applied,
+            other => panic!("Expected `[applied]` to be a boolean, got {other:?}"),
+        }
+    };
+
+    assert!(
+        applied(session.batch(&batch, values.clone()).await.unwrap()),
+        "The first CAS batch should have been applied - the rows did not exist yet"
+    );
+    assert_batch_inserted_rows(session, ks, partition).await;
+
+    assert!(
+        !applied(session.batch(&batch, values).await.unwrap()),
+        "The second CAS batch should not have been applied - the rows exist by now"
+    );
+}
+
+/// A counter batch increments the counters it targets.
+async fn counter_batch_increments_counters(session: &Session, ks: &str) {
+    let partition = "counter_batch";
+
+    let mut batch = Batch::new(BatchType::Counter);
+    let mut values = Vec::with_capacity(3);
+    for i in 1..=3_i64 {
+        batch.append_statement(
+            session
+                .prepare(format!("UPDATE {ks}.counter{i} SET c = c + ? WHERE k0 = ?"))
+                .await
+                .unwrap(),
+        );
+        values.push((Counter(i), partition));
+    }
+    session.batch(&batch, values).await.unwrap();
+
+    for i in 1..=3_i64 {
+        let (Counter(c),) = session
+            .query_unpaged(
+                format!("SELECT c FROM {ks}.counter{i} WHERE k0 = ?"),
+                (partition,),
+            )
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .single_row::<(Counter,)>()
+            .unwrap();
+        assert_eq!(c, i);
+    }
+}
+
+/// A LOGGED batch must not contain counter increments.
+async fn logged_batch_rejects_counter_increments(session: &Session, ks: &str) {
+    let partition = "logged_batch_with_counters";
+
+    let mut batch = Batch::new(BatchType::Logged);
+    let mut values = Vec::with_capacity(3);
+    for i in 1..=3_i64 {
+        batch.append_statement(
+            session
+                .prepare(format!("UPDATE {ks}.counter{i} SET c = c + ? WHERE k0 = ?"))
+                .await
+                .unwrap(),
+        );
+        values.push((Counter(i), partition));
+    }
+
+    let err = session.batch(&batch, values).await.unwrap_err();
+    assert_matches!(
+        err,
+        ExecutionError::LastAttemptError(RequestAttemptError::DbError(DbError::Invalid, _))
+    );
+}
+
+/// Conversely, a COUNTER batch must not contain a non-counter statement.
+async fn counter_batch_rejects_non_counter_increments(session: &Session, ks: &str) {
+    let partition = "counter_batch_with_non_counters";
+
+    let mut batch = Batch::new(BatchType::Counter);
+    let mut values: Vec<Vec<CqlValue>> = Vec::with_capacity(4);
+    for i in 1..=3_i64 {
+        batch.append_statement(
+            session
+                .prepare(format!("UPDATE {ks}.counter{i} SET c = c + ? WHERE k0 = ?"))
+                .await
+                .unwrap(),
+        );
+        values.push(vec![
+            CqlValue::Counter(Counter(i)),
+            CqlValue::Text(partition.to_owned()),
+        ]);
+    }
+
+    batch.append_statement(prepare_insert(session, ks).await);
+    values.push(vec![
+        CqlValue::Text(partition.to_owned()),
+        CqlValue::Int(0),
+        CqlValue::Int(1),
+    ]);
+
+    let err = session.batch(&batch, values).await.unwrap_err();
+    assert_matches!(
+        err,
+        ExecutionError::LastAttemptError(RequestAttemptError::DbError(DbError::Invalid, _))
+    );
 }
