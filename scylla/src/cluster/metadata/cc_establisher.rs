@@ -37,6 +37,7 @@ use crate::errors::{ConnectionPoolError, MetadataError, NewSessionError};
 use crate::frame::server_event_type::EventType;
 use crate::network::{ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
+use crate::routing::NodeLocationPreference;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
 /// Maintains the persistent state needed to create control connections and
@@ -56,6 +57,9 @@ pub(crate) struct ControlConnectionEstablisher {
     cc_config: ControlConnectionConfig,
     hostname_resolution_timeout: Option<Duration>,
     host_filter: Option<Arc<dyn HostFilter>>,
+    /// The session-level location preference.
+    #[expect(dead_code)]
+    node_location_preference: Arc<NodeLocationPreference>,
     // When no known peer is reachable, initial known nodes are resolved once again as a fallback
     // and establishing control connection to them is attempted.
     initial_known_nodes: Vec<KnownNode>,
@@ -109,6 +113,7 @@ impl ControlConnectionEstablisher {
         hostname_resolution_timeout: Option<Duration>,
         connection_config: ConnectionConfig,
         driver_config_reporter: Option<Arc<DriverConfigReporter>>,
+        node_location_preference: Arc<NodeLocationPreference>,
         request_timeouts: MetadataRequestTimeouts,
         keyspaces_to_fetch: Vec<String>,
         schema_metadata_fetch_mode: SchemaMetadataFetchMode,
@@ -143,6 +148,7 @@ impl ControlConnectionEstablisher {
                 .map(UntranslatedEndpoint::ContactPoint)
                 .collect(),
             host_filter: host_filter.clone(),
+            node_location_preference,
             initial_known_nodes,
             cc_cache,
         })
