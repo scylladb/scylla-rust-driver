@@ -84,18 +84,20 @@ pub trait SerializableRequest {
     /// Serializes the request into the provided buffer.
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError>;
 
-    /// Returns the exact number of bytes [`serialize`](Self::serialize) writes,
-    /// or `None` if it is not known up front. If Some, it needs to be correct,
-    /// otherwise `debug_assert!` will be triggered.
+    /// Returns the bounds on the number of bytes [`serialize`](Self::serialize)
+    /// writes, like [`Iterator::size_hint`]: a lower bound, and an upper bound if
+    /// one is known. A request that knows its exact size returns `(n, Some(n))`.
+    /// The bounds need to be correct, otherwise `debug_assert!` will be triggered.
     ///
-    /// Used to allocate the serialization buffer once, instead of growing it.
-    fn serialized_size(&self) -> Option<usize> {
-        None
+    /// The serialization buffer is allocated with the lower bound as capacity,
+    /// so that it does not need to grow when the exact size is known.
+    fn serialized_size_hint(&self) -> (usize, Option<usize>) {
+        (0, None)
     }
 
     /// Serializes the request into a heap-allocated `Bytes` object.
     fn to_bytes(&self) -> Result<Bytes, CqlRequestSerializationError> {
-        let mut v = Vec::with_capacity(self.serialized_size().unwrap_or(0));
+        let mut v = Vec::with_capacity(self.serialized_size_hint().0);
         self.serialize(&mut v)?;
         Ok(v.into())
     }
@@ -305,7 +307,7 @@ mod tests {
         {
             let mut buf = Vec::new();
             query.serialize(&mut buf).unwrap();
-            assert_eq!(query.serialized_size(), Some(buf.len()));
+            assert_eq!(query.serialized_size_hint(), (buf.len(), Some(buf.len())));
 
             let query_deserialized =
                 Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
@@ -358,7 +360,10 @@ mod tests {
         {
             let mut buf = Vec::new();
             execute_with_id.serialize(&mut buf).unwrap();
-            assert_eq!(execute_with_id.serialized_size(), Some(buf.len()));
+            assert_eq!(
+                execute_with_id.serialized_size_hint(),
+                (buf.len(), Some(buf.len()))
+            );
 
             let features = {
                 let mut default = ProtocolFeatures::default();
@@ -373,7 +378,10 @@ mod tests {
         {
             let mut buf = Vec::new();
             execute_with_id.serialize(&mut buf).unwrap();
-            assert_eq!(execute_with_id.serialized_size(), Some(buf.len()));
+            assert_eq!(
+                execute_with_id.serialized_size_hint(),
+                (buf.len(), Some(buf.len()))
+            );
         }
 
         // Batch

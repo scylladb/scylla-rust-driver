@@ -55,10 +55,11 @@ impl SerializableRequest for Query<'_> {
         Ok(())
     }
 
-    fn serialized_size(&self) -> Option<usize> {
+    fn serialized_size_hint(&self) -> (usize, Option<usize>) {
         let long_string = size_of::<i32>() + self.contents.len();
         let params = self.parameters.serialized_size();
-        Some(long_string + params)
+        let size = long_string + params;
+        (size, Some(size))
     }
 }
 
