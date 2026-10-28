@@ -29,7 +29,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use tracing::Instrument;
 use tracing::trace;
 use tracing::trace_span;
 
@@ -39,7 +38,7 @@ use crate::errors::{ConnectionPoolError, RequestAttemptError, RequestError};
 use crate::frame::response::result::TableSpec;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::network::Connection;
-use crate::observability::driver_tracing::RequestSpan;
+use crate::observability::driver_tracing::{RequestSpan, await_in_span};
 use crate::observability::history::{self, HistoryListener};
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing;
@@ -592,9 +591,7 @@ impl<'a> RequestExecutionParams<'a> {
                     context.log_attempt_start(connect_address);
 
                 let request_result: Result<NonErrorQueryResponse, RequestAttemptError> =
-                    run_request_once(connection, current_consistency)
-                        .instrument(span.clone())
-                        .await;
+                    await_in_span!(run_request_once(connection, current_consistency), &span);
 
                 let elapsed = request_start.elapsed();
                 let request_error: RequestAttemptError = match request_result {
