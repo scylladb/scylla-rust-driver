@@ -349,7 +349,7 @@ mod tests {
         // New Execute
         let id = [2, 4, 5, 2, 6, 7, 3, 1].as_slice().into();
         let result_metadata_id = Some([2, 4, 5, 2, 6, 7, 3, 1].as_slice().into());
-        let execute_with_id = ExecuteV2 {
+        let mut execute_with_id = ExecuteV2 {
             id,
             result_metadata_id,
             parameters,
@@ -368,6 +368,12 @@ mod tests {
             let execute_deserialized =
                 ExecuteV2::deserialize_with_features(&mut &buf[..], &features).unwrap();
             assert_eq!(&execute_deserialized, &execute_with_id);
+        }
+        execute_with_id.tablet_version_block = Some(1);
+        {
+            let mut buf = Vec::new();
+            execute_with_id.serialize(&mut buf).unwrap();
+            assert_eq!(execute_with_id.serialized_size(), Some(buf.len()));
         }
 
         // Batch
