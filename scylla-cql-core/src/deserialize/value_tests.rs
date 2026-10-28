@@ -93,6 +93,15 @@ fn test_deserialize_vector() {
         &vec![vec![1_u8, 2_u8], vec![3_u8, 4_u8]],
         &mut Bytes::new(),
     );
+    // An element long enough for its length to take more than one byte.
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Blob)),
+            dimensions: 2,
+        },
+        &vec![vec![7_u8; 300], vec![1_u8, 2_u8]],
+        &mut Bytes::new(),
+    );
     assert_ser_de_identity(
         &ColumnType::Vector {
             typ: Box::new(ColumnType::Native(NativeType::Counter)),
