@@ -431,7 +431,9 @@ mod tests {
     use crate::frame::request::RequestV2;
     use crate::frame::request::execute::ExecuteV2;
     use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
+    use crate::frame::types::read_long_string;
     use crate::response::PagingState;
+    use crate::statement::batch::Batch;
     use crate::statement::unprepared::Statement;
     use crate::statement::{Consistency, SerialConsistency};
     use crate::test_utils::{dry_mode_handshake_rules, setup_tracing};
@@ -495,10 +497,17 @@ mod tests {
         let (proxy_addr, proxy, mut prepares) = make_test_table_proxy().await;
         let session: CachingSession = CachingSession::from(connect(proxy_addr).await, 2);
 
-        let mut assert_prepared_once = || {
-            prepares.try_recv().unwrap();
-            prepares.try_recv().unwrap_err();
-            assert_eq!(1, session.cache.len());
+        // Checks that the session prepared each of `statements` once, and
+        // nothing else. Then clears the cache.
+        let mut assert_prepared_once = |statements: &[&str]| {
+            let mut prepared: Vec<String> = std::iter::from_fn(|| prepares.try_recv().ok())
+                .map(|(frame, _)| read_long_string(&mut &frame.body[..]).unwrap().to_owned())
+                .collect();
+            prepared.sort_unstable();
+            let mut expected = statements.to_vec();
+            expected.sort_unstable();
+            assert_eq!(prepared, expected);
+            assert_eq!(statements.len(), session.cache.len());
             session.cache.clear();
         };
 
@@ -509,7 +518,7 @@ mod tests {
                 .unwrap();
             assert_eq!(1, result.into_rows_result().unwrap().rows_num());
         }
-        assert_prepared_once();
+        assert_prepared_once(&[SELECT_FROM_TEST_TABLE]);
 
         for _ in 0..2 {
             let rows = session
@@ -523,7 +532,7 @@ mod tests {
                 .unwrap();
             assert_eq!(1, rows.len());
         }
-        assert_prepared_once();
+        assert_prepared_once(&[SELECT_FROM_TEST_TABLE]);
 
         for _ in 0..2 {
             let (result, _paging_state) = session
@@ -532,7 +541,45 @@ mod tests {
                 .unwrap();
             assert_eq!(1, result.into_rows_result().unwrap().rows_num());
         }
-        assert_prepared_once();
+        assert_prepared_once(&[SELECT_FROM_TEST_TABLE]);
+
+        // The cache holds at most 2 statements. Thus, a batch below has at
+        // most 2 statements.
+        const INSERTS: [&str; 2] = [
+            "INSERT INTO test_table (a, b) VALUES (1, 2)",
+            "INSERT INTO test_table (a, b) VALUES (3, 4)",
+        ];
+
+        let mut batch = Batch::default();
+        batch.append_statement(INSERTS[0]);
+        for _ in 0..2 {
+            session.batch(&batch, ((),)).await.unwrap();
+        }
+        assert_prepared_once(&INSERTS[..1]);
+
+        let mut batch = Batch::default();
+        for insert in INSERTS {
+            batch.append_statement(insert);
+        }
+        for _ in 0..2 {
+            session.batch(&batch, ((), ())).await.unwrap();
+        }
+        assert_prepared_once(&INSERTS);
+
+        // In a batch of prepared and unprepared statements, the session
+        // prepares only the unprepared statements.
+        let prepared = session
+            .add_prepared_statement(&INSERTS[0].into())
+            .await
+            .unwrap();
+        assert_prepared_once(&INSERTS[..1]);
+        let mut batch = Batch::default();
+        batch.append_statement(prepared);
+        batch.append_statement(INSERTS[1]);
+        for _ in 0..2 {
+            session.batch(&batch, ((), ())).await.unwrap();
+        }
+        assert_prepared_once(&INSERTS[1..]);
 
         let _ = proxy.finish().await;
     }
@@ -720,7 +767,7 @@ mod tests {
     /// Starts a dry-mode proxy pretending that `test_table` holds a single row.
     ///
     /// It prepares any statement on `test_table`, reporting each PREPARE to the returned
-    /// receiver, and answers every EXECUTE with that row.
+    /// receiver, answers every EXECUTE with that row, and every BATCH with a Void result.
     async fn make_test_table_proxy() -> (
         SocketAddr,
         RunningProxy,
@@ -753,6 +800,12 @@ mod tests {
                         None,
                     )
                     .unwrap()
+                })),
+            ),
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Batch),
+                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                    ResponseFrame::forged_void(frame.params)
                 })),
             ),
         ];

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::Infallible;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use scylla_cql::frame::flag;
@@ -21,6 +22,16 @@ use crate::errors::{ForgedRowsError, ReadFrameError};
 use crate::proxy::CompressionReader;
 
 const HEADER_SIZE: usize = 9;
+
+/// The kinds of a RESULT response body that the proxy forges, with their
+/// numbers in the CQL protocol.
+#[repr(i32)]
+enum ResultKind {
+    Void = 0x0001,
+    Rows = 0x0002,
+    Prepared = 0x0004,
+    SchemaChange = 0x0005,
+}
 
 // Parts of the frame header which are not determined by the request/response type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -197,6 +208,15 @@ impl ResponseFrame {
         ))
     }
 
+    /// Creates a `RESULT::Void` response frame, as sent by a server after a request
+    /// that returns nothing, for example a write or a batch.
+    pub fn forged_void(request_params: FrameParams) -> Self {
+        // A Void result has no body after its kind.
+        let write_nothing = |_: &mut BytesMut| Ok::<_, Infallible>(());
+        let Ok(frame) = Self::forged_result(request_params, ResultKind::Void, write_nothing);
+        frame
+    }
+
     /// Creates a `RESULT::Rows` response frame with the given columns and rows.
     ///
     /// Rows are serialized with the same machinery as bound values, so anything
@@ -219,23 +239,18 @@ impl ResponseFrame {
             rows_count += 1;
         }
 
-        let mut buf = BytesMut::new();
-        types::write_int(0x0002, &mut buf); // Kind: Rows.
-        // Every column carries its own table spec, so columns of different tables are allowed.
-        ResultMetadata::new_for_test(col_specs.len(), col_specs.to_vec()).serialize(
-            &mut buf,
-            false,
-            false,
-            paging_state,
-        )?;
-        types::write_int(i32::try_from(rows_count)?, &mut buf);
-        buf.extend_from_slice(&rows_buf);
-
-        Ok(ResponseFrame::new(
-            request_params.for_response(),
-            ResponseOpcode::Result,
-            buf.freeze(),
-        ))
+        Self::forged_result(request_params, ResultKind::Rows, |buf| {
+            // Every column carries its own table spec, so columns of different tables are allowed.
+            ResultMetadata::new_for_test(col_specs.len(), col_specs.to_vec()).serialize(
+                buf,
+                false,
+                false,
+                paging_state,
+            )?;
+            types::write_int(i32::try_from(rows_count)?, buf);
+            buf.extend_from_slice(&rows_buf);
+            Ok(())
+        })
     }
 
     /// Creates a `RESULT::Prepared` response frame, as sent by a server after a PREPARE request.
@@ -270,15 +285,9 @@ impl ResponseFrame {
             ),
         };
 
-        let mut buf = BytesMut::new();
-        types::write_int(0x0004, &mut buf); // Kind: Prepared.
-        prepared.serialize(&mut buf)?;
-
-        Ok(ResponseFrame::new(
-            request_params.for_response(),
-            ResponseOpcode::Result,
-            buf.freeze(),
-        ))
+        Self::forged_result(request_params, ResultKind::Prepared, |buf| {
+            prepared.serialize(buf)
+        })
     }
 
     /// Creates a `RESULT::SchemaChange` response frame, as sent by a server after a DDL statement.
@@ -286,9 +295,21 @@ impl ResponseFrame {
         request_params: FrameParams,
         event: &SchemaChangeEvent,
     ) -> Result<Self, std::num::TryFromIntError> {
+        Self::forged_result(request_params, ResultKind::SchemaChange, |buf| {
+            event.serialize(buf)
+        })
+    }
+
+    /// Creates a `RESULT` response frame of the given `kind`.
+    /// `write_kind_body` writes the part of the body that follows the kind.
+    fn forged_result<E>(
+        request_params: FrameParams,
+        kind: ResultKind,
+        write_kind_body: impl FnOnce(&mut BytesMut) -> Result<(), E>,
+    ) -> Result<Self, E> {
         let mut buf = BytesMut::new();
-        types::write_int(0x0005, &mut buf); // Kind: SchemaChange.
-        event.serialize(&mut buf)?;
+        types::write_int(kind as i32, &mut buf);
+        write_kind_body(&mut buf)?;
 
         Ok(ResponseFrame::new(
             request_params.for_response(),
