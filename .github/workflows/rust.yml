@@ -17,7 +17,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings --cfg scylla_unstable
   RUST_BACKTRACE: full
-  rust_min: 1.89.0 # <- Update this when bumping up MSRV
+  rust_min: 1.94.0 # <- Update this when bumping up MSRV
 
 jobs:
   static_checks:
@@ -57,6 +57,9 @@ jobs:
       # Verify scylla-cql-core separately
       - name: Clippy scylla-cql-core
         run: cargo clippy --all-targets -p scylla-cql-core --features "full-serialization"
+      # Checks of other crates enable scylla-cql-core features through feature unification.
+      - name: Clippy scylla-cql-core without features
+        run: cargo clippy --all-targets -p scylla-cql-core --features ""
 
       # Features checks.
       # No features.

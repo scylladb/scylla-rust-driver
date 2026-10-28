@@ -1358,6 +1358,7 @@ fn make_bytes(cell: &[u8]) -> Bytes {
 
 /// Asserts that two deserialization paths (direct and via CQL intermediate type)
 /// both produce the same expected result.
+#[cfg(any(feature = "chrono-04", feature = "time-03"))]
 fn assert_conversion<T: PartialEq + std::fmt::Debug>(
     raw_bytes: &[u8],
     direct: impl Fn(&Bytes) -> Option<T>,

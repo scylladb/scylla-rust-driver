@@ -1446,15 +1446,9 @@ impl Session {
             // In such case, TlsProvider is uninhabited.
             #[cfg_attr(
                 not(any(feature = "openssl-010", feature = "rustls-023")),
-                // TODO: make this expect() once MSRV is 1.92+.
-                allow(unreachable_code, unused_variables)
+                expect(unused_variables)
             )]
             let provider = TlsProvider::new_with_global_context(tls_context);
-            #[cfg_attr(
-                not(any(feature = "openssl-010", feature = "rustls-023")),
-                // TODO: remove this once MSRV is 1.92+.
-                allow(unreachable_code)
-            )]
             Some(provider)
         } else {
             None
