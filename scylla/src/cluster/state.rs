@@ -36,6 +36,9 @@ pub(crate) struct NodeConfig {
     pub(crate) metrics: Metrics,
 }
 
+/// Keyspaces by name.
+pub(crate) type KeyspaceMap = HashMap<String, Arc<Keyspace>>;
+
 /// The nodes known to be part of the cluster. Often referred to as "topology metadata".
 ///
 /// Both collections hold the same set of nodes and are rebuilt together on
@@ -103,7 +106,7 @@ pub struct ClusterState {
     ///
     /// Shared, not copied, when a new `ClusterState` is derived from this one
     /// without a schema change (e.g. on a tablet update).
-    pub(crate) keyspaces: Arc<HashMap<String, Arc<Keyspace>>>,
+    pub(crate) keyspaces: Arc<KeyspaceMap>,
 
     /// The entity which provides a way to find the set of owning nodes (+shards, in case of ScyllaDB)
     /// for a given (token, replication strategy, table) tuple.
@@ -227,7 +230,7 @@ impl ClusterState {
 
         let keyspaces = Arc::new(Self::resolve_metadata_keyspaces(
             metadata.keyspaces,
-            &HashMap::new(),
+            &KeyspaceMap::default(),
         ));
 
         let mut tablets = TabletsInfo::new();
@@ -393,8 +396,8 @@ impl ClusterState {
     /// Applies a partial schema update onto the schema metadata of `self`:
     /// replaces the metadata of the re-read keyspaces and removes those that
     /// ceased to exist, keeping every keyspace the update does not mention.
-    fn updated_keyspaces(&self, schema: SchemaUpdate) -> HashMap<String, Arc<Keyspace>> {
-        let mut new_keyspaces = HashMap::clone(&self.keyspaces);
+    fn updated_keyspaces(&self, schema: SchemaUpdate) -> KeyspaceMap {
+        let mut new_keyspaces = KeyspaceMap::clone(&self.keyspaces);
 
         for (name, keyspace) in schema.keyspaces {
             // A keyspace whose fresh metadata turned out inconsistent keeps its
@@ -492,8 +495,8 @@ impl ClusterState {
     /// broken keyspaces and warns about it.
     fn resolve_metadata_keyspaces(
         meta_keyspaces: HashMap<String, Result<Arc<Keyspace>, SingleKeyspaceMetadataError>>,
-        old_keyspaces: &HashMap<String, Arc<Keyspace>>,
-    ) -> HashMap<String, Arc<Keyspace>> {
+        old_keyspaces: &KeyspaceMap,
+    ) -> KeyspaceMap {
         meta_keyspaces
             .into_iter()
             .filter_map(|(ks_name, ks)| {
@@ -508,7 +511,7 @@ impl ClusterState {
     fn resolve_metadata_keyspace(
         ks_name: &str,
         ks: Result<Arc<Keyspace>, SingleKeyspaceMetadataError>,
-        old_keyspaces: &HashMap<String, Arc<Keyspace>>,
+        old_keyspaces: &KeyspaceMap,
     ) -> Option<Arc<Keyspace>> {
         match ks {
             Ok(ks) => Some(ks),
@@ -537,7 +540,7 @@ impl ClusterState {
         tablets: &mut TabletsInfo,
         old_known_nodes: &KnownNodes,
         new_known_nodes: &KnownNodes,
-        keyspaces: &HashMap<String, Arc<Keyspace>>,
+        keyspaces: &KeyspaceMap,
     ) {
         let removed_nodes = {
             let mut removed_nodes = HashSet::new();
@@ -567,10 +570,10 @@ impl ClusterState {
     }
 
     async fn calculate_new_locator(
-        keyspaces: Arc<HashMap<String, Arc<Keyspace>>>,
+        keyspaces: Arc<KeyspaceMap>,
         ring: Ring,
         tablets: TabletsInfo,
-    ) -> (ReplicaLocator, Arc<HashMap<String, Arc<Keyspace>>>) {
+    ) -> (ReplicaLocator, Arc<KeyspaceMap>) {
         tokio::task::spawn_blocking(move || {
             let keyspace_strategies = keyspaces
                 .values()
