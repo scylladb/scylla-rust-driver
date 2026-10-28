@@ -573,24 +573,6 @@ where
     try_join_all(tasks).await
 }
 
-/// Like [`for_each_target_execute`], but invokes the callback once per node
-/// (instead of once per shard). The callback receives only the node.
-async fn for_each_node_execute<ExecuteFn, ExecuteFut>(
-    cluster: &ClusterState,
-    execute: ExecuteFn,
-) -> Result<Vec<QueryResult>, ExecutionError>
-where
-    ExecuteFn: Fn(Arc<scylla::cluster::Node>) -> ExecuteFut,
-    ExecuteFut: Future<Output = Result<QueryResult, ExecutionError>>,
-{
-    let tasks = cluster
-        .get_nodes_info()
-        .iter()
-        .map(|node| execute(node.clone()));
-
-    try_join_all(tasks).await
-}
-
 /// Runs `attempt`, retrying while concurrent tablet migrations invalidate what it observed.
 ///
 /// Tablet migrations run in the background and can move a tablet's replicas -- or, for a
@@ -685,25 +667,49 @@ pub(crate) async fn execute_unprepared_statement_everywhere(
     .await
 }
 
-/// Like [`execute_unprepared_statement_everywhere`], but targets each node
-/// once (any shard) instead of every individual shard. This only requires
-/// at least one connection per node, making it suitable for scenarios where
-/// the pool may not be fully filled yet (e.g. right after a client routes
-/// update).
-pub(crate) async fn execute_unprepared_statement_on_every_node(
-    session: &Session,
-    cluster: &ClusterState,
-    statement: &Statement,
-    values: &dyn SerializeRow,
-) -> Result<Vec<QueryResult>, ExecutionError> {
-    for_each_node_execute(cluster, |node| async move {
-        let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), None);
-        let mut statement = statement.clone();
-        statement.set_load_balancing_policy(Some(policy));
+/// Whether `system.clients` has the `client_options` column. It was added in some
+/// ScyllaDB version, so tests relying on it detect it instead of checking the version.
+pub(crate) async fn system_clients_has_client_options(session: &Session) -> bool {
+    session
+        .query_unpaged(
+            "SELECT column_name FROM system_schema.columns \
+             WHERE keyspace_name = 'system' AND table_name = 'clients' \
+             AND column_name = 'client_options'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .rows::<(String,)>()
+        .unwrap()
+        .next()
+        .is_some()
+}
 
-        session.query_unpaged(statement, values).await
-    })
-    .await
+/// The `STARTUP` options of `session`'s connections to `node`, read from `system.clients`.
+/// The table is node-local, so it lists only the connections to `node`.
+pub(crate) async fn session_client_options(
+    session: &Session,
+    node: NodeRef<'_>,
+) -> Vec<HashMap<String, String>> {
+    let mut statement = Statement::new("SELECT client_options FROM system.clients");
+    statement.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
+        NodeIdentifier::Node(Arc::clone(node)),
+        None,
+    )));
+    let session_id = session.session_id().to_string();
+    session
+        .query_unpaged(statement, &[])
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .rows::<(Option<HashMap<String, String>>,)>()
+        .unwrap()
+        .filter_map(|row| row.unwrap().0)
+        .filter(|options| options.get("SESSION_ID") == Some(&session_id))
+        .collect()
 }
 
 pub(crate) const HEALTHCHECK_QUERY: &str = "SELECT host_id FROM system.local WHERE key='local'";
