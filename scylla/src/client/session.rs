@@ -31,7 +31,7 @@ use crate::network::tls::TlsProvider;
 use crate::network::{
     Connection, ConnectionConfig, PoolConfig, TcpSocketOptions, VerifiedKeyspaceName,
 };
-use crate::observability::driver_tracing::RequestSpan;
+use crate::observability::driver_tracing::{RequestSpan, await_in_span};
 use crate::observability::metrics::Metrics;
 use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
@@ -67,7 +67,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::timeout;
-use tracing::{Instrument, debug, error, warn};
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
@@ -1360,16 +1360,16 @@ impl Session {
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
             Coordinator,
-        ) = self
-            .run_request(
+        ) = await_in_span!(
+            self.run_request(
                 &cluster_state,
                 routing_info,
                 exec_params,
                 run_request_once,
                 &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
+            ),
+            span.span()
+        )?;
 
         let result = match run_request_result {
             RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(coordinator),
@@ -1745,16 +1745,16 @@ impl Session {
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
             Coordinator,
-        ) = self
-            .run_request(
+        ) = await_in_span!(
+            self.run_request(
                 &cluster_state,
                 routing_info,
                 exec_params,
                 run_request_once,
                 &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
+            ),
+            span.span()
+        )?;
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
@@ -2159,16 +2159,16 @@ impl Session {
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
             Coordinator,
-        ) = self
-            .run_request(
+        ) = await_in_span!(
+            self.run_request(
                 &cluster_state,
                 routing_info,
                 exec_params,
                 run_request_once,
                 &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
+            ),
+            span.span()
+        )?;
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
