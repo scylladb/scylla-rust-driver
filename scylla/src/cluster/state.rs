@@ -37,7 +37,13 @@ pub(crate) struct NodeConfig {
 }
 
 /// Keyspaces by name.
-pub(crate) type KeyspaceMap = HashMap<String, Arc<Keyspace>>;
+///
+/// `DefaultPolicy` looks keyspaces up on every request, so the map uses hashbrown's
+/// default hasher, foldhash, which is faster than std's SipHash. std uses SipHash
+/// to resist HashDoS (keys crafted to collide, making lookups slow), which foldhash
+/// does only minimally. That's enough here: the keys are names of the cluster's
+/// keyspaces, which only users allowed to create keyspaces can choose.
+pub(crate) type KeyspaceMap = HashMap<String, Arc<Keyspace>, hashbrown::DefaultHashBuilder>;
 
 /// The nodes known to be part of the cluster. Often referred to as "topology metadata".
 ///
