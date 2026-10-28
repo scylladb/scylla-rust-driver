@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::Infallible;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use scylla_cql::frame::flag;
@@ -26,6 +27,7 @@ const HEADER_SIZE: usize = 9;
 /// numbers in the CQL protocol.
 #[repr(i32)]
 enum ResultKind {
+    Void = 0x0001,
     Rows = 0x0002,
     Prepared = 0x0004,
     SchemaChange = 0x0005,
@@ -204,6 +206,15 @@ impl ResponseFrame {
             ResponseOpcode::Supported,
             buf.freeze(),
         ))
+    }
+
+    /// Creates a `RESULT::Void` response frame, as sent by a server after a request
+    /// that returns nothing, for example a write or a batch.
+    pub fn forged_void(request_params: FrameParams) -> Self {
+        // A Void result has no body after its kind.
+        let write_nothing = |_: &mut BytesMut| Ok::<_, Infallible>(());
+        let Ok(frame) = Self::forged_result(request_params, ResultKind::Void, write_nothing);
+        frame
     }
 
     /// Creates a `RESULT::Rows` response frame with the given columns and rows.
