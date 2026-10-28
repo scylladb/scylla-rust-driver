@@ -302,7 +302,7 @@ macro_rules! test_crate {
             _scylla::DeserializeRow, _scylla::SerializeRow, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla)]
-        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.90
+        #[expect(dead_code)]
         struct TestRowByName {
             #[scylla(skip)]
             a: ::core::primitive::i32,
