@@ -138,7 +138,9 @@ pub mod frame {
         //! CQL binary protocol in-wire types.
 
         #[cfg(test)]
-        pub(crate) use scylla_cql::frame::types::{read_string_map, write_bytes_opt};
+        pub(crate) use scylla_cql::frame::types::{
+            read_long_string, read_string_map, write_bytes_opt,
+        };
         pub(crate) use scylla_cql_core::frame::types::RawValue;
         pub use scylla_cql_core::frame::types::{Consistency, SerialConsistency};
     }
