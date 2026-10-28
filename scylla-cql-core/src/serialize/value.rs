@@ -16,7 +16,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::frame::response::result::{CollectionType, ColumnType, NativeType};
-use crate::frame::types::{unsigned_vint_encode, vint_encode};
+use crate::frame::types::vint_encode;
 use crate::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
     CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed, Emptiable, MaybeEmpty, MaybeUnset, Unset,
@@ -1037,22 +1037,18 @@ pub(crate) fn serialize_next_variable_length_elem<'t, T: SerializeValue + 't>(
     builder: &mut CellValueBuilder,
     element: &'t T,
 ) -> Result<(), SerializationError> {
-    let mut element_buffer = Vec::new();
-    let inner_writer = CellWriter::new_without_size(&mut element_buffer);
-    T::serialize(element, element_type, inner_writer).map_err(|err| {
+    T::serialize(
+        element,
+        element_type,
+        builder.make_sub_writer_with_vint_size(),
+    )
+    .map_err(|err| {
         mk_ser_err_named(
             rust_name,
             typ,
             VectorSerializationErrorKind::ElementSerializationFailed(err),
         )
     })?;
-    let mut element_length_buffer = Vec::new();
-    unsigned_vint_encode(
-        element_buffer.len().try_into().unwrap(),
-        &mut element_length_buffer,
-    );
-    builder.append_bytes(element_length_buffer.as_slice());
-    builder.append_bytes(element_buffer.as_slice());
     Ok(())
 }
 
