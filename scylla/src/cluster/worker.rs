@@ -16,6 +16,7 @@ use crate::observability::metrics::Metrics;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::host_listener::{HostEvent, HostEventContext, HostListener};
+use crate::routing::NodeLocationPreference;
 use crate::routing::locator::tablets::RawTablet;
 
 use crate::frame::response::result::TableSpec;
@@ -26,7 +27,7 @@ use futures::{FutureExt, future::RemoteHandle};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use super::metadata::cc_establisher::ControlConnectionEstablisher;
@@ -72,6 +73,7 @@ impl Cluster {
         hostname_resolution_timeout: Option<Duration>,
         host_filter: Option<Arc<dyn HostFilter>>,
         host_listener: Option<Arc<dyn HostListener>>,
+        node_location_preference: Arc<NodeLocationPreference>,
         cluster_metadata_refresh_interval: Duration,
         periodic_fetch_mode: PeriodicFetchMode,
         tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
@@ -155,6 +157,7 @@ impl Cluster {
             host_listener.as_deref(),
             &mut node_status,
         );
+        ClusterWorker::check_node_location_preference(&cluster_state, &node_location_preference);
 
         cluster_state.wait_until_all_pools_are_initialized().await;
 
@@ -177,6 +180,7 @@ impl Cluster {
 
             host_filter,
             host_listener,
+            node_location_preference,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
@@ -291,6 +295,10 @@ struct ClusterWorker {
 
     // The host listener allows to listen for topology and node status changes.
     host_listener: Option<Arc<dyn HostListener>>,
+
+    // Session-level node location preference. It is validated against each new topology,
+    // so that load balancing doesn't have to validate it on every request.
+    node_location_preference: Arc<NodeLocationPreference>,
 }
 
 #[derive(Debug)]
@@ -433,6 +441,12 @@ impl ClusterWorker {
             .filter(|(_k, v)| **v == StatusHint::Down)
             .for_each(|(addr, _)| cluster_state.trigger_keepalive_for_addr(*addr));
 
+        let topology_reread = match &update.metadata_changes {
+            Some(MetadataChanges::Full { .. }) => true,
+            Some(MetadataChanges::Partial(changes)) => changes.peers.is_some(),
+            None => false,
+        };
+
         let process_up_hints = |state: &ClusterState| {
             state.trigger_pool_refills_for_hosts(client_routes_hosts_to_refill.into_iter());
             update
@@ -496,6 +510,12 @@ impl ClusterWorker {
             self.host_listener.as_deref(),
             &mut self.node_status,
         );
+        if topology_reread {
+            Self::check_node_location_preference(
+                &new_cluster_state,
+                &self.node_location_preference,
+            );
+        }
 
         // The wait keeps a working session from being replaced by one whose
         // pools are all still connecting. That is only possible when no
@@ -557,6 +577,20 @@ impl ClusterWorker {
 
     fn update_cluster_state(&mut self, new_cluster_state: Arc<ClusterState>) {
         self.cluster_state.store(new_cluster_state);
+    }
+
+    /// Warns if the session-level node location preference can't be honoured
+    /// in the given cluster state.
+    fn check_node_location_preference(
+        cluster_state: &ClusterState,
+        preference: &NodeLocationPreference,
+    ) {
+        let Some(datacenter) = preference.datacenter() else {
+            return;
+        };
+        if let Err(err) = cluster_state.check_preferred_location(datacenter, preference.rack()) {
+            warn!("The node location preference set on the Session can't be honoured: {err}");
+        }
     }
 
     /// Handle node addition/removal/address changes.

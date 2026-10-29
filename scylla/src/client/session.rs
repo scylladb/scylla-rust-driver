@@ -1436,7 +1436,7 @@ impl Session {
             ))
         });
 
-        let node_location_preference = config.node_location_preference;
+        let node_location_preference = Arc::new(config.node_location_preference);
         let known_nodes = config.known_nodes;
 
         let (tablet_sender, tablet_receiver) = tokio::sync::mpsc::channel(TABLET_CHANNEL_SIZE);
@@ -1530,6 +1530,7 @@ impl Session {
             config.hostname_resolution_timeout,
             config.host_filter,
             host_listener,
+            Arc::clone(&node_location_preference),
             config.cluster_metadata_refresh_interval,
             config.periodic_metadata_fetch_mode,
             tablet_receiver,
@@ -1553,7 +1554,7 @@ impl Session {
             tracing_info_fetch_attempts: config.tracing_info_fetch_attempts,
             tracing_info_fetch_interval: config.tracing_info_fetch_interval,
             tracing_info_fetch_consistency: config.tracing_info_fetch_consistency,
-            node_location_preference: Arc::new(node_location_preference),
+            node_location_preference,
             internal_statements: InternalStatements::default(),
             session_id,
         };
