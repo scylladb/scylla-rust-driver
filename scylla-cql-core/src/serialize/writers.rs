@@ -74,7 +74,16 @@ impl<'buf> RowWriter<'buf> {
 /// in nothing being written.
 pub struct CellWriter<'buf> {
     buf: &'buf mut Vec<u8>,
-    write_size: bool,
+    size_prefix: SizePrefix,
+}
+
+/// How the size of a value is written before its contents.
+#[derive(Clone, Copy)]
+enum SizePrefix {
+    /// An `[int]`, as for values of a row or elements of a collection.
+    Int,
+    /// No size, as for fixed-length elements of a vector.
+    Omitted,
 }
 
 impl<'buf> CellWriter<'buf> {
@@ -85,7 +94,7 @@ impl<'buf> CellWriter<'buf> {
     pub fn new(buf: &'buf mut Vec<u8>) -> Self {
         Self {
             buf,
-            write_size: true,
+            size_prefix: SizePrefix::Int,
         }
     }
 
@@ -96,7 +105,7 @@ impl<'buf> CellWriter<'buf> {
     pub fn new_without_size(buf: &'buf mut Vec<u8>) -> Self {
         Self {
             buf,
-            write_size: false,
+            size_prefix: SizePrefix::Omitted,
         }
     }
 
@@ -125,8 +134,9 @@ impl<'buf> CellWriter<'buf> {
     #[inline]
     pub fn set_value(self, contents: &[u8]) -> Result<WrittenCellProof<'buf>, CellOverflowError> {
         let value_len: i32 = contents.len().try_into().map_err(|_| CellOverflowError)?;
-        if self.write_size {
-            self.buf.extend_from_slice(&value_len.to_be_bytes());
+        match self.size_prefix {
+            SizePrefix::Int => self.buf.extend_from_slice(&value_len.to_be_bytes()),
+            SizePrefix::Omitted => {}
         }
         self.buf.extend_from_slice(contents);
         Ok(WrittenCellProof::new())
@@ -140,7 +150,7 @@ impl<'buf> CellWriter<'buf> {
     /// or UDTs.
     #[inline]
     pub fn into_value_builder(self) -> CellValueBuilder<'buf> {
-        CellValueBuilder::new(self.buf, self.write_size)
+        CellValueBuilder::new(self.buf, self.size_prefix)
     }
 }
 
@@ -157,27 +167,28 @@ pub struct CellValueBuilder<'buf> {
     // Starting position of the value in the buffer.
     starting_pos: usize,
 
-    // Should we write the size of the value?
-    write_size: bool,
+    // How the size of the value is written.
+    size_prefix: SizePrefix,
 }
 
 impl<'buf> CellValueBuilder<'buf> {
     #[inline]
-    fn new(buf: &'buf mut Vec<u8>, write_size: bool) -> Self {
-        // "Length" of a [bytes] frame can either be a non-negative i32,
-        // -1 (null) or -2 (not set). Push an invalid value here. It will be
-        // overwritten eventually either by set_null, set_unset or Drop.
-        // If the CellSerializer is not dropped as it should, this will trigger
-        // an error on the DB side and the serialized data
-        // won't be misinterpreted.
+    fn new(buf: &'buf mut Vec<u8>, size_prefix: SizePrefix) -> Self {
         let starting_pos = buf.len();
-        if write_size {
-            buf.extend_from_slice(&(-3i32).to_be_bytes());
+        match size_prefix {
+            // "Length" of a [bytes] frame can either be a non-negative i32,
+            // -1 (null) or -2 (not set). Push an invalid value here. It will be
+            // overwritten eventually either by set_null, set_unset or Drop.
+            // If the CellSerializer is not dropped as it should, this will trigger
+            // an error on the DB side and the serialized data
+            // won't be misinterpreted.
+            SizePrefix::Int => buf.extend_from_slice(&(-3i32).to_be_bytes()),
+            SizePrefix::Omitted => {}
         }
         Self {
             buf,
             starting_pos,
-            write_size,
+            size_prefix,
         }
     }
 
@@ -207,12 +218,15 @@ impl<'buf> CellValueBuilder<'buf> {
     /// CQL cell size (which is i32::MAX).
     #[inline]
     pub fn finish(self) -> Result<WrittenCellProof<'buf>, CellOverflowError> {
-        if self.write_size {
-            let value_len: i32 = (self.buf.len() - self.starting_pos - 4)
-                .try_into()
-                .map_err(|_| CellOverflowError)?;
-            self.buf[self.starting_pos..self.starting_pos + 4]
-                .copy_from_slice(&value_len.to_be_bytes());
+        match self.size_prefix {
+            SizePrefix::Int => {
+                let value_len: i32 = (self.buf.len() - self.starting_pos - 4)
+                    .try_into()
+                    .map_err(|_| CellOverflowError)?;
+                self.buf[self.starting_pos..self.starting_pos + 4]
+                    .copy_from_slice(&value_len.to_be_bytes());
+            }
+            SizePrefix::Omitted => {}
         }
         Ok(WrittenCellProof::new())
     }
