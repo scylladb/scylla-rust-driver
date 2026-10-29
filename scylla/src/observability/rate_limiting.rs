@@ -10,26 +10,12 @@ use tokio::time::Instant;
 ///
 /// Lock-free: a single relaxed atomic holds the time of the next permit,
 /// so that it is cheap enough to be queried on the hot path.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Used by the next commit, which rate-limits LBP warnings."
-    )
-)]
 pub(crate) struct RateLimiter {
     interval: Duration,
     /// Earliest time of the next permit, as returned by `to_nanos()`.
     next_permit_nanos: AtomicI64,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Used by the next commit, which rate-limits LBP warnings."
-    )
-)]
 impl RateLimiter {
     pub(crate) const fn new(interval: Duration) -> Self {
         Self {
@@ -92,10 +78,6 @@ impl RateLimiter {
 /// // Warns at most once per second, no matter how often this is reached.
 /// warn_rate_limited!(LIMITER, "Something is off with node {}", node);
 /// ```
-#[expect(
-    unused_macros,
-    reason = "Used by the next commit, which rate-limits LBP warnings."
-)]
 macro_rules! warn_rate_limited {
     ($limiter:expr, $($arg:tt)+) => {
         if $limiter.try_acquire() {

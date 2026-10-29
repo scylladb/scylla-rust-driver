@@ -1,9 +1,11 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use uuid::Uuid;
 
 use crate::cluster::{ClusterState, Node, NodeRef};
+use crate::observability::{RateLimiter, warn_rate_limited};
 use crate::routing::Shard;
 
 use super::{LoadBalancingPolicy, RoutingInfo};
@@ -87,7 +89,10 @@ impl LoadBalancingPolicy for SingleTargetLoadBalancingPolicy {
         match node {
             Some(node) => Some((node, self.shard)),
             None => {
-                tracing::warn!(
+                // A static rather than a field, because this policy is often created per request.
+                static WARNING_LIMITER: RateLimiter = RateLimiter::new(Duration::from_secs(1));
+                warn_rate_limited!(
+                    WARNING_LIMITER,
                     "SingleTargetLoadBalancingPolicy failed to find requested node {:?} in cluster metadata.",
                     self.node_identifier
                 );

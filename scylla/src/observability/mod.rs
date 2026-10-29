@@ -20,8 +20,4 @@ pub(crate) mod metrics;
 mod rate_limiting;
 pub mod tracing;
 
-#[expect(
-    unused_imports,
-    reason = "Used by the next commit, which rate-limits LBP warnings."
-)]
 pub(crate) use rate_limiting::{RateLimiter, warn_rate_limited};
