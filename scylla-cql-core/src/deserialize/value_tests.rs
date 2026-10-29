@@ -2441,6 +2441,29 @@ fn test_floating_points() {
     assert_eq!(double_serialize, CqlValue::Double(double));
 }
 
+#[test]
+fn test_varint_rejects_empty() {
+    let empty = make_bytes(&[]);
+    let typ = ColumnType::Native(Varint);
+
+    assert_deser_error!(
+        &empty,
+        CqlVarint,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+    assert_deser_error!(
+        &empty,
+        CqlVarintBorrowed,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+    assert_eq!(
+        deserialize::<MaybeEmpty<CqlVarint>>(&typ, &empty).unwrap(),
+        MaybeEmpty::Empty
+    );
+}
+
 #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
 struct VarintTestCase {
     value: i32,
@@ -2510,7 +2533,36 @@ fn test_bigint03() {
         let bytes = make_bytes(&t.encoding);
         let value = deserialize::<CqlValue>(&ColumnType::Native(Varint), &bytes).unwrap();
         assert_eq!(CqlValue::Varint(t.value.to_bigint().unwrap().into()), value);
+        let direct =
+            deserialize::<num_bigint_03::BigInt>(&ColumnType::Native(Varint), &bytes).unwrap();
+        assert_eq!(direct, num_bigint_03::BigInt::from(t.value));
     }
+}
+
+#[cfg(feature = "num-bigint-03")]
+#[test]
+fn test_bigint03_rejects_empty_varint() {
+    let empty = make_bytes(&[]);
+    let typ = ColumnType::Native(Varint);
+
+    assert_deser_error!(
+        &empty,
+        num_bigint_03::BigInt,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+    assert_eq!(
+        deserialize::<MaybeEmpty<num_bigint_03::BigInt>>(&typ, &empty).unwrap(),
+        MaybeEmpty::Empty
+    );
+
+    let null = make_null();
+    assert_deser_error!(
+        &null,
+        num_bigint_03::BigInt,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonNull
+    );
 }
 
 #[cfg(feature = "num-bigint-04")]
@@ -2524,7 +2576,87 @@ fn test_bigint04() {
         let bytes = make_bytes(&t.encoding);
         let value = deserialize::<CqlValue>(&ColumnType::Native(Varint), &bytes).unwrap();
         assert_eq!(CqlValue::Varint(t.value.to_bigint().unwrap().into()), value);
+        let direct =
+            deserialize::<num_bigint_04::BigInt>(&ColumnType::Native(Varint), &bytes).unwrap();
+        assert_eq!(direct, num_bigint_04::BigInt::from(t.value));
     }
+}
+
+#[cfg(feature = "num-bigint-04")]
+#[test]
+fn test_bigint04_rejects_empty_varint() {
+    let empty = make_bytes(&[]);
+    let typ = ColumnType::Native(Varint);
+
+    assert_deser_error!(
+        &empty,
+        num_bigint_04::BigInt,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+    assert_eq!(
+        deserialize::<MaybeEmpty<num_bigint_04::BigInt>>(&typ, &empty).unwrap(),
+        MaybeEmpty::Empty
+    );
+
+    let null = make_null();
+    assert_deser_error!(
+        &null,
+        num_bigint_04::BigInt,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonNull
+    );
+}
+
+#[test]
+fn test_decimal_rejects_empty() {
+    let empty = make_bytes(&[]);
+    // Scale only, no unscaled value.
+    let scale_only = make_bytes(&[0, 0, 0, 2]);
+    let typ = ColumnType::Native(Decimal);
+
+    assert_deser_error!(
+        &empty,
+        CqlDecimal,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+    assert_deser_error!(
+        &empty,
+        CqlDecimalBorrowed,
+        typ,
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+    assert_deser_error!(
+        &scale_only,
+        CqlDecimal,
+        typ,
+        BuiltinDeserializationErrorKind::EmptyDecimalUnscaledValue
+    );
+    assert_deser_error!(
+        &scale_only,
+        CqlDecimalBorrowed,
+        typ,
+        BuiltinDeserializationErrorKind::EmptyDecimalUnscaledValue
+    );
+}
+
+#[cfg(feature = "bigdecimal-04")]
+#[test]
+fn test_bigdecimal04_rejects_empty() {
+    assert_deser_error!(
+        &make_bytes(&[]),
+        bigdecimal_04::BigDecimal,
+        ColumnType::Native(Decimal),
+        BuiltinDeserializationErrorKind::ExpectedNonEmpty
+    );
+    // Scale only, no unscaled value.
+    assert_deser_error!(
+        &make_bytes(&[0, 0, 0, 2]),
+        bigdecimal_04::BigDecimal,
+        ColumnType::Native(Decimal),
+        BuiltinDeserializationErrorKind::EmptyDecimalUnscaledValue
+    );
 }
 
 #[cfg(feature = "bigdecimal-04")]
