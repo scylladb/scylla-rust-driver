@@ -679,19 +679,12 @@ impl DefaultPolicy {
         routing_info: &ProcessedRoutingInfo<'_>,
     ) -> &'a [Arc<Node>] {
         if let Some(preferred_datacenter) = routing_info.preference.datacenter() {
-            if let Some(nodes) = cluster
+            // If the preferred DC does not exist, we won't guess any DC,
+            // as it could lead to possible violation of dc failover ban.
+            cluster
                 .replica_locator()
                 .unique_nodes_in_datacenter_ring(preferred_datacenter)
-            {
-                nodes
-            } else {
-                tracing::warn!(
-                    "Datacenter specified as the preferred one ({}) does not exist!",
-                    preferred_datacenter
-                );
-                // We won't guess any DC, as it could lead to possible violation of dc failover ban.
-                &[]
-            }
+                .unwrap_or(&[])
         } else {
             cluster.replica_locator().unique_nodes_in_global_ring()
         }
