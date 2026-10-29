@@ -10,7 +10,9 @@ use crate::cluster::metadata::update::{
 use crate::cluster::metadata::{PeriodicFetchMode, SchemaMetadataFetchMode};
 use crate::cluster::state::NodeConfig;
 use crate::cluster::{KnownNode, Node};
-use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
+use crate::errors::{
+    MetadataError, NewSessionError, RequestAttemptError, SessionShutDownError, UseKeyspaceError,
+};
 use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::metrics::Metrics;
 use crate::policies::address_translator::AddressTranslator;
@@ -20,8 +22,9 @@ use crate::routing::locator::tablets::RawTablet;
 
 use crate::frame::response::result::TableSpec;
 use arc_swap::ArcSwap;
+use futures::FutureExt;
 use futures::future::{BoxFuture, OptionFuture, join_all};
-use futures::{FutureExt, future::RemoteHandle};
+use tokio_util::task::AbortOnDropHandle;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -44,8 +47,8 @@ pub(crate) struct Cluster {
     refresh_channel: tokio::sync::mpsc::Sender<RefreshRequest>,
     use_keyspace_channel: tokio::sync::mpsc::Sender<UseKeyspaceRequest>,
 
-    _worker_handle: RemoteHandle<()>,
-    _metadata_worker_handle: RemoteHandle<()>,
+    _worker_handle: AbortOnDropHandle<()>,
+    _metadata_worker_handle: AbortOnDropHandle<()>,
 }
 
 /// Enables printing [Cluster] struct in a neat way, by skipping the rather useless
@@ -78,6 +81,7 @@ impl Cluster {
         metrics: Metrics,
         client_routes_config: Option<ClientRoutesConfig>,
     ) -> Result<Cluster, NewSessionError> {
+        let background_tasks = pool_config.connection_config.background_tasks.clone();
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
         // This is unbounded, because there is possibility that many events will be sent quickly,
@@ -179,11 +183,9 @@ impl Cluster {
             host_listener,
         };
 
-        let (fut, worker_handle) = worker.work().remote_handle();
-        tokio::spawn(fut);
-
-        let (metadata_fut, metadata_worker_handle) = metadata_worker.work(cc).remote_handle();
-        tokio::spawn(metadata_fut);
+        let worker_handle = background_tasks.spawn_stoppable(worker.work());
+        // The control connection is local to the worker, so it closes when the worker stops.
+        let metadata_worker_handle = background_tasks.spawn_stoppable(metadata_worker.work(cc));
 
         let result = Cluster {
             state: cluster_state,
@@ -203,18 +205,16 @@ impl Cluster {
     pub(crate) async fn refresh_metadata(&self) -> Result<(), MetadataError> {
         let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
 
+        // The other end of these channels is in MetadataWorker. The worker can be
+        // gone only when the session or the runtime is shutting down.
         self.refresh_channel
             .send(RefreshRequest {
                 response_chan: response_sender,
             })
             .await
-            .expect("Bug in Cluster::refresh_metadata sending");
-        // Other end of this channel is in MetadataWorker, can't be dropped while we have &self to Cluster with _metadata_worker_handle
+            .map_err(|_| SessionShutDownError)?;
 
-        response_receiver
-            .await
-            .expect("Bug in Cluster::refresh_metadata receiving")
-        // The workers always respond
+        response_receiver.await.map_err(|_| SessionShutDownError)?
     }
 
     pub(crate) async fn use_keyspace(
@@ -223,16 +223,17 @@ impl Cluster {
     ) -> Result<(), UseKeyspaceError> {
         let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
 
+        // The other end of these channels is in ClusterWorker. The worker can be
+        // gone only when the session or the runtime is shutting down.
         self.use_keyspace_channel
             .send(UseKeyspaceRequest {
                 keyspace_name,
                 response_chan: response_sender,
             })
             .await
-            .expect("Bug in Cluster::use_keyspace sending");
-        // Other end of this channel is in ClusterWorkers, can't be dropped while we have &self to Cluster with _worker_handle
+            .map_err(|_| SessionShutDownError)?;
 
-        response_receiver.await.unwrap() // ClusterWorker always responds
+        response_receiver.await.map_err(|_| SessionShutDownError)?
     }
 }
 

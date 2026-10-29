@@ -39,6 +39,12 @@ pub use crate::frame::response::CqlResponseKind;
 pub use crate::frame::response::error::{DbError, OperationType, WriteType};
 pub use crate::serialize::SerializationError;
 
+/// The session is shut down. It does not accept new requests.
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[error("The session has been shut down")]
+#[non_exhaustive]
+pub struct SessionShutDownError;
+
 /// Error that occurred during request execution
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
@@ -87,6 +93,10 @@ pub enum ExecutionError {
     /// A metadata error occurred during schema agreement.
     #[error("Cluster metadata fetch error occurred during automatic schema agreement: {0}")]
     MetadataError(#[from] MetadataError),
+
+    /// The session is shut down. It does not accept new requests.
+    #[error(transparent)]
+    SessionShutDown(#[from] SessionShutDownError),
 }
 
 impl From<SerializationError> for ExecutionError {
@@ -117,14 +127,16 @@ pub enum PrepareError {
         "Prepared statement id mismatch between multiple connections - all result ids should be equal."
     )]
     PreparedStatementIdsMismatch,
+
+    /// The session is shut down. It does not accept new requests.
+    #[error(transparent)]
+    SessionShutDown(#[from] SessionShutDownError),
 }
 
 /// An error that occurred during construction of [`QueryPager`][crate::client::pager::QueryPager].
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
-// Check triggers because all variants end with "Error".
 // TODO(2.0): Remove the "Error" postfix from variants.
-#[expect(clippy::enum_variant_names)]
 pub enum PagerExecutionError {
     /// Failed to prepare the statement.
     #[error("Failed to prepare the statement to be used by the pager: {0}")]
@@ -149,6 +161,10 @@ pub enum PagerExecutionError {
     /// Failed when refreshing metadata after schema agreement was reached.
     #[error("Failed when refreshing metadata after schema agreement was reached: {0}")]
     MetadataError(#[from] MetadataError),
+
+    /// The session is shut down. It does not accept new requests.
+    #[error(transparent)]
+    SessionShutDown(#[from] SessionShutDownError),
 }
 
 /// Error that occurred during session creation
@@ -206,6 +222,10 @@ pub enum UseKeyspaceError {
         std::time::Duration::as_millis(.0)
     )]
     RequestTimeout(std::time::Duration),
+
+    /// The session is shut down. It does not accept new requests.
+    #[error(transparent)]
+    SessionShutDown(#[from] SessionShutDownError),
 }
 
 /// An error that occurred when awating schema agreement.
@@ -247,6 +267,10 @@ pub enum SchemaAgreementError {
     /// Some host mandatory for schema agreement is not present in the connection pool.
     #[error("Host with id {0} required for schema agreement is not present in connection pool")]
     RequiredHostAbsent(Uuid),
+
+    /// The session is shut down. It does not accept new requests.
+    #[error(transparent)]
+    SessionShutDown(#[from] SessionShutDownError),
 }
 
 /// An error that occurred during tracing info fetch.
@@ -295,6 +319,10 @@ pub enum TracingError {
         a longer fetch interval (tracing_info_fetch_interval)"
     )]
     EmptyResults,
+
+    /// The session is shut down. It does not accept new requests.
+    #[error(transparent)]
+    SessionShutDown(#[from] SessionShutDownError),
 }
 
 /// An error that occurred during metadata fetch and verification.
@@ -342,6 +370,10 @@ pub enum MetadataError {
     /// Bad client routes metadata.
     #[error("Bad client routes metadata: {0}")]
     ClientRoutes(#[from] ClientRoutesMetadataError),
+
+    /// The session is shut down. It does not accept new requests.
+    #[error(transparent)]
+    SessionShutDown(#[from] SessionShutDownError),
 }
 
 /// An error occurred during metadata fetch.
@@ -565,6 +597,10 @@ pub enum ConnectionPoolError {
     /// A corresponding node was disabled by a host filter.
     #[error("The node has been disabled by a host filter")]
     NodeDisabledByHostFilter,
+
+    /// The pool is closed, because its session was shut down.
+    #[error("The pool is closed, because its session was shut down")]
+    Closed,
 }
 
 /// An error that appeared on a connection level.
