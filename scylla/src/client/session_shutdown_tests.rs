@@ -205,6 +205,90 @@ async fn shutdown_completes_when_called_again_after_a_timeout() {
 }
 
 #[tokio::test]
+async fn shutdown_timeout_waits_for_requests_that_complete_in_time() {
+    let (session, _proxy) = connect().await;
+    let slow_request = start_slow_request(&session).await;
+
+    // The timeout is longer than the delay of the proxy.
+    assert!(session.shutdown_timeout(TEST_TIMEOUT).await);
+    slow_request.await.unwrap().unwrap();
+    assert_closed(&session, &session.get_cluster_state());
+}
+
+#[tokio::test]
+async fn shutdown_timeout_forces_the_shutdown_when_requests_are_slow() {
+    let (session, _proxy) = connect().await;
+    let slow_request = start_slow_request(&session).await;
+
+    // The timeout is shorter than the delay of the proxy.
+    let completed_in_time = tokio::time::timeout(
+        SLOW_RESPONSE_DELAY / 2,
+        session.shutdown_timeout(SLOW_RESPONSE_DELAY / 6),
+    )
+    .await
+    .unwrap();
+    assert!(!completed_in_time);
+    assert_closed(&session, &session.get_cluster_state());
+    assert!(slow_request.await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn force_shutdown_does_not_wait_for_requests_in_flight() {
+    let (session, _proxy) = connect().await;
+    let slow_request = start_slow_request(&session).await;
+
+    // The proxy delays the response for longer than this timeout.
+    tokio::time::timeout(SLOW_RESPONSE_DELAY / 2, session.force_shutdown())
+        .await
+        .unwrap();
+    assert_closed(&session, &session.get_cluster_state());
+
+    // The request in flight lost its connection.
+    assert!(slow_request.await.unwrap().is_err());
+    assert_matches!(
+        session.query_unpaged(SLOW_QUERY, ()).await,
+        Err(ExecutionError::SessionShutDown(_))
+    );
+}
+
+#[tokio::test]
+async fn force_shutdown_ends_a_graceful_shutdown_in_progress() {
+    let (session, _proxy) = connect().await;
+    let slow_request = start_slow_request(&session).await;
+
+    // The graceful shutdown waits for the slow request.
+    let mut graceful = pin!(session.shutdown());
+    assert!(futures::poll!(graceful.as_mut()).is_pending());
+
+    // The proxy delays the response for longer than these timeouts.
+    tokio::time::timeout(SLOW_RESPONSE_DELAY / 2, session.force_shutdown())
+        .await
+        .unwrap();
+    tokio::time::timeout(SLOW_RESPONSE_DELAY / 2, graceful)
+        .await
+        .unwrap();
+    assert!(slow_request.await.unwrap().is_err());
+    assert_closed(&session, &session.get_cluster_state());
+}
+
+#[tokio::test]
+async fn force_shutdown_can_be_called_more_than_once() {
+    let (session, _proxy) = connect().await;
+
+    // Concurrent calls are allowed.
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        tokio::join!(session.force_shutdown(), session.force_shutdown())
+    })
+    .await
+    .unwrap();
+    assert_closed(&session, &session.get_cluster_state());
+
+    // Later calls of both kinds return at once.
+    assert!(futures::poll!(pin!(session.force_shutdown())).is_ready());
+    assert!(futures::poll!(pin!(session.shutdown())).is_ready());
+}
+
+#[tokio::test]
 async fn shutdown_closes_connections_and_rejects_requests() {
     let (session, _proxy) = connect().await;
     let cluster_state = session.get_cluster_state();

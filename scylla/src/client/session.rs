@@ -22,9 +22,9 @@ use crate::cluster::node::KnownNode;
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::DbError;
 use crate::errors::{
-    BadQuery, BrokenConnectionError, ExecutionError, MetadataError, NewSessionError,
-    PagerExecutionError, PrepareError, RequestAttemptError, RequestError, SchemaAgreementError,
-    SessionShutDownError, TracingError, UseKeyspaceError,
+    BadQuery, BrokenConnectionError, ConnectionPoolError, ExecutionError, MetadataError,
+    NewSessionError, PagerExecutionError, PrepareError, RequestAttemptError, RequestError,
+    SchemaAgreementError, SessionShutDownError, TracingError, UseKeyspaceError,
 };
 use crate::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
 use crate::frame::response::result;
@@ -2428,25 +2428,14 @@ impl Session {
     /// # Timeouts
     ///
     /// This method waits for the requests in flight without a time limit.
-    /// To set a limit, use [`tokio::time::timeout`]. If the limit expires,
-    /// the session continues to reject new requests, but its connections
-    /// stay open. You can then call `shutdown()` again, or drop the session.
+    /// To set a limit, use [`shutdown_timeout`](Self::shutdown_timeout).
     ///
-    /// This method is cancel safe. You can call it more than once, also
-    /// concurrently.
+    /// If you stop waiting for this method, for example with
+    /// [`tokio::time::timeout`], the session continues to reject new requests,
+    /// but its connections stay open. To close them, call this method again,
+    /// call [`force_shutdown`](Self::force_shutdown), or drop the session.
     ///
-    /// # Example
-    /// ```rust
-    /// # use scylla::client::session::Session;
-    /// # use std::sync::Arc;
-    /// # use std::time::Duration;
-    /// # async fn example(session: Arc<Session>) {
-    /// let shutdown = tokio::time::timeout(Duration::from_secs(10), session.shutdown());
-    /// if shutdown.await.is_err() {
-    ///     eprintln!("Some requests did not complete in 10 seconds");
-    /// }
-    /// # }
-    /// ```
+    /// You can call this method more than once, also concurrently.
     pub async fn shutdown(&self) {
         debug!("Session: shutdown started, rejecting new requests");
         self.in_flight.close();
@@ -2455,6 +2444,54 @@ impl Session {
         debug!("Session: no requests in flight, stopping background tasks");
         self.background_tasks.stop_all().await;
         debug!("Session: shutdown complete");
+    }
+
+    /// Shuts down the session gracefully, but forces the shutdown if the
+    /// requests in flight do not complete within `timeout`.
+    ///
+    /// First, this method does the steps of [`shutdown`](Self::shutdown).
+    /// If they do not complete within `timeout`, it continues as
+    /// [`force_shutdown`](Self::force_shutdown): the requests that are still
+    /// in flight fail.
+    ///
+    /// When this method returns, all connections of the session are closed.
+    ///
+    /// Returns `true` if the requests in flight completed within `timeout`.
+    /// Returns `false` if the shutdown was forced.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use scylla::client::session::Session;
+    /// # use std::time::Duration;
+    /// # async fn example(session: &Session) {
+    /// if !session.shutdown_timeout(Duration::from_secs(10)).await {
+    ///     eprintln!("Some requests did not complete in 10 seconds");
+    /// }
+    /// # }
+    /// ```
+    pub async fn shutdown_timeout(&self, timeout: Duration) -> bool {
+        if tokio::time::timeout(timeout, self.shutdown()).await.is_ok() {
+            return true;
+        }
+        self.force_shutdown().await;
+        false
+    }
+
+    /// Shuts down the session at once, and does not wait for the requests in flight.
+    ///
+    /// The session stops accepting new requests, as in step 1 of
+    /// [`shutdown`](Self::shutdown). Then it stops its background tasks, and
+    /// closes all its connections. The requests in flight fail, for example
+    /// with a broken connection error.
+    ///
+    /// When this method returns, all connections of the session are closed.
+    /// The failed requests can return after this method returns.
+    ///
+    /// You can call this method during a graceful shutdown, and after it.
+    pub async fn force_shutdown(&self) {
+        debug!("Session: forced shutdown, rejecting new requests and stopping background tasks");
+        self.in_flight.close();
+        self.background_tasks.stop_all().await;
     }
 
     /// Access metrics collected by the driver.
@@ -2730,6 +2767,12 @@ impl Session {
                 error!("Unexpected schema agreement error type: {}", error);
                 ControlFlow::Break(())
             }
+
+            // A forced shutdown closed the pools, and they never open again.
+            SchemaAgreementError::ConnectionPoolError(ConnectionPoolError::Closed)
+            | SchemaAgreementError::PrepareError(PrepareError::ConnectionPoolError(
+                ConnectionPoolError::Closed,
+            )) => ControlFlow::Break(()),
 
             // Definitely a transient error.
             SchemaAgreementError::ConnectionPoolError(_)
