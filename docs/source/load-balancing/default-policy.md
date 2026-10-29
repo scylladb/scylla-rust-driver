@@ -82,6 +82,9 @@ false), the default policy will only include local nodes in load balancing
 plans. Remote nodes will be excluded, even if they are alive and available to
 serve requests.
 
+The driver logs a warning if the preferred datacenter or rack is not present
+in the cluster, or if all of its nodes are disabled by the host filter.
+
 #### Datacenter Failover
 
 In the event of a datacenter outage or network failure, the nodes in that
