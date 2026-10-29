@@ -5,6 +5,7 @@ use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::cluster::ClusterState;
 use crate::frame::response::result::TableSpec;
 use crate::frame::types::Consistency;
+use crate::observability::{RateLimiter, warn_rate_limited};
 use crate::routing::NodeLocationPreference;
 use crate::{
     cluster::metadata::{ConsistencyMode, Strategy},
@@ -18,8 +19,10 @@ use rand::{Rng, prelude::SliceRandom, rng};
 use rand_pcg::Pcg32;
 use std::hash::{Hash, Hasher};
 use std::{fmt, sync::Arc, time::Duration};
-use tracing::{debug, warn};
+use tracing::debug;
 use uuid::Uuid;
+
+const WARNING_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy)]
 enum NodeLocationCriteria<'a> {
@@ -128,6 +131,10 @@ pub struct DefaultPolicy {
     /// based on random number generator. For sake of deterministic testing,
     /// a fixed seed can be used.
     pub(crate) fixed_seed: Option<u64>,
+
+    /// Rate limits the warning about combining SimpleStrategy with a preferred datacenter
+    /// and disabled datacenter failover.
+    simple_strategy_warning_limiter: RateLimiter,
 }
 
 impl fmt::Debug for DefaultPolicy {
@@ -160,7 +167,8 @@ impl LoadBalancingPolicy for DefaultPolicy {
                 Strategy::SimpleStrategy { .. }
             )
         {
-            warn!(
+            warn_rate_limited!(
+                self.simple_strategy_warning_limiter,
                 "\
 Combining SimpleStrategy with DC preference and disabled datacenter failover may lead to empty query plans for some tokens.\
 It is better to give up using one of them: either operate in a keyspace with NetworkTopologyStrategy, which explicitly states\
@@ -1018,6 +1026,7 @@ impl Default for DefaultPolicy {
             pick_predicate: Box::new(Self::is_alive),
             latency_awareness: None,
             fixed_seed: None,
+            simple_strategy_warning_limiter: RateLimiter::new(WARNING_INTERVAL),
         }
     }
 }
@@ -1081,6 +1090,7 @@ impl DefaultPolicyBuilder {
                 debug!("DefaultPolicy: setting fixed seed to {}", seed);
                 seed
             }),
+            simple_strategy_warning_limiter: RateLimiter::new(WARNING_INTERVAL),
         })
     }
 
@@ -3955,7 +3965,7 @@ mod latency_awareness {
                 is_token_aware: true,
                 pick_predicate,
                 latency_awareness: Some(latency_awareness),
-                fixed_seed: None,
+                ..Default::default()
             }
         }
 
