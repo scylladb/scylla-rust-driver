@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{fmt, sync::Arc, time::Duration};
 
 use bytes::Bytes;
@@ -50,6 +51,15 @@ pub enum Condition {
 
     /// True for predefined number of evaluations, then always false.
     TrueForLimitedTimes(usize),
+
+    /// True for predefined number of evaluations, then always false. All clones
+    /// of this condition share one count of evaluations.
+    ///
+    /// [`TrueForLimitedTimes`](Self::TrueForLimitedTimes) keeps its counter in
+    /// the condition itself. Thus, if you install a rule on several nodes, each
+    /// node gets its own budget. This variant shares one budget between all the
+    /// nodes. A rule that must fire once *in the whole cluster* needs this.
+    TrueForLimitedTimesShared(Arc<AtomicUsize>),
 
     /// True if any REGISTER was sent on this connection. Useful to filter out control connection messages.
     ConnectionRegisteredAnyEvent,
@@ -122,6 +132,16 @@ impl Condition {
                 }
                 val
             }
+
+            // Newer compilers deprecate `fetch_update`. Its new name is
+            // `try_update`, which is stable only from Rust 1.95.
+            // TODO: use `try_update` when the MSRV is 1.95 or higher.
+            #[allow(deprecated)]
+            Condition::TrueForLimitedTimesShared(times) => times
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |times| {
+                    times.checked_sub(1)
+                })
+                .is_ok(),
 
             Condition::ConnectionRegisteredAnyEvent => ctx.connection_has_events,
 
