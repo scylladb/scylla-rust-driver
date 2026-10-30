@@ -706,7 +706,6 @@ impl ExactSizeIterator for MaskBits<'_> {}
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) struct TableTablets {
-    table_spec: TableSpec<'static>,
     tablet_list: Vec<Tablet>,
     /// In order to make typical tablet maintance faster
     /// we remember if there were any tablets that have unrecognized uuids in replica list.
@@ -717,9 +716,8 @@ pub(crate) struct TableTablets {
 }
 
 impl TableTablets {
-    fn new(table_spec: TableSpec<'static>) -> Self {
+    fn new() -> Self {
         Self {
-            table_spec,
             tablet_list: Default::default(),
             has_unknown_replicas: false,
         }
@@ -800,6 +798,7 @@ impl TableTablets {
 
     fn perform_maintenance(
         &mut self,
+        table_spec: &TableSpec<'_>,
         removed_nodes: &HashSet<Uuid>,
         all_current_nodes: &HashMap<Uuid, Arc<Node>>,
         recreated_nodes: &HashMap<Uuid, Arc<Node>>,
@@ -813,7 +812,7 @@ impl TableTablets {
                 if let Err(failed) = &r {
                     warn!("Nodes ({}) listed as replicas for a tablet {{ks: {}, table: {}, range: [{}. {}]}} are not present in ClusterState.known_nodes, \
                            despite topology refresh. Removing problematic tablet.",
-                           failed.iter().safe_format(", "), self.table_spec.ks_name(), self.table_spec.table_name(), tablet.first_token.value(), tablet.last_token.value());
+                           failed.iter().safe_format(", "), table_spec.ks_name(), table_spec.table_name(), tablet.first_token.value(), tablet.last_token.value());
                 }
 
                 r.is_ok()
@@ -848,7 +847,7 @@ impl TableTablets {
 
     #[cfg(test)]
     fn new_for_test() -> Self {
-        Self::new(TableSpec::borrowed("test_ks", "test_table"))
+        Self::new()
     }
 }
 
@@ -920,7 +919,7 @@ impl TabletsInfo {
                 k.ks_name(),
                 k.table_name()
             );
-            Arc::new(TableTablets::new(k.clone()))
+            Arc::new(TableTablets::new())
         });
         Arc::make_mut(table_tablets).add_tablet(tablet)
     }
@@ -1027,17 +1026,15 @@ impl TabletsInfo {
                             .raw_entry_mut()
                             .from_key(&query_key)
                             .or_insert_with(|| {
-                                (
-                                    borrowed_spec.to_owned(),
-                                    Arc::new(TableTablets::new(borrowed_spec.to_owned())),
-                                )
+                                (borrowed_spec.to_owned(), Arc::new(TableTablets::new()))
                             });
                     })
             });
 
         if !removed_nodes.is_empty() || !recreated_nodes.is_empty() || self.has_unknown_replicas {
-            for (_, table_tablets) in self.tablets.iter_mut() {
+            for (table_spec, table_tablets) in self.tablets.iter_mut() {
                 Arc::make_mut(table_tablets).perform_maintenance(
+                    table_spec,
                     removed_nodes,
                     all_current_nodes,
                     recreated_nodes,
@@ -1839,7 +1836,6 @@ mod tests {
             (
                 // [Case 0] Nothing changes, no maintenance required
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(0, vec![node1.clone(), node2.clone()], None),
                         Tablet::new_for_test(1, vec![node2.clone(), node3.clone()], None),
@@ -1854,7 +1850,6 @@ mod tests {
                     HashMap::new(),
                 ),
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(0, vec![node1.clone(), node2.clone()], None),
                         Tablet::new_for_test(1, vec![node2.clone(), node3.clone()], None),
@@ -1867,7 +1862,6 @@ mod tests {
             (
                 // [Case 1] Removed node
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(0, vec![node1.clone(), node2.clone()], None),
                         Tablet::new_for_test(1, vec![node2.clone(), node3.clone()], None),
@@ -1882,7 +1876,6 @@ mod tests {
                     HashMap::new(),
                 ),
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(1, vec![node2.clone(), node3.clone()], None),
                         Tablet::new_for_test(3, vec![node3.clone()], None),
@@ -1893,7 +1886,6 @@ mod tests {
             (
                 // [Case 2] Multiple removed nodes
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(0, vec![node1.clone(), node2.clone()], None),
                         Tablet::new_for_test(1, vec![node2.clone(), node3.clone()], None),
@@ -1908,7 +1900,6 @@ mod tests {
                     HashMap::new(),
                 ),
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![Tablet::new_for_test(3, vec![node3.clone()], None)],
                     has_unknown_replicas: false,
                 },
@@ -1916,7 +1907,6 @@ mod tests {
             (
                 // [Case 3] Nodes with unresolved replicas
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(
                             0,
@@ -1939,7 +1929,6 @@ mod tests {
                     HashMap::new(),
                 ),
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(0, vec![node1.clone(), node2.clone()], None),
                         Tablet::new_for_test(1, vec![node2.clone(), node3.clone()], None),
@@ -1952,7 +1941,6 @@ mod tests {
             (
                 // [Case 4] Some replicas still unresolved
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(
                             0,
@@ -1972,7 +1960,6 @@ mod tests {
                 },
                 (HashSet::new(), node_map(&[&node2, &node3]), HashMap::new()),
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(1, vec![node2.clone(), node3.clone()], None),
                         Tablet::new_for_test(3, vec![node2.clone()], None),
@@ -1985,7 +1972,6 @@ mod tests {
                 // [Case 5] Incorrectly set "has_unknown_replicas" - unknown replicas should be ignored,
                 // because this stip of the maintenance is skipped.
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(
                             0,
@@ -2008,7 +1994,6 @@ mod tests {
                     HashMap::new(),
                 ),
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(
                             0,
@@ -2029,7 +2014,6 @@ mod tests {
             (
                 // [Case 6] Recreated one of the nodes
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(0, vec![node1.clone(), node2.clone()], None),
                         Tablet::new_for_test(1, vec![node2.clone(), node3.clone()], None),
@@ -2044,7 +2028,6 @@ mod tests {
                     HashMap::from([(node3_v2.host_id, node3_v2.clone())]),
                 ),
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(0, vec![node1.clone(), node2.clone()], None),
                         Tablet::new_for_test(1, vec![node2.clone(), node3_v2.clone()], None),
@@ -2057,7 +2040,6 @@ mod tests {
             (
                 // [Case 7] Recreated multiple nodes
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(0, vec![node1.clone(), node2.clone()], None),
                         Tablet::new_for_test(1, vec![node2.clone(), node3.clone()], None),
@@ -2075,7 +2057,6 @@ mod tests {
                     ]),
                 ),
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(0, vec![node1.clone(), node2_v2.clone()], None),
                         Tablet::new_for_test(1, vec![node2_v2.clone(), node3_v2.clone()], None),
@@ -2088,7 +2069,6 @@ mod tests {
             (
                 // [Case 8] Unknown replica and removed node
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(
                             0,
@@ -2111,7 +2091,6 @@ mod tests {
                     HashMap::new(),
                 ),
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(2, vec![node3.clone(), node1.clone()], None),
                         Tablet::new_for_test(3, vec![node3.clone()], None),
@@ -2122,7 +2101,6 @@ mod tests {
             (
                 // [Case 9] Unknown replica, removed node and recreated node
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(
                             0,
@@ -2145,7 +2123,6 @@ mod tests {
                     HashMap::from([(node3_v2.host_id, node3_v2.clone())]),
                 ),
                 TableTablets {
-                    table_spec: SOME_KS,
                     tablet_list: vec![
                         Tablet::new_for_test(2, vec![node3_v2.clone(), node1.clone()], None),
                         Tablet::new_for_test(3, vec![node3_v2.clone()], None),
@@ -2157,7 +2134,7 @@ mod tests {
 
         for (i, (pre, (removed, all, recreated), post)) in tests.iter_mut().enumerate() {
             tracing::info!("Test case {}", i);
-            pre.perform_maintenance(removed, all, recreated);
+            pre.perform_maintenance(&SOME_KS, removed, all, recreated);
             assert_eq!(pre, post);
         }
     }
@@ -2171,36 +2148,18 @@ mod tests {
 
         let mut pre = TabletsInfo {
             tablets: hashbrown::HashMap::from([
-                (
-                    TABLE_1.clone(),
-                    Arc::new(TableTablets::new(TABLE_1.clone())),
-                ),
-                (
-                    TABLE_DROP.clone(),
-                    Arc::new(TableTablets::new(TABLE_DROP.clone())),
-                ),
-                (
-                    TABLE_2.clone(),
-                    Arc::new(TableTablets::new(TABLE_2.clone())),
-                ),
+                (TABLE_1.clone(), Arc::new(TableTablets::new())),
+                (TABLE_DROP.clone(), Arc::new(TableTablets::new())),
+                (TABLE_2.clone(), Arc::new(TableTablets::new())),
             ]),
             has_unknown_replicas: false,
         };
 
         let expected_after = TabletsInfo {
             tablets: hashbrown::HashMap::from([
-                (
-                    TABLE_1.clone(),
-                    Arc::new(TableTablets::new(TABLE_1.clone())),
-                ),
-                (
-                    TABLE_2.clone(),
-                    Arc::new(TableTablets::new(TABLE_2.clone())),
-                ),
-                (
-                    TABLE_3.clone(),
-                    Arc::new(TableTablets::new(TABLE_3.clone())),
-                ),
+                (TABLE_1.clone(), Arc::new(TableTablets::new())),
+                (TABLE_2.clone(), Arc::new(TableTablets::new())),
+                (TABLE_3.clone(), Arc::new(TableTablets::new())),
             ]),
             has_unknown_replicas: false,
         };
