@@ -31,7 +31,7 @@ use crate::network::tls::TlsProvider;
 use crate::network::{
     Connection, ConnectionConfig, PoolConfig, TcpSocketOptions, VerifiedKeyspaceName,
 };
-use crate::observability::driver_tracing::RequestSpan;
+use crate::observability::driver_tracing::{RequestSpan, await_in_span};
 use crate::observability::metrics::Metrics;
 use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
@@ -67,7 +67,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::timeout;
-use tracing::{Instrument, debug, error, warn};
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
@@ -1351,24 +1351,25 @@ impl Session {
 
         let span = RequestSpan::new_batch();
 
+        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| async move {
+            connection
+                .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
+                .await
+                .and_then(QueryResponse::into_non_error_query_response)
+        };
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
             Coordinator,
-        ) = self
-            .run_request(
+        ) = await_in_span!(
+            self.run_request(
                 &cluster_state,
                 routing_info,
                 exec_params,
-                |connection: Arc<Connection>, consistency: Consistency| async move {
-                    connection
-                        .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
-                        .await
-                        .and_then(QueryResponse::into_non_error_query_response)
-                },
+                run_request_once,
                 &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
+            ),
+            span.span()
+        )?;
 
         let result = match run_request_result {
             RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(coordinator),
@@ -1689,70 +1690,71 @@ impl Session {
 
         let span = RequestSpan::new_query(&statement.contents);
         let span_ref = &span;
+        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| {
+            // Needed to avoid moving query and values into async move block
+            let values_ref = &values;
+            let paging_state_ref = &paging_state;
+            async move {
+                if values_ref.is_empty() {
+                    span_ref.record_request_size(0);
+                    connection
+                        .query_raw_with_consistency(
+                            statement,
+                            consistency,
+                            serial_consistency,
+                            page_size,
+                            paging_state_ref.clone(),
+                        )
+                        .await
+                        .and_then(QueryResponse::into_non_error_query_response)
+                } else {
+                    let prepared = connection.prepare(statement).await?;
+                    let serialized = prepared.serialize_values(values_ref)?;
+                    // We calculate the tablet hint to avoid getting unnecessary tablet feedbacks
+                    // from the server
+                    let tablet_hint = {
+                        let maybe_token = prepared
+                            .extract_partition_key_and_calculate_token(&serialized)
+                            // The error is benign: we can still execute the request, just without the hint.
+                            .unwrap_or(None)
+                            // We only care about token to calculate tablet hint.
+                            .map(|(_pk, token)| token);
+                        choose_tablet_block_hint(
+                            cluster_state_ref,
+                            prepared.get_table_spec(),
+                            maybe_token,
+                        )
+                    };
+
+                    span_ref.record_request_size(serialized.buffer_size());
+                    connection
+                        .execute_raw_with_consistency(
+                            &prepared,
+                            &serialized,
+                            consistency,
+                            serial_consistency,
+                            page_size,
+                            paging_state_ref.clone(),
+                            tablet_hint,
+                        )
+                        .await
+                        .and_then(QueryResponse::into_non_error_query_response)
+                }
+            }
+        };
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
             Coordinator,
-        ) = self
-            .run_request(
+        ) = await_in_span!(
+            self.run_request(
                 &cluster_state,
                 routing_info,
                 exec_params,
-                |connection: Arc<Connection>, consistency: Consistency| {
-                    // Needed to avoid moving query and values into async move block
-                    let values_ref = &values;
-                    let paging_state_ref = &paging_state;
-                    async move {
-                        if values_ref.is_empty() {
-                            span_ref.record_request_size(0);
-                            connection
-                                .query_raw_with_consistency(
-                                    statement,
-                                    consistency,
-                                    serial_consistency,
-                                    page_size,
-                                    paging_state_ref.clone(),
-                                )
-                                .await
-                                .and_then(QueryResponse::into_non_error_query_response)
-                        } else {
-                            let prepared = connection.prepare(statement).await?;
-                            let serialized = prepared.serialize_values(values_ref)?;
-                            // We calculate the tablet hint to avoid getting unnecessary tablet feedbacks
-                            // from the server
-                            let tablet_hint = {
-                                let maybe_token = prepared
-                                    .extract_partition_key_and_calculate_token(&serialized)
-                                    // The error is benign: we can still execute the request, just without the hint.
-                                    .unwrap_or(None)
-                                    // We only care about token to calculate tablet hint.
-                                    .map(|(_pk, token)| token);
-                                choose_tablet_block_hint(
-                                    cluster_state_ref,
-                                    prepared.get_table_spec(),
-                                    maybe_token,
-                                )
-                            };
-
-                            span_ref.record_request_size(serialized.buffer_size());
-                            connection
-                                .execute_raw_with_consistency(
-                                    &prepared,
-                                    &serialized,
-                                    consistency,
-                                    serial_consistency,
-                                    page_size,
-                                    paging_state_ref.clone(),
-                                    tablet_hint,
-                                )
-                                .await
-                                .and_then(QueryResponse::into_non_error_query_response)
-                        }
-                    }
-                },
+                run_request_once,
                 &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
+            ),
+            span.span()
+        )?;
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
@@ -1760,7 +1762,7 @@ impl Session {
                     result::ResultWithDeserializedMetadata::Void,
                 ),
                 tracing_id: None,
-                warnings: Vec::new(),
+                warnings: Box::default(),
             },
             RunRequestResult::Completed(response) => response,
         };
@@ -2140,32 +2142,33 @@ impl Session {
             span.record_replicas(replicas)
         }
 
+        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| async move {
+            connection
+                .execute_raw_with_consistency(
+                    prepared,
+                    serialized_values,
+                    consistency,
+                    serial_consistency,
+                    page_size,
+                    paging_state_ref.clone(),
+                    tablet_block_hint,
+                )
+                .await
+                .and_then(QueryResponse::into_non_error_query_response)
+        };
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
             Coordinator,
-        ) = self
-            .run_request(
+        ) = await_in_span!(
+            self.run_request(
                 &cluster_state,
                 routing_info,
                 exec_params,
-                |connection: Arc<Connection>, consistency: Consistency| async move {
-                    connection
-                        .execute_raw_with_consistency(
-                            prepared,
-                            serialized_values,
-                            consistency,
-                            serial_consistency,
-                            page_size,
-                            paging_state_ref.clone(),
-                            tablet_block_hint,
-                        )
-                        .await
-                        .and_then(QueryResponse::into_non_error_query_response)
-                },
+                run_request_once,
                 &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
+            ),
+            span.span()
+        )?;
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
@@ -2173,7 +2176,7 @@ impl Session {
                     result::ResultWithDeserializedMetadata::Void,
                 ),
                 tracing_id: None,
-                warnings: Vec::new(),
+                warnings: Box::default(),
             },
             RunRequestResult::Completed(response) => response,
         };
@@ -2521,14 +2524,32 @@ impl Session {
             .await
             .map_err(RequestError::into_execution_error)?;
 
-        // Automatically handle meaningful responses.
-        if let RunRequestResult::Completed(ref response) = result {
-            self.handle_set_keyspace_response(response).await?;
-            self.handle_auto_await_schema_agreement(response, coordinator.node().host_id)
+        // Automatically handle meaningful responses. Checked before awaiting, so
+        // that other responses don't pay for constructing the handlers' future.
+        // Such responses are rare, so the future is boxed to keep it out of every
+        // request's future.
+        if let RunRequestResult::Completed(ref response) = result
+            && (response.as_set_keyspace().is_some() || response.as_schema_change().is_some())
+        {
+            Box::pin(self.handle_response_side_effects(response, coordinator.node().host_id))
                 .await?;
         }
 
         Ok((result, coordinator))
+    }
+
+    // Awaiting both handlers through one future keeps `run_request`'s result
+    // alive across a single await point, so the compiler can overlap it with
+    // the request's future instead of reserving separate space for it.
+    async fn handle_response_side_effects(
+        &self,
+        response: &NonErrorQueryResponse,
+        coordinator_id: Uuid,
+    ) -> Result<(), ExecutionError> {
+        self.handle_set_keyspace_response(response).await?;
+        self.handle_auto_await_schema_agreement(response, coordinator_id)
+            .await?;
+        Ok(())
     }
 }
 

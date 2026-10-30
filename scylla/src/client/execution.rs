@@ -29,7 +29,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use tracing::Instrument;
 use tracing::trace;
 use tracing::trace_span;
 
@@ -39,7 +38,7 @@ use crate::errors::{ConnectionPoolError, RequestAttemptError, RequestError};
 use crate::frame::response::result::TableSpec;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::network::Connection;
-use crate::observability::driver_tracing::RequestSpan;
+use crate::observability::driver_tracing::{RequestSpan, await_in_span};
 use crate::observability::history::{self, HistoryListener};
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing;
@@ -51,6 +50,7 @@ use crate::routing::Shard;
 use crate::routing::Token;
 use crate::routing::locator::tablets::TabletVersion;
 use crate::statement::StatementConfig;
+use crate::utils::set_boxed;
 
 /// Result of running a request, before side effects are handled.
 pub(crate) enum RunRequestResult<ResT> {
@@ -554,7 +554,9 @@ impl<'a> RequestExecutionParams<'a> {
         Target: AttemptTarget,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
-        let mut last_error: Option<RequestError> = None;
+        // Boxed, as it is set only after a failed attempt: inline, its size and
+        // 16-byte alignment would weigh on the future of every request.
+        let mut last_error: Option<Box<RequestError>> = None;
         let mut current_consistency: Consistency = self.consistency;
 
         'targets_in_plan: for target in request_plan {
@@ -569,7 +571,7 @@ impl<'a> RequestExecutionParams<'a> {
                             error = %e,
                             "Choosing connection failed"
                         );
-                        last_error = Some(e.into());
+                        set_boxed(&mut last_error, e.into());
                         // Broken connection doesn't count as a failed request, don't log in metrics
                         continue 'targets_in_plan;
                     }
@@ -592,9 +594,7 @@ impl<'a> RequestExecutionParams<'a> {
                     context.log_attempt_start(connect_address);
 
                 let request_result: Result<NonErrorQueryResponse, RequestAttemptError> =
-                    run_request_once(connection, current_consistency)
-                        .instrument(span.clone())
-                        .await;
+                    await_in_span!(run_request_once(connection, current_consistency), &span);
 
                 let elapsed = request_start.elapsed();
                 let request_error: RequestAttemptError = match request_result {
@@ -644,7 +644,7 @@ impl<'a> RequestExecutionParams<'a> {
 
                 context.log_attempt_error(&attempt_id, &request_error, &retry_decision);
 
-                last_error = Some(request_error.into());
+                set_boxed(&mut last_error, request_error.into());
 
                 match retry_decision {
                     RetryDecision::RetrySameTarget(new_cl) => {
@@ -668,6 +668,6 @@ impl<'a> RequestExecutionParams<'a> {
             }
         }
 
-        last_error.map(Result::Err)
+        last_error.map(|error| Err(*error))
     }
 }
