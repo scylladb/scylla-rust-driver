@@ -9,13 +9,15 @@
 //!   `SELECT`s on a session that has not learned them yet.
 //!
 //! [`deserialization`] covers deserialization of CQL values on its own, without
-//! a cluster.
+//! a cluster. [`value`] provides the values for it and for the serialization
+//! benchmark.
 //!
 //! The actual measurement (separating connection setup from the measured
 //! request loop) is handled by the benchmark harness; this crate only provides
 //! the reusable building blocks.
 
 pub mod deserialization;
+pub mod value;
 
 use std::env;
 use std::hint::black_box;

@@ -103,7 +103,7 @@ impl SerializableRequest for ExecuteV2<'_> {
         Ok(())
     }
 
-    fn serialized_size(&self) -> Option<usize> {
+    fn serialized_size_hint(&self) -> (usize, Option<usize>) {
         // Both ids are [short bytes].
         let id_size = size_of::<u16>() + self.id.as_ref().len();
         let result_metadata_id_size = self
@@ -111,12 +111,11 @@ impl SerializableRequest for ExecuteV2<'_> {
             .as_ref()
             .map_or(0, |id| size_of::<u16>() + id.as_ref().len());
         let tablet_version_block_size = self.tablet_version_block.map_or(0, |_| size_of::<u8>());
-        Some(
-            id_size
-                + result_metadata_id_size
-                + self.parameters.serialized_size()
-                + tablet_version_block_size,
-        )
+        let size = id_size
+            + result_metadata_id_size
+            + self.parameters.serialized_size()
+            + tablet_version_block_size;
+        (size, Some(size))
     }
 }
 

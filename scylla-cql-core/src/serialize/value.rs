@@ -7,8 +7,8 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Display;
 use std::hash::BuildHasher;
+use std::iter::Peekable;
 use std::net::IpAddr;
-use std::ops::Deref as _;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -16,7 +16,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::frame::response::result::{CollectionType, ColumnType, NativeType};
-use crate::frame::types::{unsigned_vint_encode, vint_encode};
+use crate::frame::types::vint_encode;
 use crate::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
     CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed, Emptiable, MaybeEmpty, MaybeUnset, Unset,
@@ -76,6 +76,10 @@ macro_rules! impl_serialize_via_writer {
         impl_serialize_via_writer!(|$me, _typ, $writer| $e);
     };
     (|$me:ident, $typ:ident, $writer:ident| $e:expr) => {
+        // Most of these bodies are a few instructions each once the error
+        // construction is outlined, and callers - in particular a
+        // collection's element loop - benefit a lot from inlining them.
+        #[inline]
         fn serialize<'b>(
             &self,
             typ: &ColumnType,
@@ -392,12 +396,14 @@ impl SerializeValue for Counter {
 impl SerializeValue for CqlDuration {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Duration);
-        // TODO: adjust vint_encode to use CellValueBuilder or something like that
-        let mut buf = Vec::with_capacity(27); // worst case size is 27
-        vint_encode(me.months as i64, &mut buf);
-        vint_encode(me.days as i64, &mut buf);
-        vint_encode(me.nanoseconds, &mut buf);
-        writer.set_value(buf.as_slice()).unwrap()
+        // A vint takes at most 9 bytes.
+        let mut buf = [0; 27];
+        let mut unused = &mut buf[..];
+        vint_encode(me.months as i64, &mut unused);
+        vint_encode(me.days as i64, &mut unused);
+        vint_encode(me.nanoseconds, &mut unused);
+        let unused_len = unused.len();
+        writer.set_value(&buf[..buf.len() - unused_len]).unwrap()
     });
 }
 impl<V: SerializeValue> SerializeValue for MaybeUnset<V> {
@@ -773,15 +779,13 @@ fn serialize_udt<'b>(
 
     // Allow columns present in the CQL type which are not present in CqlValue,
     // but not the other way around
-    let mut indexed_fields: HashMap<_, _> = values.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    let mut field_values = UdtFieldValues::new(field_types, values);
 
     let mut builder = writer.into_value_builder();
     for (fname, ftyp) in field_types {
         // Take a value from the original list.
         // If a field is missing, write null instead.
-        let fvalue = indexed_fields
-            .remove(fname.deref())
-            .and_then(|x| x.as_ref());
+        let fvalue = field_values.take(fname).and_then(|x| x.as_ref());
 
         let writer = builder.make_sub_writer();
         match fvalue {
@@ -800,10 +804,7 @@ fn serialize_udt<'b>(
     }
 
     // If there are some leftover fields, it's an error.
-    if !indexed_fields.is_empty() {
-        // In order to have deterministic errors, return an error about
-        // the lexicographically smallest field.
-        let fname = indexed_fields.keys().min().unwrap();
+    if let Some(fname) = field_values.smallest_leftover() {
         return Err(mk_typck_err::<CqlValue>(
             typ,
             UdtTypeCheckErrorKind::NoSuchFieldInUdt {
@@ -815,6 +816,53 @@ fn serialize_udt<'b>(
     builder
         .finish()
         .map_err(|_| mk_ser_err::<CqlValue>(typ, BuiltinSerializationErrorKind::SizeOverflow))
+}
+
+/// The values of a `CqlValue::UserDefinedType`'s fields, looked up by the
+/// fields' names.
+enum UdtFieldValues<'a> {
+    /// The values follow the order of the UDT's fields, possibly with some
+    /// fields missing. This is almost always the case, and then the values
+    /// can be matched up as the fields are walked, without an index.
+    InOrder(Peekable<std::slice::Iter<'a, (String, Option<CqlValue>)>>),
+    Indexed(HashMap<&'a str, &'a Option<CqlValue>>),
+}
+
+impl<'a> UdtFieldValues<'a> {
+    fn new(
+        field_types: &[(Cow<'_, str>, ColumnType<'_>)],
+        values: &'a [(String, Option<CqlValue>)],
+    ) -> Self {
+        let mut in_order = values.iter().peekable();
+        for (fname, _) in field_types {
+            in_order.next_if(|(name, _)| name == fname);
+        }
+        if in_order.peek().is_none() {
+            Self::InOrder(values.iter().peekable())
+        } else {
+            Self::Indexed(values.iter().map(|(k, v)| (k.as_str(), v)).collect())
+        }
+    }
+
+    /// Takes the value of the field `name`. Must be called for the UDT's
+    /// fields in order.
+    fn take(&mut self, name: &str) -> Option<&'a Option<CqlValue>> {
+        match self {
+            Self::InOrder(values) => values.next_if(|(n, _)| n == name).map(|(_, v)| v),
+            Self::Indexed(values) => values.remove(name),
+        }
+    }
+
+    /// Returns the lexicographically smallest of the fields not taken, so
+    /// that the error about them is deterministic.
+    fn smallest_leftover(&self) -> Option<&'a str> {
+        match self {
+            // All the values matched one of the fields, or this would be
+            // `Indexed`.
+            Self::InOrder(_) => None,
+            Self::Indexed(values) => values.keys().min().copied(),
+        }
+    }
 }
 
 fn serialize_tuple_like<'t, 'b>(
@@ -1033,22 +1081,18 @@ pub(crate) fn serialize_next_variable_length_elem<'t, T: SerializeValue + 't>(
     builder: &mut CellValueBuilder,
     element: &'t T,
 ) -> Result<(), SerializationError> {
-    let mut element_buffer = Vec::new();
-    let inner_writer = CellWriter::new_without_size(&mut element_buffer);
-    T::serialize(element, element_type, inner_writer).map_err(|err| {
+    T::serialize(
+        element,
+        element_type,
+        builder.make_sub_writer_with_vint_size(),
+    )
+    .map_err(|err| {
         mk_ser_err_named(
             rust_name,
             typ,
             VectorSerializationErrorKind::ElementSerializationFailed(err),
         )
     })?;
-    let mut element_length_buffer = Vec::new();
-    unsigned_vint_encode(
-        element_buffer.len().try_into().unwrap(),
-        &mut element_length_buffer,
-    );
-    builder.append_bytes(element_length_buffer.as_slice());
-    builder.append_bytes(element_buffer.as_slice());
     Ok(())
 }
 
@@ -1171,6 +1215,11 @@ pub fn mk_typck_err<T: ?Sized>(
     mk_typck_err_named(std::any::type_name::<T>(), got, kind)
 }
 
+// Outlined and cold: building the error deep-clones the `ColumnType` and
+// allocates, which would otherwise bloat every `serialize` body enough to
+// stop it being inlined into a collection's element loop.
+#[cold]
+#[inline(never)]
 fn mk_typck_err_named(
     name: &'static str,
     got: &ColumnType,
@@ -1205,6 +1254,11 @@ pub fn mk_ser_err<T: ?Sized>(
     mk_ser_err_named(std::any::type_name::<T>(), got, kind)
 }
 
+// Outlined and cold: building the error deep-clones the `ColumnType` and
+// allocates, which would otherwise bloat every `serialize` body enough to
+// stop it being inlined into a collection's element loop.
+#[cold]
+#[inline(never)]
 fn mk_ser_err_named(
     name: &'static str,
     got: &ColumnType,
