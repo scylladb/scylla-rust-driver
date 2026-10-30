@@ -45,16 +45,16 @@ use crate::statement::prepared::{PreparedStatement, RawPreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;
-use futures::{FutureExt, future::RemoteHandle};
+use futures::FutureExt;
+use futures::future::{BoxFuture, RemoteHandle};
+use futures::stream::{FuturesUnordered, TryStreamExt};
 use socket2::{SockRef, TcpKeepalive};
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU64;
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 use std::{
     cmp::Ordering,
@@ -62,10 +62,14 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter, split};
 use tokio::net::{TcpSocket, TcpStream};
-use tokio::sync::{Notify, mpsc, oneshot};
-use tokio::time::Instant;
+use tokio::sync::{Notify, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
+
+mod stream_slots;
+
+pub(crate) use stream_slots::MAX_IN_FLIGHT_REQUESTS;
+use stream_slots::{ResponseFuture, StreamSlots};
 
 // FIXME: Make this constants configurable
 // The term "orphan" refers to stream ids, that were allocated for a {request, response} that no
@@ -107,17 +111,11 @@ pub(crate) struct Connection {
 }
 
 struct RouterHandle {
-    submit_channel: mpsc::Sender<Task>,
+    submit_channel: mpsc::Sender<SerializedRequest>,
 
-    // Each request send by `Connection::send_request` needs a unique request id.
-    // This field is a monotonic generator of such ids.
-    request_id_generator: AtomicU64,
-    // If a `Connection::send_request` is cancelled, it sends notification
-    // about orphaning via the sender below.
-    // Also, this sender is unbounded, because only unbounded channels support
-    // pushing values in a synchronous way (without an `.await`), which is
-    // needed for pushing values in `Drop` implementations.
-    orphan_notification_sender: mpsc::UnboundedSender<RequestId>,
+    // Requests allocate their stream ids here and receive their responses
+    // through it.
+    streams: StreamSlots,
 
     /// Notified in order to make this connection's keepaliver issue a keepalive
     /// request immediately, without waiting for the next `keepalive_interval` tick.
@@ -130,11 +128,6 @@ struct RouterHandle {
 }
 
 impl RouterHandle {
-    fn allocate_request_id(&self) -> RequestId {
-        self.request_id_generator
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    }
-
     async fn send_request(
         &self,
         request: &impl SerializableRequest,
@@ -142,38 +135,30 @@ impl RouterHandle {
         tracing: bool,
     ) -> Result<TaskResponse, InternalRequestError> {
         let serialized_request = SerializedRequest::make(request, compression, tracing)?;
-        let request_id = self.allocate_request_id();
-
-        let (response_sender, receiver) = oneshot::channel();
-        let response_handler = ResponseHandler {
-            response_sender,
-            request_id,
-        };
-
-        // Dropping `notifier` (before calling `notifier.disable()`) will send a notification to
-        // `Connection::router`. This notification is then used to mark a `stream_id` associated
-        // with this request as orphaned and free associated resources.
-        let notifier = OrphanhoodNotifier::new(request_id, &self.orphan_notification_sender);
-
-        self.submit_channel
-            .send(Task {
-                serialized_request,
-                response_handler,
-            })
+        // Room in the channel is reserved before the stream id, so that requests
+        // waiting for the writer don't hold stream ids.
+        let permit = self
+            .submit_channel
+            .reserve()
             .await
             .map_err(|_| -> BrokenConnectionError {
                 BrokenConnectionErrorKind::ChannelError.into()
             })?;
+        let response = self.submit(permit, serialized_request)?;
 
-        let task_response = receiver.await.map_err(|_| -> BrokenConnectionError {
-            BrokenConnectionErrorKind::ChannelError.into()
-        })?;
+        Ok(response.await?)
+    }
 
-        // Response was successfully received, so it's time to disable
-        // notification about orphaning.
-        notifier.disable();
-
-        task_response
+    /// Allocates a stream id for `request` and submits it for writing.
+    fn submit<'a>(
+        &'a self,
+        permit: mpsc::Permit<'_, SerializedRequest>,
+        request: SerializedRequest,
+    ) -> Result<ResponseFuture<'a>, InternalRequestError> {
+        self.streams.submit(permit, request).ok_or_else(|| {
+            error!("Could not allocate stream id");
+            InternalRequestError::UnableToAllocStreamId
+        })
     }
 }
 
@@ -183,51 +168,6 @@ pub(crate) struct ConnectionFeatures {
     shard_aware_port: Option<u16>,
     protocol_features: ProtocolFeatures,
     host_id: Option<Uuid>,
-}
-
-type RequestId = u64;
-
-struct ResponseHandler {
-    response_sender: oneshot::Sender<Result<TaskResponse, InternalRequestError>>,
-    request_id: RequestId,
-}
-
-// Used to notify `Connection::orphaner` about `Connection::send_request`
-// future being dropped before receiving response.
-struct OrphanhoodNotifier<'a> {
-    enabled: bool,
-    request_id: RequestId,
-    notification_sender: &'a mpsc::UnboundedSender<RequestId>,
-}
-
-impl<'a> OrphanhoodNotifier<'a> {
-    fn new(
-        request_id: RequestId,
-        notification_sender: &'a mpsc::UnboundedSender<RequestId>,
-    ) -> Self {
-        Self {
-            enabled: true,
-            request_id,
-            notification_sender,
-        }
-    }
-
-    fn disable(mut self) {
-        self.enabled = false;
-    }
-}
-
-impl Drop for OrphanhoodNotifier<'_> {
-    fn drop(&mut self) {
-        if self.enabled {
-            let _ = self.notification_sender.send(self.request_id);
-        }
-    }
-}
-
-struct Task {
-    serialized_request: SerializedRequest,
-    response_handler: ResponseHandler,
 }
 
 struct TaskResponse {
@@ -583,13 +523,10 @@ impl Connection {
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(1024);
         let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
-        // Unbounded because it allows for synchronous pushes
-        let (orphan_notification_sender, orphan_notification_receiver) = mpsc::unbounded_channel();
 
         let router_handle = Arc::new(RouterHandle {
             submit_channel: sender,
-            request_id_generator: AtomicU64::new(0),
-            orphan_notification_sender,
+            streams: StreamSlots::new(),
             keepalive_hint: Notify::new(),
         });
 
@@ -598,7 +535,6 @@ impl Connection {
             stream,
             receiver,
             error_sender,
-            orphan_notification_receiver,
             router_handle.clone(),
             connect_address,
         )
@@ -1518,27 +1454,26 @@ impl Connection {
 
         Ok(QueryResponse {
             response,
-            warnings: body_with_ext.warnings,
+            // Built with exact capacity, so this doesn't reallocate.
+            warnings: body_with_ext.warnings.into_boxed_slice(),
             tracing_id: body_with_ext.trace_id,
-            custom_payload: body_with_ext.custom_payload,
+            custom_payload: body_with_ext.custom_payload.map(Box::new),
         })
     }
 
     async fn run_router(
         config: HostConnectionConfig,
         stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
-        receiver: mpsc::Receiver<Task>,
+        receiver: mpsc::Receiver<SerializedRequest>,
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
-        orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
         router_handle: Arc<RouterHandle>,
         node_address: SocketAddr,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         async fn spawn_router_and_get_handle(
             config: HostConnectionConfig,
             stream: impl AsyncRead + AsyncWrite + Send + 'static,
-            receiver: mpsc::Receiver<Task>,
+            receiver: mpsc::Receiver<SerializedRequest>,
             error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
-            orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
             router_handle: Arc<RouterHandle>,
             node_address: SocketAddr,
         ) -> RemoteHandle<()> {
@@ -1547,7 +1482,6 @@ impl Connection {
                 stream,
                 receiver,
                 error_sender,
-                orphan_notification_receiver,
                 router_handle,
                 node_address,
             )
@@ -1573,7 +1507,6 @@ impl Connection {
                         stream,
                         receiver,
                         error_sender,
-                        orphan_notification_receiver,
                         router_handle,
                         node_address,
                     )
@@ -1589,7 +1522,6 @@ impl Connection {
                         stream,
                         receiver,
                         error_sender,
-                        orphan_notification_receiver,
                         router_handle,
                         node_address,
                     )
@@ -1603,7 +1535,6 @@ impl Connection {
             stream,
             receiver,
             error_sender,
-            orphan_notification_receiver,
             router_handle,
             node_address,
         )
@@ -1612,32 +1543,19 @@ impl Connection {
 
     async fn router(
         config: HostConnectionConfig,
-        stream: impl AsyncRead + AsyncWrite,
-        receiver: mpsc::Receiver<Task>,
+        stream: impl AsyncRead + AsyncWrite + Send,
+        mut receiver: mpsc::Receiver<SerializedRequest>,
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
-        orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
         router_handle: Arc<RouterHandle>,
         node_address: SocketAddr,
     ) {
         let (read_half, write_half) = split(stream);
-        // Why are we using a mutex here?
-        //
-        // The handler_map is supposed to be shared between reader and writer
-        // futures, which will be run on the same task. The mutex should not
-        // be normally required here, but Rust complains if we try to use
-        // a RefCell instead of Mutex (the whole future becomes !Sync and we
-        // cannot use it in tasks).
-        //
-        // Notice that this lock will have no contention, because reader
-        // and writer futures are run on the same fiber, and both of them
-        // are carefully written in such a way that they do not hold the lock
-        // across .await points. Therefore, it should not be too expensive.
-        let handler_map = StdMutex::new(ResponseHandlerMap::new());
+        let streams = &router_handle.streams;
 
         let write_coalescing_delay = config.write_coalescing_delay;
 
         let k = Self::keepaliver(
-            router_handle,
+            Arc::clone(&router_handle),
             config.keepalive_interval,
             config.keepalive_timeout,
             node_address,
@@ -1645,33 +1563,39 @@ impl Connection {
 
         let r = Self::reader(
             BufReader::with_capacity(8192, read_half),
-            &handler_map,
+            streams,
             config.event_sender.map(|(sender, _)| sender),
             config.compression,
         );
         let w = Self::writer(
             BufWriter::with_capacity(8192, write_half),
-            &handler_map,
-            receiver,
+            &mut receiver,
             write_coalescing_delay,
         );
-        let o = Self::orphaner(&handler_map, orphan_notification_receiver);
+        let o = Self::orphaner(streams);
 
-        let result = futures::try_join!(r, w, o, k);
+        // Unlike `try_join!`, this gives each future its own waker, so a wakeup
+        // polls only the futures that were woken. Reads and writes then don't
+        // poll the idle timers of the orphaner and keepaliver.
+        let tasks: FuturesUnordered<BoxFuture<'_, Result<(), BrokenConnectionError>>> =
+            [r.boxed(), w.boxed(), o.boxed(), k.boxed()]
+                .into_iter()
+                .collect();
+        let result: Result<(), BrokenConnectionError> = tasks.try_collect().await;
 
         let error: BrokenConnectionError = match result {
             Ok(_) => return, // Connection was dropped, we can return
             Err(err) => err,
         };
 
-        // Respond to all pending requests with the error
-        let response_handlers: HashMap<i16, ResponseHandler> =
-            handler_map.into_inner().unwrap().into_handlers();
+        // Draining the closed channel waits for requests that reserved room in it.
+        // After it, each request either failed to reserve room (and got an error),
+        // or waits in its stream slot, and no more stream ids can be allocated.
+        receiver.close();
+        while receiver.recv().await.is_some() {}
 
-        for (_, handler) in response_handlers {
-            // Ignore sending error, request was dropped
-            let _ = handler.response_sender.send(Err(error.clone().into()));
-        }
+        // Respond to all pending requests with the error
+        streams.fail_all(&error);
 
         // If someone is listening for connection errors notify them
         let _ = error_sender.send(error.into());
@@ -1679,7 +1603,7 @@ impl Connection {
 
     async fn reader(
         mut read_half: impl AsyncRead + Unpin,
-        handler_map: &StdMutex<ResponseHandlerMap>,
+        streams: &StreamSlots,
         event_sender: Option<mpsc::Sender<Event>>,
         compression: Option<Compression>,
     ) -> Result<(), BrokenConnectionError> {
@@ -1711,72 +1635,30 @@ impl Connection {
                 _ => {}
             }
 
-            let handler_lookup_res = {
-                // We are guaranteed here that handler_map will not be locked
-                // by anybody else, so we can do try_lock().unwrap()
-                let mut handler_map_guard = handler_map.try_lock().unwrap();
-                handler_map_guard.lookup(params.stream)
-            };
-
-            use HandlerLookupResult::*;
-            match handler_lookup_res {
-                Handler(handler) => {
-                    // Don't care if sending of the response fails. This must
-                    // mean that the receiver side was impatient and is not
-                    // waiting for the result anymore.
-                    let _ = handler.response_sender.send(Ok(response));
-                }
-                Missing => {
-                    // Unsolicited frame. This should not happen and indicates
-                    // a bug either in the driver, or in the database
-                    debug!(
-                        "Received response with unexpected StreamId {}",
-                        params.stream
-                    );
-                    return Err(BrokenConnectionErrorKind::UnexpectedStreamId(params.stream).into());
-                }
-                Orphaned => {
-                    // Do nothing, handler was freed because this stream_id has
-                    // been marked as orphaned
-                }
-            }
-        }
-    }
-
-    fn alloc_stream_id(
-        handler_map: &StdMutex<ResponseHandlerMap>,
-        response_handler: ResponseHandler,
-    ) -> Option<i16> {
-        // We are guaranteed here that handler_map will not be locked
-        // by anybody else, so we can do try_lock().unwrap()
-        let mut handler_map_guard = handler_map.try_lock().unwrap();
-        match handler_map_guard.allocate(response_handler) {
-            Ok(stream_id) => Some(stream_id),
-            Err(response_handler) => {
-                error!("Could not allocate stream id");
-                let _ = response_handler
-                    .response_sender
-                    .send(Err(InternalRequestError::UnableToAllocStreamId));
-                None
+            if !streams.complete(params.stream, response) {
+                // Unsolicited frame. This should not happen and indicates
+                // a bug either in the driver, or in the database
+                debug!(
+                    "Received response with unexpected StreamId {}",
+                    params.stream
+                );
+                return Err(BrokenConnectionErrorKind::UnexpectedStreamId(params.stream).into());
             }
         }
     }
 
     async fn writer(
         mut write_half: impl AsyncWrite + Unpin,
-        handler_map: &StdMutex<ResponseHandlerMap>,
-        mut task_receiver: mpsc::Receiver<Task>,
+        request_receiver: &mut mpsc::Receiver<SerializedRequest>,
         write_coalescing_delay: Option<WriteCoalescingDelay>,
     ) -> Result<(), BrokenConnectionError> {
         // When the Connection object is dropped, the sender half
         // of the channel will be dropped, this task will return an error
         // and the whole worker will be stopped
-        while let Some(mut task) = task_receiver.recv().await {
+        while let Some(mut req) = request_receiver.recv().await {
             let mut num_requests = 0;
             let mut total_sent = 0;
-            while let Some(stream_id) = Self::alloc_stream_id(handler_map, task.response_handler) {
-                let mut req = task.serialized_request;
-                req.set_stream(stream_id);
+            loop {
                 let req_data: &[u8] = req.get_data();
                 total_sent += req_data.len();
                 num_requests += 1;
@@ -1784,23 +1666,23 @@ impl Connection {
                     .write_all(req_data)
                     .await
                     .map_err(BrokenConnectionErrorKind::WriteError)?;
-                task = match task_receiver.try_recv() {
-                    Ok(t) => t,
+                req = match request_receiver.try_recv() {
+                    Ok(r) => r,
                     Err(_) => match write_coalescing_delay {
                         Some(WriteCoalescingDelay::SmallNondeterministic) => {
                             // Yielding was empirically tested to inject a 1-300µs delay,
                             // much better than tokio::time::sleep's 1ms granularity.
                             // Also, yielding in a busy system let's the queue catch up with new items.
                             tokio::task::yield_now().await;
-                            match task_receiver.try_recv() {
-                                Ok(t) => t,
+                            match request_receiver.try_recv() {
+                                Ok(r) => r,
                                 Err(_) => break,
                             }
                         }
                         Some(WriteCoalescingDelay::Milliseconds(ms)) => {
                             tokio::time::sleep(Duration::from_millis(ms.get())).await;
-                            match task_receiver.try_recv() {
-                                Ok(t) => t,
+                            match request_receiver.try_recv() {
+                                Ok(r) => r,
                                 Err(_) => break,
                             }
                         }
@@ -1818,43 +1700,22 @@ impl Connection {
         Ok(())
     }
 
-    // This task receives notifications from `OrphanhoodNotifier`s and tries to
-    // mark streams as orphaned. It also checks count of old orphans periodically.
-    // After an ald orphan threshold is reached, `orphaner` returns an error
-    // causing the connection to break.
-    async fn orphaner(
-        handler_map: &StdMutex<ResponseHandlerMap>,
-        mut orphan_receiver: mpsc::UnboundedReceiver<RequestId>,
-    ) -> Result<(), BrokenConnectionError> {
+    // Checks the count of old orphans periodically. After an old orphan
+    // threshold is reached, `orphaner` returns an error causing the connection
+    // to break.
+    async fn orphaner(streams: &StreamSlots) -> Result<(), BrokenConnectionError> {
         let mut interval = tokio::time::interval(OLD_AGE_ORPHAN_THRESHOLD);
         loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    // We are guaranteed here that handler_map will not be locked
-                    // by anybody else, so we can do try_lock().unwrap()
-                    let handler_map_guard = handler_map.try_lock().unwrap();
-                    let old_orphan_count = handler_map_guard.old_orphans_count();
-                    if old_orphan_count > OLD_ORPHAN_COUNT_THRESHOLD {
-                        warn!(
-                            "Too many old orphaned stream ids: {}",
-                            old_orphan_count,
-                        );
-                        return Err(BrokenConnectionErrorKind::TooManyOrphanedStreamIds(old_orphan_count as u16).into())
-                    }
-                }
-                Some(request_id) = orphan_receiver.recv() => {
-                    trace!(
-                        "Trying to orphan stream id associated with request_id = {}",
-                        request_id,
-                    );
-                    let mut handler_map_guard = handler_map.try_lock().unwrap(); // Same as above
-                    handler_map_guard.orphan(request_id);
-                }
-                else => { break }
+            interval.tick().await;
+            let old_orphan_count = streams.old_orphans_count();
+            if old_orphan_count > OLD_ORPHAN_COUNT_THRESHOLD {
+                warn!("Too many old orphaned stream ids: {}", old_orphan_count);
+                return Err(BrokenConnectionErrorKind::TooManyOrphanedStreamIds(
+                    old_orphan_count as u16,
+                )
+                .into());
             }
         }
-
-        Ok(())
     }
 
     async fn keepaliver(
@@ -2049,7 +1910,7 @@ impl Connection {
     ) -> Result<(), TabletParsingError> {
         if let (Some(sender), Some(tablet_data)) = (
             self.config.tablet_sender.as_ref(),
-            response.custom_payload.as_ref(),
+            response.custom_payload.as_deref(),
         ) {
             let tablet = match RawTablet::from_custom_payload(tablet_data) {
                 Some(Ok(v)) => v,
@@ -2423,166 +2284,6 @@ fn setup_tcp_keepalive(sf: &SockRef<'_>, tcp_keepalive_interval: Duration) -> st
     }
 
     sf.set_tcp_keepalive(&tcp_keepalive)
-}
-
-struct OrphanageTracker {
-    orphans: HashMap<i16, Instant>,
-    by_orphaning_times: BTreeSet<(Instant, i16)>,
-}
-
-impl OrphanageTracker {
-    fn new() -> Self {
-        Self {
-            orphans: HashMap::new(),
-            by_orphaning_times: BTreeSet::new(),
-        }
-    }
-
-    fn insert(&mut self, stream_id: i16) {
-        let now = Instant::now();
-        self.orphans.insert(stream_id, now);
-        self.by_orphaning_times.insert((now, stream_id));
-    }
-
-    fn remove(&mut self, stream_id: i16) {
-        if let Some(time) = self.orphans.remove(&stream_id) {
-            self.by_orphaning_times.remove(&(time, stream_id));
-        }
-    }
-
-    fn contains(&self, stream_id: i16) -> bool {
-        self.orphans.contains_key(&stream_id)
-    }
-
-    fn orphans_older_than(&self, age: std::time::Duration) -> usize {
-        let minimal_age = Instant::now() - age;
-        self.by_orphaning_times
-            .range(..(minimal_age, i16::MAX))
-            .count() // This has linear time complexity, but in terms of
-        // the number of old orphans. Healthy connection - one
-        // that does not have old orphaned stream ids, will
-        // calculate this function quickly.
-    }
-}
-
-struct ResponseHandlerMap {
-    stream_set: StreamIdSet,
-    handlers: HashMap<i16, ResponseHandler>,
-
-    request_to_stream: HashMap<RequestId, i16>,
-    orphanage_tracker: OrphanageTracker,
-}
-
-enum HandlerLookupResult {
-    Orphaned,
-    Handler(ResponseHandler),
-    Missing,
-}
-
-impl ResponseHandlerMap {
-    fn new() -> Self {
-        Self {
-            stream_set: StreamIdSet::new(),
-            handlers: HashMap::new(),
-            request_to_stream: HashMap::new(),
-            orphanage_tracker: OrphanageTracker::new(),
-        }
-    }
-
-    fn allocate(&mut self, response_handler: ResponseHandler) -> Result<i16, ResponseHandler> {
-        if let Some(stream_id) = self.stream_set.allocate() {
-            self.request_to_stream
-                .insert(response_handler.request_id, stream_id);
-            let prev_handler = self.handlers.insert(stream_id, response_handler);
-            assert!(prev_handler.is_none());
-
-            Ok(stream_id)
-        } else {
-            Err(response_handler)
-        }
-    }
-
-    // Orphan stream_id (associated with this request_id) by moving it to
-    // `orphanage_tracker`, and freeing its handler
-    fn orphan(&mut self, request_id: RequestId) {
-        if let Some(stream_id) = self.request_to_stream.get(&request_id) {
-            debug!(
-                "Orphaning stream_id = {} associated with request_id = {}",
-                stream_id, request_id
-            );
-            self.orphanage_tracker.insert(*stream_id);
-            self.handlers.remove(stream_id);
-            self.request_to_stream.remove(&request_id);
-        }
-    }
-
-    fn old_orphans_count(&self) -> usize {
-        self.orphanage_tracker
-            .orphans_older_than(OLD_AGE_ORPHAN_THRESHOLD)
-    }
-
-    fn lookup(&mut self, stream_id: i16) -> HandlerLookupResult {
-        self.stream_set.free(stream_id);
-
-        if self.orphanage_tracker.contains(stream_id) {
-            self.orphanage_tracker.remove(stream_id);
-            // This `stream_id` had been orphaned, so its handler got removed.
-            // This is a valid state (as opposed to missing handler)
-            return HandlerLookupResult::Orphaned;
-        }
-
-        if let Some(handler) = self.handlers.remove(&stream_id) {
-            // A mapping `request_id` -> `stream_id` must be removed, to
-            // prevent marking this `stream_id` as orphaned by some late
-            // orphan notification.
-            self.request_to_stream.remove(&handler.request_id);
-
-            HandlerLookupResult::Handler(handler)
-        } else {
-            HandlerLookupResult::Missing
-        }
-    }
-
-    // Retrieves the map of handlers, used after connection breaks
-    // and we have to respond to all of them with an error
-    fn into_handlers(self) -> HashMap<i16, ResponseHandler> {
-        self.handlers
-    }
-}
-
-struct StreamIdSet {
-    used_bitmap: Box<[u64]>,
-}
-
-/// Number of stream ids usable on one connection, i.e. the maximum number of
-/// requests in flight on it. Every id in `0..MAX_IN_FLIGHT_REQUESTS` is
-/// allocatable; none is reserved.
-pub(crate) const MAX_IN_FLIGHT_REQUESTS: usize = i16::MAX as usize + 1;
-
-impl StreamIdSet {
-    fn new() -> Self {
-        Self {
-            used_bitmap: vec![0; MAX_IN_FLIGHT_REQUESTS / 64].into_boxed_slice(),
-        }
-    }
-
-    fn allocate(&mut self) -> Option<i16> {
-        for (block_id, block) in self.used_bitmap.iter_mut().enumerate() {
-            if *block != !0 {
-                let off = block.trailing_ones();
-                *block |= 1u64 << off;
-                let stream_id = off as i16 + block_id as i16 * 64;
-                return Some(stream_id);
-            }
-        }
-        None
-    }
-
-    fn free(&mut self, stream_id: i16) {
-        let block_id = stream_id as usize / 64;
-        let off = stream_id as usize % 64;
-        self.used_bitmap[block_id] &= !(1 << off);
-    }
 }
 
 /// This type can only hold a valid keyspace name
