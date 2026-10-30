@@ -25,6 +25,7 @@ use crate::errors::{
     PagerExecutionError, PrepareError, RequestAttemptError, RequestError, SchemaAgreementError,
     TracingError, UseKeyspaceError,
 };
+use crate::frame::request::batch::BatchRoutingHint;
 use crate::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
 use crate::frame::response::result;
 use crate::network::tls::TlsProvider;
@@ -1349,6 +1350,21 @@ impl Session {
             node_location_preference: &self.node_location_preference,
         };
 
+        // The batch is routed by its first statement exactly when a token could be computed
+        // from it, which requires a prepared statement with partition key bind indices. That's
+        // also what the server requires of the routing statement named in the hint.
+        let routing_hint = BatchRoutingHint {
+            routing_statement_index: match first_value_token {
+                Some(_) => 0,
+                None => BatchRoutingHint::NO_ROUTING_STATEMENT,
+            },
+            tablet_version_block: choose_tablet_block_hint(
+                &cluster_state,
+                routing_info.table,
+                routing_info.token,
+            ),
+        };
+
         let span = RequestSpan::new_batch();
 
         let (run_request_result, coordinator): (
@@ -1361,7 +1377,13 @@ impl Session {
                 exec_params,
                 |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
-                        .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
+                        .batch_with_consistency(
+                            batch,
+                            values_ref,
+                            consistency,
+                            serial_consistency,
+                            routing_hint,
+                        )
                         .await
                         .and_then(QueryResponse::into_non_error_query_response)
                 },

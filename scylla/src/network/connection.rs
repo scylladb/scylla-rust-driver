@@ -1255,6 +1255,7 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
+        routing_hint: batch::BatchRoutingHint,
     ) -> Result<QueryResponse, RequestAttemptError> {
         let batch = self.prepare_batch(init_batch, &values).await?;
 
@@ -1275,6 +1276,16 @@ impl Connection {
         };
         let timestamp = batch.get_timestamp().or_else(get_timestamp_from_gen);
 
+        // On a connection that negotiated TABLETS_ROUTING_V2 the server requires a routing
+        // hint on every BATCH. As for EXECUTE, the hint's value is entirely the caller's, while
+        // whether one is sent at all is decided only here, because only this connection knows
+        // what it negotiated.
+        let routing_hint = self
+            .features
+            .protocol_features
+            .tablets_v2_supported
+            .then_some(routing_hint);
+
         let batch_frame = batch::Batch {
             statements: Cow::Borrowed(&batch.statements),
             values,
@@ -1282,7 +1293,19 @@ impl Connection {
             consistency,
             serial_consistency,
             timestamp,
+            routing_hint,
         };
+
+        // Routing information returned for a batch describes the tablet of the statement the
+        // hint named, so it's filed under that statement's table.
+        let routing_table_spec = routing_hint
+            .map(|hint| hint.routing_statement_index)
+            .filter(|&index| index != batch::BatchRoutingHint::NO_ROUTING_STATEMENT)
+            .and_then(|index| batch.statements.get(usize::from(index)))
+            .and_then(|statement| match statement {
+                BatchStatement::PreparedStatement(ps) => ps.get_table_spec(),
+                BatchStatement::Query(_) => None,
+            });
 
         loop {
             let query_response = self
@@ -1312,7 +1335,20 @@ impl Connection {
                     }
                     _ => Err(err.into()),
                 },
-                ResponseWithDeserializedMetadata::Result(_) => Ok(query_response),
+                ResponseWithDeserializedMetadata::Result(_) => {
+                    if let Some(spec) = routing_table_spec
+                        && let Err(e) = self
+                            .update_tablets_from_response(spec, &query_response)
+                            .await
+                    {
+                        tracing::warn!(
+                            "Error while parsing tablet info from custom payload: {}",
+                            e
+                        );
+                    }
+
+                    Ok(query_response)
+                }
                 _ => Err(RequestAttemptError::UnexpectedResponse(
                     query_response.response.to_response_kind(),
                 )),
