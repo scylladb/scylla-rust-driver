@@ -1100,7 +1100,7 @@ impl Connection {
             )
             .await?;
 
-        if let Some(spec) = prepared_statement.get_table_spec()
+        if let Some(spec) = prepared_statement.get_shared_table_spec()
             && let Err(e) = self
                 .update_tablets_from_response(spec, &query_response)
                 .await
@@ -1144,7 +1144,7 @@ impl Connection {
                     )
                     .await?;
 
-                if let Some(spec) = prepared_statement.get_table_spec()
+                if let Some(spec) = prepared_statement.get_shared_table_spec()
                     && let Err(e) = self.update_tablets_from_response(spec, &new_response).await
                 {
                     tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
@@ -1904,7 +1904,7 @@ impl Connection {
 
     async fn update_tablets_from_response(
         &self,
-        table: &TableSpec<'_>,
+        table: &Arc<TableSpec<'static>>,
         response: &QueryResponse,
     ) -> Result<(), TabletParsingError> {
         if let (Some(sender), Some(tablet_data)) = (
@@ -1922,7 +1922,7 @@ impl Connection {
                 table.table_name(),
                 tablet
             );
-            let _ = sender.send((Arc::new(table.to_owned()), tablet)).await;
+            let _ = sender.send((Arc::clone(table), tablet)).await;
         }
 
         Ok(())
