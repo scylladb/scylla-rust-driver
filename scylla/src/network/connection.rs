@@ -279,7 +279,7 @@ pub(crate) struct ConnectionConfig {
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
-    pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
+    pub(crate) tablet_sender: Option<mpsc::Sender<(Arc<TableSpec<'static>>, RawTablet)>>,
 
     pub(crate) identity: SelfIdentity<'static>,
 
@@ -360,7 +360,7 @@ pub(crate) struct HostConnectionConfig {
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
-    pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
+    pub(crate) tablet_sender: Option<mpsc::Sender<(Arc<TableSpec<'static>>, RawTablet)>>,
 
     pub(crate) identity: SelfIdentity<'static>,
     pub(crate) session_id: Uuid,
@@ -1922,7 +1922,7 @@ impl Connection {
                 table.table_name(),
                 tablet
             );
-            let _ = sender.send((table.to_owned(), tablet)).await;
+            let _ = sender.send((Arc::new(table.to_owned()), tablet)).await;
         }
 
         Ok(())

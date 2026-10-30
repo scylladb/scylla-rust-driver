@@ -845,7 +845,7 @@ impl ClusterState {
     /// allocation nor a new `ClusterState`.
     pub(crate) fn with_updated_tablets(
         &self,
-        raw_tablets: Vec<(TableSpec<'static>, RawTablet)>,
+        raw_tablets: Vec<(Arc<TableSpec<'static>>, RawTablet)>,
     ) -> Option<ClusterState> {
         let replica_translator = |uuid: Uuid| self.topology.known_nodes.get(&uuid).cloned();
 
@@ -1390,7 +1390,7 @@ mod tests {
         )]);
         let state = new_cluster_state(metadata, None).await;
 
-        let table = TableSpec::borrowed("ks", "t").into_owned();
+        let table = Arc::new(TableSpec::borrowed("ks", "t"));
         let tablet = |first, last, shard, version| {
             (
                 table.clone(),

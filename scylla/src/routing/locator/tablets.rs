@@ -846,16 +846,16 @@ impl TableTablets {
     }
 }
 
-/// Needed to query hashbrown::HashMap<TableSpec<'static>, TableTablets>
+/// Needed to query hashbrown::HashMap<Arc<TableSpec<'static>>, Arc<TableTablets>>
 /// with `TableSpec` of any lifetime.
 #[derive(Hash)]
 struct TableSpecQueryKey<'a> {
     table_spec: &'a TableSpec<'a>,
 }
 
-impl<'key, 'query> hashbrown::Equivalent<TableSpec<'key>> for TableSpecQueryKey<'query> {
-    fn equivalent(&self, key: &TableSpec<'key>) -> bool {
-        self.table_spec == key
+impl<'key, 'query> hashbrown::Equivalent<Arc<TableSpec<'key>>> for TableSpecQueryKey<'query> {
+    fn equivalent(&self, key: &Arc<TableSpec<'key>>) -> bool {
+        self.table_spec == &**key
     }
 }
 
@@ -863,7 +863,7 @@ impl<'key, 'query> hashbrown::Equivalent<TableSpec<'key>> for TableSpecQueryKey<
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) struct TabletsInfo {
     // We use hashbrown hashmap instead of std hashmap because with
-    // std one it is not possible to query map with key `TableSpec<'static>`
+    // std one it is not possible to query map with key `Arc<TableSpec<'static>>`
     // using `TableSpec<'a>` for `'a` other than `'static`.
     // This is because `std::hashmap` requires that the key implements `Borrow<Q>`
     // where `&Q` is an argument to `.get(key)` method. It is not possible to write
@@ -871,10 +871,10 @@ pub(crate) struct TabletsInfo {
     // HashBrown on the other hand requires only `Q: Hash + Equivalent<K> + ?Sized`,
     // and it is easy to create a wrapper type with required `Equivalent` impl.
     //
-    // Each table's tablets are behind an `Arc`, so that a tablet update - which
-    // clones the whole `TabletsInfo` and then changes one table - copies only
-    // that table's tablets and shares the rest.
-    tablets: hashbrown::HashMap<TableSpec<'static>, Arc<TableTablets>>,
+    // Each table's spec and tablets are behind an `Arc`, so that a tablet
+    // update - which clones the whole `TabletsInfo` and then changes one table -
+    // copies only that table's tablets and shares the rest.
+    tablets: hashbrown::HashMap<Arc<TableSpec<'static>>, Arc<TableTablets>>,
     /// See `has_unknown_replicas` field in `TableTablets`.
     /// The field here will be true if it is true for any TableTablets.
     has_unknown_replicas: bool,
@@ -904,7 +904,7 @@ impl TabletsInfo {
             .is_some_and(|tablets| tablets.contains(raw))
     }
 
-    pub(crate) fn add_tablet(&mut self, table_spec: TableSpec<'static>, tablet: Tablet) {
+    pub(crate) fn add_tablet(&mut self, table_spec: Arc<TableSpec<'static>>, tablet: Tablet) {
         if tablet.failed.is_some() {
             self.has_unknown_replicas = true;
         }
@@ -1021,7 +1021,10 @@ impl TabletsInfo {
                             .raw_entry_mut()
                             .from_key(&query_key)
                             .or_insert_with(|| {
-                                (borrowed_spec.to_owned(), Arc::new(TableTablets::new()))
+                                (
+                                    Arc::new(borrowed_spec.to_owned()),
+                                    Arc::new(TableTablets::new()),
+                                )
                             });
                     })
             });
@@ -2143,18 +2146,18 @@ mod tests {
 
         let mut pre = TabletsInfo {
             tablets: hashbrown::HashMap::from([
-                (TABLE_1.clone(), Arc::new(TableTablets::new())),
-                (TABLE_DROP.clone(), Arc::new(TableTablets::new())),
-                (TABLE_2.clone(), Arc::new(TableTablets::new())),
+                (Arc::new(TABLE_1), Arc::new(TableTablets::new())),
+                (Arc::new(TABLE_DROP), Arc::new(TableTablets::new())),
+                (Arc::new(TABLE_2), Arc::new(TableTablets::new())),
             ]),
             has_unknown_replicas: false,
         };
 
         let expected_after = TabletsInfo {
             tablets: hashbrown::HashMap::from([
-                (TABLE_1.clone(), Arc::new(TableTablets::new())),
-                (TABLE_2.clone(), Arc::new(TableTablets::new())),
-                (TABLE_3.clone(), Arc::new(TableTablets::new())),
+                (Arc::new(TABLE_1), Arc::new(TableTablets::new())),
+                (Arc::new(TABLE_2), Arc::new(TableTablets::new())),
+                (Arc::new(TABLE_3), Arc::new(TableTablets::new())),
             ]),
             has_unknown_replicas: false,
         };

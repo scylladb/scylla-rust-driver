@@ -825,7 +825,7 @@ async fn test_tablet_replica_sets() {
     })
     .unwrap();
     let mut tablets = TabletsInfo::new();
-    tablets.add_tablet(TABLE_NTS_RF_2.clone(), tablet);
+    tablets.add_tablet(Arc::new(TABLE_NTS_RF_2.clone()), tablet);
     let locator = ReplicaLocator::new(ring.iter().cloned(), std::iter::empty(), tablets);
 
     // The strategy is ignored for tablet tables.

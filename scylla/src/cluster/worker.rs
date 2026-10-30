@@ -74,7 +74,7 @@ impl Cluster {
         host_listener: Option<Arc<dyn HostListener>>,
         cluster_metadata_refresh_interval: Duration,
         periodic_fetch_mode: PeriodicFetchMode,
-        tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
+        tablet_receiver: tokio::sync::mpsc::Receiver<(Arc<TableSpec<'static>>, RawTablet)>,
         metrics: Metrics,
         client_routes_config: Option<ClientRoutesConfig>,
     ) -> Result<Cluster, NewSessionError> {
@@ -283,7 +283,7 @@ struct ClusterWorker {
 
     // Channel used to receive info about new tablets from custom payload in responses
     // sent by server.
-    tablets_channel: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
+    tablets_channel: tokio::sync::mpsc::Receiver<(Arc<TableSpec<'static>>, RawTablet)>,
 
     // The host filter determines towards which nodes we should open
     // connections
