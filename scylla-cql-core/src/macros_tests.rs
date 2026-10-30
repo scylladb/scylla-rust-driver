@@ -3701,7 +3701,7 @@ mod derive_macros_integration {
                             let err = get_deser_err(&err);
                             assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
                             let BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
-                                column_index: field_index,
+                                column_index,
                                 ref column_name,
                                 ref err,
                             } = err.kind
@@ -3709,7 +3709,8 @@ mod derive_macros_integration {
                                 panic!("unexpected error kind: {:?}", err.kind)
                             };
                             assert_eq!(column_name.as_str(), "b");
-                            assert_eq!(field_index, 2);
+                            // `b` is the second column, although the skipped `x` makes it the third field.
+                            assert_eq!(column_index, 1);
                             let err = get_value_deser_err_inner(err);
                             assert_eq!(err.rust_name, std::any::type_name::<Option<i32>>());
                             assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
