@@ -3458,6 +3458,52 @@ mod derive_macros_integration {
                                 }
                             );
                         }
+
+                        // Column deserialization failed, columns in a different order than fields
+                        {
+                            let specs = [
+                                spec("a", ColumnType::Native(NativeType::Ascii)),
+                                spec("c", ColumnType::Native(NativeType::Boolean)),
+                                spec("e", ColumnType::Native(NativeType::Int)),
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                            ];
+
+                            let row_bytes = serialize_cells(
+                                [
+                                    "alamakota".as_bytes(),
+                                    &[true as u8],
+                                    &13_i32.to_be_bytes(),
+                                    &42_i64.to_be_bytes(),
+                                ]
+                                .map(Some),
+                            );
+
+                            let err = deserialize::<MyRow>(&specs, &row_bytes).unwrap_err();
+
+                            let err = get_deser_err(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            let BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
+                                column_index,
+                                ref column_name,
+                                ref err,
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            // `b` is the last column, although it is the second field that is not skipped.
+                            assert_eq!(column_index, 3);
+                            assert_eq!(column_name.as_str(), "b");
+                            let err = get_value_deser_err_inner(err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Option<i32>>());
+                            assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
+                            assert_matches!(
+                                err.kind,
+                                value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                                    expected: 4,
+                                    got: 8,
+                                }
+                            );
+                        }
                     }
                 }
 
