@@ -16,6 +16,7 @@ use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -132,6 +133,21 @@ impl std::fmt::Debug for ClusterState {
             .field("keyspaces", &self.keyspaces.keys())
             .finish_non_exhaustive()
     }
+}
+
+/// Reason why load balancing can't target a preferred node location.
+#[derive(Debug, Error)]
+pub(crate) enum PreferredLocationError<'a> {
+    #[error("datacenter \"{0}\" is not present in the cluster")]
+    DatacenterAbsent(&'a str),
+    #[error("all nodes in datacenter \"{0}\" are disabled by the HostFilter")]
+    DatacenterDisabled(&'a str),
+    #[error("rack \"{rack}\" is not present in datacenter \"{datacenter}\"")]
+    RackAbsent { datacenter: &'a str, rack: &'a str },
+    #[error(
+        "all nodes in rack \"{rack}\" of datacenter \"{datacenter}\" are disabled by the HostFilter"
+    )]
+    RackDisabled { datacenter: &'a str, rack: &'a str },
 }
 
 type KnownNodes = HashMap<Uuid, Arc<Node>>;
@@ -739,6 +755,41 @@ impl ClusterState {
     /// Access replica location info
     pub fn replica_locator(&self) -> &ReplicaLocator {
         &self.locator
+    }
+
+    /// Checks that the preferred datacenter (and rack, if given) has any enabled nodes,
+    /// so that load balancing can target it.
+    ///
+    /// Only token-owning nodes are considered, because load balancing picks nodes
+    /// from the token ring.
+    pub(crate) fn check_preferred_location<'a>(
+        &self,
+        datacenter: &'a str,
+        rack: Option<&'a str>,
+    ) -> Result<(), PreferredLocationError<'a>> {
+        let datacenter_nodes = self
+            .locator
+            .unique_nodes_in_datacenter_ring(datacenter)
+            .ok_or(PreferredLocationError::DatacenterAbsent(datacenter))?;
+        if !datacenter_nodes.iter().any(|node| node.is_enabled()) {
+            return Err(PreferredLocationError::DatacenterDisabled(datacenter));
+        }
+
+        let Some(rack) = rack else {
+            return Ok(());
+        };
+        let mut rack_nodes = datacenter_nodes
+            .iter()
+            .filter(|node| node.rack.as_deref() == Some(rack))
+            .peekable();
+        if rack_nodes.peek().is_none() {
+            return Err(PreferredLocationError::RackAbsent { datacenter, rack });
+        }
+        if !rack_nodes.any(|node| node.is_enabled()) {
+            return Err(PreferredLocationError::RackDisabled { datacenter, rack });
+        }
+
+        Ok(())
     }
 
     /// Returns nonempty iterator (over nodes) of iterators (over shards).
@@ -1457,6 +1508,58 @@ mod tests {
             state
                 .with_updated_tablets(vec![tablet(101, 200, 0, Some(3))])
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn check_preferred_location() {
+        setup_tracing();
+
+        // dc1/r1: enabled, dc1/r2: disabled, dc2/r1: disabled,
+        // dc3/r1: zero-token, so it is not in the ring.
+        let peers = [
+            (1, "dc1", "r1", vec![Token::new(1)]),
+            (2, "dc1", "r2", vec![Token::new(2)]),
+            (3, "dc2", "r1", vec![Token::new(3)]),
+            (4, "dc3", "r1", vec![]),
+        ]
+        .into_iter()
+        .map(|(id, dc, rack, tokens)| Peer {
+            tokens,
+            ..make_peer(Uuid::new_v4(), make_addr(id), Some(dc), Some(rack))
+        })
+        .collect();
+        let filter = AddrRejectFilter::rejecting([make_addr(2), make_addr(3)]);
+        let state = new_cluster_state(make_metadata(peers), Some(&filter)).await;
+
+        assert_matches!(state.check_preferred_location("dc1", None), Ok(()));
+        assert_matches!(state.check_preferred_location("dc1", Some("r1")), Ok(()));
+        assert_matches!(
+            state.check_preferred_location("dc1", Some("r2")),
+            Err(PreferredLocationError::RackDisabled {
+                datacenter: "dc1",
+                rack: "r2"
+            })
+        );
+        assert_matches!(
+            state.check_preferred_location("dc1", Some("r3")),
+            Err(PreferredLocationError::RackAbsent {
+                datacenter: "dc1",
+                rack: "r3"
+            })
+        );
+        // A datacenter problem is reported even if a rack is given.
+        assert_matches!(
+            state.check_preferred_location("dc2", Some("r1")),
+            Err(PreferredLocationError::DatacenterDisabled("dc2"))
+        );
+        assert_matches!(
+            state.check_preferred_location("dc3", None),
+            Err(PreferredLocationError::DatacenterAbsent("dc3"))
+        );
+        assert_matches!(
+            state.check_preferred_location("dc4", Some("r1")),
+            Err(PreferredLocationError::DatacenterAbsent("dc4"))
         );
     }
 }

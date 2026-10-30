@@ -5,6 +5,7 @@ use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::cluster::ClusterState;
 use crate::frame::response::result::TableSpec;
 use crate::frame::types::Consistency;
+use crate::observability::{RateLimiter, warn_rate_limited};
 use crate::routing::NodeLocationPreference;
 use crate::{
     cluster::metadata::{ConsistencyMode, Strategy},
@@ -18,8 +19,10 @@ use rand::{Rng, prelude::SliceRandom, rng};
 use rand_pcg::Pcg32;
 use std::hash::{Hash, Hasher};
 use std::{fmt, sync::Arc, time::Duration};
-use tracing::{debug, warn};
+use tracing::debug;
 use uuid::Uuid;
+
+const WARNING_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy)]
 enum NodeLocationCriteria<'a> {
@@ -69,6 +72,8 @@ enum PickedReplica<'a> {
 
     /// A replica that could not be computed cheaply. `pick` should therefore return None
     /// and `fallback` will then return that replica as the first in the iterator.
+    ///
+    /// Only possible when picking from all replicas, never from a preferred datacenter or rack.
     ToBeComputedInFallback,
 }
 
@@ -128,6 +133,14 @@ pub struct DefaultPolicy {
     /// based on random number generator. For sake of deterministic testing,
     /// a fixed seed can be used.
     pub(crate) fixed_seed: Option<u64>,
+
+    /// Rate limits the warning about combining SimpleStrategy with a preferred datacenter
+    /// and disabled datacenter failover.
+    simple_strategy_warning_limiter: RateLimiter,
+
+    /// Rate limits warnings about an unusable location preference set on this policy.
+    /// Kept per policy, so that misconfigured policies don't suppress each other's warnings.
+    preferred_location_warning_limiter: RateLimiter,
 }
 
 impl fmt::Debug for DefaultPolicy {
@@ -160,7 +173,8 @@ impl LoadBalancingPolicy for DefaultPolicy {
                 Strategy::SimpleStrategy { .. }
             )
         {
-            warn!(
+            warn_rate_limited!(
+                self.simple_strategy_warning_limiter,
                 "\
 Combining SimpleStrategy with DC preference and disabled datacenter failover may lead to empty query plans for some tokens.\
 It is better to give up using one of them: either operate in a keyspace with NetworkTopologyStrategy, which explicitly states\
@@ -213,6 +227,11 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                         PickedReplica::ToBeComputedInFallback => None,
                     };
                 }
+                // No replica in the preferred location is ever deferred to fallback()
+                // (see `PickedReplica::ToBeComputedInFallback`), so whenever pick() finds
+                // no target in the preferred rack or datacenter, it runs this check (here
+                // or below). Therefore, fallback(), which always follows pick(), needs no checks.
+                self.warn_if_preferred_location_unusable(cluster, dc, Some(rack));
             }
 
             if let NodeLocationPreference::DatacenterAndRack(dc, _)
@@ -237,6 +256,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                         PickedReplica::ToBeComputedInFallback => None,
                     };
                 }
+                self.warn_if_preferred_location_unusable(cluster, dc, None);
             }
 
             // If preferred datacenter is not specified, or if datacenter failover is possible, loosen restriction about locality.
@@ -286,6 +306,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             if let Some(alive_local_rack_node) = local_rack_node_picked {
                 return Some((alive_local_rack_node, None));
             }
+            self.warn_if_preferred_location_unusable(cluster, dc, Some(rack));
         }
 
         // Try to pick some alive random local node.
@@ -293,6 +314,9 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             self.pick_node(local_nodes, |node| (self.pick_predicate)(node, None));
         if let Some(alive_local_node) = local_node_picked {
             return Some((alive_local_node, None));
+        }
+        if let Some(dc) = routing_info.preference.datacenter() {
+            self.warn_if_preferred_location_unusable(cluster, dc, None);
         }
 
         let all_nodes = cluster.replica_locator().unique_nodes_in_global_ring();
@@ -625,6 +649,28 @@ impl DefaultPolicy {
         routing_info
     }
 
+    /// Warns if the location preference set on this policy can't be targeted.
+    ///
+    /// Meant to be called only after no target was found in the preferred location,
+    /// so that the hot path doesn't pay for the check.
+    fn warn_if_preferred_location_unusable(
+        &self,
+        cluster: &ClusterState,
+        datacenter: &str,
+        rack: Option<&str>,
+    ) {
+        // The session-level preference is checked by the cluster worker upon topology changes.
+        if self.preferences.is_none() {
+            return;
+        }
+        if let Err(err) = cluster.check_preferred_location(datacenter, rack) {
+            warn_rate_limited!(
+                self.preferred_location_warning_limiter,
+                "The node location preference set on DefaultPolicy can't be honoured: {err}"
+            );
+        }
+    }
+
     /// Returns all nodes in the local datacenter if one is given,
     /// or else all nodes in the cluster.
     fn preferred_node_set<'a>(
@@ -633,19 +679,12 @@ impl DefaultPolicy {
         routing_info: &ProcessedRoutingInfo<'_>,
     ) -> &'a [Arc<Node>] {
         if let Some(preferred_datacenter) = routing_info.preference.datacenter() {
-            if let Some(nodes) = cluster
+            // If the preferred DC does not exist, we won't guess any DC,
+            // as it could lead to possible violation of dc failover ban.
+            cluster
                 .replica_locator()
                 .unique_nodes_in_datacenter_ring(preferred_datacenter)
-            {
-                nodes
-            } else {
-                tracing::warn!(
-                    "Datacenter specified as the preferred one ({}) does not exist!",
-                    preferred_datacenter
-                );
-                // We won't guess any DC, as it could lead to possible violation of dc failover ban.
-                &[]
-            }
+                .unwrap_or(&[])
         } else {
             cluster.replica_locator().unique_nodes_in_global_ring()
         }
@@ -1018,6 +1057,8 @@ impl Default for DefaultPolicy {
             pick_predicate: Box::new(Self::is_alive),
             latency_awareness: None,
             fixed_seed: None,
+            simple_strategy_warning_limiter: RateLimiter::new(WARNING_INTERVAL),
+            preferred_location_warning_limiter: RateLimiter::new(WARNING_INTERVAL),
         }
     }
 }
@@ -1081,6 +1122,8 @@ impl DefaultPolicyBuilder {
                 debug!("DefaultPolicy: setting fixed seed to {}", seed);
                 seed
             }),
+            simple_strategy_warning_limiter: RateLimiter::new(WARNING_INTERVAL),
+            preferred_location_warning_limiter: RateLimiter::new(WARNING_INTERVAL),
         })
     }
 
@@ -2767,6 +2810,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_default_policy_warns_on_unusable_preferred_location() {
+        setup_tracing();
+        use crate::policies::load_balancing::LoadBalancingPolicy;
+        use crate::test_utils::{CapturedLogs, capturing_logs};
+
+        const WARNING: &str = "The node location preference set on DefaultPolicy can't be honoured";
+
+        let cluster = mock_cluster_state_for_token_aware_tests().await;
+        let session_preference = NodeLocationPreference::Datacenter("typo".to_owned());
+        let token_aware = RoutingInfo {
+            token: Some(Token::new(160)),
+            table: Some(TABLE_NTS_RF_3),
+            node_location_preference: &session_preference,
+            ..Default::default()
+        };
+        let token_unaware = RoutingInfo {
+            node_location_preference: &session_preference,
+            ..Default::default()
+        };
+
+        let cases = [
+            (
+                Some(NodeLocationPreference::Datacenter("typo".to_owned())),
+                Some(r#"datacenter "typo" is not present in the cluster"#),
+            ),
+            (
+                Some(NodeLocationPreference::DatacenterAndRack(
+                    "eu".to_owned(),
+                    "typo".to_owned(),
+                )),
+                Some(r#"rack "typo" is not present in datacenter "eu""#),
+            ),
+            (
+                Some(NodeLocationPreference::DatacenterAndRack(
+                    "eu".to_owned(),
+                    "r1".to_owned(),
+                )),
+                None,
+            ),
+            // The session-level preference is checked by the cluster worker, not by the policy.
+            (None, None),
+        ];
+
+        for routing_info in [&token_aware, &token_unaware] {
+            for (preferences, problem) in &cases {
+                let policy = DefaultPolicy {
+                    preferences: preferences.clone(),
+                    ..Default::default()
+                };
+                let logs = CapturedLogs::default();
+                capturing_logs(&logs, tracing::Level::WARN, || {
+                    // Twice, to check that the warning is rate limited.
+                    policy.pick(routing_info, &cluster);
+                    policy.pick(routing_info, &cluster);
+                });
+                let logs = logs.text();
+
+                match problem {
+                    Some(problem) => {
+                        assert_eq!(logs.matches(WARNING).count(), 1, "{logs}");
+                        assert!(logs.contains(&format!("{WARNING}: {problem}")), "{logs}");
+                    }
+                    None => assert!(!logs.contains(WARNING), "{logs}"),
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn test_default_policy_leader_aware_routing() {
         setup_tracing();
         use crate::frame::response::result::TableSpec;
@@ -3955,7 +4067,7 @@ mod latency_awareness {
                 is_token_aware: true,
                 pick_predicate,
                 latency_awareness: Some(latency_awareness),
-                fixed_seed: None,
+                ..Default::default()
             }
         }
 

@@ -71,14 +71,23 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogs {
     }
 }
 
-/// Runs `f` with a scoped subscriber that appends everything logged at ERROR level to
-/// `capture`. Only works for synchronous `f`, which is what makes the thread-local dispatcher
-/// - and thus the capture - apply.
-pub(crate) fn capturing_errors<T>(capture: &CapturedLogs, f: impl FnOnce() -> T) -> T {
+/// Runs `f` with a scoped subscriber that appends everything logged at `max_level` or more
+/// severe to `capture`. Only works for synchronous `f`, which is what makes the thread-local
+/// dispatcher - and thus the capture - apply.
+pub(crate) fn capturing_logs<T>(
+    capture: &CapturedLogs,
+    max_level: tracing::Level,
+    f: impl FnOnce() -> T,
+) -> T {
     let subscriber = tracing_subscriber::fmt()
         .with_writer(capture.clone())
-        .with_max_level(tracing::Level::ERROR)
+        .with_max_level(max_level)
         .without_time()
         .finish();
     tracing::subscriber::with_default(subscriber, f)
+}
+
+/// [`capturing_logs`] at ERROR level.
+pub(crate) fn capturing_errors<T>(capture: &CapturedLogs, f: impl FnOnce() -> T) -> T {
+    capturing_logs(capture, tracing::Level::ERROR, f)
 }

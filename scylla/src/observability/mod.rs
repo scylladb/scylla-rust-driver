@@ -17,4 +17,7 @@ pub mod metrics;
 #[cfg(not(feature = "metrics"))]
 #[path = "metrics_noop.rs"]
 pub(crate) mod metrics;
+mod rate_limiting;
 pub mod tracing;
+
+pub(crate) use rate_limiting::{RateLimiter, warn_rate_limited};
