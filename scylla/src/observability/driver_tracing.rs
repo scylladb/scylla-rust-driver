@@ -13,6 +13,40 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tracing::trace_span;
 
+/// Awaits a future inside a span, like `future.instrument(span.clone()).await`.
+///
+/// The span is entered on every poll of the future. The driver's request spans
+/// are TRACE level, so they are usually disabled, and then the future is awaited
+/// directly. Unlike `Instrumented`, which would hold a clone of the span, this
+/// borrows the span, and it doesn't enter the span while dropping the future.
+///
+/// `$future` appears in both branches, so it must not contain closure literals
+/// (each copy would be a distinct type, compiled separately).
+macro_rules! await_in_span {
+    ($future:expr, $span:expr) => {{
+        let span: &::tracing::Span = $span;
+        if span.is_disabled() {
+            $future.await
+        } else {
+            // Unlike `let`, a `match` keeps the temporaries of `$future` (e.g. an
+            // argument `&make_value()`) alive until the future completes, as
+            // `$future.await` does.
+            // `move` makes the closure own the `Pin<&mut _>`. A closure borrowing it
+            // would keep both the pin and a reference to it in this future's state.
+            match ::std::pin::pin!($future) {
+                mut future => {
+                    ::std::future::poll_fn(move |cx| {
+                        let _entered = span.enter();
+                        ::std::future::Future::poll(future.as_mut(), cx)
+                    })
+                    .await
+                }
+            }
+        }
+    }};
+}
+pub(crate) use await_in_span;
+
 pub(crate) struct RequestSpan {
     span: tracing::Span,
     speculative_executions: AtomicUsize,

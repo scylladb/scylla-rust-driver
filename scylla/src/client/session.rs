@@ -10,7 +10,7 @@ use crate::authentication::AuthenticatorProvider;
 use crate::client::client_routes::ClientRoutesConfig;
 use crate::client::driver_config::DriverConfigReporter;
 use crate::client::execution::{
-    NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RunRequestResult,
+    NodeAttemptTarget, Request, RequestExecutionOutcome, RequestExecutionParams, RunRequestResult,
     choose_tablet_block_hint,
 };
 use crate::cluster::control_connection::MetadataRequestTimeouts;
@@ -29,9 +29,9 @@ use crate::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErr
 use crate::frame::response::result;
 use crate::network::tls::TlsProvider;
 use crate::network::{
-    Connection, ConnectionConfig, PoolConfig, TcpSocketOptions, VerifiedKeyspaceName,
+    Connection, ConnectionConfig, ExecuteArgs, PoolConfig, TcpSocketOptions, VerifiedKeyspaceName,
 };
-use crate::observability::driver_tracing::RequestSpan;
+use crate::observability::driver_tracing::{RequestSpan, await_in_span};
 use crate::observability::metrics::Metrics;
 use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
@@ -67,10 +67,14 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::timeout;
-use tracing::{Instrument, debug, error, warn};
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
+
+/// Lent to unpaged requests. A constant rather than a temporary, which the
+/// caller's future would keep while the request runs.
+const START_PAGING_STATE: &PagingState = &PagingState::start();
 
 // Query used for schema agreement checks
 const SCHEMA_VERSION_QUERY_STR: &str = "SELECT schema_version FROM system.local WHERE key='local'";
@@ -908,25 +912,32 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
-        let serialized_values = prepared.serialize_values(&values)?;
-        self.execute_unpaged_nongeneric(prepared, &serialized_values)
-            .await
-    }
-
-    async fn execute_unpaged_nongeneric(
-        &self,
-        prepared: &PreparedStatement,
-        serialized_values: &SerializedValues,
-    ) -> Result<QueryResult, ExecutionError> {
-        let (result, paging_state) = self
+        // Moved into a block, so that the values are dropped once serialized:
+        // borrowing the argument would keep it in this future's state.
+        let serialized_values = {
+            let values = values;
+            prepared.serialize_values(&values)?
+        };
+        let response = self
             .execute(
                 prepared,
-                serialized_values,
+                &serialized_values,
                 None,
-                PagingState::start(),
+                START_PAGING_STATE,
                 RequestPaging::Unpaged,
             )
             .await?;
+        Self::unpaged_prepared_result(response)
+    }
+
+    /// Checks that an unpaged prepared request got its whole result in one page.
+    ///
+    /// A separate function rather than a common async fn calling
+    /// [`Session::execute`], as each async fn layer adds its arguments to the
+    /// future and its own polling to every request.
+    fn unpaged_prepared_result(
+        (result, paging_state): (QueryResult, PagingStateResponse),
+    ) -> Result<QueryResult, ExecutionError> {
         if !paging_state.finished() {
             error!(
                 "Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug."
@@ -985,8 +996,16 @@ impl Session {
         &self,
         bound: &BoundStatement,
     ) -> Result<QueryResult, ExecutionError> {
-        self.execute_unpaged_nongeneric(&bound.prepared, &bound.values)
-            .await
+        let response = self
+            .execute(
+                &bound.prepared,
+                &bound.values,
+                None,
+                START_PAGING_STATE,
+                RequestPaging::Unpaged,
+            )
+            .await?;
+        Self::unpaged_prepared_result(response)
     }
 
     /// Executes a prepared statement, restricting results to single page.
@@ -1051,23 +1070,17 @@ impl Session {
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let serialized_values = prepared.serialize_values(&values)?;
-        self.execute_single_page_nongeneric(prepared, &serialized_values, paging_state)
-            .await
-    }
-
-    async fn execute_single_page_nongeneric(
-        &self,
-        prepared: &PreparedStatement,
-        serialized_values: &SerializedValues,
-        paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let page_size = prepared.get_validated_page_size();
+        // Moved into a block, so that the values are dropped once serialized:
+        // borrowing the argument would keep it in this future's state.
+        let serialized_values = {
+            let values = values;
+            prepared.serialize_values(&values)?
+        };
         self.execute(
             prepared,
-            serialized_values,
-            Some(page_size),
-            paging_state,
+            &serialized_values,
+            Some(prepared.get_validated_page_size()),
+            &paging_state,
             RequestPaging::Manual,
         )
         .await
@@ -1137,8 +1150,14 @@ impl Session {
         bound: &BoundStatement,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        self.execute_single_page_nongeneric(&bound.prepared, &bound.values, paging_state)
-            .await
+        self.execute(
+            &bound.prepared,
+            &bound.values,
+            Some(bound.prepared.get_validated_page_size()),
+            &paging_state,
+            RequestPaging::Manual,
+        )
+        .await
     }
 
     /// Execute a prepared statement with paging.
@@ -1185,11 +1204,16 @@ impl Session {
         prepared: impl Into<PreparedStatement>,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
-        let prepared = prepared.into();
-        let serialized_values = prepared.serialize_values(&values)?;
+        // Scoped, so that the values are dropped once serialized: borrowed, the
+        // values and the statement would be kept in this future's state.
+        let (prepared, serialized_values) = {
+            let values = values;
+            let prepared = prepared.into();
+            let serialized_values = prepared.serialize_values(&values)?;
+            (prepared, serialized_values)
+        };
 
-        self.execute_iter_nongeneric(prepared, serialized_values)
-            .await
+        QueryPager::new_for_prepared_statement(self, prepared, serialized_values).await
     }
 
     /// Execute a bound statement with paging.
@@ -1241,8 +1265,7 @@ impl Session {
         &self,
         bound: BoundStatement,
     ) -> Result<QueryPager, PagerExecutionError> {
-        self.execute_iter_nongeneric(bound.prepared, bound.values)
-            .await
+        QueryPager::new_for_prepared_statement(self, bound.prepared, bound.values).await
     }
 
     /// Execute a batch statement.
@@ -1351,24 +1374,22 @@ impl Session {
 
         let span = RequestSpan::new_batch();
 
+        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| async move {
+            connection
+                .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
+                .await
+                .and_then(QueryResponse::into_non_error_query_response)
+        };
+        let request = Request {
+            params: exec_params,
+            routing_info,
+            run_once: run_request_once,
+            span: &span,
+        };
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
             Coordinator,
-        ) = self
-            .run_request(
-                &cluster_state,
-                routing_info,
-                exec_params,
-                |connection: Arc<Connection>, consistency: Consistency| async move {
-                    connection
-                        .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
-                        .await
-                        .and_then(QueryResponse::into_non_error_query_response)
-                },
-                &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
+        ) = await_in_span!(self.run_request(&cluster_state, &request), span.span())?;
 
         let result = match run_request_result {
             RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(coordinator),
@@ -1689,70 +1710,68 @@ impl Session {
 
         let span = RequestSpan::new_query(&statement.contents);
         let span_ref = &span;
+        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| {
+            // Needed to avoid moving query and values into async move block
+            let values_ref = &values;
+            let paging_state_ref = &paging_state;
+            async move {
+                if values_ref.is_empty() {
+                    span_ref.record_request_size(0);
+                    connection
+                        .query_raw_with_consistency(
+                            statement,
+                            consistency,
+                            serial_consistency,
+                            page_size,
+                            paging_state_ref.clone(),
+                        )
+                        .await
+                        .and_then(QueryResponse::into_non_error_query_response)
+                } else {
+                    let prepared = connection.prepare(statement).await?;
+                    let serialized = prepared.serialize_values(values_ref)?;
+                    // We calculate the tablet hint to avoid getting unnecessary tablet feedbacks
+                    // from the server
+                    let tablet_hint = {
+                        let maybe_token = prepared
+                            .extract_partition_key_and_calculate_token(&serialized)
+                            // The error is benign: we can still execute the request, just without the hint.
+                            .unwrap_or(None)
+                            // We only care about token to calculate tablet hint.
+                            .map(|(_pk, token)| token);
+                        choose_tablet_block_hint(
+                            cluster_state_ref,
+                            prepared.get_table_spec(),
+                            maybe_token,
+                        )
+                    };
+
+                    span_ref.record_request_size(serialized.buffer_size());
+                    connection
+                        .execute_raw_with_consistency(&ExecuteArgs {
+                            prepared_statement: &prepared,
+                            values: &serialized,
+                            consistency,
+                            serial_consistency,
+                            page_size,
+                            paging_state: paging_state_ref,
+                            tablet_block_hint: tablet_hint,
+                        })
+                        .await
+                        .and_then(QueryResponse::into_non_error_query_response)
+                }
+            }
+        };
+        let request = Request {
+            params: exec_params,
+            routing_info,
+            run_once: run_request_once,
+            span: &span,
+        };
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
             Coordinator,
-        ) = self
-            .run_request(
-                &cluster_state,
-                routing_info,
-                exec_params,
-                |connection: Arc<Connection>, consistency: Consistency| {
-                    // Needed to avoid moving query and values into async move block
-                    let values_ref = &values;
-                    let paging_state_ref = &paging_state;
-                    async move {
-                        if values_ref.is_empty() {
-                            span_ref.record_request_size(0);
-                            connection
-                                .query_raw_with_consistency(
-                                    statement,
-                                    consistency,
-                                    serial_consistency,
-                                    page_size,
-                                    paging_state_ref.clone(),
-                                )
-                                .await
-                                .and_then(QueryResponse::into_non_error_query_response)
-                        } else {
-                            let prepared = connection.prepare(statement).await?;
-                            let serialized = prepared.serialize_values(values_ref)?;
-                            // We calculate the tablet hint to avoid getting unnecessary tablet feedbacks
-                            // from the server
-                            let tablet_hint = {
-                                let maybe_token = prepared
-                                    .extract_partition_key_and_calculate_token(&serialized)
-                                    // The error is benign: we can still execute the request, just without the hint.
-                                    .unwrap_or(None)
-                                    // We only care about token to calculate tablet hint.
-                                    .map(|(_pk, token)| token);
-                                choose_tablet_block_hint(
-                                    cluster_state_ref,
-                                    prepared.get_table_spec(),
-                                    maybe_token,
-                                )
-                            };
-
-                            span_ref.record_request_size(serialized.buffer_size());
-                            connection
-                                .execute_raw_with_consistency(
-                                    &prepared,
-                                    &serialized,
-                                    consistency,
-                                    serial_consistency,
-                                    page_size,
-                                    paging_state_ref.clone(),
-                                    tablet_hint,
-                                )
-                                .await
-                                .and_then(QueryResponse::into_non_error_query_response)
-                        }
-                    }
-                },
-                &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
+        ) = await_in_span!(self.run_request(&cluster_state, &request), span.span())?;
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
@@ -1760,7 +1779,7 @@ impl Session {
                     result::ResultWithDeserializedMetadata::Void,
                 ),
                 tracing_id: None,
-                warnings: Vec::new(),
+                warnings: Box::default(),
             },
             RunRequestResult::Completed(response) => response,
         };
@@ -1851,7 +1870,7 @@ impl Session {
             // we fully prepare a statement beforehand.
             let prepared = self.prepare_nongeneric(&statement).await?;
             let values = prepared.serialize_values(&values)?;
-            self.execute_iter_nongeneric(prepared, values).await
+            QueryPager::new_for_prepared_statement(self, prepared, values).await
         }
     }
 
@@ -2066,7 +2085,7 @@ impl Session {
             prepared,
             serialized_values,
             page_size,
-            paging_state,
+            &paging_state,
             request_paging,
         )
         .await
@@ -2087,15 +2106,25 @@ impl Session {
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
         page_size: Option<PageSize>,
-        paging_state: PagingState,
+        // Taken by reference: an async fn keeps arguments taken by value twice in
+        // its state.
+        paging_state: &PagingState,
         request_paging: RequestPaging,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let paging_state_ref = &paging_state;
-
-        let (partition_key, token) = prepared
-            .extract_partition_key_and_calculate_token(serialized_values)
-            .map_err(PartitionKeyError::into_execution_error)?
-            .unzip();
+        // Scoped, so that the partition key, needed only for the span, is not kept
+        // in this future's state while the request runs.
+        let (token, span) = {
+            let (partition_key, token) = prepared
+                .extract_partition_key_and_calculate_token(serialized_values)
+                .map_err(PartitionKeyError::into_execution_error)?
+                .unzip();
+            let span = RequestSpan::new_prepared(
+                partition_key.as_ref().map(|pk| pk.iter()),
+                token,
+                serialized_values.buffer_size(),
+            );
+            (token, span)
+        };
 
         let execution_profile = prepared
             .get_execution_profile_handle()
@@ -2127,12 +2156,6 @@ impl Session {
         let tablet_block_hint =
             choose_tablet_block_hint(&cluster_state, routing_info.table, routing_info.token);
 
-        let span = RequestSpan::new_prepared(
-            partition_key.as_ref().map(|pk| pk.iter()),
-            token,
-            serialized_values.buffer_size(),
-        );
-
         if !span.span().is_disabled()
             && let (Some(table_spec), Some(token)) = (routing_info.table, token)
             && let Ok(replicas) = cluster_state.get_token_endpoints_iter(table_spec, token)
@@ -2140,32 +2163,35 @@ impl Session {
             span.record_replicas(replicas)
         }
 
+        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| {
+            // Built outside of the attempt's future, which then keeps only the
+            // arguments, not also the values they are built from.
+            let args = ExecuteArgs {
+                prepared_statement: prepared,
+                values: serialized_values,
+                consistency,
+                serial_consistency,
+                page_size,
+                paging_state,
+                tablet_block_hint,
+            };
+            async move {
+                connection
+                    .execute_raw_with_consistency(&args)
+                    .await
+                    .and_then(QueryResponse::into_non_error_query_response)
+            }
+        };
+        let request = Request {
+            params: exec_params,
+            routing_info,
+            run_once: run_request_once,
+            span: &span,
+        };
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
             Coordinator,
-        ) = self
-            .run_request(
-                &cluster_state,
-                routing_info,
-                exec_params,
-                |connection: Arc<Connection>, consistency: Consistency| async move {
-                    connection
-                        .execute_raw_with_consistency(
-                            prepared,
-                            serialized_values,
-                            consistency,
-                            serial_consistency,
-                            page_size,
-                            paging_state_ref.clone(),
-                            tablet_block_hint,
-                        )
-                        .await
-                        .and_then(QueryResponse::into_non_error_query_response)
-                },
-                &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
+        ) = await_in_span!(self.run_request(&cluster_state, &request), span.span())?;
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
@@ -2173,7 +2199,7 @@ impl Session {
                     result::ResultWithDeserializedMetadata::Void,
                 ),
                 tracing_id: None,
-                warnings: Vec::new(),
+                warnings: Box::default(),
             },
             RunRequestResult::Completed(response) => response,
         };
@@ -2185,32 +2211,9 @@ impl Session {
         Ok((result, paging_state_response))
     }
 
-    /// Does the same as [`Session::execute_iter`], but without generics.
-    /// This is to reduce code bloat.
-    ///
-    /// Additionally, this function accepts only `SerializedValues`,
-    /// so the caller is responsible for serializing the values beforehand.
-    /// This:
-    /// - on one hand introduces a risk of misusing the API (passing values
-    ///   that don't match the prepared statement) - therefore this API
-    ///   must not be leaked to end users;
-    /// - on the other hand allows manual preserialization of values, which
-    ///   we need in wrapper drivers (e.g. C#-RS Driver) - for them we expose
-    ///   a dedicated API endpoint using this function, conditionally compiled
-    ///   if special compile flag is passed.
-    async fn execute_iter_nongeneric(
-        &self,
-        prepared: PreparedStatement,
-        values: SerializedValues,
-    ) -> Result<QueryPager, PagerExecutionError> {
-        QueryPager::new_for_prepared_statement(self, prepared, values).await
-    }
-
-    /// This is essentially the same as `execute_iter_nongeneric`, but it is *public*
-    /// and only available when the `unstable-csharp-rs` feature is enabled.
-    /// Rationale: I don't know a way to make a function conditionally public,
-    /// based on a compile-time flag, so I added a new wrapper function
-    /// that is conditionally compiled and is public.
+    /// Does the same as [`Session::execute_iter`], but takes values serialized
+    /// by the caller, which wrapper drivers (e.g. C#-RS Driver) need. It is only
+    /// available when the `unstable-csharp-rs` feature is enabled.
     ///
     /// This function is intended to be used by the C#-RS Driver's internals
     /// and it's potentially a footgun: if a user passes `SerializedValues`
@@ -2224,7 +2227,7 @@ impl Session {
         prepared: PreparedStatement,
         values: SerializedValues,
     ) -> Result<QueryPager, PagerExecutionError> {
-        self.execute_iter_nongeneric(prepared, values).await
+        QueryPager::new_for_prepared_statement(self, prepared, values).await
     }
 
     /// Prepares all statements within the batch and returns a new batch where every
@@ -2484,8 +2487,8 @@ impl Session {
 
 impl Session {
     /// This method allows to easily run a request using load balancing, retry policy etc.
-    /// Requires some information about the request and a closure.
-    /// The closure is used to execute the request once on a chosen connection.
+    /// The request's `run_once` closure is used to execute the request once on a
+    /// chosen connection.
     /// - query will use connection.query()
     /// - execute will use connection.execute()
     ///
@@ -2493,42 +2496,58 @@ impl Session {
     /// On success, this request's result is returned.
     // I tried to make this closures take a reference instead of an Arc but failed
     // maybe once async closures get stabilized this can be fixed
-    async fn run_request<'a, QueryFut>(
-        &'a self,
+    async fn run_request<F, QueryFut>(
+        &self,
         state: &ClusterState,
-        routing_info: RoutingInfo<'a>,
-        exec_params: RequestExecutionParams<'a>,
-        run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
-        request_span: &'a RequestSpan,
+        // Taken by reference: an async fn keeps arguments taken by value twice in
+        // its state.
+        request: &Request<'_, F>,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), ExecutionError>
     where
+        F: Fn(Arc<Connection>, Consistency) -> QueryFut,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
-        let request_plan =
-            load_balancing::Plan::new(exec_params.load_balancing_policy, &routing_info, state)
-                .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
+        let mut request_plan = load_balancing::Plan::new(
+            request.params.load_balancing_policy,
+            &request.routing_info,
+            state,
+        )
+        .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
 
         let RequestExecutionOutcome {
             result,
             coordinator,
-        } = exec_params
-            .run_request_no_side_effects(
-                &routing_info,
-                request_plan,
-                run_request_once,
-                request_span,
-            )
+        } = request
+            .run_request_no_side_effects(&mut request_plan)
             .await
             .map_err(RequestError::into_execution_error)?;
 
-        // Automatically handle meaningful responses.
-        if let RunRequestResult::Completed(ref response) = result {
-            self.handle_set_keyspace_response(response).await?;
-            self.handle_auto_await_schema_agreement(response, coordinator.node().host_id)
+        // Automatically handle meaningful responses. Checked before awaiting, so
+        // that other responses don't pay for constructing the handlers' future.
+        // Such responses are rare, so the future is boxed to keep it out of every
+        // request's future.
+        if let RunRequestResult::Completed(ref response) = result
+            && (response.as_set_keyspace().is_some() || response.as_schema_change().is_some())
+        {
+            Box::pin(self.handle_response_side_effects(response, coordinator.node().host_id))
                 .await?;
         }
 
         Ok((result, coordinator))
+    }
+
+    // Awaiting both handlers through one future keeps `run_request`'s result
+    // alive across a single await point, so the compiler can overlap it with
+    // the request's future instead of reserving separate space for it.
+    async fn handle_response_side_effects(
+        &self,
+        response: &NonErrorQueryResponse,
+        coordinator_id: Uuid,
+    ) -> Result<(), ExecutionError> {
+        self.handle_set_keyspace_response(response).await?;
+        self.handle_auto_await_schema_agreement(response, coordinator_id)
+            .await?;
+        Ok(())
     }
 }
 

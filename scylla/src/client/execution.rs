@@ -7,13 +7,13 @@
 //! connection worker. This module collapses all of that into a single set
 //! of layered functions:
 //!
-//! - [`RequestExecutionParams::run_request_no_side_effects`] - takes no `Session`
+//! - [`Request::run_request_no_side_effects`] - takes no `Session`
 //!   and does not handle side effects. It applies the client-side timeout and dispatches
 //!   speculative-execution fibers. It is generic over the *source* of
 //!   connections (see [`AttemptTarget`]) so that it works both with a
 //!   load-balancing plan of nodes and with a single fixed connection (as used
 //!   by the control connection).
-//! - [`RequestExecutionParams::run_request_speculative_fiber`] - a single speculative fiber:
+//! - [`Request::run_request_speculative_fiber`] - a single speculative fiber:
 //!   iterates the execution plan, picks connections, runs the per-attempt
 //!   closure and applies the retry policy.
 //!
@@ -29,7 +29,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use tracing::Instrument;
 use tracing::trace;
 use tracing::trace_span;
 
@@ -39,10 +38,9 @@ use crate::errors::{ConnectionPoolError, RequestAttemptError, RequestError};
 use crate::frame::response::result::TableSpec;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::network::Connection;
-use crate::observability::driver_tracing::RequestSpan;
+use crate::observability::driver_tracing::{RequestSpan, await_in_span};
 use crate::observability::history::{self, HistoryListener};
 use crate::observability::metrics::Metrics;
-use crate::policies::load_balancing;
 use crate::policies::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::policies::speculative_execution::{self, SpeculativeExecutionPolicy};
@@ -51,6 +49,7 @@ use crate::routing::Shard;
 use crate::routing::Token;
 use crate::routing::locator::tablets::TabletVersion;
 use crate::statement::StatementConfig;
+use crate::utils::set_boxed;
 
 /// Result of running a request, before side effects are handled.
 pub(crate) enum RunRequestResult<ResT> {
@@ -188,6 +187,19 @@ impl<'a> RequestExecutionParams<'a> {
     }
 }
 
+/// A request to execute: its parameters, and what each of its attempts needs.
+///
+/// The execution layers take it by a single reference, as an async fn keeps
+/// each of its arguments in its state.
+pub(crate) struct Request<'a, F> {
+    pub(crate) params: RequestExecutionParams<'a>,
+    pub(crate) routing_info: RoutingInfo<'a>,
+    /// Performs a single attempt, on the given connection and with the given
+    /// consistency.
+    pub(crate) run_once: F,
+    pub(crate) span: &'a RequestSpan,
+}
+
 /// Abstracts a single target that a request attempt can be sent to.
 ///
 /// A request plan is an iterator of `AttemptTarget`s. There are two
@@ -323,62 +335,30 @@ pub(crate) struct RequestExecutionOutcome<C> {
     pub(crate) coordinator: C,
 }
 
-/// History data threaded through a single fiber.
-struct HistoryData<'a> {
-    listener: &'a dyn HistoryListener,
+/// History data threaded through a single fiber. Its listener is the
+/// request's [`RequestExecutionParams::history_listener`].
+struct HistoryData {
     request_id: history::RequestId,
     speculative_id: Option<history::SpeculativeId>,
 }
 
 /// Per-fiber execution context.
-struct ExecuteRequestContext<'a> {
-    retry_policy: &'a dyn RetryPolicy,
+struct ExecuteRequestContext {
     /// Created lazily, upon the first attempt error, in order to avoid
     /// an allocation on the happy path (where no retry is ever needed).
     retry_session: Option<Box<dyn RetrySession>>,
-    history_data: Option<HistoryData<'a>>,
-    routing_info: &'a load_balancing::RoutingInfo<'a>,
-    request_span: &'a RequestSpan,
+    history_data: Option<HistoryData>,
 }
 
-impl ExecuteRequestContext<'_> {
-    fn retry_session(&mut self) -> &mut dyn RetrySession {
-        let retry_policy = self.retry_policy;
+impl ExecuteRequestContext {
+    fn retry_session(&mut self, retry_policy: &dyn RetryPolicy) -> &mut dyn RetrySession {
         self.retry_session
             .get_or_insert_with(|| retry_policy.new_session())
             .as_mut()
     }
-
-    fn log_attempt_start(&self, node_addr: SocketAddr) -> Option<history::AttemptId> {
-        self.history_data.as_ref().map(|hd| {
-            hd.listener
-                .log_attempt_start(hd.request_id, hd.speculative_id, node_addr)
-        })
-    }
-
-    fn log_attempt_success(&self, attempt_id_opt: &Option<history::AttemptId>) {
-        let (Some(history_data), Some(attempt_id)) = (&self.history_data, attempt_id_opt) else {
-            return;
-        };
-        history_data.listener.log_attempt_success(*attempt_id);
-    }
-
-    fn log_attempt_error(
-        &self,
-        attempt_id_opt: &Option<history::AttemptId>,
-        error: &RequestAttemptError,
-        retry_decision: &RetryDecision,
-    ) {
-        let (Some(history_data), Some(attempt_id)) = (&self.history_data, attempt_id_opt) else {
-            return;
-        };
-        history_data
-            .listener
-            .log_attempt_error(*attempt_id, error, retry_decision);
-    }
 }
 
-impl<'a> RequestExecutionParams<'a> {
+impl RequestExecutionParams<'_> {
     fn inc_total_queries(&self) {
         let Some((metrics, _)) = self.metrics_and_speculative_policy else {
             return;
@@ -419,64 +399,102 @@ impl<'a> RequestExecutionParams<'a> {
         }
     }
 
-    /// Executes a request without handling side effects and without
+    fn log_attempt_start(
+        &self,
+        history_data: &Option<HistoryData>,
+        node_addr: SocketAddr,
+    ) -> Option<history::AttemptId> {
+        let (Some(listener), Some(history_data)) = (self.history_listener, history_data) else {
+            return None;
+        };
+        Some(listener.log_attempt_start(
+            history_data.request_id,
+            history_data.speculative_id,
+            node_addr,
+        ))
+    }
+
+    fn log_attempt_success(&self, attempt_id: Option<history::AttemptId>) {
+        let (Some(listener), Some(attempt_id)) = (self.history_listener, attempt_id) else {
+            return;
+        };
+        listener.log_attempt_success(attempt_id);
+    }
+
+    fn log_attempt_error(
+        &self,
+        attempt_id: Option<history::AttemptId>,
+        error: &RequestAttemptError,
+        retry_decision: &RetryDecision,
+    ) {
+        let (Some(listener), Some(attempt_id)) = (self.history_listener, attempt_id) else {
+            return;
+        };
+        listener.log_attempt_error(attempt_id, error, retry_decision);
+    }
+}
+
+impl<'a, F> Request<'a, F> {
+    /// Executes the request without handling side effects and without
     /// needing a `Session`.
     ///
     /// Applies the client-side timeout and, for idempotent requests with a
     /// speculative execution policy, runs potentially multiple
     /// [`run_request_speculative_fiber`] fibers; otherwise runs a single fiber.
     ///
-    /// `request_plan` is an iterator of targets. `run_request_once`
-    /// performs a single attempt against a chosen connection and consistency.
+    /// `request_plan` is an iterator of targets.
     pub(crate) async fn run_request_no_side_effects<Target, QueryFut>(
         &self,
-        routing_info: &'a RoutingInfo<'a>,
-        request_plan: impl Iterator<Item = Target>,
-        run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
-        request_span: &'a RequestSpan,
+        // Taken by reference: an async fn keeps arguments taken by value twice in
+        // its state, and it is passed further down to the fibers.
+        request_plan: &mut impl Iterator<Item = Target>,
     ) -> Result<RequestExecutionOutcome<Target::Coordinator>, RequestError>
     where
         Target: AttemptTarget,
+        F: Fn(Arc<Connection>, Consistency) -> QueryFut,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
-        let history_listener_and_id: Option<(&dyn HistoryListener, history::RequestId)> =
-            self.history_listener.map(|hl| (hl, hl.log_request_start()));
+        // Only the id is kept, as the listener can be read from the parameters.
+        let request_id: Option<history::RequestId> = self
+            .params
+            .history_listener
+            .map(|hl| hl.log_request_start());
 
         let runner = async {
-            match self.metrics_and_speculative_policy {
+            match self.params.metrics_and_speculative_policy {
                 #[cfg_attr(not(feature = "metrics"), expect(unused_variables))]
-                Some((metrics, Some(speculative))) if self.is_idempotent => {
+                Some((metrics, Some(speculative))) if self.params.is_idempotent => {
                     let shared_request_plan = SharedPlan {
                         iter: std::sync::Mutex::new(request_plan),
                     };
 
                     let request_runner_generator = |is_speculative: bool| {
-                        let history_data: Option<HistoryData> =
-                            history_listener_and_id.map(|(listener, request_id)| {
+                        let history_data: Option<HistoryData> = self
+                            .params
+                            .history_listener
+                            .zip(request_id)
+                            .map(|(listener, request_id)| {
                                 let speculative_id: Option<history::SpeculativeId> = is_speculative
                                     .then(|| listener.log_new_speculative_fiber(request_id));
                                 HistoryData {
-                                    listener,
                                     request_id,
                                     speculative_id,
                                 }
                             });
 
                         if is_speculative {
-                            request_span.inc_speculative_executions();
+                            self.span.inc_speculative_executions();
                         }
 
-                        self.run_request_speculative_fiber(
-                            &shared_request_plan,
-                            &run_request_once,
-                            ExecuteRequestContext {
-                                retry_policy: self.retry_policy,
-                                retry_session: None,
-                                history_data,
-                                routing_info,
-                                request_span,
-                            },
-                        )
+                        let mut context = ExecuteRequestContext {
+                            retry_session: None,
+                            history_data,
+                        };
+                        let request_plan = &shared_request_plan;
+                        async move {
+                            self.run_request_speculative_fiber(request_plan, &mut context)
+                                .await
+                        }
                     };
 
                     let context = speculative_execution::Context {
@@ -489,36 +507,31 @@ impl<'a> RequestExecutionParams<'a> {
                 }
                 _ => {
                     let history_data: Option<HistoryData> =
-                        history_listener_and_id.map(|(listener, request_id)| HistoryData {
-                            listener,
+                        request_id.map(|request_id| HistoryData {
                             request_id,
                             speculative_id: None,
                         });
-                    self.run_request_speculative_fiber(
-                        request_plan,
-                        &run_request_once,
-                        ExecuteRequestContext {
-                            retry_policy: self.retry_policy,
-                            retry_session: None,
-                            history_data,
-                            routing_info,
-                            request_span,
-                        },
-                    )
-                    .await
-                    .unwrap_or(Err(RequestError::EmptyPlan))
+                    let mut context = ExecuteRequestContext {
+                        retry_session: None,
+                        history_data,
+                    };
+                    self.run_request_speculative_fiber(request_plan, &mut context)
+                        .await
+                        .unwrap_or(Err(RequestError::EmptyPlan))
                 }
             }
         };
 
-        let result = match self.request_timeout {
-            Some(timeout) => tokio::time::timeout(timeout, runner).await.unwrap_or_else(
+        // Matched by reference, so that this future keeps a reference rather
+        // than the duration while waiting.
+        let result = match &self.params.request_timeout {
+            Some(timeout) => tokio::time::timeout(*timeout, runner).await.unwrap_or_else(
                 |_: tokio::time::error::Elapsed| {
-                    self.inc_request_timeouts();
+                    self.params.inc_request_timeouts();
 
-                    let timeout_error = RequestError::RequestTimeout(timeout);
+                    let timeout_error = RequestError::RequestTimeout(*timeout);
                     trace!(
-                        parent: request_span.span(),
+                        parent: self.span.span(),
                         error = %timeout_error,
                         "Request timed out"
                     );
@@ -528,7 +541,7 @@ impl<'a> RequestExecutionParams<'a> {
             None => runner.await,
         };
 
-        if let Some((history_listener, request_id)) = history_listener_and_id {
+        if let Some((history_listener, request_id)) = self.params.history_listener.zip(request_id) {
             match &result {
                 Ok(_) => history_listener.log_request_success(request_id),
                 Err(e) => history_listener.log_request_error(request_id, e),
@@ -541,21 +554,25 @@ impl<'a> RequestExecutionParams<'a> {
     /// A single execution fiber.
     ///
     /// Iterates the execution plan, picking a connection for each target and attempt,
-    /// running `run_request_once` and consulting the retry policy on failure.
+    /// running the attempt and consulting the retry policy on failure.
     ///
     /// Returns `None` only if the plan was empty.
     async fn run_request_speculative_fiber<Target, QueryFut>(
         &self,
         request_plan: impl Iterator<Item = Target>,
-        run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
-        mut context: ExecuteRequestContext<'a>,
+        // Taken by reference: an async fn keeps arguments taken by value twice in
+        // its state.
+        context: &mut ExecuteRequestContext,
     ) -> Option<Result<RequestExecutionOutcome<Target::Coordinator>, RequestError>>
     where
         Target: AttemptTarget,
+        F: Fn(Arc<Connection>, Consistency) -> QueryFut,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
-        let mut last_error: Option<RequestError> = None;
-        let mut current_consistency: Consistency = self.consistency;
+        // Boxed, as it is set only after a failed attempt: inline, its size and
+        // 16-byte alignment would weigh on the future of every request.
+        let mut last_error: Option<Box<RequestError>> = None;
+        let mut current_consistency: Consistency = self.params.consistency;
 
         'targets_in_plan: for target in request_plan {
             let span = trace_span!("Executing request on chosen target");
@@ -569,42 +586,43 @@ impl<'a> RequestExecutionParams<'a> {
                             error = %e,
                             "Choosing connection failed"
                         );
-                        last_error = Some(e.into());
+                        set_boxed(&mut last_error, e.into());
                         // Broken connection doesn't count as a failed request, don't log in metrics
                         continue 'targets_in_plan;
                     }
                 };
-                context.request_span.record_shard_id(&connection);
+                self.span.record_shard_id(&connection);
 
-                self.inc_total_queries();
+                self.params.inc_total_queries();
                 let request_start = Instant::now();
 
-                let connect_address = connection.get_connect_address();
-                trace!(
-                    parent: &span,
-                    connection = %connect_address,
-                    "Sending"
-                );
+                // Scoped, as logging borrows the address, which would keep it in
+                // this future's state during the attempt.
+                let attempt_id: Option<history::AttemptId> = {
+                    let connect_address = connection.get_connect_address();
+                    trace!(
+                        parent: &span,
+                        connection = %connect_address,
+                        "Sending"
+                    );
+                    self.params
+                        .log_attempt_start(&context.history_data, connect_address)
+                };
 
                 let coordinator = target.coordinator(&connection);
 
-                let attempt_id: Option<history::AttemptId> =
-                    context.log_attempt_start(connect_address);
-
                 let request_result: Result<NonErrorQueryResponse, RequestAttemptError> =
-                    run_request_once(connection, current_consistency)
-                        .instrument(span.clone())
-                        .await;
+                    await_in_span!((self.run_once)(connection, current_consistency), &span);
 
                 let elapsed = request_start.elapsed();
                 let request_error: RequestAttemptError = match request_result {
                     Ok(response) => {
                         trace!(parent: &span, "Request succeeded");
-                        self.log_query_latency(elapsed.as_millis() as u64);
-                        context.log_attempt_success(&attempt_id);
+                        self.params.log_query_latency(elapsed.as_millis() as u64);
+                        self.params.log_attempt_success(attempt_id);
                         target.on_attempt_success(
-                            self.load_balancing_policy,
-                            context.routing_info,
+                            self.params.load_balancing_policy,
+                            &self.routing_info,
                             elapsed,
                         );
                         return Some(Ok(RequestExecutionOutcome {
@@ -618,10 +636,10 @@ impl<'a> RequestExecutionParams<'a> {
                             last_error = %e,
                             "Request failed"
                         );
-                        self.inc_failed_queries();
+                        self.params.inc_failed_queries();
                         target.on_attempt_failure(
-                            self.load_balancing_policy,
-                            context.routing_info,
+                            self.params.load_balancing_policy,
+                            &self.routing_info,
                             elapsed,
                             &e,
                         );
@@ -632,28 +650,31 @@ impl<'a> RequestExecutionParams<'a> {
                 // Use retry policy to decide what to do next.
                 let request_info = RequestInfo {
                     error: &request_error,
-                    is_idempotent: self.is_idempotent,
+                    is_idempotent: self.params.is_idempotent,
                     consistency: current_consistency,
                 };
 
-                let retry_decision = context.retry_session().decide_should_retry(request_info);
+                let retry_decision = context
+                    .retry_session(self.params.retry_policy)
+                    .decide_should_retry(request_info);
                 trace!(
                     parent: &span,
                     retry_decision = ?retry_decision
                 );
 
-                context.log_attempt_error(&attempt_id, &request_error, &retry_decision);
+                self.params
+                    .log_attempt_error(attempt_id, &request_error, &retry_decision);
 
-                last_error = Some(request_error.into());
+                set_boxed(&mut last_error, request_error.into());
 
                 match retry_decision {
                     RetryDecision::RetrySameTarget(new_cl) => {
-                        self.inc_retries_num();
+                        self.params.inc_retries_num();
                         current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'same_target_retries;
                     }
                     RetryDecision::RetryNextTarget(new_cl) => {
-                        self.inc_retries_num();
+                        self.params.inc_retries_num();
                         current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'targets_in_plan;
                     }
@@ -668,6 +689,6 @@ impl<'a> RequestExecutionParams<'a> {
             }
         }
 
-        last_error.map(Result::Err)
+        last_error.map(|error| Err(*error))
     }
 }
