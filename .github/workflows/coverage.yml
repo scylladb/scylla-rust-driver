@@ -37,7 +37,7 @@ jobs:
           toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
           components: llvm-tools
       - name: Install cargo-nextest and cargo-llvm-cov
-        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: nextest,cargo-llvm-cov
       - name: Print rustc version
