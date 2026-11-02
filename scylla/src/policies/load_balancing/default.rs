@@ -3137,7 +3137,7 @@ mod tests {
         let state = state.with_updated_tablets(vec![
             // Strongly consistent, versioned -> leader-first routing. Leader = C.
             (
-                TABLE_NTS_RF_3.clone(),
+                Arc::new(TABLE_NTS_RF_3.clone()),
                 RawTablet::new_for_test(
                     1,
                     1000,
@@ -3147,14 +3147,17 @@ mod tests {
             ),
             // Eventually consistent, versioned -> no leader routing.
             (
-                TABLE_NTS_RF_2.clone(),
+                Arc::new(TABLE_NTS_RF_2.clone()),
                 RawTablet::new_for_test(1, 1000, vec![replica(B), replica(G), replica(F)], Some(7)),
             ),
             // Strongly consistent and versioned, but its first replica -- the leader -- is a
             // node this driver does not know, so it is dropped from the resolved replica list
             // and the tablet is marked as having unresolved replicas.
             (
-                TableSpec::borrowed(KEYSPACE_NTS_RF_3, "table_with_unresolved_leader").into_owned(),
+                Arc::new(TableSpec::borrowed(
+                    KEYSPACE_NTS_RF_3,
+                    "table_with_unresolved_leader",
+                )),
                 RawTablet::new_for_test(
                     1,
                     1000,
