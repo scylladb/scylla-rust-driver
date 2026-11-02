@@ -61,6 +61,19 @@
             "minimumReleaseAge": null
         },
         {
+            "description": "Shorter wait for actions used only in jobs without a write token or secrets. A compromised release there could at most fake a CI result, which the crates built in those jobs (updated without any wait) can do anyway. The few days only guard against broken releases. Remove an action from this list before using it in a privileged job.",
+            "matchManagers": [
+                "github-actions"
+            ],
+            "matchPackageNames": [
+                "actions-rust-lang/setup-rust-toolchain",
+                "taiki-e/install-action",
+                "EmbarkStudios/cargo-deny-action",
+                "actions/upload-artifact"
+            ],
+            "minimumReleaseAge": "3 days"
+        },
+        {
             "description": "Newest supported version of feature-pinned crates: surface new majors on the Dependency Dashboard (no PR), as adopting them needs a new feature/alias.",
             "matchManagers": [
                 "cargo"
@@ -99,19 +112,6 @@
                 "scylla/Cargo.toml"
             ],
             "dependencyDashboardApproval": true
-        },
-        {
-            "description": "taiki-e/install-action releases (near-)daily and only installs CI tooling, so weekly is still too noisy: restrict it to the 1st and 3rd Saturday of each month. Cron cannot express a true fortnightly cadence; day-of-month and day-of-week are ANDed, so consecutive windows are exactly 14 or 21 days apart - never less than a fortnight.",
-            "matchManagers": [
-                "github-actions"
-            ],
-            "matchDepNames": [
-                "taiki-e/install-action"
-            ],
-            // See https://crontab.cronhub.io/ for cheatsheet on crontab syntax and translation to natural language.
-            "schedule": [
-                "* * 1-7,15-21 * 6"
-            ]
         }
     ]
 }

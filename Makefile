@@ -69,11 +69,20 @@ deny:
 	cargo deny --all-features check
 
 .PHONY: test
-test: up
+test: unit-test integration-test
+
+.PHONY: unit-test
+unit-test:
+	# Unit tests must not need a cluster, hence no dependency on `up`.
+	cargo nextest run --all-features -E 'not binary_id(scylla::integration)'
+
+.PHONY: integration-test
+integration-test: up
 	# We need to run doctests separately, because nextest doesn't support them :(
 	# https://github.com/nextest-rs/nextest/issues/16
+	# Some of them connect to the cluster.
 	cargo test --doc --all-features
-	cargo nextest run --all-features
+	cargo nextest run --all-features -E 'binary_id(scylla::integration)'
 
 .PHONY: ccm-test
 ccm-test:

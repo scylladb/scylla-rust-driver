@@ -7,7 +7,7 @@ use crate::frame::response::result::TableSpec;
 use crate::frame::types::Consistency;
 use crate::routing::NodeLocationPreference;
 use crate::{
-    cluster::metadata::{ConsistencyMode, Strategy},
+    cluster::metadata::{ConsistencyMode, Keyspace, Strategy},
     cluster::node::Node,
     errors::RequestAttemptError,
     routing::locator::ReplicaSet,
@@ -152,11 +152,11 @@ impl LoadBalancingPolicy for DefaultPolicy {
          * for the statement, so that we can pick one of them. */
         let routing_info = self.routing_info(query, cluster);
 
-        if let Some(ref token_with_strategy) = routing_info.token_with_strategy
+        if let Some(ref token_with_keyspace) = routing_info.token_with_keyspace
             && routing_info.preference.datacenter().is_some()
             && !self.permit_dc_failover
             && matches!(
-                token_with_strategy.strategy,
+                token_with_keyspace.keyspace.strategy,
                 Strategy::SimpleStrategy { .. }
             )
         {
@@ -178,7 +178,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
         /* Token-aware logic - if routing info is available, we know what are the replicas
          * for the statement. Try to pick one of them. */
-        if let (Some(ts), Some(table_spec)) = (&routing_info.token_with_strategy, query.table) {
+        if let (Some(ts), Some(table_spec)) = (&routing_info.token_with_keyspace, query.table) {
             /* Leader-aware logic - for a strongly-consistent keyspace the leader has to
              * coordinate the request anyway, so it outranks distance and is tried before the
              * locality buckets below. See `leader_to_prefer`. */
@@ -351,7 +351,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
          * - shuffled list in case of non-LWTs,
          * - deterministically ordered in case of LWTs. */
         let maybe_replicas = if let (Some(ts), Some(table_spec)) =
-            (&routing_info.token_with_strategy, query.table)
+            (&routing_info.token_with_keyspace, query.table)
         {
             // The tablet's Raft leader, when leader-aware routing applies to this request. It
             // outranks distance, so it is yielded before the locality-ordered replicas below.
@@ -619,7 +619,7 @@ impl DefaultPolicy {
         let mut routing_info = ProcessedRoutingInfo::new(query, cluster, self.preferences.as_ref());
 
         if !self.is_token_aware {
-            routing_info.token_with_strategy = None;
+            routing_info.token_with_keyspace = None;
         }
 
         routing_info
@@ -655,16 +655,19 @@ impl DefaultPolicy {
     /// cluster state and table spec.
     fn nonfiltered_replica_set<'a>(
         &'a self,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         replica_location: NodeLocationCriteria<'a>,
         cluster: &'a ClusterState,
         table_spec: &TableSpec,
     ) -> ReplicaSet<'a> {
         let datacenter = replica_location.datacenter();
 
-        cluster
-            .replica_locator()
-            .replicas_for_token(ts.token, ts.strategy, datacenter, table_spec)
+        cluster.replica_locator().replicas_for_token(
+            ts.token,
+            &ts.keyspace.strategy,
+            datacenter,
+            table_spec,
+        )
     }
 
     /// Wraps the provided predicate, adding the requirement for rack to match.
@@ -702,7 +705,7 @@ impl DefaultPolicy {
     /// else returns replicas in arbitrary order.
     fn filtered_replicas<'a, PredicateT: Fn(NodeRef<'a>, Shard) -> bool + 'a>(
         &'a self,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: PredicateT,
         cluster: &'a ClusterState,
@@ -732,7 +735,7 @@ impl DefaultPolicy {
     /// to avoid Paxos contention.
     fn pick_replica<'a>(
         &'a self,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterState,
@@ -770,7 +773,7 @@ impl DefaultPolicy {
     // **iff** it satisfies the predicate or ToBeComputedInFallback otherwise.
     fn pick_first_replica<'a>(
         &'a self,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterState,
@@ -824,7 +827,7 @@ impl DefaultPolicy {
     /// location criteria and the predicate.
     fn pick_random_replica<'a>(
         &'a self,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterState,
@@ -848,7 +851,7 @@ impl DefaultPolicy {
     /// For LWTs, though, the replicas are instead returned in a deterministic order.
     fn maybe_shuffled_replicas<'a, PredicateT: Fn(NodeRef<'a>, Shard) -> bool + 'a>(
         &'a self,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: PredicateT,
         cluster: &'a ClusterState,
@@ -938,15 +941,9 @@ impl DefaultPolicy {
     ///
     /// Whether the tablet's leader is *known* is a separate question, answered by
     /// [`Self::leader_to_prefer`], which is this predicate's only caller.
-    fn should_route_to_leader(query: &RoutingInfo, cluster: &ClusterState) -> bool {
-        let Some(table_spec) = query.table else {
-            return false;
-        };
-
+    fn should_route_to_leader(query: &RoutingInfo, keyspace: &Keyspace) -> bool {
         // Note: For the time being, only global consistency is implemented in Scylla.
-        let strongly_consistent = cluster
-            .get_keyspace(table_spec.ks_name())
-            .is_some_and(|ks| ks.consistency_mode == ConsistencyMode::Global);
+        let strongly_consistent = keyspace.consistency_mode == ConsistencyMode::Global;
 
         if !strongly_consistent {
             return false;
@@ -976,13 +973,13 @@ impl DefaultPolicy {
     fn leader_to_prefer<'a>(
         &'a self,
         query: &RoutingInfo,
-        ts: &TokenWithStrategy<'a>,
+        ts: &TokenWithKeyspace<'a>,
         routing_info: &ProcessedRoutingInfo<'a>,
         predicate: impl FnOnce(NodeRef<'a>, Shard) -> bool,
         cluster: &'a ClusterState,
         table_spec: &TableSpec,
     ) -> Option<(NodeRef<'a>, Shard)> {
-        if !Self::should_route_to_leader(query, cluster) {
+        if !Self::should_route_to_leader(query, ts.keyspace) {
             return None;
         }
 
@@ -1242,7 +1239,7 @@ impl Default for DefaultPolicyBuilder {
 }
 
 struct ProcessedRoutingInfo<'a> {
-    token_with_strategy: Option<TokenWithStrategy<'a>>,
+    token_with_keyspace: Option<TokenWithKeyspace<'a>>,
     preference: &'a NodeLocationPreference,
 }
 
@@ -1253,24 +1250,23 @@ impl<'a> ProcessedRoutingInfo<'a> {
         policy_preference: Option<&'a NodeLocationPreference>,
     ) -> ProcessedRoutingInfo<'a> {
         Self {
-            token_with_strategy: TokenWithStrategy::new(query, cluster),
+            token_with_keyspace: TokenWithKeyspace::new(query, cluster),
             preference: policy_preference.unwrap_or(query.node_location_preference),
         }
     }
 }
 
-struct TokenWithStrategy<'a> {
-    strategy: &'a Strategy,
+struct TokenWithKeyspace<'a> {
+    keyspace: &'a Keyspace,
     token: Token,
 }
 
-impl<'a> TokenWithStrategy<'a> {
-    fn new(query: &'a RoutingInfo, cluster: &'a ClusterState) -> Option<TokenWithStrategy<'a>> {
+impl<'a> TokenWithKeyspace<'a> {
+    fn new(query: &'a RoutingInfo, cluster: &'a ClusterState) -> Option<TokenWithKeyspace<'a>> {
         let token = query.token?;
         let keyspace_name = query.table?.ks_name();
         let keyspace = cluster.get_keyspace(keyspace_name)?;
-        let strategy = &keyspace.strategy;
-        Some(TokenWithStrategy { strategy, token })
+        Some(TokenWithKeyspace { keyspace, token })
     }
 }
 
@@ -3106,11 +3102,12 @@ mod tests {
         use crate::routing::locator::tablets::RawTablet;
         use crate::routing::locator::test::{A, B, C, F, G, KEYSPACE_NTS_RF_3, id_to_invalid_addr};
         use std::collections::HashMap;
+        use std::sync::Arc;
         use uuid::Uuid;
 
         let mut metadata = mock_metadata_for_token_aware_tests();
         if let Some(Ok(ks)) = metadata.keyspaces.get_mut(KEYSPACE_NTS_RF_3) {
-            ks.consistency_mode = ConsistencyMode::Global;
+            Arc::make_mut(ks).consistency_mode = ConsistencyMode::Global;
         }
 
         let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
@@ -3120,7 +3117,7 @@ mod tests {
             connectivity_events_sender,
             metrics: Default::default(),
         };
-        let mut state = ClusterState::new(metadata, &node_config, None).await;
+        let state = ClusterState::new(metadata, &node_config, None).await;
 
         let down_addrs: Vec<_> = down.iter().map(|&id| id_to_invalid_addr(id)).collect();
         for node in state.get_nodes_info() {
@@ -3137,10 +3134,10 @@ mod tests {
         let replica = |id: u16| (addr_to_host_id[&id_to_invalid_addr(id)], 0);
 
         // Tablets cover the whole test token range [1, 1000] (in particular Token(160)).
-        state.update_tablets(vec![
+        let state = state.with_updated_tablets(vec![
             // Strongly consistent, versioned -> leader-first routing. Leader = C.
             (
-                TABLE_NTS_RF_3.clone(),
+                Arc::new(TABLE_NTS_RF_3.clone()),
                 RawTablet::new_for_test(
                     1,
                     1000,
@@ -3150,14 +3147,17 @@ mod tests {
             ),
             // Eventually consistent, versioned -> no leader routing.
             (
-                TABLE_NTS_RF_2.clone(),
+                Arc::new(TABLE_NTS_RF_2.clone()),
                 RawTablet::new_for_test(1, 1000, vec![replica(B), replica(G), replica(F)], Some(7)),
             ),
             // Strongly consistent and versioned, but its first replica -- the leader -- is a
             // node this driver does not know, so it is dropped from the resolved replica list
             // and the tablet is marked as having unresolved replicas.
             (
-                TableSpec::borrowed(KEYSPACE_NTS_RF_3, "table_with_unresolved_leader").into_owned(),
+                Arc::new(TableSpec::borrowed(
+                    KEYSPACE_NTS_RF_3,
+                    "table_with_unresolved_leader",
+                )),
                 RawTablet::new_for_test(
                     1,
                     1000,
@@ -3167,7 +3167,7 @@ mod tests {
             ),
         ]);
 
-        state
+        state.expect("the tablets are new to the state")
     }
 
     #[tokio::test]
@@ -3913,6 +3913,7 @@ mod latency_awareness {
                 averages: &[(u16, Option<TimestampedAverage>)],
             ) {
                 let addr_to_host_id: HashMap<NodeAddr, Uuid> = cluster
+                    .topology
                     .known_nodes
                     .values()
                     .map(|node| (node.address, node.host_id))

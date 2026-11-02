@@ -43,7 +43,7 @@ jobs:
       output: ${{ steps.semver-pr-check.outputs.output }}
     steps:
     - name: Checkout
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: "2"
         ref: "refs/pull/${{ env.PR_ID }}/merge"
@@ -60,9 +60,9 @@ jobs:
     - name: Fetch PR base
       run: git fetch origin "$PR_BASE"
     - name: Setup rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
     - name: Install semver-checks
-      uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+      uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
       with:
         tool: cargo-semver-checks
     - name: Verify the API compatibilty with PR base
@@ -88,6 +88,8 @@ jobs:
     if: github.event_name == 'pull_request_target'
     permissions:
       pull-requests: write
+    # Holds a write token, so it must not restore caches.
+    cache-mode: none
     needs: semver-pull-request-check
     timeout-minutes: 3
     steps:
@@ -148,11 +150,11 @@ jobs:
       contents: read
     timeout-minutes: 30
     steps:
-    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
     - name: Install semver-checks
-      uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+      uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
       with:
         tool: cargo-semver-checks
     - name: Run semver-checks to see if it agrees with version updates

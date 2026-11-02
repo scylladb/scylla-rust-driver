@@ -213,6 +213,10 @@ pub struct PreparedStatement {
 struct PreparedStatementSharedData {
     id: Bytes,
     metadata: PreparedMetadata,
+    /// The spec of the table the statement operates on, as in `metadata`.
+    /// Shared with the tablets learned from responses to the statement, so
+    /// that tablet feedback doesn't copy it.
+    table_spec: Option<Arc<TableSpec<'static>>>,
     initial_result_metadata: Arc<ResultMetadata<'static>>,
     current_result_metadata: ArcSwap<ResultMetadata<'static>>,
     statement: String,
@@ -254,10 +258,15 @@ impl PreparedStatement {
         page_size: PageSize,
         config: StatementConfig,
     ) -> Self {
+        let table_spec = metadata
+            .col_specs
+            .first()
+            .map(|spec| Arc::new(spec.table_spec().clone()));
         Self {
             shared: Arc::new(PreparedStatementSharedData {
                 id,
                 metadata,
+                table_spec,
                 initial_result_metadata: Arc::clone(&result_metadata),
                 current_result_metadata: ArcSwap::from(result_metadata),
                 statement,
@@ -414,6 +423,11 @@ impl PreparedStatement {
             .col_specs
             .first()
             .map(|spec| spec.table_spec())
+    }
+
+    /// Like [`Self::get_table_spec`], but the spec can be kept without copying it.
+    pub(crate) fn get_shared_table_spec(&self) -> Option<&Arc<TableSpec<'static>>> {
+        self.shared.table_spec.as_ref()
     }
 
     /// Returns the name of the keyspace this statement is operating on.

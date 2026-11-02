@@ -17,7 +17,7 @@ use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types;
 use bytes::Bytes;
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::{result::Result as StdResult, str};
 
 /// Represents a CQL `RESULT::SetKeyspace` response.
@@ -108,7 +108,10 @@ pub mod cow_bytes {
 pub struct ResultMetadata<'a> {
     id: Option<cow_bytes::CowBytes<'a>>,
     col_count: usize,
-    col_specs: Vec<ColumnSpec<'a>>,
+    // A boxed slice is smaller than a `Vec`, and the specs never change after
+    // parsing. The parsed `Vec`s have exact capacity, so converting doesn't
+    // reallocate.
+    col_specs: Box<[ColumnSpec<'a>]>,
 }
 
 impl<'a> ResultMetadata<'a> {
@@ -138,7 +141,7 @@ impl<'a> ResultMetadata<'a> {
         Self {
             id: None,
             col_count: 0,
-            col_specs: Vec::new(),
+            col_specs: Box::default(),
         }
     }
 
@@ -162,7 +165,14 @@ impl<'a> ResultMetadata<'a> {
 #[derive(Debug, Clone)]
 pub enum ResultMetadataHolder {
     /// [ResultMetadata] that is self-borrowed from the RESULT:Rows frame.
-    SelfBorrowed(SelfBorrowedMetadataContainer),
+    ///
+    /// Boxed, because the container is several times larger than the other
+    /// variant, and every RESULT:Rows response holds a [ResultMetadataHolder].
+    /// The box allocates only for responses that carry metadata, which already
+    /// allocate its column specs. Responses to prepared statements usually don't
+    /// carry it, if the server supports ScyllaDB's metadata id extension or cached
+    /// result metadata is enabled.
+    SelfBorrowed(Box<SelfBorrowedMetadataContainer>),
     /// [ResultMetadata] that is shared and cached in PreparedStatement.
     SharedCached(Arc<ResultMetadata<'static>>),
 }
@@ -191,7 +201,10 @@ impl ResultMetadataHolder {
     /// Creates an empty [ResultMetadataHolder].
     #[inline]
     pub fn mock_empty() -> Self {
-        Self::SelfBorrowed(SelfBorrowedMetadataContainer::mock_empty())
+        // Shared, so that creating it doesn't allocate.
+        static EMPTY: LazyLock<Arc<ResultMetadata<'static>>> =
+            LazyLock::new(|| Arc::new(ResultMetadata::mock_empty()));
+        Self::SharedCached(Arc::clone(&EMPTY))
     }
 }
 
@@ -416,9 +429,7 @@ impl DeserializedMetadataAndRawRows {
     #[inline]
     pub fn mock_empty() -> Self {
         Self {
-            metadata: ResultMetadataHolder::SelfBorrowed(
-                SelfBorrowedMetadataContainer::mock_empty(),
-            ),
+            metadata: ResultMetadataHolder::mock_empty(),
             rows_count: 0,
             raw_rows: Bytes::new(),
             raw_metadata_and_rows_bytes_size: 0,
@@ -761,7 +772,7 @@ fn deser_result_metadata(
     let metadata = ResultMetadata {
         id: new_metadata_id,
         col_count,
-        col_specs,
+        col_specs: col_specs.into_boxed_slice(),
     };
     Ok((metadata, paging_state))
 }
@@ -770,43 +781,57 @@ impl RawMetadataAndRawRows {
     /// Deserializes flags and paging state; the other part of result metadata
     /// as well as rows remain serialized.
     fn deserialize(
-        frame: &mut FrameSlice,
+        mut frame: Bytes,
         cached_metadata: Option<Arc<ResultMetadata<'static>>>,
         features: &ProtocolFeatures,
     ) -> StdResult<(Self, PagingStateResponse), RawRowsAndPagingStateResponseParseError> {
-        let flags = types::read_int(frame.as_slice_mut())
-            .map_err(|err| RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into()))?;
-        let global_tables_spec = flags & 0x0001 != 0;
-        let has_more_pages = flags & 0x0002 != 0;
-        let no_metadata = flags & 0x0004 != 0;
-        let metadata_changed = features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
+        let (col_count, global_tables_spec, metadata_presense, paging_state) =
+            types::parse_prefix(&mut frame, |buf| {
+                let flags = types::read_int(buf).map_err(|err| {
+                    RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into())
+                })?;
+                let global_tables_spec = flags & 0x0001 != 0;
+                let has_more_pages = flags & 0x0002 != 0;
+                let no_metadata = flags & 0x0004 != 0;
+                let metadata_changed =
+                    features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
 
-        let metadata_presense = match (no_metadata, metadata_changed) {
-            (true, true) => {
-                return Err(RawRowsAndPagingStateResponseParseError::IdPresentForEmptyMetadata);
-            }
-            (true, false) => MetadataPresence::NoMetadata,
-            (false, true) => MetadataPresence::MetadataWithNewId,
-            (false, false) => MetadataPresence::JustMetadata,
-        };
+                let metadata_presense = match (no_metadata, metadata_changed) {
+                    (true, true) => {
+                        return Err(
+                            RawRowsAndPagingStateResponseParseError::IdPresentForEmptyMetadata,
+                        );
+                    }
+                    (true, false) => MetadataPresence::NoMetadata,
+                    (false, true) => MetadataPresence::MetadataWithNewId,
+                    (false, false) => MetadataPresence::JustMetadata,
+                };
 
-        let col_count = types::read_int_length(frame.as_slice_mut())
-            .map_err(RawRowsAndPagingStateResponseParseError::ColumnCountParseError)?;
+                let col_count = types::read_int_length(buf)
+                    .map_err(RawRowsAndPagingStateResponseParseError::ColumnCountParseError)?;
 
-        let raw_paging_state = has_more_pages
-            .then(|| {
-                types::read_bytes(frame.as_slice_mut())
-                    .map_err(RawRowsAndPagingStateResponseParseError::PagingStateParseError)
-            })
-            .transpose()?;
+                let raw_paging_state = has_more_pages
+                    .then(|| {
+                        types::read_bytes(buf)
+                            .map_err(RawRowsAndPagingStateResponseParseError::PagingStateParseError)
+                    })
+                    .transpose()?;
 
-        let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
+                let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
+
+                Ok((
+                    col_count,
+                    global_tables_spec,
+                    metadata_presense,
+                    paging_state,
+                ))
+            })?;
 
         let raw_rows = Self {
             col_count,
             global_tables_spec,
             metadata_presence: metadata_presense,
-            raw_metadata_and_rows: frame.to_bytes(),
+            raw_metadata_and_rows: frame,
             cached_metadata,
         };
 
@@ -849,7 +874,7 @@ impl RawMetadataAndRawRows {
                 ResultMetadata {
                     id: new_metadata_id,
                     col_count,
-                    col_specs,
+                    col_specs: col_specs.into_boxed_slice(),
                 }
             };
             Ok(server_metadata)
@@ -900,21 +925,20 @@ impl RawMetadataAndRawRows {
                         Self::metadata_deserializer(self.col_count, self.global_tables_spec, metadata_changed),
                     )?;
                 (
-                    ResultMetadataHolder::SelfBorrowed(metadata_container),
+                    ResultMetadataHolder::SelfBorrowed(Box::new(metadata_container)),
                     raw_rows_with_count,
                 )
             }
         };
 
-        let mut frame_slice = FrameSlice::new(&row_count_and_raw_rows);
-
-        let rows_count: usize = types::read_int_length(frame_slice.as_slice_mut())
+        let mut raw_rows = row_count_and_raw_rows;
+        let rows_count = types::parse_prefix(&mut raw_rows, types::read_int_length)
             .map_err(ResultMetadataAndRowsCountParseError::RowsCountParseError)?;
 
         Ok(DeserializedMetadataAndRawRows {
             metadata: metadata_deserialized,
             rows_count,
-            raw_rows: frame_slice.to_bytes(),
+            raw_rows,
             raw_metadata_and_rows_bytes_size,
         })
     }
@@ -963,8 +987,7 @@ fn deser_rows(
     features: &ProtocolFeatures,
 ) -> StdResult<(RawMetadataAndRawRows, PagingStateResponse), RawRowsAndPagingStateResponseParseError>
 {
-    let mut frame_slice = FrameSlice::new(&buf_bytes);
-    RawMetadataAndRawRows::deserialize(&mut frame_slice, cached_metadata.cloned(), features)
+    RawMetadataAndRawRows::deserialize(buf_bytes, cached_metadata.cloned(), features)
 }
 
 fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspaceParseError> {
@@ -1023,25 +1046,20 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeE
 ///
 /// Reuses cached metadata if provided, otherwise deserializes it.
 pub fn deserialize_with_features(
-    buf_bytes: Bytes,
+    mut buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
     features: &ProtocolFeatures,
 ) -> StdResult<Result, CqlResultParseError> {
-    let buf = &mut &*buf_bytes;
     use self::Result::*;
     Ok(
-        match types::read_int(buf)
+        match types::parse_prefix(&mut buf_bytes, types::read_int)
             .map_err(|err| CqlResultParseError::ResultIdParseError(err.into()))?
         {
             0x0001 => Void,
-            0x0002 => Rows(deser_rows(
-                buf_bytes.slice_ref(buf),
-                cached_metadata,
-                features,
-            )?),
-            0x0003 => SetKeyspace(deser_set_keyspace(buf)?),
-            0x0004 => Prepared(deser_prepared(buf, features)?),
-            0x0005 => SchemaChange(deser_schema_change(buf)?),
+            0x0002 => Rows(deser_rows(buf_bytes, cached_metadata, features)?),
+            0x0003 => SetKeyspace(deser_set_keyspace(&mut &*buf_bytes)?),
+            0x0004 => Prepared(deser_prepared(&mut &*buf_bytes, features)?),
+            0x0005 => SchemaChange(deser_schema_change(&mut &*buf_bytes)?),
             id => return Err(CqlResultParseError::UnknownResultId(id)),
         },
     )
@@ -1192,7 +1210,7 @@ mod test_utils {
             Self {
                 id: None,
                 col_count,
-                col_specs,
+                col_specs: col_specs.into_boxed_slice(),
             }
         }
 
@@ -1230,21 +1248,61 @@ mod test_utils {
             }
 
             if !no_metadata {
-                if let Some(spec) = global_table_spec {
-                    serialize_table_spec(spec, buf)?;
-                }
-
-                for col_spec in self.col_specs() {
-                    if global_table_spec.is_none() {
-                        serialize_table_spec(col_spec.table_spec(), buf)?;
-                    }
-
-                    types::write_string(col_spec.name(), buf)?;
-                    serialize_column_type(col_spec.typ(), buf)?;
-                }
+                serialize_col_specs(self.col_specs(), global_table_spec, buf)?;
             }
 
             Ok(())
+        }
+    }
+
+    fn serialize_col_specs(
+        col_specs: &[ColumnSpec<'_>],
+        global_table_spec: Option<&TableSpec<'_>>,
+        buf: &mut impl BufMut,
+    ) -> StdResult<(), TryFromIntError> {
+        if let Some(spec) = global_table_spec {
+            serialize_table_spec(spec, buf)?;
+        }
+
+        for col_spec in col_specs {
+            if global_table_spec.is_none() {
+                serialize_table_spec(col_spec.table_spec(), buf)?;
+            }
+
+            types::write_string(col_spec.name(), buf)?;
+            serialize_column_type(col_spec.typ(), buf)?;
+        }
+
+        Ok(())
+    }
+
+    impl Prepared {
+        /// Serializes the response body, without the result kind, in the CQL wire format.
+        ///
+        /// Lets test tooling, like `scylla-proxy`, forge `RESULT::Prepared` responses.
+        /// The result metadata ID is written only if `result_metadata` has one, so it
+        /// must be set exactly when the ScyllaDB metadata ID extension was negotiated.
+        pub fn serialize(&self, buf: &mut impl BufMut) -> StdResult<(), TryFromIntError> {
+            types::write_short_bytes(&self.id, buf)?;
+            if let Some(result_metadata_id) = self.result_metadata.id() {
+                types::write_short_bytes(result_metadata_id, buf)?;
+            }
+
+            let metadata = &self.prepared_metadata;
+            // Table specs are always written per column, so no flag is set.
+            types::write_int(0, buf);
+            types::write_int_length(metadata.col_count, buf)?;
+            types::write_int_length(metadata.pk_indexes.len(), buf)?;
+            // `pk_indexes` are sorted by bind marker, but they go on the wire
+            // in the partition key order.
+            let mut pk_indexes = metadata.pk_indexes.clone();
+            pk_indexes.sort_unstable_by_key(|pk_index| pk_index.sequence);
+            for pk_index in pk_indexes {
+                types::write_short(pk_index.index, buf);
+            }
+            serialize_col_specs(&metadata.col_specs, None, buf)?;
+
+            self.result_metadata.serialize(buf, false, false, None)
         }
     }
 
@@ -1275,7 +1333,7 @@ mod test_utils {
             };
 
             let (raw_rows, _paging_state_response) = Self::deserialize(
-                &mut FrameSlice::new(&raw_result_rows),
+                raw_result_rows,
                 cached_metadata,
                 &ProtocolFeatures::default(),
             )
@@ -1299,6 +1357,81 @@ mod test_utils {
                 raw_rows,
                 raw_metadata_and_rows_bytes_size: 0,
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::BytesMut;
+
+    use super::*;
+
+    #[test]
+    fn prepared_serialization_roundtrip() {
+        let col_spec = |name: &str| {
+            ColumnSpec::owned(
+                name.to_owned(),
+                ColumnType::Native(NativeType::Int),
+                TableSpec::owned("ks".to_owned(), "t".to_owned()),
+            )
+        };
+        let mut prepared = Prepared {
+            id: Bytes::from_static(b"id"),
+            prepared_metadata: PreparedMetadata {
+                flags: 0,
+                col_count: 3,
+                // The partition key is (c, a).
+                pk_indexes: vec![
+                    PartitionKeyIndex {
+                        index: 0,
+                        sequence: 1,
+                    },
+                    PartitionKeyIndex {
+                        index: 2,
+                        sequence: 0,
+                    },
+                ],
+                col_specs: vec![col_spec("a"), col_spec("b"), col_spec("c")],
+            },
+            result_metadata: ResultMetadata::new_for_test(1, vec![col_spec("d")]),
+        };
+
+        let pk_indexes = |metadata: &PreparedMetadata| {
+            metadata
+                .pk_indexes
+                .iter()
+                .map(|pk_index| (pk_index.index, pk_index.sequence))
+                .collect::<Vec<_>>()
+        };
+
+        // Without and with the ScyllaDB metadata ID extension.
+        let mut features = ProtocolFeatures::default();
+        for result_metadata_id in [None, Some(Bytes::from_static(b"result_id"))] {
+            features.scylla_metadata_id_supported = result_metadata_id.is_some();
+            prepared.result_metadata.id = result_metadata_id.map(cow_bytes::CowBytes::Owned);
+
+            let mut buf = BytesMut::new();
+            prepared.serialize(&mut buf).unwrap();
+            let deserialized = deser_prepared(&mut &buf[..], &features).unwrap();
+
+            assert_eq!(deserialized.id, prepared.id);
+            assert_eq!(
+                deserialized.result_metadata.id(),
+                prepared.result_metadata.id()
+            );
+            assert_eq!(
+                pk_indexes(&deserialized.prepared_metadata),
+                pk_indexes(&prepared.prepared_metadata)
+            );
+            assert_eq!(
+                deserialized.prepared_metadata.col_specs,
+                prepared.prepared_metadata.col_specs
+            );
+            assert_eq!(
+                deserialized.result_metadata.col_specs(),
+                prepared.result_metadata.col_specs()
+            );
         }
     }
 }

@@ -22,8 +22,9 @@ pub(crate) use worker::{
 
 mod state;
 pub use state::ClusterState;
+pub(crate) use state::KeyspaceMap;
 #[cfg(test)]
-pub(crate) use state::NodeConfig;
+pub(crate) use state::{NodeConfig, Topology};
 
 pub(crate) mod node;
 pub use node::{KnownNode, Node, NodeAddr, NodeRef};

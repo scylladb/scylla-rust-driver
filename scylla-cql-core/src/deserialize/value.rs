@@ -370,6 +370,7 @@ impl_strict_type!(
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
+        let val = ensure_not_empty::<Self>(typ, val)?;
         Ok(CqlVarint::from_signed_bytes_be_slice(val))
     }
 );
@@ -379,6 +380,7 @@ impl_strict_type!(
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
+        let val = ensure_not_empty::<Self>(typ, val)?;
         Ok(CqlVarintBorrowed::from_signed_bytes_be_slice(val))
     },
     'b
@@ -390,6 +392,7 @@ impl_strict_type!(
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
+        let val = ensure_not_empty::<Self>(typ, val)?;
         Ok(num_bigint_03::BigInt::from_signed_bytes_be(val))
     }
 );
@@ -400,23 +403,41 @@ impl_strict_type!(
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
+        let val = ensure_not_empty::<Self>(typ, val)?;
         Ok(num_bigint_04::BigInt::from_signed_bytes_be(val))
     }
 );
+
+fn get_unscaled_and_scale_from_decimal_column<'frame, T>(
+    typ: &ColumnType,
+    v: Option<FrameSlice<'frame>>,
+) -> Result<(&'frame [u8], i32), DeserializationError> {
+    let val = ensure_not_null_slice::<T>(typ, v)?;
+    let mut val = ensure_not_empty::<T>(typ, val)?;
+    let scale = types::read_int(&mut val).map_err(|err| {
+        mk_deser_err::<T>(
+            typ,
+            BuiltinDeserializationErrorKind::BadDecimalScale(err.into()),
+        )
+    })?;
+    // Such a decimal is malformed: the database accepts it on write,
+    // but fails to interpret it later.
+    if val.is_empty() {
+        return Err(mk_deser_err::<T>(
+            typ,
+            BuiltinDeserializationErrorKind::EmptyDecimalUnscaledValue,
+        ));
+    }
+    Ok((val, scale))
+}
 
 impl_strict_type!(
     CqlDecimal,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
-        let mut val = ensure_not_null_slice::<Self>(typ, v)?;
-        let scale = types::read_int(&mut val).map_err(|err| {
-            mk_deser_err::<Self>(
-                typ,
-                BuiltinDeserializationErrorKind::BadDecimalScale(err.into()),
-            )
-        })?;
+        let (unscaled, scale) = get_unscaled_and_scale_from_decimal_column::<Self>(typ, v)?;
         Ok(CqlDecimal::from_signed_be_bytes_slice_and_exponent(
-            val, scale,
+            unscaled, scale,
         ))
     }
 );
@@ -425,15 +446,9 @@ impl_strict_type!(
     CqlDecimalBorrowed<'b>,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
-        let mut val = ensure_not_null_slice::<Self>(typ, v)?;
-        let scale = types::read_int(&mut val).map_err(|err| {
-            mk_deser_err::<Self>(
-                typ,
-                BuiltinDeserializationErrorKind::BadDecimalScale(err.into()),
-            )
-        })?;
+        let (unscaled, scale) = get_unscaled_and_scale_from_decimal_column::<Self>(typ, v)?;
         Ok(CqlDecimalBorrowed::from_signed_be_bytes_slice_and_exponent(
-            val, scale,
+            unscaled, scale,
         ))
     },
     'b
@@ -444,15 +459,9 @@ impl_strict_type!(
     bigdecimal_04::BigDecimal,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
-        let mut val = ensure_not_null_slice::<Self>(typ, v)?;
-        let scale = types::read_int(&mut val).map_err(|err| {
-            mk_deser_err::<Self>(
-                typ,
-                BuiltinDeserializationErrorKind::BadDecimalScale(err.into()),
-            )
-        })? as i64;
-        let int_value = bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(val);
-        Ok(bigdecimal_04::BigDecimal::from((int_value, scale)))
+        let (unscaled, scale) = get_unscaled_and_scale_from_decimal_column::<Self>(typ, v)?;
+        let int_value = bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(unscaled);
+        Ok(bigdecimal_04::BigDecimal::from((int_value, scale as i64)))
     }
 );
 
@@ -2056,6 +2065,19 @@ fn ensure_not_null_owned<T>(
     ensure_not_null_frame_slice::<T>(typ, v).map(|frame_slice| frame_slice.to_bytes())
 }
 
+fn ensure_not_empty<'frame, T>(
+    typ: &ColumnType,
+    v: &'frame [u8],
+) -> Result<&'frame [u8], DeserializationError> {
+    if v.is_empty() {
+        return Err(mk_deser_err::<T>(
+            typ,
+            BuiltinDeserializationErrorKind::ExpectedNonEmpty,
+        ));
+    }
+    Ok(v)
+}
+
 fn ensure_exact_length<'frame, T, const SIZE: usize>(
     typ: &ColumnType,
     v: &'frame [u8],
@@ -2581,11 +2603,17 @@ pub enum BuiltinDeserializationErrorKind {
     /// Failed to deserialize decimal's scale.
     BadDecimalScale(LowLevelDeserializationError),
 
+    /// Decimal has a scale, but its unscaled value is empty.
+    EmptyDecimalUnscaledValue,
+
     /// Failed to deserialize raw bytes of cql value.
     RawCqlBytesReadError(LowLevelDeserializationError),
 
     /// Expected non-null value, got null.
     ExpectedNonNull,
+
+    /// Expected non-empty value, got empty.
+    ExpectedNonEmpty,
 
     /// The length of read value in bytes is different than expected for the Rust type.
     ByteLengthMismatch { expected: usize, got: usize },
@@ -2632,11 +2660,17 @@ impl Display for BuiltinDeserializationErrorKind {
             BuiltinDeserializationErrorKind::BadDecimalScale(err) => {
                 write!(f, "malformed decimal's scale: {err}")
             }
+            BuiltinDeserializationErrorKind::EmptyDecimalUnscaledValue => {
+                f.write_str("decimal's unscaled value is empty")
+            }
             BuiltinDeserializationErrorKind::RawCqlBytesReadError(err) => {
                 write!(f, "failed to read raw cql value bytes: {err}")
             }
             BuiltinDeserializationErrorKind::ExpectedNonNull => {
                 f.write_str("expected a non-null value, got null")
+            }
+            BuiltinDeserializationErrorKind::ExpectedNonEmpty => {
+                f.write_str("expected a non-empty value, got empty")
             }
             BuiltinDeserializationErrorKind::ByteLengthMismatch { expected, got } => {
                 write!(f, "the CQL type requires {expected} bytes, but got {got}",)

@@ -16,3 +16,4 @@ mod startup_options;
 mod status_change_hints;
 mod tracing;
 mod use_keyspace;
+mod write_coalescing;

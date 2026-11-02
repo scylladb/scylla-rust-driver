@@ -77,7 +77,7 @@ pub struct QueryResult {
     request_coordinator: Option<Coordinator>,
     deserialized_metadata_and_rows: Option<DeserializedMetadataAndRawRows>,
     tracing_id: Option<Uuid>,
-    warnings: Vec<String>,
+    warnings: Box<[String]>,
 }
 
 impl QueryResult {
@@ -85,7 +85,7 @@ impl QueryResult {
         request_coordinator: Coordinator,
         raw_rows: Option<DeserializedMetadataAndRawRows>,
         tracing_id: Option<Uuid>,
-        warnings: Vec<String>,
+        warnings: Box<[String]>,
     ) -> Self {
         Self {
             request_coordinator: Some(request_coordinator),
@@ -106,7 +106,7 @@ impl QueryResult {
     pub(crate) fn new_with_unknown_coordinator(
         raw_rows: Option<DeserializedMetadataAndRawRows>,
         tracing_id: Option<Uuid>,
-        warnings: Vec<String>,
+        warnings: Box<[String]>,
     ) -> Self {
         Self {
             request_coordinator: None,
@@ -123,7 +123,7 @@ impl QueryResult {
             request_coordinator: Some(request_coordinator),
             deserialized_metadata_and_rows: None,
             tracing_id: None,
-            warnings: Vec::new(),
+            warnings: Box::default(),
         }
     }
 
@@ -273,7 +273,7 @@ pub struct QueryRowsResult {
     request_coordinator: Option<Coordinator>,
     raw_rows_with_metadata: DeserializedMetadataAndRawRows,
     tracing_id: Option<Uuid>,
-    warnings: Vec<String>,
+    warnings: Box<[String]>,
 }
 
 impl QueryRowsResult {
@@ -411,7 +411,7 @@ impl QueryRowsResult {
         (
             raw_rows_with_metadata,
             tracing_id,
-            warnings,
+            warnings.into_vec(),
             request_coordinator,
         )
     }
@@ -569,7 +569,8 @@ mod tests {
         // Check tracing ID
         for tracing_id in [None, Some(Uuid::from_u128(0x_feed_dead))] {
             for raw_rows in [None, Some(sample_raw_rows(7, 6))] {
-                let qr = QueryResult::new_with_unknown_coordinator(raw_rows, tracing_id, vec![]);
+                let qr =
+                    QueryResult::new_with_unknown_coordinator(raw_rows, tracing_id, Box::default());
                 assert_eq!(qr.tracing_id(), tracing_id);
             }
         }
@@ -589,7 +590,7 @@ mod tests {
         {
             // Not RESULT::Rows response -> no column specs
             {
-                let rqr = QueryResult::new_with_unknown_coordinator(None, None, Vec::new());
+                let rqr = QueryResult::new_with_unknown_coordinator(None, None, Box::default());
                 let qr = rqr.into_rows_result();
                 assert_matches!(qr, Err(IntoRowsResultError::ResultNotRows(_)));
             }
@@ -599,7 +600,7 @@ mod tests {
                 let n = 5;
                 let metadata = sample_result_metadata(n);
                 let rr = DeserializedMetadataAndRawRows::new_for_test(metadata, 0, Bytes::new());
-                let rqr = QueryResult::new_with_unknown_coordinator(Some(rr), None, Vec::new());
+                let rqr = QueryResult::new_with_unknown_coordinator(Some(rr), None, Box::default());
                 let qr = rqr.into_rows_result().unwrap();
                 let column_specs = qr.column_specs();
                 assert_eq!(column_specs.len(), n);
@@ -643,7 +644,7 @@ mod tests {
         {
             // Not RESULT::Rows
             {
-                let rqr = QueryResult::new_with_unknown_coordinator(None, None, Vec::new());
+                let rqr = QueryResult::new_with_unknown_coordinator(None, None, Box::default());
                 let qr = rqr.into_rows_result();
                 assert_matches!(qr, Err(IntoRowsResultError::ResultNotRows(_)));
             }
@@ -651,7 +652,7 @@ mod tests {
             // RESULT::Rows with 0 rows
             {
                 let rr = sample_raw_rows(1, 0);
-                let rqr = QueryResult::new_with_unknown_coordinator(Some(rr), None, Vec::new());
+                let rqr = QueryResult::new_with_unknown_coordinator(Some(rr), None, Box::default());
                 assert_matches!(rqr.result_not_rows(), Err(ResultNotRowsError));
 
                 let qr = rqr.into_rows_result().unwrap();
@@ -693,10 +694,16 @@ mod tests {
             {
                 let rr_good_data = sample_raw_rows(2, 1);
                 let rr_bad_data = sample_raw_rows_invalid_bytes(2, 1);
-                let rqr_good_data =
-                    QueryResult::new_with_unknown_coordinator(Some(rr_good_data), None, Vec::new());
-                let rqr_bad_data =
-                    QueryResult::new_with_unknown_coordinator(Some(rr_bad_data), None, Vec::new());
+                let rqr_good_data = QueryResult::new_with_unknown_coordinator(
+                    Some(rr_good_data),
+                    None,
+                    Box::default(),
+                );
+                let rqr_bad_data = QueryResult::new_with_unknown_coordinator(
+                    Some(rr_bad_data),
+                    None,
+                    Box::default(),
+                );
 
                 for rqr in [&rqr_good_data, &rqr_bad_data] {
                     assert_matches!(rqr.result_not_rows(), Err(ResultNotRowsError));
@@ -756,7 +763,7 @@ mod tests {
             // RESULT::Rows with 2 rows
             {
                 let rr = sample_raw_rows(2, 2);
-                let rqr = QueryResult::new_with_unknown_coordinator(Some(rr), None, Vec::new());
+                let rqr = QueryResult::new_with_unknown_coordinator(Some(rr), None, Box::default());
                 assert_matches!(rqr.result_not_rows(), Err(ResultNotRowsError));
 
                 let qr = rqr.into_rows_result().unwrap();
@@ -800,7 +807,7 @@ mod tests {
     fn test_query_result_returns_self_if_not_rows() {
         // Check tracing ID
         for tracing_id in [None, Some(Uuid::from_u128(0x_feed_dead))] {
-            let qr = QueryResult::new_with_unknown_coordinator(None, tracing_id, vec![]);
+            let qr = QueryResult::new_with_unknown_coordinator(None, tracing_id, Box::default());
             let err = qr.into_rows_result().unwrap_err();
             match err {
                 IntoRowsResultError::ResultNotRows(query_result) => {

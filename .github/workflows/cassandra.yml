@@ -1,6 +1,9 @@
 # This workflow runs all tests on cassandra to ensure full compatibility
 name: Cassandra tests
 
+permissions:
+  contents: read
+
 on:
   push:
     branches:
@@ -22,15 +25,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup 3-node Cassandra cluster
         run: |
           docker compose -f test/cluster/cassandra/docker-compose.yml up -d --wait
         # A separate step for building to separate measuring time of compilation and testing
       - name: Setup rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: nextest
       - name: Run tests on cassandra

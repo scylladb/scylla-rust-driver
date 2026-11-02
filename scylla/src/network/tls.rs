@@ -53,12 +53,11 @@ impl TlsProvider {
         #[expect(unused)] endpoint: &UntranslatedEndpoint,
     ) -> Option<TlsConfig> {
         match self {
+            #[cfg_attr(
+                not(any(feature = "openssl-010", feature = "rustls-023")),
+                expect(unreachable_code)
+            )]
             TlsProvider::GlobalContext(context) => {
-                #[cfg_attr(
-                    not(any(feature = "openssl-010", feature = "rustls-023")),
-                    // TODO: make this expect() once MSRV is 1.92+.
-                    allow(unreachable_code)
-                )]
                 Some(TlsConfig::new_with_global_context(context.clone()))
             }
         }

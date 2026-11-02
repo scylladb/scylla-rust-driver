@@ -45,16 +45,16 @@ use crate::statement::prepared::{PreparedStatement, RawPreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;
-use futures::{FutureExt, future::RemoteHandle};
+use futures::FutureExt;
+use futures::future::{BoxFuture, RemoteHandle};
+use futures::stream::{FuturesUnordered, TryStreamExt};
 use socket2::{SockRef, TcpKeepalive};
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU64;
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 use std::{
     cmp::Ordering,
@@ -62,10 +62,14 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter, split};
 use tokio::net::{TcpSocket, TcpStream};
-use tokio::sync::{Notify, mpsc, oneshot};
-use tokio::time::Instant;
+use tokio::sync::{Notify, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
+
+mod stream_slots;
+
+pub(crate) use stream_slots::MAX_IN_FLIGHT_REQUESTS;
+use stream_slots::{ResponseFuture, StreamSlots};
 
 // FIXME: Make this constants configurable
 // The term "orphan" refers to stream ids, that were allocated for a {request, response} that no
@@ -107,17 +111,11 @@ pub(crate) struct Connection {
 }
 
 struct RouterHandle {
-    submit_channel: mpsc::Sender<Task>,
+    submit_channel: mpsc::Sender<SerializedRequest>,
 
-    // Each request send by `Connection::send_request` needs a unique request id.
-    // This field is a monotonic generator of such ids.
-    request_id_generator: AtomicU64,
-    // If a `Connection::send_request` is cancelled, it sends notification
-    // about orphaning via the sender below.
-    // Also, this sender is unbounded, because only unbounded channels support
-    // pushing values in a synchronous way (without an `.await`), which is
-    // needed for pushing values in `Drop` implementations.
-    orphan_notification_sender: mpsc::UnboundedSender<RequestId>,
+    // Requests allocate their stream ids here and receive their responses
+    // through it.
+    streams: StreamSlots,
 
     /// Notified in order to make this connection's keepaliver issue a keepalive
     /// request immediately, without waiting for the next `keepalive_interval` tick.
@@ -130,11 +128,6 @@ struct RouterHandle {
 }
 
 impl RouterHandle {
-    fn allocate_request_id(&self) -> RequestId {
-        self.request_id_generator
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    }
-
     async fn send_request(
         &self,
         request: &impl SerializableRequest,
@@ -142,38 +135,30 @@ impl RouterHandle {
         tracing: bool,
     ) -> Result<TaskResponse, InternalRequestError> {
         let serialized_request = SerializedRequest::make(request, compression, tracing)?;
-        let request_id = self.allocate_request_id();
-
-        let (response_sender, receiver) = oneshot::channel();
-        let response_handler = ResponseHandler {
-            response_sender,
-            request_id,
-        };
-
-        // Dropping `notifier` (before calling `notifier.disable()`) will send a notification to
-        // `Connection::router`. This notification is then used to mark a `stream_id` associated
-        // with this request as orphaned and free associated resources.
-        let notifier = OrphanhoodNotifier::new(request_id, &self.orphan_notification_sender);
-
-        self.submit_channel
-            .send(Task {
-                serialized_request,
-                response_handler,
-            })
+        // Room in the channel is reserved before the stream id, so that requests
+        // waiting for the writer don't hold stream ids.
+        let permit = self
+            .submit_channel
+            .reserve()
             .await
             .map_err(|_| -> BrokenConnectionError {
                 BrokenConnectionErrorKind::ChannelError.into()
             })?;
+        let response = self.submit(permit, serialized_request)?;
 
-        let task_response = receiver.await.map_err(|_| -> BrokenConnectionError {
-            BrokenConnectionErrorKind::ChannelError.into()
-        })?;
+        Ok(response.await?)
+    }
 
-        // Response was successfully received, so it's time to disable
-        // notification about orphaning.
-        notifier.disable();
-
-        task_response
+    /// Allocates a stream id for `request` and submits it for writing.
+    fn submit<'a>(
+        &'a self,
+        permit: mpsc::Permit<'_, SerializedRequest>,
+        request: SerializedRequest,
+    ) -> Result<ResponseFuture<'a>, InternalRequestError> {
+        self.streams.submit(permit, request).ok_or_else(|| {
+            error!("Could not allocate stream id");
+            InternalRequestError::UnableToAllocStreamId
+        })
     }
 }
 
@@ -183,51 +168,6 @@ pub(crate) struct ConnectionFeatures {
     shard_aware_port: Option<u16>,
     protocol_features: ProtocolFeatures,
     host_id: Option<Uuid>,
-}
-
-type RequestId = u64;
-
-struct ResponseHandler {
-    response_sender: oneshot::Sender<Result<TaskResponse, InternalRequestError>>,
-    request_id: RequestId,
-}
-
-// Used to notify `Connection::orphaner` about `Connection::send_request`
-// future being dropped before receiving response.
-struct OrphanhoodNotifier<'a> {
-    enabled: bool,
-    request_id: RequestId,
-    notification_sender: &'a mpsc::UnboundedSender<RequestId>,
-}
-
-impl<'a> OrphanhoodNotifier<'a> {
-    fn new(
-        request_id: RequestId,
-        notification_sender: &'a mpsc::UnboundedSender<RequestId>,
-    ) -> Self {
-        Self {
-            enabled: true,
-            request_id,
-            notification_sender,
-        }
-    }
-
-    fn disable(mut self) {
-        self.enabled = false;
-    }
-}
-
-impl Drop for OrphanhoodNotifier<'_> {
-    fn drop(&mut self) {
-        if self.enabled {
-            let _ = self.notification_sender.send(self.request_id);
-        }
-    }
-}
-
-struct Task {
-    serialized_request: SerializedRequest,
-    response_handler: ResponseHandler,
 }
 
 struct TaskResponse {
@@ -339,7 +279,7 @@ pub(crate) struct ConnectionConfig {
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
-    pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
+    pub(crate) tablet_sender: Option<mpsc::Sender<(Arc<TableSpec<'static>>, RawTablet)>>,
 
     pub(crate) identity: SelfIdentity<'static>,
 
@@ -420,7 +360,7 @@ pub(crate) struct HostConnectionConfig {
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
-    pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
+    pub(crate) tablet_sender: Option<mpsc::Sender<(Arc<TableSpec<'static>>, RawTablet)>>,
 
     pub(crate) identity: SelfIdentity<'static>,
     pub(crate) session_id: Uuid,
@@ -583,13 +523,10 @@ impl Connection {
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(1024);
         let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
-        // Unbounded because it allows for synchronous pushes
-        let (orphan_notification_sender, orphan_notification_receiver) = mpsc::unbounded_channel();
 
         let router_handle = Arc::new(RouterHandle {
             submit_channel: sender,
-            request_id_generator: AtomicU64::new(0),
-            orphan_notification_sender,
+            streams: StreamSlots::new(),
             keepalive_hint: Notify::new(),
         });
 
@@ -598,7 +535,6 @@ impl Connection {
             stream,
             receiver,
             error_sender,
-            orphan_notification_receiver,
             router_handle.clone(),
             connect_address,
         )
@@ -993,29 +929,6 @@ impl Connection {
         Ok(response)
     }
 
-    #[cfg(test)]
-    async fn execute_raw_unpaged(
-        &self,
-        prepared: &PreparedStatement,
-        values: &SerializedValues,
-    ) -> Result<QueryResponse, RequestAttemptError> {
-        // This method is used only for driver internal queries, so no need to consult execution profile here.
-        self.execute_raw_with_consistency(
-            prepared,
-            values,
-            prepared
-                .config
-                .determine_consistency(self.config.default_consistency),
-            prepared.config.serial_consistency.flatten(),
-            None,
-            PagingState::start(),
-            // A test-only helper executing on one given connection: no cached tablet version
-            // to probe.
-            0,
-        )
-        .await
-    }
-
     fn handle_result_metadata_new_id(
         prepared_statement: &PreparedStatement,
         query_response: &QueryResponse,
@@ -1187,7 +1100,7 @@ impl Connection {
             )
             .await?;
 
-        if let Some(spec) = prepared_statement.get_table_spec()
+        if let Some(spec) = prepared_statement.get_shared_table_spec()
             && let Err(e) = self
                 .update_tablets_from_response(spec, &query_response)
                 .await
@@ -1231,7 +1144,7 @@ impl Connection {
                     )
                     .await?;
 
-                if let Some(spec) = prepared_statement.get_table_spec()
+                if let Some(spec) = prepared_statement.get_shared_table_spec()
                     && let Err(e) = self.update_tablets_from_response(spec, &new_response).await
                 {
                     tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
@@ -1541,27 +1454,26 @@ impl Connection {
 
         Ok(QueryResponse {
             response,
-            warnings: body_with_ext.warnings,
+            // Built with exact capacity, so this doesn't reallocate.
+            warnings: body_with_ext.warnings.into_boxed_slice(),
             tracing_id: body_with_ext.trace_id,
-            custom_payload: body_with_ext.custom_payload,
+            custom_payload: body_with_ext.custom_payload.map(Box::new),
         })
     }
 
     async fn run_router(
         config: HostConnectionConfig,
         stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
-        receiver: mpsc::Receiver<Task>,
+        receiver: mpsc::Receiver<SerializedRequest>,
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
-        orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
         router_handle: Arc<RouterHandle>,
         node_address: SocketAddr,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         async fn spawn_router_and_get_handle(
             config: HostConnectionConfig,
             stream: impl AsyncRead + AsyncWrite + Send + 'static,
-            receiver: mpsc::Receiver<Task>,
+            receiver: mpsc::Receiver<SerializedRequest>,
             error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
-            orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
             router_handle: Arc<RouterHandle>,
             node_address: SocketAddr,
         ) -> RemoteHandle<()> {
@@ -1570,7 +1482,6 @@ impl Connection {
                 stream,
                 receiver,
                 error_sender,
-                orphan_notification_receiver,
                 router_handle,
                 node_address,
             )
@@ -1596,7 +1507,6 @@ impl Connection {
                         stream,
                         receiver,
                         error_sender,
-                        orphan_notification_receiver,
                         router_handle,
                         node_address,
                     )
@@ -1612,7 +1522,6 @@ impl Connection {
                         stream,
                         receiver,
                         error_sender,
-                        orphan_notification_receiver,
                         router_handle,
                         node_address,
                     )
@@ -1626,7 +1535,6 @@ impl Connection {
             stream,
             receiver,
             error_sender,
-            orphan_notification_receiver,
             router_handle,
             node_address,
         )
@@ -1635,32 +1543,19 @@ impl Connection {
 
     async fn router(
         config: HostConnectionConfig,
-        stream: impl AsyncRead + AsyncWrite,
-        receiver: mpsc::Receiver<Task>,
+        stream: impl AsyncRead + AsyncWrite + Send,
+        mut receiver: mpsc::Receiver<SerializedRequest>,
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
-        orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
         router_handle: Arc<RouterHandle>,
         node_address: SocketAddr,
     ) {
         let (read_half, write_half) = split(stream);
-        // Why are we using a mutex here?
-        //
-        // The handler_map is supposed to be shared between reader and writer
-        // futures, which will be run on the same task. The mutex should not
-        // be normally required here, but Rust complains if we try to use
-        // a RefCell instead of Mutex (the whole future becomes !Sync and we
-        // cannot use it in tasks).
-        //
-        // Notice that this lock will have no contention, because reader
-        // and writer futures are run on the same fiber, and both of them
-        // are carefully written in such a way that they do not hold the lock
-        // across .await points. Therefore, it should not be too expensive.
-        let handler_map = StdMutex::new(ResponseHandlerMap::new());
+        let streams = &router_handle.streams;
 
         let write_coalescing_delay = config.write_coalescing_delay;
 
         let k = Self::keepaliver(
-            router_handle,
+            Arc::clone(&router_handle),
             config.keepalive_interval,
             config.keepalive_timeout,
             node_address,
@@ -1668,33 +1563,39 @@ impl Connection {
 
         let r = Self::reader(
             BufReader::with_capacity(8192, read_half),
-            &handler_map,
+            streams,
             config.event_sender.map(|(sender, _)| sender),
             config.compression,
         );
         let w = Self::writer(
             BufWriter::with_capacity(8192, write_half),
-            &handler_map,
-            receiver,
+            &mut receiver,
             write_coalescing_delay,
         );
-        let o = Self::orphaner(&handler_map, orphan_notification_receiver);
+        let o = Self::orphaner(streams);
 
-        let result = futures::try_join!(r, w, o, k);
+        // Unlike `try_join!`, this gives each future its own waker, so a wakeup
+        // polls only the futures that were woken. Reads and writes then don't
+        // poll the idle timers of the orphaner and keepaliver.
+        let tasks: FuturesUnordered<BoxFuture<'_, Result<(), BrokenConnectionError>>> =
+            [r.boxed(), w.boxed(), o.boxed(), k.boxed()]
+                .into_iter()
+                .collect();
+        let result: Result<(), BrokenConnectionError> = tasks.try_collect().await;
 
         let error: BrokenConnectionError = match result {
             Ok(_) => return, // Connection was dropped, we can return
             Err(err) => err,
         };
 
-        // Respond to all pending requests with the error
-        let response_handlers: HashMap<i16, ResponseHandler> =
-            handler_map.into_inner().unwrap().into_handlers();
+        // Draining the closed channel waits for requests that reserved room in it.
+        // After it, each request either failed to reserve room (and got an error),
+        // or waits in its stream slot, and no more stream ids can be allocated.
+        receiver.close();
+        while receiver.recv().await.is_some() {}
 
-        for (_, handler) in response_handlers {
-            // Ignore sending error, request was dropped
-            let _ = handler.response_sender.send(Err(error.clone().into()));
-        }
+        // Respond to all pending requests with the error
+        streams.fail_all(&error);
 
         // If someone is listening for connection errors notify them
         let _ = error_sender.send(error.into());
@@ -1702,7 +1603,7 @@ impl Connection {
 
     async fn reader(
         mut read_half: impl AsyncRead + Unpin,
-        handler_map: &StdMutex<ResponseHandlerMap>,
+        streams: &StreamSlots,
         event_sender: Option<mpsc::Sender<Event>>,
         compression: Option<Compression>,
     ) -> Result<(), BrokenConnectionError> {
@@ -1734,72 +1635,30 @@ impl Connection {
                 _ => {}
             }
 
-            let handler_lookup_res = {
-                // We are guaranteed here that handler_map will not be locked
-                // by anybody else, so we can do try_lock().unwrap()
-                let mut handler_map_guard = handler_map.try_lock().unwrap();
-                handler_map_guard.lookup(params.stream)
-            };
-
-            use HandlerLookupResult::*;
-            match handler_lookup_res {
-                Handler(handler) => {
-                    // Don't care if sending of the response fails. This must
-                    // mean that the receiver side was impatient and is not
-                    // waiting for the result anymore.
-                    let _ = handler.response_sender.send(Ok(response));
-                }
-                Missing => {
-                    // Unsolicited frame. This should not happen and indicates
-                    // a bug either in the driver, or in the database
-                    debug!(
-                        "Received response with unexpected StreamId {}",
-                        params.stream
-                    );
-                    return Err(BrokenConnectionErrorKind::UnexpectedStreamId(params.stream).into());
-                }
-                Orphaned => {
-                    // Do nothing, handler was freed because this stream_id has
-                    // been marked as orphaned
-                }
-            }
-        }
-    }
-
-    fn alloc_stream_id(
-        handler_map: &StdMutex<ResponseHandlerMap>,
-        response_handler: ResponseHandler,
-    ) -> Option<i16> {
-        // We are guaranteed here that handler_map will not be locked
-        // by anybody else, so we can do try_lock().unwrap()
-        let mut handler_map_guard = handler_map.try_lock().unwrap();
-        match handler_map_guard.allocate(response_handler) {
-            Ok(stream_id) => Some(stream_id),
-            Err(response_handler) => {
-                error!("Could not allocate stream id");
-                let _ = response_handler
-                    .response_sender
-                    .send(Err(InternalRequestError::UnableToAllocStreamId));
-                None
+            if !streams.complete(params.stream, response) {
+                // Unsolicited frame. This should not happen and indicates
+                // a bug either in the driver, or in the database
+                debug!(
+                    "Received response with unexpected StreamId {}",
+                    params.stream
+                );
+                return Err(BrokenConnectionErrorKind::UnexpectedStreamId(params.stream).into());
             }
         }
     }
 
     async fn writer(
         mut write_half: impl AsyncWrite + Unpin,
-        handler_map: &StdMutex<ResponseHandlerMap>,
-        mut task_receiver: mpsc::Receiver<Task>,
+        request_receiver: &mut mpsc::Receiver<SerializedRequest>,
         write_coalescing_delay: Option<WriteCoalescingDelay>,
     ) -> Result<(), BrokenConnectionError> {
         // When the Connection object is dropped, the sender half
         // of the channel will be dropped, this task will return an error
         // and the whole worker will be stopped
-        while let Some(mut task) = task_receiver.recv().await {
+        while let Some(mut req) = request_receiver.recv().await {
             let mut num_requests = 0;
             let mut total_sent = 0;
-            while let Some(stream_id) = Self::alloc_stream_id(handler_map, task.response_handler) {
-                let mut req = task.serialized_request;
-                req.set_stream(stream_id);
+            loop {
                 let req_data: &[u8] = req.get_data();
                 total_sent += req_data.len();
                 num_requests += 1;
@@ -1807,23 +1666,23 @@ impl Connection {
                     .write_all(req_data)
                     .await
                     .map_err(BrokenConnectionErrorKind::WriteError)?;
-                task = match task_receiver.try_recv() {
-                    Ok(t) => t,
+                req = match request_receiver.try_recv() {
+                    Ok(r) => r,
                     Err(_) => match write_coalescing_delay {
                         Some(WriteCoalescingDelay::SmallNondeterministic) => {
                             // Yielding was empirically tested to inject a 1-300µs delay,
                             // much better than tokio::time::sleep's 1ms granularity.
                             // Also, yielding in a busy system let's the queue catch up with new items.
                             tokio::task::yield_now().await;
-                            match task_receiver.try_recv() {
-                                Ok(t) => t,
+                            match request_receiver.try_recv() {
+                                Ok(r) => r,
                                 Err(_) => break,
                             }
                         }
                         Some(WriteCoalescingDelay::Milliseconds(ms)) => {
                             tokio::time::sleep(Duration::from_millis(ms.get())).await;
-                            match task_receiver.try_recv() {
-                                Ok(t) => t,
+                            match request_receiver.try_recv() {
+                                Ok(r) => r,
                                 Err(_) => break,
                             }
                         }
@@ -1841,43 +1700,22 @@ impl Connection {
         Ok(())
     }
 
-    // This task receives notifications from `OrphanhoodNotifier`s and tries to
-    // mark streams as orphaned. It also checks count of old orphans periodically.
-    // After an ald orphan threshold is reached, `orphaner` returns an error
-    // causing the connection to break.
-    async fn orphaner(
-        handler_map: &StdMutex<ResponseHandlerMap>,
-        mut orphan_receiver: mpsc::UnboundedReceiver<RequestId>,
-    ) -> Result<(), BrokenConnectionError> {
+    // Checks the count of old orphans periodically. After an old orphan
+    // threshold is reached, `orphaner` returns an error causing the connection
+    // to break.
+    async fn orphaner(streams: &StreamSlots) -> Result<(), BrokenConnectionError> {
         let mut interval = tokio::time::interval(OLD_AGE_ORPHAN_THRESHOLD);
         loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    // We are guaranteed here that handler_map will not be locked
-                    // by anybody else, so we can do try_lock().unwrap()
-                    let handler_map_guard = handler_map.try_lock().unwrap();
-                    let old_orphan_count = handler_map_guard.old_orphans_count();
-                    if old_orphan_count > OLD_ORPHAN_COUNT_THRESHOLD {
-                        warn!(
-                            "Too many old orphaned stream ids: {}",
-                            old_orphan_count,
-                        );
-                        return Err(BrokenConnectionErrorKind::TooManyOrphanedStreamIds(old_orphan_count as u16).into())
-                    }
-                }
-                Some(request_id) = orphan_receiver.recv() => {
-                    trace!(
-                        "Trying to orphan stream id associated with request_id = {}",
-                        request_id,
-                    );
-                    let mut handler_map_guard = handler_map.try_lock().unwrap(); // Same as above
-                    handler_map_guard.orphan(request_id);
-                }
-                else => { break }
+            interval.tick().await;
+            let old_orphan_count = streams.old_orphans_count();
+            if old_orphan_count > OLD_ORPHAN_COUNT_THRESHOLD {
+                warn!("Too many old orphaned stream ids: {}", old_orphan_count);
+                return Err(BrokenConnectionErrorKind::TooManyOrphanedStreamIds(
+                    old_orphan_count as u16,
+                )
+                .into());
             }
         }
-
-        Ok(())
     }
 
     async fn keepaliver(
@@ -2067,12 +1905,12 @@ impl Connection {
 
     async fn update_tablets_from_response(
         &self,
-        table: &TableSpec<'_>,
+        table: &Arc<TableSpec<'static>>,
         response: &QueryResponse,
     ) -> Result<(), TabletParsingError> {
         if let (Some(sender), Some(tablet_data)) = (
             self.config.tablet_sender.as_ref(),
-            response.custom_payload.as_ref(),
+            response.custom_payload.as_deref(),
         ) {
             let tablet = match RawTablet::from_custom_payload(tablet_data) {
                 Some(Ok(v)) => v,
@@ -2085,7 +1923,7 @@ impl Connection {
                 table.table_name(),
                 tablet
             );
-            let _ = sender.send((table.to_owned(), tablet)).await;
+            let _ = sender.send((Arc::clone(table), tablet)).await;
         }
 
         Ok(())
@@ -2448,166 +2286,6 @@ fn setup_tcp_keepalive(sf: &SockRef<'_>, tcp_keepalive_interval: Duration) -> st
     sf.set_tcp_keepalive(&tcp_keepalive)
 }
 
-struct OrphanageTracker {
-    orphans: HashMap<i16, Instant>,
-    by_orphaning_times: BTreeSet<(Instant, i16)>,
-}
-
-impl OrphanageTracker {
-    fn new() -> Self {
-        Self {
-            orphans: HashMap::new(),
-            by_orphaning_times: BTreeSet::new(),
-        }
-    }
-
-    fn insert(&mut self, stream_id: i16) {
-        let now = Instant::now();
-        self.orphans.insert(stream_id, now);
-        self.by_orphaning_times.insert((now, stream_id));
-    }
-
-    fn remove(&mut self, stream_id: i16) {
-        if let Some(time) = self.orphans.remove(&stream_id) {
-            self.by_orphaning_times.remove(&(time, stream_id));
-        }
-    }
-
-    fn contains(&self, stream_id: i16) -> bool {
-        self.orphans.contains_key(&stream_id)
-    }
-
-    fn orphans_older_than(&self, age: std::time::Duration) -> usize {
-        let minimal_age = Instant::now() - age;
-        self.by_orphaning_times
-            .range(..(minimal_age, i16::MAX))
-            .count() // This has linear time complexity, but in terms of
-        // the number of old orphans. Healthy connection - one
-        // that does not have old orphaned stream ids, will
-        // calculate this function quickly.
-    }
-}
-
-struct ResponseHandlerMap {
-    stream_set: StreamIdSet,
-    handlers: HashMap<i16, ResponseHandler>,
-
-    request_to_stream: HashMap<RequestId, i16>,
-    orphanage_tracker: OrphanageTracker,
-}
-
-enum HandlerLookupResult {
-    Orphaned,
-    Handler(ResponseHandler),
-    Missing,
-}
-
-impl ResponseHandlerMap {
-    fn new() -> Self {
-        Self {
-            stream_set: StreamIdSet::new(),
-            handlers: HashMap::new(),
-            request_to_stream: HashMap::new(),
-            orphanage_tracker: OrphanageTracker::new(),
-        }
-    }
-
-    fn allocate(&mut self, response_handler: ResponseHandler) -> Result<i16, ResponseHandler> {
-        if let Some(stream_id) = self.stream_set.allocate() {
-            self.request_to_stream
-                .insert(response_handler.request_id, stream_id);
-            let prev_handler = self.handlers.insert(stream_id, response_handler);
-            assert!(prev_handler.is_none());
-
-            Ok(stream_id)
-        } else {
-            Err(response_handler)
-        }
-    }
-
-    // Orphan stream_id (associated with this request_id) by moving it to
-    // `orphanage_tracker`, and freeing its handler
-    fn orphan(&mut self, request_id: RequestId) {
-        if let Some(stream_id) = self.request_to_stream.get(&request_id) {
-            debug!(
-                "Orphaning stream_id = {} associated with request_id = {}",
-                stream_id, request_id
-            );
-            self.orphanage_tracker.insert(*stream_id);
-            self.handlers.remove(stream_id);
-            self.request_to_stream.remove(&request_id);
-        }
-    }
-
-    fn old_orphans_count(&self) -> usize {
-        self.orphanage_tracker
-            .orphans_older_than(OLD_AGE_ORPHAN_THRESHOLD)
-    }
-
-    fn lookup(&mut self, stream_id: i16) -> HandlerLookupResult {
-        self.stream_set.free(stream_id);
-
-        if self.orphanage_tracker.contains(stream_id) {
-            self.orphanage_tracker.remove(stream_id);
-            // This `stream_id` had been orphaned, so its handler got removed.
-            // This is a valid state (as opposed to missing handler)
-            return HandlerLookupResult::Orphaned;
-        }
-
-        if let Some(handler) = self.handlers.remove(&stream_id) {
-            // A mapping `request_id` -> `stream_id` must be removed, to
-            // prevent marking this `stream_id` as orphaned by some late
-            // orphan notification.
-            self.request_to_stream.remove(&handler.request_id);
-
-            HandlerLookupResult::Handler(handler)
-        } else {
-            HandlerLookupResult::Missing
-        }
-    }
-
-    // Retrieves the map of handlers, used after connection breaks
-    // and we have to respond to all of them with an error
-    fn into_handlers(self) -> HashMap<i16, ResponseHandler> {
-        self.handlers
-    }
-}
-
-struct StreamIdSet {
-    used_bitmap: Box<[u64]>,
-}
-
-/// Number of stream ids usable on one connection, i.e. the maximum number of
-/// requests in flight on it. Every id in `0..MAX_IN_FLIGHT_REQUESTS` is
-/// allocatable; none is reserved.
-pub(crate) const MAX_IN_FLIGHT_REQUESTS: usize = i16::MAX as usize + 1;
-
-impl StreamIdSet {
-    fn new() -> Self {
-        Self {
-            used_bitmap: vec![0; MAX_IN_FLIGHT_REQUESTS / 64].into_boxed_slice(),
-        }
-    }
-
-    fn allocate(&mut self) -> Option<i16> {
-        for (block_id, block) in self.used_bitmap.iter_mut().enumerate() {
-            if *block != !0 {
-                let off = block.trailing_ones();
-                *block |= 1u64 << off;
-                let stream_id = off as i16 + block_id as i16 * 64;
-                return Some(stream_id);
-            }
-        }
-        None
-    }
-
-    fn free(&mut self, stream_id: i16) {
-        let block_id = stream_id as usize / 64;
-        let off = stream_id as usize % 64;
-        self.used_bitmap[block_id] &= !(1 << off);
-    }
-}
-
 /// This type can only hold a valid keyspace name
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct VerifiedKeyspaceName {
@@ -2679,7 +2357,7 @@ mod tests {
     use assert_matches::assert_matches;
     use scylla_proxy::{
         Condition, Node, Proxy, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction,
-        RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, ShardAwareness, WorkerError,
+        RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, WorkerError,
     };
 
     use bytes::Bytes;
@@ -2695,10 +2373,10 @@ mod tests {
         ConnectionError, CqlResponseKind, DbError, NextPageError, NextRowError,
         RequestAttemptError, RequestError,
     };
+    use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
     use crate::statement::prepared::PreparedStatement;
     use crate::statement::unprepared::Statement;
-    use crate::test_utils::setup_tracing;
-    use crate::utils::test_utils::{PerformDDL, resolve_hostname, unique_keyspace_name};
+    use crate::test_utils::{dry_mode_handshake_rules, setup_tracing};
     use futures::{StreamExt, TryStreamExt};
     use std::collections::HashMap;
     use std::net::SocketAddr;
@@ -2706,131 +2384,26 @@ mod tests {
     use std::time::Duration;
     use uuid::Uuid;
 
-    /// Tests for Connection::execute_iter
-    /// 1. SELECT from an empty table.
-    /// 2. Create table and insert ints 0..100.
-    ///    Then use execute_iter with page_size set to 7 to select all 100 rows.
-    ///
-    /// For the failure modes of this path (timeouts, server errors, non-Rows
-    /// responses), see the `connection_execute_iter_*` tests below.
-    #[tokio::test]
-    async fn connection_execute_iter_test() {
-        use crate::client::session_builder::SessionBuilder;
-
-        setup_tracing();
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
-        let addr: SocketAddr = resolve_hostname(&uri).await;
-
-        let (connection, _) = super::open_connection(
-            &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address: addr }),
-            None,
-            &HostConnectionConfig::default(),
-        )
-        .await
-        .unwrap();
-        let connection = Arc::new(connection);
-
-        let ks = unique_keyspace_name();
-        let session = SessionBuilder::new()
-            .known_node_addr(addr)
-            .build()
-            .await
-            .unwrap();
-
-        {
-            // Preparation phase
-            session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone())).await.unwrap();
-            session.use_keyspace(ks.clone(), false).await.unwrap();
-            session
-                .ddl("DROP TABLE IF EXISTS connection_execute_iter_tab")
-                .await
-                .unwrap();
-            session
-                .ddl("CREATE TABLE IF NOT EXISTS connection_execute_iter_tab (p int primary key)")
-                .await
-                .unwrap();
-        }
-
-        connection
-            .use_keyspace(&super::VerifiedKeyspaceName::new(ks.clone(), false).unwrap())
-            .await
-            .unwrap();
-
-        // 1. SELECT from an empty table returns query result where rows are Some(Vec::new())
-        let select_query =
-            Statement::new("SELECT p FROM connection_execute_iter_tab").with_page_size(7);
-        let prepared_select = connection.prepare(&select_query).await.unwrap();
-        let empty_res = connection
-            .clone()
-            .execute_iter(prepared_select.clone(), SerializedValues::new())
-            .await
-            .unwrap()
-            .rows_stream::<(i32,)>()
-            .unwrap()
-            .try_collect::<Vec<_>>()
-            .await
-            .unwrap();
-        assert!(empty_res.is_empty());
-
-        // 2. Insert 100 and select using execute_iter with page_size 7
-        let values: Vec<i32> = (0..100).collect();
-        let insert_query = Statement::new("INSERT INTO connection_execute_iter_tab (p) VALUES (?)")
-            .with_page_size(7);
-        let prepared = connection.prepare(&insert_query).await.unwrap();
-        let mut insert_futures = Vec::new();
-        for v in &values {
-            let fut = async {
-                let values = prepared.serialize_values(&(*v,)).unwrap();
-                connection.execute_raw_unpaged(&prepared, &values).await
-            };
-            insert_futures.push(fut);
-        }
-
-        futures::future::try_join_all(insert_futures).await.unwrap();
-
-        let mut results: Vec<i32> = connection
-            .clone()
-            .execute_iter(prepared_select, SerializedValues::new())
-            .await
-            .unwrap()
-            .rows_stream::<(i32,)>()
-            .unwrap()
-            .map(|ret| ret.unwrap().0)
-            .collect::<Vec<_>>()
-            .await;
-        results.sort_unstable(); // Clippy recommended to use sort_unstable instead of sort()
-        assert_eq!(results, values);
-
-        {
-            // Teardown phase
-            session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
-        }
-    }
-
     /// A fixture for tests of the fixed-connection paging path, i.e.
     /// [`Connection::execute_iter`] -> `SingleConnectionPagingExecutor`.
     ///
-    /// The connection under test goes through a proxy, so that request rules can
-    /// inject delays and errors into particular pages.
+    /// The connection under test goes to a dry-mode proxy, so every page is
+    /// forged (or spoiled) by request rules.
     struct FixedConnectionPagingFixture {
         proxy: scylla_proxy::RunningProxy,
         connection: Arc<super::Connection>,
     }
 
     impl FixedConnectionPagingFixture {
-        async fn setup(request_rules: Vec<RequestRule>) -> Self {
-            let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
-            let node_addr: SocketAddr = resolve_hostname(&uri).await;
+        async fn setup(execute_rules: Vec<RequestRule>) -> Self {
             let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
 
             let proxy = Proxy::builder()
                 .with_node(
                     Node::builder()
                         .proxy_address(proxy_addr)
-                        .real_address(node_addr)
-                        .shard_awareness(ShardAwareness::QueryNode)
-                        .request_rules(request_rules)
-                        .build(),
+                        .request_rules(Self::rules(execute_rules))
+                        .build_dry_mode(),
                 )
                 .build()
                 .run()
@@ -2853,22 +2426,60 @@ mod tests {
             }
         }
 
-        /// Prepares a paged SELECT over a system table, which is guaranteed to
-        /// exist and to contain multiple rows. Page size of 1 makes every row a
-        /// separate page, so that pages 2+ are always fetched.
+        /// Completes `execute_rules` with the rules that let the connection
+        /// be opened and the paged SELECT be prepared.
+        fn rules(execute_rules: Vec<RequestRule>) -> Vec<RequestRule> {
+            let mut rules = dry_mode_handshake_rules();
+            rules.push(RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Prepare),
+                RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                    ResponseFrame::forged_prepared(
+                        frame.params,
+                        b"paged_select",
+                        &[],
+                        &paged_select_col_specs(),
+                    )
+                    .unwrap()
+                })),
+            ));
+            rules.extend(execute_rules);
+            rules
+        }
+
         async fn prepare_paged_select(&self) -> PreparedStatement {
-            let select =
-                Statement::new("SELECT keyspace_name FROM system_schema.tables").with_page_size(1);
+            let select = Statement::new("SELECT v FROM ks.t");
             self.connection.prepare(&select).await.unwrap()
         }
 
-        fn change_request_rules(&mut self, rules: Vec<RequestRule>) {
-            self.proxy.running_nodes[0].change_request_rules(Some(rules));
+        fn change_execute_rules(&mut self, rules: Vec<RequestRule>) {
+            self.proxy.running_nodes[0].change_request_rules(Some(Self::rules(rules)));
         }
 
         async fn finish(self) {
             let _ = self.proxy.finish().await;
         }
+    }
+
+    fn paged_select_col_specs() -> [ColumnSpec<'static>; 1] {
+        [ColumnSpec::borrowed(
+            "v",
+            ColumnType::Native(NativeType::Int),
+            TableSpec::borrowed("ks", "t"),
+        )]
+    }
+
+    /// Forges a page of the paged SELECT that consists of the given rows.
+    /// If `paging_state` is `Some`, the page announces that more pages follow.
+    fn forge_page(rows: &'static [i32], paging_state: Option<&'static [u8]>) -> RequestReaction {
+        RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+            ResponseFrame::forged_rows(
+                frame.params,
+                &paged_select_col_specs(),
+                rows.iter().map(|v| (*v,)),
+                paging_state,
+            )
+            .unwrap()
+        }))
     }
 
     /// A rule matching EXECUTE frames only. PREPARE requests must not be
@@ -2877,26 +2488,77 @@ mod tests {
         Condition::RequestOpcode(RequestOpcode::Execute)
     }
 
+    /// Matches requests for the page that follows the one which returned `paging_state`.
+    fn page_after(paging_state: &[u8]) -> Condition {
+        execute_opcode_condition().and(Condition::BodyContainsCaseSensitive(
+            paging_state.to_vec().into_boxed_slice(),
+        ))
+    }
+
+    /// Tests that [`Connection::execute_iter`] fetches all pages, each with
+    /// the paging state returned along with the previous one.
+    ///
+    /// For the failure modes of this path (timeouts, server errors, non-Rows
+    /// responses), see the `connection_execute_iter_*` tests below.
+    #[tokio::test]
+    async fn connection_execute_iter_test() {
+        setup_tracing();
+
+        // Case 1: the result is a single empty page.
+        let mut fixture = FixedConnectionPagingFixture::setup(vec![RequestRule(
+            execute_opcode_condition(),
+            forge_page(&[], None),
+        )])
+        .await;
+
+        let prepared = fixture.prepare_paged_select().await;
+        let connection = Arc::clone(&fixture.connection);
+        let fetch_all = async |prepared: PreparedStatement| {
+            Arc::clone(&connection)
+                .execute_iter(prepared, SerializedValues::new())
+                .await
+                .unwrap()
+                .rows_stream::<(i32,)>()
+                .unwrap()
+                .map_ok(|(v,)| v)
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap()
+        };
+
+        assert!(fetch_all(prepared.clone()).await.is_empty());
+
+        // Case 2: the result spans multiple pages.
+        fixture.change_execute_rules(vec![
+            RequestRule(
+                page_after(b"after_page_1"),
+                forge_page(&[2, 3], Some(b"after_page_2")),
+            ),
+            RequestRule(page_after(b"after_page_2"), forge_page(&[4], None)),
+            RequestRule(
+                execute_opcode_condition(),
+                forge_page(&[0, 1], Some(b"after_page_1")),
+            ),
+        ]);
+
+        assert_eq!(fetch_all(prepared).await, [0, 1, 2, 3, 4]);
+
+        fixture.finish().await;
+    }
+
     /// The timeout configured by the tests below. Its value is arbitrary: those
     /// tests never wait for it to elapse in real time. It is only chosen far
     /// longer than any realistic round trip, so that a timeout firing in the test
     /// can only be the result of the clock being advanced deliberately.
     const PAGING_TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
-    /// Makes the request under test delayed for more than the timeout's duration,
-    /// so that the only possible outcome is the client-side timeout.
-    fn delay_request_for_more_than_timeout() -> RequestReaction {
-        RequestReaction::delay(PAGING_TEST_TIMEOUT + Duration::from_secs(1))
-    }
-
     /// Stops the clock, so that the request timeout no longer elapses on its own.
     ///
     /// From this point on, time only moves when the runtime runs out of work to
     /// do, in which case tokio advances it to the nearest deadline - here, the
-    /// request timeout. Since the request under test is delayed by the proxy for
-    /// significantly longer, the response will not race with that, which makes
-    /// the timeout fire deterministically and at no cost in wall-clock time.
-    /// This is why the tests need no timing margins whatsoever.
+    /// request timeout. Since the request under test is never answered by the
+    /// proxy, this makes the timeout fire deterministically and at no cost in
+    /// wall-clock time. This is why the tests need no timing margins whatsoever.
     ///
     /// Must only be called once all the setup that involves real I/O is done,
     /// as a paused clock would make such I/O race against the advancing time.
@@ -2914,7 +2576,7 @@ mod tests {
 
         let fixture = FixedConnectionPagingFixture::setup(vec![RequestRule(
             execute_opcode_condition(),
-            delay_request_for_more_than_timeout(),
+            RequestReaction::drop_frame(),
         )])
         .await;
 
@@ -2949,34 +2611,30 @@ mod tests {
         setup_tracing();
 
         let fixture = FixedConnectionPagingFixture::setup(vec![
-            // Let the first page through, then delay all subsequent requests.
+            // Serve the first page, then leave all subsequent requests unanswered.
             RequestRule(
                 execute_opcode_condition().and(Condition::TrueForLimitedTimes(1)),
-                RequestReaction::noop(),
+                forge_page(&[0], Some(b"after_page_1")),
             ),
-            RequestRule(
-                execute_opcode_condition(),
-                delay_request_for_more_than_timeout(),
-            ),
+            RequestRule(execute_opcode_condition(), RequestReaction::drop_frame()),
         ])
         .await;
 
         let mut prepared = fixture.prepare_paged_select().await;
         prepared.set_request_timeout(Some(PAGING_TEST_TIMEOUT));
 
-        // The first page is served by the real node, so it is fetched while the
-        // clock still runs. The timeout is armed for it as well, but it is far
-        // too long to elapse - and, being the last thing done in real time, it
-        // cannot be advanced past by accident, either.
+        // The first page is fetched while the clock still runs. The timeout is
+        // armed for it as well, but it is far too long to elapse - and, being
+        // the last thing done in real time, it cannot be advanced past by
+        // accident, either.
         let mut rows_stream = Arc::clone(&fixture.connection)
             .execute_iter(prepared, SerializedValues::new())
             .await
             .unwrap()
-            .rows_stream::<(String,)>()
+            .rows_stream::<(i32,)>()
             .unwrap();
 
-        // The first page consists of exactly one row, which must arrive intact.
-        let (_ks_name,) = rows_stream.next().await.unwrap().unwrap();
+        assert_eq!(rows_stream.next().await.unwrap().unwrap(), (0,));
 
         stop_the_clock();
 
@@ -3044,11 +2702,11 @@ mod tests {
 
         // Case 2: a subsequent page fetch fails with a server error. The error
         // must reach the user through the page channel, with the same mapping.
-        fixture.change_request_rules(vec![
-            // Let the first page through, then fail all subsequent ones.
+        fixture.change_execute_rules(vec![
+            // Serve the first page, then fail all subsequent ones.
             RequestRule(
                 execute_opcode_condition().and(Condition::TrueForLimitedTimes(1)),
-                RequestReaction::noop(),
+                forge_page(&[0], Some(b"after_page_1")),
             ),
             RequestRule(
                 execute_opcode_condition(),
@@ -3062,10 +2720,10 @@ mod tests {
             .execute_iter(prepared, SerializedValues::new())
             .await
             .unwrap()
-            .rows_stream::<(String,)>()
+            .rows_stream::<(i32,)>()
             .unwrap();
 
-        let (_ks_name,) = rows_stream.next().await.unwrap().unwrap();
+        assert_eq!(rows_stream.next().await.unwrap().unwrap(), (0,));
 
         let err = rows_stream.next().await.unwrap().unwrap_err();
         assert_matches!(
@@ -3137,11 +2795,11 @@ mod tests {
 
         // Case 2: a subsequent page is not of Rows kind. The error must reach the
         // user through the page channel, with the same mapping.
-        fixture.change_request_rules(vec![
-            // Let the first page through, then spoil all subsequent ones.
+        fixture.change_execute_rules(vec![
+            // Serve the first page, then spoil all subsequent ones.
             RequestRule(
                 execute_opcode_condition().and(Condition::TrueForLimitedTimes(1)),
-                RequestReaction::noop(),
+                forge_page(&[0], Some(b"after_page_1")),
             ),
             RequestRule(execute_opcode_condition(), forge_void_result()),
         ]);
@@ -3150,149 +2808,15 @@ mod tests {
             .execute_iter(prepared, SerializedValues::new())
             .await
             .unwrap()
-            .rows_stream::<(String,)>()
+            .rows_stream::<(i32,)>()
             .unwrap();
 
-        let (_ks_name,) = rows_stream.next().await.unwrap().unwrap();
+        assert_eq!(rows_stream.next().await.unwrap().unwrap(), (0,));
 
         let err = rows_stream.next().await.unwrap().unwrap_err();
         assert_unexpected_response(err);
 
         fixture.finish().await;
-    }
-
-    #[tokio::test]
-    async fn test_coalescing() {
-        use std::num::NonZeroU64;
-
-        use super::WriteCoalescingDelay;
-        use crate::client::session_builder::SessionBuilder;
-
-        setup_tracing();
-        // It's difficult to write a reliable test that checks whether coalescing
-        // works like intended or not. Instead, this is a smoke test which is supposed
-        // to trigger the coalescing logic and check that everything works fine
-        // no matter whether coalescing is enabled or not.
-
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
-        let addr: SocketAddr = resolve_hostname(&uri).await;
-        let ks = unique_keyspace_name();
-
-        let session = SessionBuilder::new()
-            .known_node_addr(addr)
-            .build()
-            .await
-            .unwrap();
-
-        {
-            // Preparation phase
-            session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone())).await.unwrap();
-            session.use_keyspace(ks.clone(), false).await.unwrap();
-            session
-                .ddl("CREATE TABLE IF NOT EXISTS t (p int primary key, v blob)")
-                .await
-                .unwrap();
-        }
-
-        let subtest = |write_coalescing_delay: Option<WriteCoalescingDelay>, ks: String| async move {
-            let (connection, _) = super::open_connection(
-                &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address: addr }),
-                None,
-                &HostConnectionConfig {
-                    write_coalescing_delay,
-                    ..HostConnectionConfig::default()
-                },
-            )
-            .await
-            .unwrap();
-            let connection = Arc::new(connection);
-
-            connection
-                .use_keyspace(&super::VerifiedKeyspaceName::new(ks, false).unwrap())
-                .await
-                .unwrap();
-
-            connection.ddl("TRUNCATE t").await.unwrap();
-
-            let mut futs = Vec::new();
-
-            const NUM_BATCHES: i32 = 10;
-
-            for batch_size in 0..NUM_BATCHES {
-                // Each future should issue more and more queries in the first poll
-                let base = arithmetic_sequence_sum(batch_size);
-                let conn = connection.clone();
-                futs.push(tokio::task::spawn(async move {
-                    let futs = (base..base + batch_size).map(|j| {
-                        let q = Statement::new("INSERT INTO t (p, v) VALUES (?, ?)");
-                        let conn = conn.clone();
-                        async move {
-                            let prepared = conn.prepare(&q).await.unwrap();
-                            let values = prepared
-                                .serialize_values(&(j, vec![j as u8; j as usize]))
-                                .unwrap();
-                            let response =
-                                conn.execute_raw_unpaged(&prepared, &values).await.unwrap();
-                            // QueryResponse might contain an error - make sure that there were no errors
-                            let _nonerror_response =
-                                response.into_non_error_query_response().unwrap();
-                        }
-                    });
-                    let _joined: Vec<()> = futures::future::join_all(futs).await;
-                }));
-
-                tokio::task::yield_now().await;
-            }
-
-            let _joined: Vec<()> = futures::future::try_join_all(futs).await.unwrap();
-
-            // Check that everything was written properly
-            let range_end = arithmetic_sequence_sum(NUM_BATCHES);
-            let mut results = connection
-                .query_unpaged(&"SELECT p, v FROM t".into())
-                .await
-                .unwrap()
-                .into_rows_result()
-                .unwrap()
-                .rows::<(i32, Vec<u8>)>()
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
-            results.sort();
-
-            let expected = (0..range_end)
-                .map(|i| (i, vec![i as u8; i as usize]))
-                .collect::<Vec<_>>();
-
-            assert_eq!(results, expected);
-        };
-
-        // Non-deterministic sub-millisecond delay
-        subtest(
-            Some(WriteCoalescingDelay::SmallNondeterministic),
-            ks.clone(),
-        )
-        .await;
-        // 1ms delay
-        subtest(
-            Some(WriteCoalescingDelay::Milliseconds(
-                NonZeroU64::new(1).unwrap(),
-            )),
-            ks.clone(),
-        )
-        .await;
-        // No delay - coalescing disabled
-        subtest(None, ks.clone()).await;
-
-        {
-            // Teardown phase
-            session.ddl(format!("DROP KEYSPACE {ks} ")).await.unwrap();
-        }
-    }
-
-    // Returns the sum of integral numbers in the range [0..n)
-    fn arithmetic_sequence_sum(n: i32) -> i32 {
-        n * (n - 1) / 2
     }
 
     #[tokio::test]
@@ -3450,41 +2974,60 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn connection_is_closed_on_no_response_to_keepalives() {
         use crate::errors::BrokenConnectionErrorKind;
 
         setup_tracing();
 
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
-        let node_addr: SocketAddr = resolve_hostname(&uri).await;
 
+        let (options_tx, mut options_rx) = mpsc::unbounded_channel();
+        let answer_options_rule = RequestRule(
+            Condition::RequestOpcode(RequestOpcode::Options),
+            RequestReaction::forge_response(Arc::new(|frame: RequestFrame| {
+                ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
+            }))
+            .with_feedback_when_performed(options_tx),
+        );
         let drop_options_rule = RequestRule(
             Condition::RequestOpcode(RequestOpcode::Options),
             RequestReaction::drop_frame(),
         );
-
-        let config = HostConnectionConfig {
-            keepalive_interval: Some(Duration::from_millis(500)),
-            keepalive_timeout: Some(Duration::from_secs(1)),
-            ..Default::default()
+        // The first matching rule wins, so `options_rule` overrides the handshake rules.
+        let rules_with = |options_rule| {
+            let mut rules = vec![
+                options_rule,
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Query),
+                    forge_void_result(),
+                ),
+            ];
+            rules.extend(dry_mode_handshake_rules());
+            rules
         };
 
         let mut proxy = Proxy::builder()
             .with_node(
                 Node::builder()
                     .proxy_address(proxy_addr)
-                    .real_address(node_addr)
-                    .shard_awareness(ShardAwareness::QueryNode)
-                    .build(),
+                    .request_rules(rules_with(answer_options_rule))
+                    .build_dry_mode(),
             )
             .build()
             .run()
             .await
             .unwrap();
 
-        // Setup connection normally, without obstruction
+        let config = HostConnectionConfig {
+            keepalive_interval: Some(Duration::from_millis(500)),
+            keepalive_timeout: Some(Duration::from_secs(1)),
+            // With the in-memory transport, the paused clock cannot advance
+            // while a keepalive or its response is in flight.
+            transport_factory: Some(proxy.transport_factory()),
+            ..Default::default()
+        };
+
         let (conn, mut error_receiver) = open_connection(
             &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                 address: proxy_addr,
@@ -3495,9 +3038,12 @@ mod tests {
         .await
         .unwrap();
 
-        // As everything is normal, these queries should succeed.
+        // The first OPTIONS belongs to the handshake.
+        options_rx.recv().await.unwrap();
+
+        // As everything is normal, keepalives are answered and queries should succeed.
         for _ in 0..3 {
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            options_rx.recv().await.unwrap();
             conn.query_unpaged(&"SELECT host_id FROM system.local WHERE key='local'".into())
                 .await
                 .unwrap();
@@ -3508,8 +3054,7 @@ mod tests {
             Err(tokio::sync::oneshot::error::TryRecvError::Empty)
         );
 
-        // Set up proxy to drop keepalive messages
-        proxy.running_nodes[0].change_request_rules(Some(vec![drop_options_rule]));
+        proxy.running_nodes[0].change_request_rules(Some(rules_with(drop_options_rule)));
 
         // Wait until keepaliver gots impatient and terminates router.
         // Then, the error from keepaliver will be propagated to the error receiver.
@@ -3547,31 +3092,18 @@ mod tests {
         // A dry-mode proxy that allows finishing creation of a Session.
         // It performs the whole handshake on all connections, but responds to all
         // QUERY, PREPARE and EXECUTE requests with an error.
-        let proxy_rules = vec![
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Options),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_supported(frame.params, &HashMap::default()).unwrap()
-                })),
-            ),
-            RequestRule(
-                Condition::or(
-                    Condition::RequestOpcode(RequestOpcode::Startup),
-                    Condition::RequestOpcode(RequestOpcode::Register),
-                ),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_ready(frame.params)
-                })),
-            ),
-            RequestRule(
+        let proxy_rules = [
+            dry_mode_handshake_rules(),
+            vec![RequestRule(
                 Condition::any([
                     Condition::RequestOpcode(RequestOpcode::Query),
                     Condition::RequestOpcode(RequestOpcode::Prepare),
                     Condition::RequestOpcode(RequestOpcode::Execute),
                 ]),
                 RequestReaction::forge().server_error(),
-            ),
-        ];
+            )],
+        ]
+        .concat();
 
         let proxy = Proxy::builder()
             .with_node(
@@ -3598,6 +3130,7 @@ mod tests {
 
         let connection = session
             .get_cluster_state()
+            .topology
             .all_nodes
             .first()
             .unwrap()
@@ -3666,39 +3199,31 @@ mod tests {
             )
         };
 
-        let request_rules = vec![
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Options),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_supported(frame.params, &HashMap::new()).unwrap()
-                })),
-            ),
-            RequestRule(
-                Condition::RequestOpcode(RequestOpcode::Startup),
-                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
-                    ResponseFrame::forged_ready(frame.params)
-                })),
-            ),
-            mk_rule(
-                SUCCESSFUL_QUERY,
-                RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
-                    ResponseFrame::new(
-                        params.for_response(),
-                        ResponseOpcode::Result,
-                        Bytes::from_static(&[0, 0, 0, 1]), // Void response
-                    )
-                })),
-            ),
-            mk_rule(DROP_QUERY, RequestReaction::drop_frame()),
-            mk_rule(
-                DELAY_HALF_THRESHOLD_QUERY,
-                make_delayed_response(super::OLD_AGE_ORPHAN_THRESHOLD / 2),
-            ),
-            mk_rule(
-                DELAY_DOUBLE_THRESHOLD_QUERY,
-                make_delayed_response(2 * super::OLD_AGE_ORPHAN_THRESHOLD),
-            ),
-        ];
+        let request_rules = [
+            dry_mode_handshake_rules(),
+            vec![
+                mk_rule(
+                    SUCCESSFUL_QUERY,
+                    RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
+                        ResponseFrame::new(
+                            params.for_response(),
+                            ResponseOpcode::Result,
+                            Bytes::from_static(&[0, 0, 0, 1]), // Void response
+                        )
+                    })),
+                ),
+                mk_rule(DROP_QUERY, RequestReaction::drop_frame()),
+                mk_rule(
+                    DELAY_HALF_THRESHOLD_QUERY,
+                    make_delayed_response(super::OLD_AGE_ORPHAN_THRESHOLD / 2),
+                ),
+                mk_rule(
+                    DELAY_DOUBLE_THRESHOLD_QUERY,
+                    make_delayed_response(2 * super::OLD_AGE_ORPHAN_THRESHOLD),
+                ),
+            ],
+        ]
+        .concat();
 
         let proxy = Proxy::builder()
             .with_node(

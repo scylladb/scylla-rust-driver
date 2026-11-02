@@ -4,10 +4,10 @@ use super::frame_errors::LowLevelDeserializationError;
 #[cfg(test)]
 use assert_matches::assert_matches;
 use byteorder::{BigEndian, ReadBytesExt};
-use bytes::BufMut;
 use bytes::Bytes;
 #[cfg(test)]
 use bytes::BytesMut;
+use bytes::{Buf, BufMut};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
@@ -22,6 +22,23 @@ pub use scylla_cql_core::frame::types::{
     read_consistency, read_int, read_int_length, read_short, read_short_bytes, read_short_length,
     read_string, read_string_list, read_value,
 };
+
+/// Parses a prefix of `bytes` with `parse`, then drops the parsed prefix.
+///
+/// Unlike slicing `bytes`, this doesn't clone them. The first clone of `Bytes`
+/// created from a `Vec`, which response bodies are, allocates a shared header.
+// Without `#[inline]`, release builds don't inline it, which costs every SELECT
+// ~0.3% instructions.
+#[inline]
+pub(crate) fn parse_prefix<R>(bytes: &mut Bytes, parse: impl FnOnce(&mut &[u8]) -> R) -> R {
+    let mut buf = &bytes[..];
+    let ret = parse(&mut buf);
+    // Readers only consume the front of the buffer.
+    debug_assert_eq!(buf.as_ptr_range().end, bytes.as_ptr_range().end);
+    let parsed = bytes.len() - buf.len();
+    bytes.advance(parsed);
+    ret
+}
 
 pub(crate) fn read_raw_bytes<'a>(
     count: usize,

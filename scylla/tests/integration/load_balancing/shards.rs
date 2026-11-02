@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::utils::{
     PerformDDL, create_new_session_builder, scylla_supports_tablets, setup_tracing,
-    test_with_3_node_cluster, unique_keyspace_name,
+    test_with_3_node_cluster, unique_keyspace_name, wait_until_all_shards_are_connected,
 };
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session_builder::SessionBuilder;
@@ -46,6 +46,10 @@ async fn test_consistent_shard_awareness() {
             )
             .await
             .unwrap();
+
+        // The test asserts that requests reach one shard per node, which
+        // requires a connection to every shard.
+        wait_until_all_shards_are_connected(&session).await;
 
         let (feedback_txs, mut feedback_rxs): (Vec<_>, Vec<_>) = (0..3).map(|_| {
             mpsc::unbounded_channel::<(RequestFrame, Option<TargetShard>)>()

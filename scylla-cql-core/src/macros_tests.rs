@@ -2346,7 +2346,7 @@ mod derive_macros_integration {
             // etc. that usually pop up when generating code for empty structs.
             #[derive(SerializeRow)]
             #[scylla(crate = crate)]
-            #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.90
+            #[expect(dead_code)]
             struct TestRowWithNoColumns {}
 
             #[derive(SerializeRow, Debug, PartialEq, Eq, Default)]

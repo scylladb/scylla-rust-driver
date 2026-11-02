@@ -17,16 +17,16 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings --cfg scylla_unstable
   RUST_BACKTRACE: full
-  rust_min: 1.89.0 # <- Update this when bumping up MSRV
+  rust_min: 1.94.0 # <- Update this when bumping up MSRV
 
 jobs:
   static_checks:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           components: clippy, rustfmt
       - name: Print rustc version
@@ -57,6 +57,9 @@ jobs:
       # Verify scylla-cql-core separately
       - name: Clippy scylla-cql-core
         run: cargo clippy --all-targets -p scylla-cql-core --features "full-serialization"
+      # Checks of other crates enable scylla-cql-core features through feature unification.
+      - name: Clippy scylla-cql-core without features
+        run: cargo clippy --all-targets -p scylla-cql-core --features ""
 
       # Features checks.
       # No features.
@@ -135,26 +138,32 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: nextest
       - name: Print rustc version
         run: rustc --version
+      # Unit tests run before the cluster is set up, so that a unit test that
+      # tries to use a cluster fails. Such tests belong in integration tests.
+      - name: Run unit tests
+        run: |
+          RUST_LOG=trace cargo nextest run --all-features -E 'not binary_id(scylla::integration)'
       - name: Setup 3-node ScyllaDB cluster
         run: |
           sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
           make up
       # We need to run doctests separately, because nextest doesn't support them :(
       # https://github.com/nextest-rs/nextest/issues/16
+      # Some of them connect to the cluster.
       - name: Run doctests
         run: cargo test --doc --all-features
-      - name: Run tests
+      - name: Run integration tests
         run: |
-          RUST_LOG=trace cargo nextest run --all-features
+          RUST_LOG=trace cargo nextest run --all-features -E 'binary_id(scylla::integration)'
       - name: Check for stale test keyspaces
         run: cargo run --bin find-stale-test-keyspaces
       - name: Stop the docker cluster
@@ -182,9 +191,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Print rustc version
         run: rustc --version
       - name: Install scylla-ccm
@@ -206,9 +215,9 @@ jobs:
   min_rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust ${{ env.rust_min }}
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           toolchain: ${{ env.rust_min }}
       - name: Print Rust version
@@ -222,9 +231,9 @@ jobs:
   cargo_docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Compile docs
         run: RUSTDOCFLAGS=-Dwarnings cargo doc
 
@@ -233,12 +242,12 @@ jobs:
     env:
       RUSTDOCFLAGS: -Dwarnings
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust Nightly
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           toolchain: nightly
-      - uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: cargo-docs-rs
       - run: cargo docs-rs -p scylla

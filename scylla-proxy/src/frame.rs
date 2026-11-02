@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::Infallible;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use scylla_cql::frame::flag;
@@ -9,7 +10,7 @@ use scylla_cql::frame::request::{RequestDeserializationError, RequestV2};
 pub use scylla_cql::frame::response::ResponseOpcode;
 use scylla_cql::frame::response::error::DbError;
 use scylla_cql::frame::response::event::SchemaChangeEvent;
-use scylla_cql::frame::response::result::{ColumnSpec, ResultMetadata};
+use scylla_cql::frame::response::result::{ColumnSpec, Prepared, PreparedMetadata, ResultMetadata};
 use scylla_cql::frame::types;
 use scylla_cql::serialize::RowWriter;
 use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow};
@@ -21,6 +22,16 @@ use crate::errors::{ForgedRowsError, ReadFrameError};
 use crate::proxy::CompressionReader;
 
 const HEADER_SIZE: usize = 9;
+
+/// The kinds of a RESULT response body that the proxy forges, with their
+/// numbers in the CQL protocol.
+#[repr(i32)]
+enum ResultKind {
+    Void = 0x0001,
+    Rows = 0x0002,
+    Prepared = 0x0004,
+    SchemaChange = 0x0005,
+}
 
 // Parts of the frame header which are not determined by the request/response type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -197,6 +208,15 @@ impl ResponseFrame {
         ))
     }
 
+    /// Creates a `RESULT::Void` response frame, as sent by a server after a request
+    /// that returns nothing, for example a write or a batch.
+    pub fn forged_void(request_params: FrameParams) -> Self {
+        // A Void result has no body after its kind.
+        let write_nothing = |_: &mut BytesMut| Ok::<_, Infallible>(());
+        let Ok(frame) = Self::forged_result(request_params, ResultKind::Void, write_nothing);
+        frame
+    }
+
     /// Creates a `RESULT::Rows` response frame with the given columns and rows.
     ///
     /// Rows are serialized with the same machinery as bound values, so anything
@@ -219,23 +239,55 @@ impl ResponseFrame {
             rows_count += 1;
         }
 
-        let mut buf = BytesMut::new();
-        types::write_int(0x0002, &mut buf); // Kind: Rows.
-        // Every column carries its own table spec, so columns of different tables are allowed.
-        ResultMetadata::new_for_test(col_specs.len(), col_specs.to_vec()).serialize(
-            &mut buf,
-            false,
-            false,
-            paging_state,
-        )?;
-        types::write_int(i32::try_from(rows_count)?, &mut buf);
-        buf.extend_from_slice(&rows_buf);
+        Self::forged_result(request_params, ResultKind::Rows, |buf| {
+            // Every column carries its own table spec, so columns of different tables are allowed.
+            ResultMetadata::new_for_test(col_specs.len(), col_specs.to_vec()).serialize(
+                buf,
+                false,
+                false,
+                paging_state,
+            )?;
+            types::write_int(i32::try_from(rows_count)?, buf);
+            buf.extend_from_slice(&rows_buf);
+            Ok(())
+        })
+    }
 
-        Ok(ResponseFrame::new(
-            request_params.for_response(),
-            ResponseOpcode::Result,
-            buf.freeze(),
-        ))
+    /// Creates a `RESULT::Prepared` response frame, as sent by a server after a PREPARE request.
+    ///
+    /// `bind_col_specs` describe the bind markers of the statement, and `result_col_specs`
+    /// the columns of rows returned by executing it. No bind marker is reported to be
+    /// a partition key column.
+    pub fn forged_prepared(
+        request_params: FrameParams,
+        id: &[u8],
+        bind_col_specs: &[ColumnSpec<'_>],
+        result_col_specs: &[ColumnSpec<'_>],
+    ) -> Result<Self, std::num::TryFromIntError> {
+        let into_owned = |col_specs: &[ColumnSpec<'_>]| {
+            col_specs
+                .iter()
+                .cloned()
+                .map(ColumnSpec::into_owned)
+                .collect::<Vec<_>>()
+        };
+        let prepared = Prepared {
+            id: Bytes::copy_from_slice(id),
+            prepared_metadata: PreparedMetadata {
+                flags: 0,
+                col_count: bind_col_specs.len(),
+                pk_indexes: Vec::new(),
+                col_specs: into_owned(bind_col_specs),
+            },
+            result_metadata: ResultMetadata::new_for_test(
+                result_col_specs.len(),
+                into_owned(result_col_specs),
+            ),
+        };
+
+        Self::forged_result(request_params, ResultKind::Prepared, |buf| {
+            prepared.serialize(buf)
+        })
     }
 
     /// Creates a `RESULT::SchemaChange` response frame, as sent by a server after a DDL statement.
@@ -243,9 +295,21 @@ impl ResponseFrame {
         request_params: FrameParams,
         event: &SchemaChangeEvent,
     ) -> Result<Self, std::num::TryFromIntError> {
+        Self::forged_result(request_params, ResultKind::SchemaChange, |buf| {
+            event.serialize(buf)
+        })
+    }
+
+    /// Creates a `RESULT` response frame of the given `kind`.
+    /// `write_kind_body` writes the part of the body that follows the kind.
+    fn forged_result<E>(
+        request_params: FrameParams,
+        kind: ResultKind,
+        write_kind_body: impl FnOnce(&mut BytesMut) -> Result<(), E>,
+    ) -> Result<Self, E> {
         let mut buf = BytesMut::new();
-        types::write_int(0x0005, &mut buf); // Kind: SchemaChange.
-        event.serialize(&mut buf)?;
+        types::write_int(kind as i32, &mut buf);
+        write_kind_body(&mut buf)?;
 
         Ok(ResponseFrame::new(
             request_params.for_response(),

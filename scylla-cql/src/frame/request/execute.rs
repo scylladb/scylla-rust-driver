@@ -102,6 +102,22 @@ impl SerializableRequest for ExecuteV2<'_> {
         }
         Ok(())
     }
+
+    fn serialized_size(&self) -> Option<usize> {
+        // Both ids are [short bytes].
+        let id_size = size_of::<u16>() + self.id.as_ref().len();
+        let result_metadata_id_size = self
+            .result_metadata_id
+            .as_ref()
+            .map_or(0, |id| size_of::<u16>() + id.as_ref().len());
+        let tablet_version_block_size = self.tablet_version_block.map_or(0, |_| size_of::<u8>());
+        Some(
+            id_size
+                + result_metadata_id_size
+                + self.parameters.serialized_size()
+                + tablet_version_block_size,
+        )
+    }
 }
 
 impl DeserializableRequest for ExecuteV2<'static> {
