@@ -1638,7 +1638,7 @@ impl Connection {
             if !streams.complete(params.stream, response) {
                 // Unsolicited frame. This should not happen and indicates
                 // a bug either in the driver, or in the database
-                debug!(
+                warn!(
                     "Received response with unexpected StreamId {}",
                     params.stream
                 );
