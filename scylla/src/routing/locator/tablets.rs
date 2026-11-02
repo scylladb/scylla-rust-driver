@@ -844,11 +844,6 @@ impl TableTablets {
         // All unknown replicas were either resolved or whole tablets removed.
         self.has_unknown_replicas = false;
     }
-
-    #[cfg(test)]
-    fn new_for_test() -> Self {
-        Self::new()
-    }
 }
 
 /// Needed to query hashbrown::HashMap<TableSpec<'static>, TableTablets>
@@ -1543,7 +1538,7 @@ mod tests {
 
     #[test]
     fn table_tablets_empty() {
-        let tablets: TableTablets = TableTablets::new_for_test();
+        let tablets: TableTablets = TableTablets::new();
         assert_eq!(tablets.tablet_for_token(Token::new(1)), None);
     }
 
@@ -1571,7 +1566,7 @@ mod tests {
 
     #[test]
     fn table_tablets_single() {
-        let mut tablets = TableTablets::new_for_test();
+        let mut tablets = TableTablets::new();
 
         insert_ranges(&mut tablets, &[(-200, 1000)]);
         verify_ranges(&tablets, &[(-200, 1000)]);
@@ -1631,7 +1626,7 @@ mod tests {
         };
         let replicas = || vec![(node.host_id, 0), (other.host_id, 1)];
 
-        let mut tablets = TableTablets::new_for_test();
+        let mut tablets = TableTablets::new();
         tablets.add_tablet(resolve(raw(0, 100, replicas(), Some(7))));
 
         assert!(tablets.contains(&raw(0, 100, replicas(), Some(7))));
@@ -1659,14 +1654,14 @@ mod tests {
         // A present tablet with unresolved replicas never counts as already
         // there: the next feedback may resolve them.
         let with_unknown = || raw(0, 100, vec![(node.host_id, 0), (unknown, 1)], Some(7));
-        let mut tablets = TableTablets::new_for_test();
+        let mut tablets = TableTablets::new();
         tablets.add_tablet(resolve(with_unknown()));
         assert!(!tablets.contains(&with_unknown()));
     }
 
     #[test]
     fn test_adding_tablets_non_overlapping() {
-        let mut tablets = TableTablets::new_for_test();
+        let mut tablets = TableTablets::new();
         const RANGES: &[(i64, i64)] = &[
             (-2000000, -1900001),
             (-1900000, -1700001),
@@ -1681,7 +1676,7 @@ mod tests {
 
     #[test]
     fn test_adding_tablet_same() {
-        let mut tablets = TableTablets::new_for_test();
+        let mut tablets = TableTablets::new();
 
         insert_ranges(&mut tablets, &[(-2000000, -1800000), (-2000000, -1800000)]);
         verify_ranges(&tablets, &[(-2000000, -1800000)]);
@@ -1689,7 +1684,7 @@ mod tests {
 
     #[test]
     fn test_adding_tablet_overlapping_one() {
-        let mut tablets = TableTablets::new_for_test();
+        let mut tablets = TableTablets::new();
         insert_ranges(&mut tablets, &[(-2000000, -1800000)]);
         verify_ranges(&tablets, &[(-2000000, -1800000)]);
 
@@ -1704,7 +1699,7 @@ mod tests {
 
     #[test]
     fn test_adding_tablet_fill_hole() {
-        let mut tablets = TableTablets::new_for_test();
+        let mut tablets = TableTablets::new();
 
         // Fill a hole between two tablets
         insert_ranges(
@@ -1727,7 +1722,7 @@ mod tests {
 
     #[test]
     fn test_adding_tablet_neighbours_not_removed() {
-        let mut tablets = TableTablets::new_for_test();
+        let mut tablets = TableTablets::new();
         insert_ranges(
             &mut tablets,
             &[
@@ -1762,7 +1757,7 @@ mod tests {
 
     #[test]
     fn replace_multiple_tablets_middle() {
-        let mut tablets = TableTablets::new_for_test();
+        let mut tablets = TableTablets::new();
         insert_ranges(
             &mut tablets,
             &[
