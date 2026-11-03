@@ -3563,6 +3563,10 @@ mod latency_awareness {
                 scale,
             );
 
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "The policy owns this task, not a session. Many sessions can share a policy"
+            )]
             let updater_handle = AbortOnDropHandle::new(tokio::task::spawn(async move {
                 let mut update_scheduler = tokio::time::interval(update_rate);
                 loop {
