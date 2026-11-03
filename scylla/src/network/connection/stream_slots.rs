@@ -54,6 +54,9 @@ pub(super) struct StreamSlots {
     segments: [OnceLock<Box<[StdMutex<SlotState>]>>; SEGMENT_COUNT],
     // Locked only while holding a slot lock, never the other way around.
     orphans: StdMutex<OrphanageTracker>,
+    /// Set by the first [`fail_all`](Self::fail_all). After it, a request
+    /// that allocates a stream id fails with this error at once.
+    closed: OnceLock<BrokenConnectionError>,
 }
 
 #[derive(Default)]
@@ -77,6 +80,7 @@ impl StreamSlots {
                 .collect(),
             segments: Default::default(),
             orphans: StdMutex::new(OrphanageTracker::new()),
+            closed: OnceLock::new(),
         }
     }
 
@@ -114,7 +118,14 @@ impl StreamSlots {
                         matches!(*state, SlotState::Free),
                         "stream id {id} allocated while its slot is in use"
                     );
-                    *state = SlotState::Waiting(None);
+                    // `slot` can create the segment. The fence comes after it,
+                    // and `closed` is read under the slot lock. See `fail_all`.
+                    atomic::fence(atomic::Ordering::SeqCst);
+                    *state = match self.closed.get() {
+                        // No response can arrive on a closed connection.
+                        Some(error) => SlotState::Ready(Err(error.clone())),
+                        None => SlotState::Waiting(None),
+                    };
                     drop(state);
                     return Some(AllocatedStream { streams: self, id });
                 }
@@ -181,8 +192,31 @@ impl StreamSlots {
         }
     }
 
-    /// Fails all requests that wait for a response.
+    /// Fails all requests that wait for a response. Requests that allocate a
+    /// stream id after this call fail at once.
+    ///
+    /// Only the first call sets the error. The next calls use the same error.
+    ///
+    /// This does not wait, so a `Drop` can call it. Thus, the requests also
+    /// fail when the router is aborted.
     pub(super) fn fail_all(&self, error: &BrokenConnectionError) {
+        let error = self.closed.get_or_init(|| error.clone());
+        // Do not miss a request that allocates a stream id while this runs.
+        // This sets `closed`, then reads which segments exist. `allocate`
+        // gets its segment, which can create it, then reads `closed`. These
+        // are two different variables, so acquire and release (as in
+        // `OnceLock`) let both reads see the old values. Then this skips the
+        // segment, and the request waits forever. The `SeqCst` fences here
+        // and in `allocate` prevent this. One of the two fences is first:
+        // - This fence is first: `allocate` sees `closed`, and it fails the
+        //   request itself.
+        // - The fence in `allocate` is first: this sees the segment and locks
+        //   the slot. The slot lock then orders the two:
+        //   - If `allocate` locked the slot first, the slot is `Waiting`, and
+        //     this fails the request.
+        //   - If this locked the slot first, `allocate` sees `closed` when it
+        //     locks the slot, and it fails the request itself.
+        atomic::fence(atomic::Ordering::SeqCst);
         let slots = self
             .segments
             .iter()
@@ -427,6 +461,31 @@ mod tests {
         streams.fail_all(&BrokenConnectionErrorKind::ChannelError.into());
         assert!(response.await.is_err());
         let _response = channel.submit(&streams, 0);
+    }
+
+    #[tokio::test]
+    async fn stream_slots_fail_requests_after_fail_all() {
+        setup_tracing();
+        let streams = StreamSlots::new();
+        let mut channel = SubmitChannel::new();
+
+        // 100 waiting requests span the first two slot segments.
+        let mut waiting: Vec<_> = (0..100).map(|id| channel.submit(&streams, id)).collect();
+        for response in &mut waiting {
+            assert!(futures::poll!(response).is_pending());
+        }
+        streams.fail_all(&BrokenConnectionErrorKind::ChannelError.into());
+        for response in waiting {
+            assert!(response.await.is_err());
+        }
+
+        // A request that allocates its stream id after `fail_all` fails at once.
+        // The router can be gone already, so nothing else would fail it.
+        let mut late = channel.submit(&streams, 0);
+        assert!(matches!(
+            futures::poll!(&mut late),
+            std::task::Poll::Ready(Err(_))
+        ));
     }
 
     #[tokio::test]

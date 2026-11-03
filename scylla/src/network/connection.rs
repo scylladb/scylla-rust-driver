@@ -125,6 +125,22 @@ struct RouterHandle {
     keepalive_hint: Notify,
 }
 
+/// Fails the requests of a connection when its router stops.
+///
+/// The router can be aborted while requests wait for their responses, for
+/// example by a session shutdown. An abort runs only `Drop`, so the error
+/// path at the end of `router` does not run.
+struct FailRequestsOnDrop<'a>(&'a StreamSlots);
+
+impl Drop for FailRequestsOnDrop<'_> {
+    fn drop(&mut self) {
+        // After the error path of `router`, this changes nothing: `fail_all`
+        // keeps the error of its first call.
+        self.0
+            .fail_all(&BrokenConnectionErrorKind::ChannelError.into());
+    }
+}
+
 impl RouterHandle {
     async fn send_request(
         &self,
@@ -1631,6 +1647,7 @@ impl Connection {
     ) {
         let (read_half, write_half) = split(stream);
         let streams = &router_handle.streams;
+        let _fail_requests_on_stop = FailRequestsOnDrop(streams);
 
         let write_coalescing_delay = config.write_coalescing_delay;
 
@@ -1667,12 +1684,6 @@ impl Connection {
             Ok(_) => return, // Connection was dropped, we can return
             Err(err) => err,
         };
-
-        // Draining the closed channel waits for requests that reserved room in it.
-        // After it, each request either failed to reserve room (and got an error),
-        // or waits in its stream slot, and no more stream ids can be allocated.
-        receiver.close();
-        while receiver.recv().await.is_some() {}
 
         // Respond to all pending requests with the error
         streams.fail_all(&error);
