@@ -81,13 +81,14 @@ impl SerializedRequest {
             data = vec![0; HEADER_SIZE];
             compress_append(&body, compression, &mut data)?;
         } else {
-            let body_size = req.serialized_size();
-            data = Vec::with_capacity(HEADER_SIZE + body_size.unwrap_or(0));
+            let (min_body_size, max_body_size) = req.serialized_size_hint();
+            data = Vec::with_capacity(HEADER_SIZE + min_body_size);
             data.resize(HEADER_SIZE, 0);
             req.serialize(&mut data)?;
+            let body_size = data.len() - HEADER_SIZE;
             debug_assert!(
-                body_size.is_none_or(|size| size == data.len() - HEADER_SIZE),
-                "serialized_size() does not match the serialized body"
+                min_body_size <= body_size && max_body_size.is_none_or(|max| body_size <= max),
+                "serialized_size_hint() does not match the serialized body"
             );
         }
 

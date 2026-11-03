@@ -10,7 +10,8 @@
 use std::collections::{HashMap, HashSet};
 use std::hint::black_box;
 
-use benchmarks::deserialization::{COLLECTION_LEN, SerializedValue, UDT_FIELDS, VECTOR_DIMENSIONS};
+use benchmarks::deserialization::SerializedValue;
+use benchmarks::value::{COLLECTION_LEN, TypedValue, UDT_FIELDS, VECTOR_DIMENSIONS};
 use gungraun::Dhat;
 use gungraun::prelude::*;
 use scylla::value::CqlValue;
@@ -26,23 +27,32 @@ use scylla::value::CqlValue;
 type State = (SerializedValue, usize);
 
 fn setup_list_int(n: usize) -> State {
-    (SerializedValue::list_int(COLLECTION_LEN), n)
+    (
+        SerializedValue::new(TypedValue::list_int(COLLECTION_LEN)),
+        n,
+    )
 }
 
 fn setup_set_int(n: usize) -> State {
-    (SerializedValue::set_int(COLLECTION_LEN), n)
+    (SerializedValue::new(TypedValue::set_int(COLLECTION_LEN)), n)
 }
 
 fn setup_map_int_bigint(n: usize) -> State {
-    (SerializedValue::map_int_bigint(COLLECTION_LEN), n)
+    (
+        SerializedValue::new(TypedValue::map_int_bigint(COLLECTION_LEN)),
+        n,
+    )
 }
 
 fn setup_vector_float(n: usize) -> State {
-    (SerializedValue::vector_float(VECTOR_DIMENSIONS), n)
+    (
+        SerializedValue::new(TypedValue::vector_float(VECTOR_DIMENSIONS)),
+        n,
+    )
 }
 
 fn setup_udt(n: usize) -> State {
-    (SerializedValue::udt_of_ints(UDT_FIELDS), n)
+    (SerializedValue::new(TypedValue::udt_of_ints(UDT_FIELDS)), n)
 }
 
 // Dropping the state is done in teardown so that it is not attributed to the
