@@ -4,6 +4,7 @@
 
 use super::execution::RequestPaging;
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle};
+use super::in_flight::{InFlightGuard, InFlightRequests};
 use super::pager::QueryPager;
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
@@ -23,7 +24,7 @@ use crate::errors::DbError;
 use crate::errors::{
     BadQuery, BrokenConnectionError, ExecutionError, MetadataError, NewSessionError,
     PagerExecutionError, PrepareError, RequestAttemptError, RequestError, SchemaAgreementError,
-    TracingError, UseKeyspaceError,
+    SessionShutDownError, TracingError, UseKeyspaceError,
 };
 use crate::frame::response::NonErrorResponse;
 use crate::frame::response::result;
@@ -95,6 +96,9 @@ pub struct Session {
     default_execution_profile_handle: ExecutionProfileHandle,
     schema_agreement_interval: Duration,
     metrics: Arc<Metrics>,
+    /// Requests that public methods are executing. Pagers share it,
+    /// because they fetch pages after the public method returns.
+    in_flight: Arc<InFlightRequests>,
     schema_agreement_timeout: Duration,
     schema_agreement_automatic_waiting: bool,
     refresh_metadata_on_auto_schema_agreement: bool,
@@ -120,6 +124,7 @@ impl std::fmt::Debug for Session {
             .field("schema_agreement_interval", &self.schema_agreement_interval);
 
         d.field("metrics", &self.metrics);
+        d.field("in_flight", &self.in_flight);
 
         d.field(
             "auto_await_schema_agreement_timeout",
@@ -748,7 +753,9 @@ impl Session {
         statement: impl Into<Statement>,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
-        self.do_query_unpaged(&statement.into(), values).await
+        let request = self.enter_request()?;
+        self.do_query_unpaged(&request, &statement.into(), values)
+            .await
     }
 
     /// Queries a single page from the database, optionally continuing from a saved point.
@@ -808,7 +815,8 @@ impl Session {
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        self.do_query_single_page(&statement.into(), values, paging_state)
+        let request = self.enter_request()?;
+        self.do_query_single_page(&request, &statement.into(), values, paging_state)
             .await
     }
 
@@ -855,7 +863,8 @@ impl Session {
         statement: impl Into<Statement>,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
-        self.do_query_iter(statement.into(), values).await
+        let request = self.enter_request()?;
+        self.do_query_iter(&request, statement.into(), values).await
     }
 
     /// Execute a prepared statement. Requires a [PreparedStatement]
@@ -908,18 +917,21 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
+        let request = self.enter_request()?;
         let serialized_values = prepared.serialize_values(&values)?;
-        self.execute_unpaged_nongeneric(prepared, &serialized_values)
+        self.execute_unpaged_nongeneric(&request, prepared, &serialized_values)
             .await
     }
 
     async fn execute_unpaged_nongeneric(
         &self,
+        request: &InFlightGuard,
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
     ) -> Result<QueryResult, ExecutionError> {
         let (result, paging_state) = self
             .execute(
+                request,
                 prepared,
                 serialized_values,
                 None,
@@ -985,7 +997,8 @@ impl Session {
         &self,
         bound: &BoundStatement,
     ) -> Result<QueryResult, ExecutionError> {
-        self.execute_unpaged_nongeneric(&bound.prepared, &bound.values)
+        let request = self.enter_request()?;
+        self.execute_unpaged_nongeneric(&request, &bound.prepared, &bound.values)
             .await
     }
 
@@ -1051,19 +1064,22 @@ impl Session {
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
+        let request = self.enter_request()?;
         let serialized_values = prepared.serialize_values(&values)?;
-        self.execute_single_page_nongeneric(prepared, &serialized_values, paging_state)
+        self.execute_single_page_nongeneric(&request, prepared, &serialized_values, paging_state)
             .await
     }
 
     async fn execute_single_page_nongeneric(
         &self,
+        request: &InFlightGuard,
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         let page_size = prepared.get_validated_page_size();
         self.execute(
+            request,
             prepared,
             serialized_values,
             Some(page_size),
@@ -1137,7 +1153,8 @@ impl Session {
         bound: &BoundStatement,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        self.execute_single_page_nongeneric(&bound.prepared, &bound.values, paging_state)
+        let request = self.enter_request()?;
+        self.execute_single_page_nongeneric(&request, &bound.prepared, &bound.values, paging_state)
             .await
     }
 
@@ -1185,10 +1202,11 @@ impl Session {
         prepared: impl Into<PreparedStatement>,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
+        let request = self.enter_request()?;
         let prepared = prepared.into();
         let serialized_values = prepared.serialize_values(&values)?;
 
-        self.execute_iter_nongeneric(prepared, serialized_values)
+        self.execute_iter_nongeneric(&request, prepared, serialized_values)
             .await
     }
 
@@ -1241,7 +1259,8 @@ impl Session {
         &self,
         bound: BoundStatement,
     ) -> Result<QueryPager, PagerExecutionError> {
-        self.execute_iter_nongeneric(bound.prepared, bound.values)
+        let request = self.enter_request()?;
+        self.execute_iter_nongeneric(&request, bound.prepared, bound.values)
             .await
     }
 
@@ -1296,6 +1315,7 @@ impl Session {
         batch: &Batch,
         values: impl BatchValues,
     ) -> Result<QueryResult, ExecutionError> {
+        let request = self.enter_request()?;
         // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
         // If users batch statements by shard, they will be rewarded with full shard awareness
 
@@ -1362,6 +1382,7 @@ impl Session {
             Coordinator,
         ) = await_in_span!(
             self.run_request(
+                &request,
                 &cluster_state,
                 routing_info,
                 exec_params,
@@ -1547,6 +1568,7 @@ impl Session {
             default_execution_profile_handle,
             schema_agreement_interval: config.schema_agreement_interval,
             metrics,
+            in_flight: Arc::new(InFlightRequests::new()),
             schema_agreement_timeout: config.schema_agreement_timeout,
             schema_agreement_automatic_waiting: config.schema_agreement_automatic_waiting,
             refresh_metadata_on_auto_schema_agreement: config
@@ -1561,8 +1583,10 @@ impl Session {
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
+            // Nothing can shut down the session before it is returned, so this does not fail.
+            let request = session.enter_request().map_err(UseKeyspaceError::from)?;
             session
-                .do_use_keyspace(keyspace_name, config.keyspace_case_sensitive)
+                .do_use_keyspace(&request, keyspace_name, config.keyspace_case_sensitive)
                 .await?;
         }
 
@@ -1605,11 +1629,13 @@ impl Session {
 
     async fn do_query_unpaged(
         &self,
+        request: &InFlightGuard,
         statement: &Statement,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
         let (result, paging_state_response) = self
             .query(
+                request,
                 statement,
                 values,
                 None,
@@ -1630,11 +1656,13 @@ impl Session {
 
     async fn do_query_single_page(
         &self,
+        request: &InFlightGuard,
         statement: &Statement,
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         self.query(
+            request,
             statement,
             values,
             Some(statement.get_validated_page_size()),
@@ -1657,6 +1685,7 @@ impl Session {
     /// should be made.
     async fn query(
         &self,
+        request: &InFlightGuard,
         statement: &Statement,
         values: impl SerializeRow,
         page_size: Option<PageSize>,
@@ -1748,6 +1777,7 @@ impl Session {
             Coordinator,
         ) = await_in_span!(
             self.run_request(
+                request,
                 &cluster_state,
                 routing_info,
                 exec_params,
@@ -1775,6 +1805,7 @@ impl Session {
 
     pub(crate) async fn handle_set_keyspace_response(
         &self,
+        request: &InFlightGuard,
         response: &NonErrorQueryResponse,
     ) -> Result<(), UseKeyspaceError> {
         if let Some(set_keyspace) = response.as_set_keyspace() {
@@ -1782,7 +1813,7 @@ impl Session {
                 "Detected USE KEYSPACE query, setting session's keyspace to {}",
                 set_keyspace.keyspace_name
             );
-            self.do_use_keyspace(set_keyspace.keyspace_name.clone(), true)
+            self.do_use_keyspace(request, set_keyspace.keyspace_name.clone(), true)
                 .await?;
         }
 
@@ -1822,17 +1853,18 @@ impl From<AutoSchemaAwaitingError> for PagerExecutionError {
 impl Session {
     pub(crate) async fn handle_auto_await_schema_agreement(
         &self,
+        request: &InFlightGuard,
         response: &NonErrorQueryResponse,
         coordinator_id: Uuid,
     ) -> Result<(), AutoSchemaAwaitingError> {
         if self.schema_agreement_automatic_waiting && response.as_schema_change().is_some() {
             debug!("Detected schema change, so awaiting schema agreement automatically...");
-            self.await_schema_agreement_with_required_node(Some(coordinator_id))
+            self.await_schema_agreement_with_required_node(request, Some(coordinator_id))
                 .await?;
             debug!("Auto schema agreement awaiting: schema agreement reached.",);
 
             if self.refresh_metadata_on_auto_schema_agreement {
-                self.do_refresh_metadata().await?;
+                self.do_refresh_metadata(request).await?;
             }
         }
 
@@ -1841,27 +1873,30 @@ impl Session {
 
     async fn do_query_iter(
         &self,
+        request: &InFlightGuard,
         statement: Statement,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
         if values.is_empty() {
-            self.do_query_iter_without_values(statement).await
+            self.do_query_iter_without_values(request, statement).await
         } else {
             // Making QueryPager::new_for_query work with values is too hard (if even possible)
             // so instead of sending one prepare to a specific connection on each iterator query,
             // we fully prepare a statement beforehand.
-            let prepared = self.prepare_nongeneric(&statement).await?;
+            let prepared = self.prepare_nongeneric(request, &statement).await?;
             let values = prepared.serialize_values(&values)?;
-            self.execute_iter_nongeneric(prepared, values).await
+            self.execute_iter_nongeneric(request, prepared, values)
+                .await
         }
     }
 
     /// `Session::query_iter` specialization for empty values.
     async fn do_query_iter_without_values(
         &self,
+        request: &InFlightGuard,
         statement: Statement,
     ) -> Result<QueryPager, PagerExecutionError> {
-        QueryPager::new_for_unprepared_statement_without_values(self, statement).await
+        QueryPager::new_for_unprepared_statement_without_values(request, self, statement).await
     }
 
     /// Prepares a statement on the server side and returns a prepared statement,
@@ -1926,13 +1961,15 @@ impl Session {
         &self,
         statement: impl Into<Statement>,
     ) -> Result<PreparedStatement, PrepareError> {
+        let request = self.enter_request()?;
         let statement = statement.into();
-        self.prepare_nongeneric(&statement).await
+        self.prepare_nongeneric(&request, &statement).await
     }
 
     // Introduced to avoid monomorphisation of this large function.
     async fn prepare_nongeneric(
         &self,
+        _request: &InFlightGuard,
         statement: &Statement,
     ) -> Result<PreparedStatement, PrepareError> {
         let cluster_state = self.get_cluster_state();
@@ -2054,6 +2091,7 @@ impl Session {
         paged: bool,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
+        let request = self.enter_request()?;
         let (page_size, request_paging) = if paged {
             (
                 Some(prepared.get_validated_page_size()),
@@ -2064,6 +2102,7 @@ impl Session {
         };
 
         self.execute(
+            &request,
             prepared,
             serialized_values,
             page_size,
@@ -2085,6 +2124,7 @@ impl Session {
     /// should be made.
     async fn execute(
         &self,
+        request: &InFlightGuard,
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
         page_size: Option<PageSize>,
@@ -2160,6 +2200,7 @@ impl Session {
             Coordinator,
         ) = await_in_span!(
             self.run_request(
+                request,
                 &cluster_state,
                 routing_info,
                 exec_params,
@@ -2200,10 +2241,11 @@ impl Session {
     ///   if special compile flag is passed.
     async fn execute_iter_nongeneric(
         &self,
+        request: &InFlightGuard,
         prepared: PreparedStatement,
         values: SerializedValues,
     ) -> Result<QueryPager, PagerExecutionError> {
-        QueryPager::new_for_prepared_statement(self, prepared, values).await
+        QueryPager::new_for_prepared_statement(request, self, prepared, values).await
     }
 
     /// This is essentially the same as `execute_iter_nongeneric`, but it is *public*
@@ -2224,7 +2266,9 @@ impl Session {
         prepared: PreparedStatement,
         values: SerializedValues,
     ) -> Result<QueryPager, PagerExecutionError> {
-        self.execute_iter_nongeneric(prepared, values).await
+        let request = self.enter_request()?;
+        self.execute_iter_nongeneric(&request, prepared, values)
+            .await
     }
 
     /// Prepares all statements within the batch and returns a new batch where every
@@ -2256,6 +2300,8 @@ impl Session {
     /// # }
     /// ```
     pub async fn prepare_batch(&self, batch: &Batch) -> Result<Batch, PrepareError> {
+        let request = self.enter_request()?;
+        let request = &request;
         let mut prepared_batch = batch.clone();
 
         try_join_all(
@@ -2264,7 +2310,7 @@ impl Session {
                 .iter_mut()
                 .map(|statement| async move {
                     if let BatchStatement::Query(query) = statement {
-                        let prepared = self.prepare_nongeneric(query).await?;
+                        let prepared = self.prepare_nongeneric(request, query).await?;
                         *statement = BatchStatement::PreparedStatement(prepared);
                     }
                     Ok::<(), PrepareError>(())
@@ -2327,7 +2373,8 @@ impl Session {
         keyspace_name: impl Into<String>,
         case_sensitive: bool,
     ) -> Result<(), UseKeyspaceError> {
-        self.do_use_keyspace(keyspace_name.into(), case_sensitive)
+        let request = self.enter_request()?;
+        self.do_use_keyspace(&request, keyspace_name.into(), case_sensitive)
             .await
     }
 
@@ -2336,6 +2383,7 @@ impl Session {
     /// executes needs to change the keyspace.
     pub(crate) async fn do_use_keyspace(
         &self,
+        _request: &InFlightGuard,
         keyspace_name: String,
         case_sensitive: bool,
     ) -> Result<(), UseKeyspaceError> {
@@ -2357,13 +2405,14 @@ impl Session {
     /// Normally this is not needed, the driver should automatically detect
     /// all metadata changes in the cluster.
     pub async fn refresh_metadata(&self) -> Result<(), MetadataError> {
-        self.do_refresh_metadata().await
+        let request = self.enter_request()?;
+        self.do_refresh_metadata(&request).await
     }
 
     /// Implements [`Session::refresh_metadata`].
     /// The driver calls this function directly, when a request that it
     /// executes needs fresh metadata.
-    async fn do_refresh_metadata(&self) -> Result<(), MetadataError> {
+    async fn do_refresh_metadata(&self, _request: &InFlightGuard) -> Result<(), MetadataError> {
         debug!("Session: requested metadata refresh");
         let res = self.cluster.refresh_metadata().await;
         debug!("Session: finished metadata refresh");
@@ -2377,6 +2426,23 @@ impl Session {
     #[cfg(feature = "metrics")]
     pub fn get_metrics(&self) -> Arc<Metrics> {
         self.get_metrics_priv()
+    }
+
+    /// Admits a request that a public method starts.
+    ///
+    /// Each public method that sends requests to the cluster calls this
+    /// first, and keeps the guard until it returns. The steps of an admitted
+    /// request must not call it again: they must not be rejected halfway.
+    ///
+    /// The internal functions that send requests take a reference to the
+    /// guard as an argument. So a public method that does not call this can
+    /// not call them, and does not compile.
+    fn enter_request(&self) -> Result<InFlightGuard, SessionShutDownError> {
+        self.in_flight.try_enter().ok_or(SessionShutDownError)
+    }
+
+    pub(crate) fn get_in_flight_requests(&self) -> &Arc<InFlightRequests> {
+        &self.in_flight
     }
 
     pub(crate) fn get_metrics_priv(&self) -> Arc<Metrics> {
@@ -2396,10 +2462,11 @@ impl Session {
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/tracing/tracing.html)
     /// for more information about query tracing
     pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, TracingError> {
+        let request = self.enter_request()?;
         // tracing_info_fetch_attempts is NonZeroU32 so at least one attempt will be made
         for _ in 0..self.tracing_info_fetch_attempts.get() {
             let current_try: Option<TracingInfo> =
-                self.try_getting_tracing_info(tracing_id).await?;
+                self.try_getting_tracing_info(&request, tracing_id).await?;
 
             match current_try {
                 Some(tracing_info) => return Ok(tracing_info),
@@ -2444,6 +2511,7 @@ impl Session {
     // If there is some other error returns this error
     async fn try_getting_tracing_info(
         &self,
+        request: &InFlightGuard,
         tracing_id: &Uuid,
     ) -> Result<Option<TracingInfo>, TracingError> {
         // Get statements for tracing queries.
@@ -2453,8 +2521,8 @@ impl Session {
 
         // Using non-public do_query_unpaged allows us to avoid cloning.
         let (traces_session_res, traces_events_res) = tokio::try_join!(
-            self.do_query_unpaged(traces_session_stmt, (tracing_id,)),
-            self.do_query_unpaged(traces_events_stmt, (tracing_id,))
+            self.do_query_unpaged(request, traces_session_stmt, (tracing_id,)),
+            self.do_query_unpaged(request, traces_events_stmt, (tracing_id,))
         )?;
 
         // Get tracing info
@@ -2513,6 +2581,7 @@ impl Session {
     // maybe once async closures get stabilized this can be fixed
     async fn run_request<'a, QueryFut>(
         &'a self,
+        request: &InFlightGuard,
         state: &ClusterState,
         routing_info: RoutingInfo<'a>,
         exec_params: RequestExecutionParams<'a>,
@@ -2546,8 +2615,12 @@ impl Session {
         if let RunRequestResult::Completed(ref response) = result
             && (response.as_set_keyspace().is_some() || response.as_schema_change().is_some())
         {
-            Box::pin(self.handle_response_side_effects(response, coordinator.node().host_id))
-                .await?;
+            Box::pin(self.handle_response_side_effects(
+                request,
+                response,
+                coordinator.node().host_id,
+            ))
+            .await?;
         }
 
         Ok((result, coordinator))
@@ -2558,11 +2631,12 @@ impl Session {
     // the request's future instead of reserving separate space for it.
     async fn handle_response_side_effects(
         &self,
+        request: &InFlightGuard,
         response: &NonErrorQueryResponse,
         coordinator_id: Uuid,
     ) -> Result<(), ExecutionError> {
-        self.handle_set_keyspace_response(response).await?;
-        self.handle_auto_await_schema_agreement(response, coordinator_id)
+        self.handle_set_keyspace_response(request, response).await?;
+        self.handle_auto_await_schema_agreement(request, response, coordinator_id)
             .await?;
         Ok(())
     }
@@ -2575,7 +2649,9 @@ impl Session {
     /// If agreement is not reached in `Session::schema_agreement_timeout`,
     /// `SchemaAgreementError::Timeout` is returned.
     pub async fn await_schema_agreement(&self) -> Result<Uuid, SchemaAgreementError> {
-        self.await_schema_agreement_with_required_node(None).await
+        let request = self.enter_request()?;
+        self.await_schema_agreement_with_required_node(&request, None)
+            .await
     }
 
     /// Decides if an error should result in await_schema_agreement stopping immediately,
@@ -2679,6 +2755,7 @@ impl Session {
     /// returned its schema version during the agreement process.
     pub(crate) async fn await_schema_agreement_with_required_node(
         &self,
+        request: &InFlightGuard,
         required_node: Option<Uuid>,
     ) -> Result<Uuid, SchemaAgreementError> {
         // None: no finished attempt recorded
@@ -2691,7 +2768,7 @@ impl Session {
         let agreement_result = timeout(self.schema_agreement_timeout, async {
             loop {
                 let result = self
-                    .check_schema_agreement_with_required_node(required_node)
+                    .check_schema_agreement_with_required_node(request, required_node)
                     .await;
                 debug!("Schema agreement check result: {:?}", result);
                 match result {
@@ -2736,7 +2813,9 @@ impl Session {
     ///
     /// If so, returns that agreed upon version.
     pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, SchemaAgreementError> {
-        self.check_schema_agreement_with_required_node(None).await
+        let request = self.enter_request()?;
+        self.check_schema_agreement_with_required_node(&request, None)
+            .await
     }
 
     /// Checks if all reachable nodes have the same schema version.
@@ -2746,6 +2825,7 @@ impl Session {
     /// returned its schema version.
     async fn check_schema_agreement_with_required_node(
         &self,
+        _request: &InFlightGuard,
         required_node: Option<Uuid>,
     ) -> Result<Option<Uuid>, SchemaAgreementError> {
         let cluster_state = self.get_cluster_state();
@@ -2900,7 +2980,8 @@ impl Session {
         &self,
         required_node: Option<Uuid>,
     ) -> Result<Uuid, SchemaAgreementError> {
-        self.await_schema_agreement_with_required_node(required_node)
+        let request = self.enter_request()?;
+        self.await_schema_agreement_with_required_node(&request, required_node)
             .await
     }
 }
