@@ -78,6 +78,13 @@ impl BackgroundTasks {
     ///
     /// It is safe to call this more than once, also concurrently.
     pub(crate) async fn stop_all(&self) {
+        self.stop_all_no_wait();
+        self.tracker.wait().await;
+    }
+
+    /// Stops all tasks, as [`stop_all`](Self::stop_all) does, but does not
+    /// wait. The tasks stop at their next poll.
+    pub(crate) fn stop_all_no_wait(&self) {
         let handles = {
             let mut registry = self.registry.lock().unwrap();
             registry.stopped = true;
@@ -87,6 +94,11 @@ impl BackgroundTasks {
             handle.abort();
         }
         self.tracker.close();
+    }
+
+    /// Waits until all tasks end. It does not stop them.
+    #[cfg(test)]
+    pub(crate) async fn wait(&self) {
         self.tracker.wait().await;
     }
 
