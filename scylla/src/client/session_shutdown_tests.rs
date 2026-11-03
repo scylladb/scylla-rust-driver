@@ -145,6 +145,13 @@ async fn start_slow_request(
 /// that the pools in `cluster_state` released their connections.
 fn assert_closed(session: &Session, cluster_state: &ClusterState) {
     assert_eq!(session.background_tasks.len(), 0);
+    assert_pools_closed(cluster_state);
+    // The pools also remove their connections from the metrics.
+    #[cfg(feature = "metrics")]
+    assert_eq!(session.get_metrics().get_total_connections(), 0);
+}
+
+fn assert_pools_closed(cluster_state: &ClusterState) {
     for node in cluster_state.get_nodes_info() {
         assert!(!node.is_connected());
         assert_matches!(
@@ -152,9 +159,6 @@ fn assert_closed(session: &Session, cluster_state: &ClusterState) {
             Some(ConnectionPoolError::Closed(_))
         );
     }
-    // The pools also remove their connections from the metrics.
-    #[cfg(feature = "metrics")]
-    assert_eq!(session.get_metrics().get_total_connections(), 0);
 }
 
 #[tokio::test]
@@ -293,6 +297,20 @@ async fn force_shutdown_can_be_called_more_than_once() {
     // Later calls of both kinds return at once.
     assert!(futures::poll!(pin!(session.force_shutdown())).is_ready());
     assert!(futures::poll!(pin!(session.shutdown())).is_ready());
+}
+
+#[tokio::test]
+async fn drop_forces_a_shutdown() {
+    let (session, _proxy) = connect().await;
+    // This keeps the pools alive, as a Node that user code holds does.
+    let cluster_state = session.get_cluster_state();
+    let background_tasks = session.background_tasks.clone();
+
+    drop(Arc::into_inner(session).unwrap());
+    tokio::time::timeout(TEST_TIMEOUT, background_tasks.wait())
+        .await
+        .unwrap();
+    assert_pools_closed(&cluster_state);
 }
 
 #[tokio::test]
