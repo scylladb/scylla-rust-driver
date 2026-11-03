@@ -166,6 +166,17 @@ impl std::fmt::Debug for Session {
     }
 }
 
+/// Dropping the session forces a shutdown, as [`Session::force_shutdown`] does.
+/// `drop` can not wait, so the connections close a short time after it returns.
+impl Drop for Session {
+    fn drop(&mut self) {
+        // Without this, a pool that user code still holds (through a Node)
+        // would continue to refill, and a pager would continue to fetch pages.
+        self.in_flight.close();
+        self.background_tasks.stop_all_no_wait();
+    }
+}
+
 /// Represents a TLS context used to configure TLS connections to DB nodes.
 /// Abstracts over various TLS implementations, such as OpenSSL and Rustls.
 #[derive(Clone)] // Cheaply clonable - reference counted.
@@ -2536,6 +2547,9 @@ impl Session {
     /// The failed requests can return after this method returns.
     ///
     /// You can call this method during a graceful shutdown, and after it.
+    ///
+    /// Dropping the session does the same, but does not wait until the
+    /// connections are closed.
     pub async fn force_shutdown(&self) {
         debug!("Session: forced shutdown, rejecting new requests and stopping background tasks");
         self.in_flight.close();
