@@ -1,4 +1,7 @@
 #![allow(missing_docs)]
+// The proxy is a test tool, and it has no session. The clippy.toml rule
+// against tokio::spawn is for the driver.
+#![allow(clippy::disallowed_methods)]
 
 mod actions;
 mod errors;

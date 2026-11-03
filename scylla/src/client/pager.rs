@@ -1168,6 +1168,10 @@ If you are using this API, you are probably doing something wrong."
                         .query_remaining_pages(sender, page_query, routing_info, span_creator)
                         .await;
                 };
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "A shutdown must not wait for a pager that the user does not read"
+                )]
                 let _worker_handle = tokio::task::spawn(worker_task);
                 Some(receiver)
             }
@@ -1368,6 +1372,10 @@ If you are using this API, you are probably doing something wrong."
                         .query_remaining_pages(sender, page_query, routing_info, span_creator)
                         .await;
                 };
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "A shutdown must not wait for a pager that the user does not read"
+                )]
                 let _worker_handle = tokio::task::spawn(worker_task);
                 Some(receiver)
             }
@@ -1431,6 +1439,10 @@ If you are using this API, you are probably doing something wrong."
                 let worker_task =
                     async move { executor.fetch_remaining_pages(state, sender).await }
                         .instrument(parent_span);
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "A shutdown must not wait for a pager that the user does not read"
+                )]
                 let _worker_handle = tokio::task::spawn(worker_task);
                 Some(receiver)
             }
