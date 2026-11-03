@@ -102,6 +102,9 @@
 //! for the list of available features and their descriptions.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
+// Tests spawn tasks that belong to no session. The build without `test`
+// still checks the driver code.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 #[doc(hidden)]
 pub mod _macro_internal {
