@@ -135,13 +135,40 @@ struct RouterHandle {
     keepalive_hint: Notify,
 }
 
+/// Fails the requests of a connection when its router stops.
+///
+/// The router can be aborted while requests wait for their responses, for
+/// example by a session shutdown. An abort runs only `Drop`, so the error
+/// path at the end of `router` does not run.
+struct RouterGuard {
+    router_handle: Arc<RouterHandle>,
+    receiver: mpsc::Receiver<SerializedRequest>,
+}
+
+impl Drop for RouterGuard {
+    fn drop(&mut self) {
+        // After the error path of `router`, this changes nothing: `fail_all`
+        // keeps the error of its first call.
+        self.router_handle
+            .streams
+            .fail_all(&BrokenConnectionErrorKind::ChannelError.into());
+    }
+}
+
 impl RouterHandle {
     async fn send_request(
         &self,
         request: SerializedRequest,
     ) -> Result<TaskResponse, InternalRequestError> {
-        let channel_error =
-            || -> BrokenConnectionError { BrokenConnectionErrorKind::ChannelError.into() };
+        // The channel closes only when `RouterGuard` is dropped, after
+        // `fail_all` sets the error of the connection. Return this error, as
+        // `allocate` does. Then a request on a closed connection gets the same
+        // error. `ChannelError` is only a defensive fallback.
+        let closed_error = || -> BrokenConnectionError {
+            self.streams
+                .closed_error()
+                .unwrap_or_else(|| BrokenConnectionErrorKind::ChannelError.into())
+        };
         // Room in the channel is reserved before the stream id, so that requests
         // waiting for the writer don't hold stream ids.
         //
@@ -155,13 +182,13 @@ impl RouterHandle {
                         .submit_channel
                         .reserve()
                         .await
-                        .map_err(|_| channel_error())?;
+                        .map_err(|_| closed_error())?;
                     self.submit(permit, request)
                 })
                 .await?
             }
             Err(mpsc::error::TrySendError::Closed(())) => {
-                return Err(channel_error().into());
+                return Err(closed_error().into());
             }
         };
 
@@ -1587,12 +1614,15 @@ impl Connection {
             router_handle: Arc<RouterHandle>,
             node_address: SocketAddr,
         ) -> AbortOnDropHandle<()> {
+            let guard = RouterGuard {
+                router_handle,
+                receiver,
+            };
             AbortOnDropHandle::new(tokio::task::spawn(Connection::router(
                 config,
                 stream,
-                receiver,
+                guard,
                 error_sender,
-                router_handle,
                 node_address,
             )))
         }
@@ -1649,18 +1679,17 @@ impl Connection {
     async fn router(
         config: HostConnectionConfig,
         stream: impl AsyncRead + AsyncWrite + Send,
-        mut receiver: mpsc::Receiver<SerializedRequest>,
+        mut guard: RouterGuard,
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
-        router_handle: Arc<RouterHandle>,
         node_address: SocketAddr,
     ) {
         let (read_half, write_half) = split(stream);
-        let streams = &router_handle.streams;
+        let streams = &guard.router_handle.streams;
 
         let write_coalescing_delay = config.write_coalescing_delay;
 
         let k = Self::keepaliver(
-            Arc::clone(&router_handle),
+            Arc::clone(&guard.router_handle),
             config.keepalive_interval,
             config.keepalive_timeout,
             node_address,
@@ -1674,7 +1703,7 @@ impl Connection {
         );
         let w = Self::writer(
             BufWriter::with_capacity(8192, write_half),
-            &mut receiver,
+            &mut guard.receiver,
             write_coalescing_delay,
         );
         let o = Self::orphaner(streams);
@@ -1692,12 +1721,6 @@ impl Connection {
             Ok(_) => return, // Connection was dropped, we can return
             Err(err) => err,
         };
-
-        // Draining the closed channel waits for requests that reserved room in it.
-        // After it, each request either failed to reserve room (and got an error),
-        // or waits in its stream slot, and no more stream ids can be allocated.
-        receiver.close();
-        while receiver.recv().await.is_some() {}
 
         // Respond to all pending requests with the error
         streams.fail_all(&error);
