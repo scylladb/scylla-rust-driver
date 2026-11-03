@@ -1,6 +1,10 @@
 avoid-breaking-exported-api = false
 disallowed-methods = [
-    { path = "itertools::Itertools::format", reason = "Footgun: panics on double formatting.", replacement = "crate::utils::safe_format::IteratorSafeFormatExt::safe_format" }
+    { path = "itertools::Itertools::format", reason = "Footgun: panics on double formatting.", replacement = "crate::utils::safe_format::IteratorSafeFormatExt::safe_format" },
+    # A session shutdown stops only the tasks that BackgroundTasks spawns.
+    { path = "tokio::task::spawn", reason = "Session::shutdown() does not stop this task. Use BackgroundTasks." },
+    { path = "tokio::task::spawn_local", reason = "Session::shutdown() does not stop this task. Use BackgroundTasks." },
+    { path = "tokio::task::spawn_blocking", reason = "Session::shutdown() does not wait for this task. Use BackgroundTasks." },
 ]
 # TODO(2.0): Some of our error types are big. We need to address this in 2.0
 large-error-ignored = [
