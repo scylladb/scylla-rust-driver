@@ -14,6 +14,14 @@ The cache key is the statement string. Two strings that differ in any way are tw
 so put values in bind markers (`?`) instead of formatting them into the string.
 :::
 
+:::{warning}
+The keyspace is not part of the cache key. A statement written without a keyspace name is prepared
+against the session's keyspace at that moment, and the cached statement keeps running against it:
+after `use_keyspace` switches the session to another keyspace, the same string still reads and writes
+the first one, and there is no error. Set the keyspace before you use the caching session and do not
+change it, or write the keyspace name in each statement (`ks.tab`, as the examples here do).
+:::
+
 ## Creating a caching session
 
 ```rust
