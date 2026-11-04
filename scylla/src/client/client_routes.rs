@@ -424,9 +424,14 @@ impl AddressTranslator for ClientRoutesAddressTranslator {
             format!("{}:{}", hostname, port)
         };
 
+        let dns_error = |error| TranslationError::DnsLookupFailedForHost {
+            host_id,
+            host: Box::from(hostport.as_str()),
+            error,
+        };
         let addrs = resolve_hostname(&hostport, self.hostname_resolution_timeout)
             .await
-            .map_err(TranslationError::DnsLookupFailed)?;
+            .map_err(dns_error)?;
 
         // Randomly selects one of the resolved addresses of a client route.
         //
@@ -436,7 +441,7 @@ impl AddressTranslator for ClientRoutesAddressTranslator {
         // scenarios where DNS returns both a soon-to-be-invalid old address
         // and the soon-to-be-valid new one.
         let addr = *addrs.choose(&mut rng()).ok_or_else(|| {
-            TranslationError::DnsLookupFailed(DnsLookupError::EmptyAddressListForHost(
+            dns_error(DnsLookupError::EmptyAddressListForHost(
                 hostport.as_str().into(),
             ))
         })?;
@@ -457,6 +462,7 @@ mod tests {
     use crate::cluster::metadata::update::ClientRoutesUpdate;
     use crate::cluster::metadata::{ClientRoute, ClientRoutes};
     use crate::frame::response::event::ClientRoutesChangeEvent;
+    use crate::utils::test_utils::setup_tracing;
     use assert_matches::assert_matches;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use uuid::Uuid;
@@ -581,6 +587,67 @@ mod tests {
         let result = translator.translate_address(&peer).await.unwrap();
 
         assert_eq!(result, localhost_addr(9042));
+    }
+
+    #[tokio::test]
+    async fn dns_failure_includes_host_id_and_effective_route_hostname_and_port() {
+        // Regression test for issue #2019, fixed in PR #2020.
+        setup_tracing();
+
+        // A NUL is rejected locally, without depending on external DNS or timing.
+        for use_tls in [false, true] {
+            for override_hostname in [false, true] {
+                let mut proxy = ClientRoutesProxy::new_with_connection_id("conn-1".to_owned());
+                if override_hostname {
+                    proxy = proxy.with_overridden_hostname("override\n\0.example.com".to_owned());
+                }
+                let translator =
+                    ClientRoutesAddressTranslator::new(make_config(vec![proxy]), None, use_tls);
+                let host_id = Uuid::new_v4();
+                translator.replace_client_routes(make_client_routes(vec![ClientRoute {
+                    connection_id: "conn-1".to_owned(),
+                    host_id,
+                    hostname: "route\n\0.example.com".to_owned(),
+                    port: Some(9009),
+                    tls_port: Some(9109),
+                }]));
+
+                let peer = make_peer(host_id, localhost_addr(9000));
+                let error = tokio::time::timeout(
+                    std::time::Duration::from_secs(1),
+                    translator.translate_address(&peer),
+                )
+                .await
+                .expect("client-route DNS rejection timed out")
+                .unwrap_err();
+                let hostname = if override_hostname {
+                    "override\n\0.example.com"
+                } else {
+                    "route\n\0.example.com"
+                };
+                let port = if use_tls { 9109 } else { 9009 };
+                let expected_target = format!("{hostname}:{port}");
+
+                // Route data must not inject log lines or NULs into diagnostics.
+                let message = error.to_string();
+                assert!(!message.contains(['\n', '\r', '\0']));
+                assert!(message.contains(&expected_target.escape_debug().to_string()));
+                assert_matches!(
+                    std::error::Error::source(&error)
+                        .unwrap()
+                        .downcast_ref::<DnsLookupError>(),
+                    Some(DnsLookupError::IoError(_))
+                );
+                assert_matches!(
+                    error,
+                    TranslationError::DnsLookupFailedForHost {
+                        host_id: error_host_id,
+                        host,
+                        error: DnsLookupError::IoError(_),
+                    } if error_host_id == host_id && host.as_ref() == expected_target
+                );
+            }
+        }
     }
 
     // A typical custom routing setup has multiple nodes, each with its own entry in
