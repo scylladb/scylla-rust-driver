@@ -18,7 +18,7 @@ use std::net::SocketAddr;
 // If we add a new event type that is not about changes, then clippy will no longer complain.
 #[expect(clippy::enum_variant_names)]
 #[non_exhaustive]
-pub enum EventV2 {
+pub enum Event {
     /// Topology changed.
     TopologyChange(TopologyChangeEvent),
     /// Status of a node changed.
@@ -132,7 +132,7 @@ pub enum ClientRoutesChangeEvent {
     },
 }
 
-impl EventV2 {
+impl Event {
     /// Deserialize an event from the provided buffer.
     pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlEventParseError> {
         let event_type: EventTypeV2 = types::read_string(buf)

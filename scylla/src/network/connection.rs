@@ -28,7 +28,7 @@ use crate::frame::types::SerialConsistency;
 use crate::frame::{
     self, FrameParams, SerializedRequest,
     request::{self, SerializableRequest, batch, execute, query},
-    response::{ResponseOpcode, ResponseV2 as Response, event::EventV2 as Event, result},
+    response::{ResponseOpcode, ResponseV2 as Response, event::Event, result},
     server_event_type::EventTypeV2 as EventType,
 };
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};

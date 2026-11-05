@@ -16,7 +16,7 @@ use crate::cluster::metadata::{SchemaMetadataFetchMode, UntranslatedEndpoint};
 use crate::errors::{
     ConnectionError, NextPageError, NextRowError, RequestAttemptError, RequestError,
 };
-use crate::frame::response::event::EventV2 as Event;
+use crate::frame::response::event::Event;
 use crate::network::Connection;
 use crate::serialize::row::SerializeRow;
 use crate::statement::Statement;

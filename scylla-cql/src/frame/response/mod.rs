@@ -80,7 +80,7 @@ pub enum ResponseV2 {
     /// SUPPORTED response, containing the features supported by the server.
     Supported(Supported),
     /// EVENT response, containing an event that occurred on the server.
-    Event(event::EventV2),
+    Event(event::Event),
 }
 
 impl ResponseV2 {
@@ -116,7 +116,7 @@ impl ResponseV2 {
             ResponseOpcode::Result => {
                 Self::Result(result::deserialize(buf_bytes, cached_metadata, features)?)
             }
-            ResponseOpcode::Event => Self::Event(event::EventV2::deserialize(buf)?),
+            ResponseOpcode::Event => Self::Event(event::Event::deserialize(buf)?),
             ResponseOpcode::AuthChallenge => {
                 Self::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)
             }
@@ -171,7 +171,7 @@ pub enum ResponseWithDeserializedMetadataV2 {
     /// SUPPORTED response, containing the features supported by the server.
     Supported(Supported),
     /// EVENT response, containing an event that occurred on the server.
-    Event(event::EventV2),
+    Event(event::Event),
 }
 
 impl ResponseWithDeserializedMetadataV2 {
@@ -233,7 +233,7 @@ pub enum NonErrorResponseWithDeserializedMetadataV2 {
     /// See [`ResponseWithDeserializedMetadataV2::Supported`].
     Supported(Supported),
     /// See [`ResponseWithDeserializedMetadataV2::Event`].
-    Event(event::EventV2),
+    Event(event::Event),
 }
 
 impl NonErrorResponseWithDeserializedMetadataV2 {

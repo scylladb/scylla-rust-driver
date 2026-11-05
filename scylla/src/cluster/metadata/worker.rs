@@ -20,7 +20,7 @@ use crate::errors::{
     BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, MetadataError,
 };
 use crate::frame::response::event::ClientRoutesChangeEvent;
-use crate::frame::response::event::EventV2 as Event;
+use crate::frame::response::event::Event;
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::response::event::SchemaChangeType;
 use crate::frame::response::event::StatusChangeEvent;
