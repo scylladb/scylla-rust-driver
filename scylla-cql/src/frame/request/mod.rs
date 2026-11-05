@@ -137,6 +137,8 @@ pub enum RequestDeserializationError {
     BatchTypeParse(#[from] BatchTypeParseError),
     #[error("Unexpected batch statement kind: {0}")]
     UnexpectedBatchStatementKind(u8),
+    #[error("Deserialization of {0:?} requests is not supported")]
+    UnsupportedOpcode(RequestOpcode),
 }
 
 /// A CQL request that can be sent to the server.
@@ -162,10 +164,7 @@ impl Request<'_> {
             RequestOpcode::Query => Query::deserialize(buf, features).map(Self::Query),
             RequestOpcode::Execute => Execute::deserialize(buf, features).map(Self::Execute),
             RequestOpcode::Batch => Batch::deserialize(buf, features).map(Self::Batch),
-            _ => unimplemented!(
-                "Deserialization of opcode {:?} is not yet supported",
-                opcode
-            ),
+            _ => Err(RequestDeserializationError::UnsupportedOpcode(opcode)),
         }
     }
 
@@ -196,7 +195,10 @@ impl Request<'_> {
 mod tests {
     use std::{borrow::Cow, ops::Deref};
 
+    use assert_matches::assert_matches;
+
     use super::query::PagingState;
+    use super::{Request, RequestDeserializationError, RequestOpcode};
     use crate::Consistency;
     use crate::frame::protocol_features::ProtocolFeatures;
     use crate::frame::request::batch::{Batch, BatchStatement, BatchType};
@@ -470,5 +472,18 @@ mod tests {
         for len in 0..buf.len() {
             Batch::deserialize(&mut &buf[..len], &Default::default()).unwrap_err();
         }
+    }
+
+    /// Requests that can't be deserialized yet must be rejected without panicking.
+    #[test]
+    fn deser_rejects_unsupported_opcode() {
+        let result =
+            Request::deserialize(&mut &[][..], RequestOpcode::Options, &Default::default());
+        assert_matches!(
+            result.err(),
+            Some(RequestDeserializationError::UnsupportedOpcode(
+                RequestOpcode::Options
+            ))
+        );
     }
 }
