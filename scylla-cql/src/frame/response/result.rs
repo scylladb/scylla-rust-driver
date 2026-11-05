@@ -343,13 +343,6 @@ impl DeserializedMetadataAndRawRows {
         self.metadata.inner()
     }
 
-    /// Consumes the `DeserializedMetadataAndRawRows` and returns metadata
-    /// associated with the response (or cached metadata, if used in its stead).
-    #[inline]
-    pub fn into_metadata(self) -> ResultMetadataHolder {
-        self.metadata
-    }
-
     /// Returns the number of rows that the RESULT:Rows contain.
     #[inline]
     pub fn rows_count(&self) -> usize {
