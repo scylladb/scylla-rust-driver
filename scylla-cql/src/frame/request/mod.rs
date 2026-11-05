@@ -12,9 +12,9 @@ pub mod startup;
 use batch::BatchTypeParseError;
 use thiserror::Error;
 
-use crate::Consistency;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::request::execute::Execute;
+use crate::frame::types::Consistency;
 use crate::serialize::row::SerializedValues;
 use bytes::Bytes;
 
@@ -199,13 +199,13 @@ mod tests {
 
     use super::query::PagingState;
     use super::{Request, RequestDeserializationError, RequestOpcode};
-    use crate::Consistency;
     use crate::frame::protocol_features::ProtocolFeatures;
     use crate::frame::request::batch::{Batch, BatchStatement, BatchType};
     use crate::frame::request::execute::Execute;
     use crate::frame::request::query::{Query, QueryParameters};
     use crate::frame::request::{DeserializableRequest, SerializableRequest};
     use crate::frame::response::result::{ColumnType, NativeType};
+    use crate::frame::types::Consistency;
     use crate::frame::types::{self, SerialConsistency};
     use crate::serialize::row::SerializedValues;
 

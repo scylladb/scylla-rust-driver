@@ -111,10 +111,10 @@ impl DeserializableRequest for Execute<'static> {
 mod tests {
     use std::borrow::Cow;
 
-    use crate::Consistency;
     use crate::frame::protocol_features::ProtocolFeatures;
     use crate::frame::request::{DeserializableRequest, SerializableRequest};
     use crate::frame::response::result::cow_bytes::CowBytes;
+    use crate::frame::types::Consistency;
     use crate::serialize::row::SerializedValues;
 
     use super::Execute;
