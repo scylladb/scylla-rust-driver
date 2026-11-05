@@ -99,9 +99,11 @@ impl Response {
                 Self::Authenticate(authenticate::Authenticate::deserialize(buf)?)
             }
             ResponseOpcode::Supported => Self::Supported(Supported::deserialize(buf)?),
-            ResponseOpcode::Result => {
-                Self::Result(result::deserialize(buf_bytes, cached_metadata, features)?)
-            }
+            ResponseOpcode::Result => Self::Result(result::Result::deserialize(
+                buf_bytes,
+                cached_metadata,
+                features,
+            )?),
             ResponseOpcode::Event => Self::Event(event::Event::deserialize(buf)?),
             ResponseOpcode::AuthChallenge => {
                 Self::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)

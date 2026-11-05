@@ -947,31 +947,33 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeE
     })
 }
 
-/// Deserializes a CQL `RESULT` response from the provided buffer.
-///
-/// Reuses cached metadata if provided, otherwise deserializes it.
-pub fn deserialize(
-    mut buf_bytes: Bytes,
-    cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
-    features: &ProtocolFeatures,
-) -> StdResult<Result, CqlResultParseError> {
-    use self::Result::*;
-    Ok(
-        match types::parse_prefix(&mut buf_bytes, types::read_int)
-            .map_err(|err| CqlResultParseError::ResultIdParseError(err.into()))?
-        {
-            0x0001 => Void,
-            0x0002 => Rows(DeserializedMetadataAndRawRows::deserialize(
-                buf_bytes,
-                cached_metadata,
-                features,
-            )?),
-            0x0003 => SetKeyspace(deser_set_keyspace(&mut &*buf_bytes)?),
-            0x0004 => Prepared(deser_prepared(&mut &*buf_bytes, features)?),
-            0x0005 => SchemaChange(deser_schema_change(&mut &*buf_bytes)?),
-            id => return Err(CqlResultParseError::UnknownResultId(id)),
-        },
-    )
+impl Result {
+    /// Deserializes a CQL `RESULT` response from the provided buffer.
+    ///
+    /// Reuses cached metadata if provided, otherwise deserializes it.
+    pub fn deserialize(
+        mut buf_bytes: Bytes,
+        cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
+        features: &ProtocolFeatures,
+    ) -> StdResult<Result, CqlResultParseError> {
+        use self::Result::*;
+        Ok(
+            match types::parse_prefix(&mut buf_bytes, types::read_int)
+                .map_err(|err| CqlResultParseError::ResultIdParseError(err.into()))?
+            {
+                0x0001 => Void,
+                0x0002 => Rows(DeserializedMetadataAndRawRows::deserialize(
+                    buf_bytes,
+                    cached_metadata,
+                    features,
+                )?),
+                0x0003 => SetKeyspace(deser_set_keyspace(&mut &*buf_bytes)?),
+                0x0004 => Prepared(deser_prepared(&mut &*buf_bytes, features)?),
+                0x0005 => SchemaChange(deser_schema_change(&mut &*buf_bytes)?),
+                id => return Err(CqlResultParseError::UnknownResultId(id)),
+            },
+        )
+    }
 }
 
 // This is not #[cfg(test)], because it is used by scylla crate.
