@@ -29,7 +29,7 @@ use crate::frame::{
     self, FrameParams, SerializedRequest,
     request::{self, SerializableRequest, batch, execute, query},
     response::{ResponseOpcode, ResponseV2 as Response, event::Event, result},
-    server_event_type::EventTypeV2 as EventType,
+    server_event_type::EventType,
 };
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;

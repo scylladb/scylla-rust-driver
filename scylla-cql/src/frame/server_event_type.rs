@@ -13,7 +13,7 @@ use super::frame_errors::CqlEventParseError;
 #[expect(clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum EventTypeV2 {
+pub enum EventType {
     /// Represents a change in the cluster topology, such as node addition or removal.
     TopologyChange,
     /// Represents a change in the status of a node, such as up or down.
@@ -24,7 +24,7 @@ pub enum EventTypeV2 {
     ClientRoutesChange,
 }
 
-impl fmt::Display for EventTypeV2 {
+impl fmt::Display for EventType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match &self {
             Self::TopologyChange => "TOPOLOGY_CHANGE",
@@ -37,7 +37,7 @@ impl fmt::Display for EventTypeV2 {
     }
 }
 
-impl FromStr for EventTypeV2 {
+impl FromStr for EventType {
     type Err = CqlEventParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

@@ -7,7 +7,7 @@ use crate::frame::frame_errors::{
     ClientRoutesChangeEventParseError, ClusterChangeEventParseError, CqlEventParseError,
     SchemaChangeEventParseError,
 };
-use crate::frame::server_event_type::EventTypeV2;
+use crate::frame::server_event_type::EventType;
 use crate::frame::types;
 use std::net::SocketAddr;
 
@@ -135,22 +135,20 @@ pub enum ClientRoutesChangeEvent {
 impl Event {
     /// Deserialize an event from the provided buffer.
     pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlEventParseError> {
-        let event_type: EventTypeV2 = types::read_string(buf)
+        let event_type: EventType = types::read_string(buf)
             .map_err(CqlEventParseError::EventTypeParseError)?
             .parse()?;
         match event_type {
-            EventTypeV2::TopologyChange => Ok(Self::TopologyChange(
+            EventType::TopologyChange => Ok(Self::TopologyChange(
                 TopologyChangeEvent::deserialize(buf)
                     .map_err(CqlEventParseError::TopologyChangeEventParseError)?,
             )),
-            EventTypeV2::StatusChange => Ok(Self::StatusChange(
+            EventType::StatusChange => Ok(Self::StatusChange(
                 StatusChangeEvent::deserialize(buf)
                     .map_err(CqlEventParseError::StatusChangeEventParseError)?,
             )),
-            EventTypeV2::SchemaChange => {
-                Ok(Self::SchemaChange(SchemaChangeEvent::deserialize(buf)?))
-            }
-            EventTypeV2::ClientRoutesChange => Ok(Self::ClientRoutesChange(
+            EventType::SchemaChange => Ok(Self::SchemaChange(SchemaChangeEvent::deserialize(buf)?)),
+            EventType::ClientRoutesChange => Ok(Self::ClientRoutesChange(
                 ClientRoutesChangeEvent::deserialize(buf)
                     .map_err(CqlEventParseError::ClientRoutesChangeEventParseError)?,
             )),

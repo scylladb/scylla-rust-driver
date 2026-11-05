@@ -3,7 +3,7 @@
 use crate::frame::{
     frame_errors::CqlRequestSerializationError,
     request::{RequestOpcode, SerializableRequest},
-    server_event_type::EventTypeV2,
+    server_event_type::EventType,
     types,
 };
 
@@ -14,7 +14,7 @@ pub use crate::frame::frame_errors::RegisterSerializationError;
 /// used to subscribe for server events.
 pub struct Register {
     /// A list of event types to register for.
-    pub event_types_to_register_for: Vec<EventTypeV2>,
+    pub event_types_to_register_for: Vec<EventType>,
 }
 
 impl SerializableRequest for Register {
