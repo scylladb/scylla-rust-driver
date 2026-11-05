@@ -342,8 +342,7 @@ async fn test_insert_sends_empty_result_metadata_id() {
                     parse_response_body_extensions(req_frame.params.flags, None, req_frame.body)
                         .unwrap();
                 let execute =
-                    Execute::deserialize_with_features(&mut &*body_with_extensions.body, &features)
-                        .unwrap();
+                    Execute::deserialize(&mut &*body_with_extensions.body, &features).unwrap();
                 let Some(id) = execute.result_metadata_id else {
                     panic!("Expected result_metadata_id to be Some (extension is enabled)");
                 };
@@ -511,11 +510,8 @@ async fn test_mixed_cluster() {
                     let body_with_extensions =
                         parse_response_body_extensions(frame.params.flags, None, frame.body)
                             .unwrap();
-                    let execute = Execute::deserialize_with_features(
-                        &mut &*body_with_extensions.body,
-                        &features,
-                    )
-                    .unwrap();
+                    let execute =
+                        Execute::deserialize(&mut &*body_with_extensions.body, &features).unwrap();
 
                     execute.result_metadata_id
                 });

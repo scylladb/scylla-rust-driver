@@ -110,13 +110,13 @@ pub trait DeserializableRequest: SerializableRequest + Sized {
     ///
     /// `features` are the protocol features negotiated on the connection
     /// that the request was sent over.
-    fn deserialize_with_features(
+    fn deserialize(
         buf: &mut &[u8],
         features: &ProtocolFeatures,
     ) -> Result<Self, RequestDeserializationError>;
 }
 
-/// An error type returned by [`DeserializableRequest::deserialize_with_features`].
+/// An error type returned by [`DeserializableRequest::deserialize`].
 /// This is not intended for driver's direct usage. It's a testing utility,
 /// mainly used by `scylla-proxy` crate.
 #[doc(hidden)]
@@ -158,15 +158,9 @@ impl Request<'_> {
         features: &ProtocolFeatures,
     ) -> Result<Self, RequestDeserializationError> {
         match opcode {
-            RequestOpcode::Query => {
-                Query::deserialize_with_features(buf, features).map(Self::Query)
-            }
-            RequestOpcode::Execute => {
-                Execute::deserialize_with_features(buf, features).map(Self::Execute)
-            }
-            RequestOpcode::Batch => {
-                Batch::deserialize_with_features(buf, features).map(Self::Batch)
-            }
+            RequestOpcode::Query => Query::deserialize(buf, features).map(Self::Query),
+            RequestOpcode::Execute => Execute::deserialize(buf, features).map(Self::Execute),
+            RequestOpcode::Batch => Batch::deserialize(buf, features).map(Self::Batch),
             _ => unimplemented!(
                 "Deserialization of opcode {:?} is not yet supported",
                 opcode
@@ -241,7 +235,7 @@ mod tests {
             assert_eq!(query.serialized_size_hint(), (buf.len(), Some(buf.len())));
 
             let query_deserialized =
-                Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
+                Query::deserialize(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&query_deserialized, &query);
         }
 
@@ -284,8 +278,7 @@ mod tests {
                 default.scylla_metadata_id_supported = true;
                 default
             };
-            let execute_deserialized =
-                Execute::deserialize_with_features(&mut &buf[..], &features).unwrap();
+            let execute_deserialized = Execute::deserialize(&mut &buf[..], &features).unwrap();
             assert_eq!(&execute_deserialized, &execute_with_id);
         }
         execute_with_id.tablet_version_block = Some(1);
@@ -330,7 +323,7 @@ mod tests {
             );
 
             let batch_deserialized =
-                Batch::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
+                Batch::deserialize(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&batch_deserialized, &batch);
         }
     }
@@ -359,7 +352,7 @@ mod tests {
 
             // Sanity check: query deserializes to the equivalent.
             let query_deserialized =
-                Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
+                Query::deserialize(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&query_deserialized.contents, &query.contents);
             assert_eq!(&query_deserialized.parameters, &query.parameters);
 
@@ -382,8 +375,7 @@ mod tests {
 
             // Unknown flag should lead to frame rejection, as unknown flags can be new protocol extensions
             // leading to different semantics.
-            let _parse_error =
-                Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap_err();
+            let _parse_error = Query::deserialize(&mut &buf[..], &Default::default()).unwrap_err();
         }
 
         // Batch
@@ -405,7 +397,7 @@ mod tests {
 
             // Sanity check: batch deserializes to the equivalent.
             let batch_deserialized =
-                Batch::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
+                Batch::deserialize(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(batch, batch_deserialized);
 
             // Now modify flags by adding an unknown one.
@@ -417,8 +409,7 @@ mod tests {
 
             // Unknown flag should lead to frame rejection, as unknown flags can be new protocol extensions
             // leading to different semantics.
-            let _parse_error =
-                Batch::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap_err();
+            let _parse_error = Batch::deserialize(&mut &buf[..], &Default::default()).unwrap_err();
         }
     }
 }

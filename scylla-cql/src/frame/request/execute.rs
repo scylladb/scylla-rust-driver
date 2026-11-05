@@ -80,7 +80,7 @@ impl SerializableRequest for Execute<'_> {
 }
 
 impl DeserializableRequest for Execute<'static> {
-    fn deserialize_with_features(
+    fn deserialize(
         buf: &mut &[u8],
         features: &ProtocolFeatures,
     ) -> Result<Self, RequestDeserializationError> {
@@ -186,8 +186,7 @@ mod tests {
         let mut buf = Vec::new();
         execute.serialize(&mut buf).unwrap();
 
-        let deserialized =
-            Execute::deserialize_with_features(&mut &buf[..], &v2_features()).unwrap();
+        let deserialized = Execute::deserialize(&mut &buf[..], &v2_features()).unwrap();
         assert_eq!(deserialized, execute);
     }
 
@@ -204,8 +203,7 @@ mod tests {
         let mut buf = Vec::new();
         execute.serialize(&mut buf).unwrap();
 
-        let deserialized =
-            Execute::deserialize_with_features(&mut &buf[..], &non_v2_features()).unwrap();
+        let deserialized = Execute::deserialize(&mut &buf[..], &non_v2_features()).unwrap();
         assert_eq!(deserialized, execute);
         assert!(deserialized.tablet_version_block.is_none());
     }

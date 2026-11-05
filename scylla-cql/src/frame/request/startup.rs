@@ -33,7 +33,7 @@ impl SerializableRequest for Startup<'_> {
 }
 
 impl DeserializableRequest for Startup<'_> {
-    fn deserialize_with_features(
+    fn deserialize(
         buf: &mut &[u8],
         _features: &ProtocolFeatures,
     ) -> Result<Self, super::RequestDeserializationError> {

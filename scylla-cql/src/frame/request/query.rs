@@ -65,7 +65,7 @@ impl SerializableRequest for Query<'_> {
 }
 
 impl DeserializableRequest for Query<'_> {
-    fn deserialize_with_features(
+    fn deserialize(
         buf: &mut &[u8],
         _features: &ProtocolFeatures,
     ) -> Result<Self, RequestDeserializationError> {

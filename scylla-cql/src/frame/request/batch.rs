@@ -244,7 +244,7 @@ fn serialize_batch_statement(
 }
 
 impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedValues>> {
-    fn deserialize_with_features(
+    fn deserialize(
         buf: &mut &[u8],
         _features: &ProtocolFeatures,
     ) -> Result<Self, RequestDeserializationError> {
