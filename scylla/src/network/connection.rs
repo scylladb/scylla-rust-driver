@@ -176,15 +176,14 @@ struct TaskResponse {
     body: Bytes,
 }
 
+const DEFAULT_DRIVER_NAME: &str = "ScyllaDB Rust Driver";
 // `env!` must be expanded in this crate: `scylla-cql` has its own version number.
 const DEFAULT_DRIVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 impl<'id: 'map, 'map> SelfIdentity<'id> {
     fn add_startup_options(&'id self, options: &'map mut HashMap<Cow<'id, str>, Cow<'id, str>>) {
         /* Driver identity. */
-        let driver_name = self
-            .get_custom_driver_name()
-            .unwrap_or(options::DEFAULT_DRIVER_NAME);
+        let driver_name = self.get_custom_driver_name().unwrap_or(DEFAULT_DRIVER_NAME);
         options.insert(
             Cow::Borrowed(options::DRIVER_NAME),
             Cow::Borrowed(driver_name),

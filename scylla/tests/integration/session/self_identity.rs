@@ -79,7 +79,7 @@ async fn test_given_self_identity(self_identity: SelfIdentity<'static>) {
             for (option_key, default_mandatory_option, custom_mandatory_option) in [
                 (
                     options::DRIVER_NAME,
-                    options::DEFAULT_DRIVER_NAME,
+                    "ScyllaDB Rust Driver",
                     self_identity.get_custom_driver_name(),
                 ),
                 (
