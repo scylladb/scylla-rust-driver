@@ -387,19 +387,19 @@ impl ResponseWithDeserializedMetadataV2 {
 /// of valid responses without need to handle error case any later.
 #[derive(Debug)]
 pub enum NonErrorResponse {
-    /// See [`Response::Ready`].
+    /// See [`ResponseV2::Ready`].
     Ready,
-    /// See [`Response::Result`].
+    /// See [`ResponseV2::Result`].
     Result(result::Result),
-    /// See [`Response::Authenticate`].
+    /// See [`ResponseV2::Authenticate`].
     Authenticate(authenticate::Authenticate),
-    /// See [`Response::AuthSuccess`].
+    /// See [`ResponseV2::AuthSuccess`].
     AuthSuccess(authenticate::AuthSuccess),
-    /// See [`Response::AuthChallenge`].
+    /// See [`ResponseV2::AuthChallenge`].
     AuthChallenge(authenticate::AuthChallenge),
-    /// See [`Response::Supported`].
+    /// See [`ResponseV2::Supported`].
     Supported(Supported),
-    /// See [`Response::Event`].
+    /// See [`ResponseV2::Event`].
     Event(event::Event),
 }
 
@@ -425,19 +425,19 @@ impl NonErrorResponse {
 /// instead of [result::RawMetadataAndRawRows].
 #[derive(Debug)]
 pub enum NonErrorResponseWithDeserializedMetadata {
-    /// See [`Response::Ready`].
+    /// See [`ResponseWithDeserializedMetadataV2::Ready`].
     Ready,
-    /// See [`Response::Result`].
+    /// See [`ResponseWithDeserializedMetadataV2::Result`].
     Result(result::ResultWithDeserializedMetadata),
-    /// See [`Response::Authenticate`].
+    /// See [`ResponseWithDeserializedMetadataV2::Authenticate`].
     Authenticate(authenticate::Authenticate),
-    /// See [`Response::AuthSuccess`].
+    /// See [`ResponseWithDeserializedMetadataV2::AuthSuccess`].
     AuthSuccess(authenticate::AuthSuccess),
-    /// See [`Response::AuthChallenge`].
+    /// See [`ResponseWithDeserializedMetadataV2::AuthChallenge`].
     AuthChallenge(authenticate::AuthChallenge),
-    /// See [`Response::Supported`].
+    /// See [`ResponseWithDeserializedMetadataV2::Supported`].
     Supported(Supported),
-    /// See [`Response::Event`].
+    /// See [`ResponseWithDeserializedMetadataV2::Event`].
     Event(event::Event),
 }
 
@@ -464,19 +464,19 @@ impl NonErrorResponseWithDeserializedMetadata {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum NonErrorResponseWithDeserializedMetadataV2 {
-    /// See [`Response::Ready`].
+    /// See [`ResponseWithDeserializedMetadataV2::Ready`].
     Ready,
-    /// See [`Response::Result`].
+    /// See [`ResponseWithDeserializedMetadataV2::Result`].
     Result(result::ResultWithDeserializedMetadata),
-    /// See [`Response::Authenticate`].
+    /// See [`ResponseWithDeserializedMetadataV2::Authenticate`].
     Authenticate(authenticate::Authenticate),
-    /// See [`Response::AuthSuccess`].
+    /// See [`ResponseWithDeserializedMetadataV2::AuthSuccess`].
     AuthSuccess(authenticate::AuthSuccess),
-    /// See [`Response::AuthChallenge`].
+    /// See [`ResponseWithDeserializedMetadataV2::AuthChallenge`].
     AuthChallenge(authenticate::AuthChallenge),
-    /// See [`Response::Supported`].
+    /// See [`ResponseWithDeserializedMetadataV2::Supported`].
     Supported(Supported),
-    /// See [`Response::Event`].
+    /// See [`ResponseWithDeserializedMetadataV2::Event`].
     Event(event::EventV2),
 }
 
