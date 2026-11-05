@@ -769,7 +769,14 @@ impl DeserializedMetadataAndRawRows {
                 let (metadata_container, raw_rows_with_count) =
                     self_borrowed_metadata::SelfBorrowedMetadataContainer::make_deserialized_metadata(
                         frame,
-                        metadata_deserializer(col_count, global_tables_spec, metadata_changed),
+                        |buf| {
+                            metadata_deserializer(
+                                buf,
+                                col_count,
+                                global_tables_spec,
+                                metadata_changed,
+                            )
+                        },
                     )?;
                 (
                     ResultMetadataHolder::SelfBorrowed(Box::new(metadata_container)),
@@ -793,45 +800,30 @@ impl DeserializedMetadataAndRawRows {
     }
 }
 
-// This function is needed because creating the deserializer closure
-// directly in the enclosing function does not provide enough type hints
-// for the compiler (and having a function with a verbose signature does),
-// so it demands a type annotation. We cannot, however, write a correct
-// type annotation, because this way we would limit the lifetime
-// to a concrete lifetime, and our closure needs to be `impl for<'frame> ...`.
-// This is a proud trick by Wojciech Przytuła, which crowns the brilliant
-// idea of Karol Baryła to use Yoke to enable borrowing ResultMetadata
-// from itself.
-fn metadata_deserializer(
+/// Deserializes the result metadata that follows its header.
+fn metadata_deserializer<'frame>(
+    buf: &mut &'frame [u8],
     col_count: usize,
     global_tables_spec: bool,
     metadata_changed: bool,
-) -> impl for<'frame> FnOnce(
-    &mut &'frame [u8],
 ) -> StdResult<ResultMetadata<'frame>, ResultMetadataParseError> {
-    move |buf| {
-        let server_metadata = {
-            let new_metadata_id = metadata_changed
-                .then(|| {
-                    types::read_short_bytes(buf)
-                        .map_err(ResultMetadataParseError::NewMetadataIdParseError)
-                })
-                .transpose()?
-                .map(cow_bytes::CowBytes::Borrowed);
-            let global_table_spec = global_tables_spec
-                .then(|| deser_table_spec(buf))
-                .transpose()?;
+    let new_metadata_id = metadata_changed
+        .then(|| {
+            types::read_short_bytes(buf).map_err(ResultMetadataParseError::NewMetadataIdParseError)
+        })
+        .transpose()?
+        .map(cow_bytes::CowBytes::Borrowed);
+    let global_table_spec = global_tables_spec
+        .then(|| deser_table_spec(buf))
+        .transpose()?;
 
-            let col_specs = deser_col_specs_borrowed(buf, global_table_spec, col_count)?;
+    let col_specs = deser_col_specs_borrowed(buf, global_table_spec, col_count)?;
 
-            ResultMetadata {
-                id: new_metadata_id,
-                col_count,
-                col_specs: col_specs.into_boxed_slice(),
-            }
-        };
-        Ok(server_metadata)
-    }
+    Ok(ResultMetadata {
+        id: new_metadata_id,
+        col_count,
+        col_specs: col_specs.into_boxed_slice(),
+    })
 }
 
 fn deser_prepared_metadata(
