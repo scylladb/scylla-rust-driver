@@ -439,4 +439,35 @@ mod tests {
             Query::deserialize(&mut &buf[..len], &Default::default()).unwrap_err();
         }
     }
+
+    /// A frame cut short must be rejected without panicking.
+    #[test]
+    fn deser_rejects_truncated_batch() {
+        // Every optional part and statement kind is present, so that each one gets cut.
+        let mut values = SerializedValues::new();
+        values
+            .add_value(&2137, &ColumnType::Native(NativeType::Int))
+            .unwrap();
+        let batch = Batch {
+            statements: Cow::Owned(vec![
+                BatchStatement::Query {
+                    text: Cow::Borrowed("INSERT INTO ks.t (a) VALUES (?)"),
+                },
+                BatchStatement::Prepared {
+                    id: Cow::Borrowed(&[1, 2, 3]),
+                },
+            ]),
+            batch_type: BatchType::Logged,
+            consistency: Consistency::Quorum,
+            serial_consistency: Some(SerialConsistency::Serial),
+            timestamp: Some(1),
+            values: vec![values.clone(), values],
+        };
+        let mut buf = Vec::new();
+        batch.serialize(&mut buf).unwrap();
+
+        for len in 0..buf.len() {
+            Batch::deserialize(&mut &buf[..len], &Default::default()).unwrap_err();
+        }
+    }
 }

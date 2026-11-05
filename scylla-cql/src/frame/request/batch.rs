@@ -1,6 +1,6 @@
 //! CQL protocol-level representation of a `BATCH` request.
 
-use bytes::{Buf, BufMut};
+use bytes::BufMut;
 use std::{borrow::Cow, convert::TryInto};
 
 use crate::frame::{
@@ -206,7 +206,7 @@ where
 fn deserialize_batch_statement(
     buf: &mut &[u8],
 ) -> Result<BatchStatement<'static>, RequestDeserializationError> {
-    let kind = buf.get_u8();
+    let kind = types::read_byte(buf)?;
     match kind {
         0 => {
             let text = Cow::Owned(types::read_long_string(buf)?.to_owned());
@@ -247,7 +247,7 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
         buf: &mut &[u8],
         _features: &ProtocolFeatures,
     ) -> Result<Self, RequestDeserializationError> {
-        let batch_type = buf.get_u8().try_into()?;
+        let batch_type = types::read_byte(buf)?.try_into()?;
 
         let statements_count: usize = types::read_short(buf)?.into();
         let statements_with_values = (0..statements_count)
@@ -263,7 +263,7 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
 
         let consistency = types::read_consistency(buf)?;
 
-        let flags = buf.get_u8();
+        let flags = types::read_byte(buf)?;
         let unknown_flags = flags & (!ALL_FLAGS);
         if unknown_flags != 0 {
             return Err(RequestDeserializationError::UnknownFlags {
