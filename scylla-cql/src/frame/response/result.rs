@@ -687,6 +687,56 @@ fn deser_col_specs_owned<'frame>(
     result
 }
 
+/// The flags, column count and paging state, which start result metadata.
+struct ResultMetadataHeader {
+    col_count: usize,
+    global_tables_spec: bool,
+    metadata_presence: MetadataPresence,
+    paging_state: PagingStateResponse,
+}
+
+impl ResultMetadataHeader {
+    fn deserialize(
+        buf: &mut &[u8],
+        features: &ProtocolFeatures,
+    ) -> StdResult<Self, RawRowsAndPagingStateResponseParseError> {
+        let flags = types::read_int(buf)
+            .map_err(|err| RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into()))?;
+        let global_tables_spec = flags & 0x0001 != 0;
+        let has_more_pages = flags & 0x0002 != 0;
+        let no_metadata = flags & 0x0004 != 0;
+        let metadata_changed = features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
+
+        let metadata_presence = match (no_metadata, metadata_changed) {
+            (true, true) => {
+                return Err(RawRowsAndPagingStateResponseParseError::IdPresentForEmptyMetadata);
+            }
+            (true, false) => MetadataPresence::NoMetadata,
+            (false, true) => MetadataPresence::MetadataWithNewId,
+            (false, false) => MetadataPresence::JustMetadata,
+        };
+
+        let col_count = types::read_int_length(buf)
+            .map_err(RawRowsAndPagingStateResponseParseError::ColumnCountParseError)?;
+
+        let raw_paging_state = has_more_pages
+            .then(|| {
+                types::read_bytes(buf)
+                    .map_err(RawRowsAndPagingStateResponseParseError::PagingStateParseError)
+            })
+            .transpose()?;
+
+        let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
+
+        Ok(Self {
+            col_count,
+            global_tables_spec,
+            metadata_presence,
+            paging_state,
+        })
+    }
+}
+
 fn deser_result_metadata(
     buf: &mut &[u8],
     features: &ProtocolFeatures,
@@ -744,47 +794,14 @@ impl RawMetadataAndRawRows {
         cached_metadata: Option<Arc<ResultMetadata<'static>>>,
         features: &ProtocolFeatures,
     ) -> StdResult<(Self, PagingStateResponse), RawRowsAndPagingStateResponseParseError> {
-        let (col_count, global_tables_spec, metadata_presence, paging_state) =
-            types::parse_prefix(&mut frame, |buf| {
-                let flags = types::read_int(buf).map_err(|err| {
-                    RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into())
-                })?;
-                let global_tables_spec = flags & 0x0001 != 0;
-                let has_more_pages = flags & 0x0002 != 0;
-                let no_metadata = flags & 0x0004 != 0;
-                let metadata_changed =
-                    features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
-
-                let metadata_presence = match (no_metadata, metadata_changed) {
-                    (true, true) => {
-                        return Err(
-                            RawRowsAndPagingStateResponseParseError::IdPresentForEmptyMetadata,
-                        );
-                    }
-                    (true, false) => MetadataPresence::NoMetadata,
-                    (false, true) => MetadataPresence::MetadataWithNewId,
-                    (false, false) => MetadataPresence::JustMetadata,
-                };
-
-                let col_count = types::read_int_length(buf)
-                    .map_err(RawRowsAndPagingStateResponseParseError::ColumnCountParseError)?;
-
-                let raw_paging_state = has_more_pages
-                    .then(|| {
-                        types::read_bytes(buf)
-                            .map_err(RawRowsAndPagingStateResponseParseError::PagingStateParseError)
-                    })
-                    .transpose()?;
-
-                let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
-
-                Ok((
-                    col_count,
-                    global_tables_spec,
-                    metadata_presence,
-                    paging_state,
-                ))
-            })?;
+        let ResultMetadataHeader {
+            col_count,
+            global_tables_spec,
+            metadata_presence,
+            paging_state,
+        } = types::parse_prefix(&mut frame, |buf| {
+            ResultMetadataHeader::deserialize(buf, features)
+        })?;
 
         let raw_rows = Self {
             col_count,
