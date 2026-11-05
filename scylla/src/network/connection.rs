@@ -17,7 +17,7 @@ use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::request::CqlRequestKind;
 use crate::frame::request::options::{self, Options};
 use crate::frame::request::query::QueryParameters;
-use crate::frame::request::register::RegisterV2 as Register;
+use crate::frame::request::register::Register;
 use crate::frame::response::authenticate::Authenticate;
 use crate::frame::response::result::{ResultMetadata, ResultWithDeserializedMetadata, TableSpec};
 use crate::frame::response::{self, error};

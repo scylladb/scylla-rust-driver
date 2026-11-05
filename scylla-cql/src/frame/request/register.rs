@@ -12,12 +12,12 @@ pub use crate::frame::frame_errors::RegisterSerializationError;
 
 /// The CQL protocol-level representation of an `REGISTER` request,
 /// used to subscribe for server events.
-pub struct RegisterV2 {
+pub struct Register {
     /// A list of event types to register for.
     pub event_types_to_register_for: Vec<EventTypeV2>,
 }
 
-impl SerializableRequest for RegisterV2 {
+impl SerializableRequest for Register {
     const OPCODE: RequestOpcode = RequestOpcode::Register;
 
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
