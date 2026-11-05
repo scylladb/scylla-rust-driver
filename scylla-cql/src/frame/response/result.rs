@@ -800,6 +800,41 @@ impl DeserializedMetadataAndRawRows {
     }
 }
 
+/// [`deser_col_specs_borrowed`] or [`deser_col_specs_owned`].
+type DeserColSpecs<'frame, 'result> =
+    fn(
+        &mut &'frame [u8],
+        Option<TableSpec<'frame>>,
+        usize,
+    ) -> StdResult<Vec<ColumnSpec<'result>>, ColumnSpecParseError>;
+
+fn deser_result_metadata_body_generic<'frame, 'result>(
+    buf: &mut &'frame [u8],
+    col_count: usize,
+    global_tables_spec: bool,
+    metadata_changed: bool,
+    make_id: fn(&'frame [u8]) -> cow_bytes::CowBytes<'result>,
+    deser_col_specs: DeserColSpecs<'frame, 'result>,
+) -> StdResult<ResultMetadata<'result>, ResultMetadataParseError> {
+    let new_metadata_id = metadata_changed
+        .then(|| {
+            types::read_short_bytes(buf).map_err(ResultMetadataParseError::NewMetadataIdParseError)
+        })
+        .transpose()?
+        .map(make_id);
+    let global_table_spec = global_tables_spec
+        .then(|| deser_table_spec(buf))
+        .transpose()?;
+
+    let col_specs = deser_col_specs(buf, global_table_spec, col_count)?;
+
+    Ok(ResultMetadata {
+        id: new_metadata_id,
+        col_count,
+        col_specs: col_specs.into_boxed_slice(),
+    })
+}
+
 /// Deserializes the result metadata that follows its header, in the borrowed form.
 fn deser_result_metadata_body_borrowed<'frame>(
     buf: &mut &'frame [u8],
@@ -807,23 +842,14 @@ fn deser_result_metadata_body_borrowed<'frame>(
     global_tables_spec: bool,
     metadata_changed: bool,
 ) -> StdResult<ResultMetadata<'frame>, ResultMetadataParseError> {
-    let new_metadata_id = metadata_changed
-        .then(|| {
-            types::read_short_bytes(buf).map_err(ResultMetadataParseError::NewMetadataIdParseError)
-        })
-        .transpose()?
-        .map(cow_bytes::CowBytes::Borrowed);
-    let global_table_spec = global_tables_spec
-        .then(|| deser_table_spec(buf))
-        .transpose()?;
-
-    let col_specs = deser_col_specs_borrowed(buf, global_table_spec, col_count)?;
-
-    Ok(ResultMetadata {
-        id: new_metadata_id,
+    deser_result_metadata_body_generic(
+        buf,
         col_count,
-        col_specs: col_specs.into_boxed_slice(),
-    })
+        global_tables_spec,
+        metadata_changed,
+        cow_bytes::CowBytes::Borrowed,
+        deser_col_specs_borrowed,
+    )
 }
 
 fn deser_prepared_metadata(
