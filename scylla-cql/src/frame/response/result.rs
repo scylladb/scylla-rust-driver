@@ -692,27 +692,16 @@ fn deser_result_metadata(
         paging_state,
     } = ResultMetadataHeader::deserialize(buf, features)?;
 
-    let new_metadata_id = matches!(metadata_presence, MetadataPresence::MetadataWithNewId)
-        .then(|| {
-            types::read_short_bytes(buf).map_err(ResultMetadataParseError::NewMetadataIdParseError)
-        })
-        .transpose()?
-        .map(|x| cow_bytes::CowBytes::from(x).into_owned());
-
-    let col_specs = if matches!(metadata_presence, MetadataPresence::NoMetadata) {
-        vec![]
+    let metadata_changed = matches!(metadata_presence, MetadataPresence::MetadataWithNewId);
+    let metadata = if matches!(metadata_presence, MetadataPresence::NoMetadata) {
+        // The header rules out a new metadata id without metadata.
+        ResultMetadata {
+            id: None,
+            col_count,
+            col_specs: Box::default(),
+        }
     } else {
-        let global_table_spec = global_tables_spec
-            .then(|| deser_table_spec(buf))
-            .transpose()?;
-
-        deser_col_specs_owned(buf, global_table_spec, col_count)?
-    };
-
-    let metadata = ResultMetadata {
-        id: new_metadata_id,
-        col_count,
-        col_specs: col_specs.into_boxed_slice(),
+        deser_result_metadata_body_owned(buf, col_count, global_tables_spec, metadata_changed)?
     };
     Ok((metadata, paging_state))
 }
@@ -849,6 +838,23 @@ fn deser_result_metadata_body_borrowed<'frame>(
         metadata_changed,
         cow_bytes::CowBytes::Borrowed,
         deser_col_specs_borrowed,
+    )
+}
+
+/// Deserializes the result metadata that follows its header, in the owned form.
+fn deser_result_metadata_body_owned(
+    buf: &mut &[u8],
+    col_count: usize,
+    global_tables_spec: bool,
+    metadata_changed: bool,
+) -> StdResult<ResultMetadata<'static>, ResultMetadataParseError> {
+    deser_result_metadata_body_generic(
+        buf,
+        col_count,
+        global_tables_spec,
+        metadata_changed,
+        |id| cow_bytes::CowBytes::from(id).into_owned(),
+        deser_col_specs_owned,
     )
 }
 
