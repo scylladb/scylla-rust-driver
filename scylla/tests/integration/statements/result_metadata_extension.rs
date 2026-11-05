@@ -13,7 +13,7 @@ use scylla::frame::response::result::{ColumnSpec, TableSpec};
 use scylla::statement::prepared::PreparedStatement;
 use scylla_cql::frame::request::DeserializableRequest;
 use scylla_cql::frame::request::execute::Execute;
-use scylla_cql::frame::response::result::ResultWithDeserializedMetadata;
+use scylla_cql::frame::response::result::Result;
 use scylla_cql::frame::response::{Response, Supported};
 use scylla_cql::frame::{parse_response_body_extensions, types};
 use scylla_proxy::{
@@ -354,10 +354,7 @@ async fn test_insert_sends_empty_result_metadata_id() {
                 )
                 .unwrap();
                 assert!(
-                    matches!(
-                        response,
-                        Response::Result(ResultWithDeserializedMetadata::Void)
-                    ),
+                    matches!(response, Response::Result(Result::Void)),
                     "INSERT should return VOID response, iteration {i}, got: {response:?}"
                 );
             }

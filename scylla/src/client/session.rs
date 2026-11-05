@@ -1759,9 +1759,7 @@ impl Session {
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
-                response: NonErrorResponseWithDeserializedMetadata::Result(
-                    result::ResultWithDeserializedMetadata::Void,
-                ),
+                response: NonErrorResponseWithDeserializedMetadata::Result(result::Result::Void),
                 tracing_id: None,
                 warnings: Box::default(),
             },
@@ -2173,9 +2171,7 @@ impl Session {
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
-                response: NonErrorResponseWithDeserializedMetadata::Result(
-                    result::ResultWithDeserializedMetadata::Void,
-                ),
+                response: NonErrorResponseWithDeserializedMetadata::Result(result::Result::Void),
                 tracing_id: None,
                 warnings: Box::default(),
             },

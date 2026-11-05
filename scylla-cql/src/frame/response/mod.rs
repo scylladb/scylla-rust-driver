@@ -69,7 +69,7 @@ pub enum Response {
     /// typically after a connection is established.
     Ready,
     /// RESULT response, containing the result of a statement execution.
-    Result(result::ResultWithDeserializedMetadata),
+    Result(result::Result),
     /// AUTHENTICATE response, indicating that the server requires authentication.
     Authenticate(authenticate::Authenticate),
     /// AUTH_SUCCESS response, indicating that the authentication was successful.
@@ -162,7 +162,7 @@ pub enum NonErrorResponseWithDeserializedMetadataV2 {
     /// See [`Response::Ready`].
     Ready,
     /// See [`Response::Result`].
-    Result(result::ResultWithDeserializedMetadata),
+    Result(result::Result),
     /// See [`Response::Authenticate`].
     Authenticate(authenticate::Authenticate),
     /// See [`Response::AuthSuccess`].

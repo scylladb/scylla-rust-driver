@@ -48,18 +48,18 @@ impl QueryResponse {
 impl NonErrorQueryResponse {
     pub(crate) fn as_set_keyspace(&self) -> Option<&result::SetKeyspace> {
         match &self.response {
-            NonErrorResponseWithDeserializedMetadata::Result(
-                result::ResultWithDeserializedMetadata::SetKeyspace(sk),
-            ) => Some(sk),
+            NonErrorResponseWithDeserializedMetadata::Result(result::Result::SetKeyspace(sk)) => {
+                Some(sk)
+            }
             _ => None,
         }
     }
 
     pub(crate) fn as_schema_change(&self) -> Option<&result::SchemaChange> {
         match &self.response {
-            NonErrorResponseWithDeserializedMetadata::Result(
-                result::ResultWithDeserializedMetadata::SchemaChange(sc),
-            ) => Some(sc),
+            NonErrorResponseWithDeserializedMetadata::Result(result::Result::SchemaChange(sc)) => {
+                Some(sc)
+            }
             _ => None,
         }
     }
@@ -74,9 +74,10 @@ impl NonErrorQueryResponse {
             warnings,
         } = self;
         let (raw_rows, paging_state_response) = match response {
-            NonErrorResponseWithDeserializedMetadata::Result(
-                result::ResultWithDeserializedMetadata::Rows((rs, paging_state_response)),
-            ) => (Some(rs), paging_state_response),
+            NonErrorResponseWithDeserializedMetadata::Result(result::Result::Rows((
+                rs,
+                paging_state_response,
+            ))) => (Some(rs), paging_state_response),
             NonErrorResponseWithDeserializedMetadata::Result(_) => {
                 (None, PagingStateResponse::NoMorePages)
             }

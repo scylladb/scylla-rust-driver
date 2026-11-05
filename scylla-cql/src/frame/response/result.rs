@@ -414,7 +414,7 @@ impl DeserializedMetadataAndRawRows {
 
 /// Represents the result of a CQL `RESULT` response.
 #[derive(Debug)]
-pub enum ResultWithDeserializedMetadata {
+pub enum Result {
     /// A result with no associated data.
     Void,
     /// A result with metadata and rows.
@@ -946,8 +946,8 @@ pub fn deserialize(
     mut buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
     features: &ProtocolFeatures,
-) -> StdResult<ResultWithDeserializedMetadata, CqlResultParseError> {
-    use self::ResultWithDeserializedMetadata::*;
+) -> StdResult<Result, CqlResultParseError> {
+    use self::Result::*;
     Ok(
         match types::parse_prefix(&mut buf_bytes, types::read_int)
             .map_err(|err| CqlResultParseError::ResultIdParseError(err.into()))?

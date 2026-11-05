@@ -19,7 +19,7 @@ use crate::frame::request::options::{self, Options};
 use crate::frame::request::query::QueryParameters;
 use crate::frame::request::register::Register;
 use crate::frame::response::authenticate::Authenticate;
-use crate::frame::response::result::{ResultMetadata, ResultWithDeserializedMetadata, TableSpec};
+use crate::frame::response::result::{ResultMetadata, TableSpec};
 use crate::frame::response::{self, error};
 use crate::frame::response::{Error, Response};
 use crate::frame::types::SerialConsistency;
@@ -673,7 +673,7 @@ impl Connection {
             Response::Error(error::Error { error, reason }) => {
                 Err(RequestAttemptError::DbError(error, reason))
             }
-            Response::Result(result::ResultWithDeserializedMetadata::Prepared(p)) => {
+            Response::Result(result::Result::Prepared(p)) => {
                 let is_lwt = self
                     .features
                     .protocol_features
@@ -929,9 +929,7 @@ impl Connection {
         prepared_statement: &PreparedStatement,
         query_response: &QueryResponse,
     ) {
-        if let Response::Result(ResultWithDeserializedMetadata::Rows(rows_result)) =
-            &query_response.response
-        {
+        if let Response::Result(result::Result::Rows(rows_result)) = &query_response.response {
             // New metadata doesn't have id, so nothing to update.
             if rows_result.0.metadata().id().is_none() {
                 return;
@@ -1319,7 +1317,7 @@ impl Connection {
         query_response: QueryResponse,
     ) -> Result<(), UseKeyspaceError> {
         match query_response.response {
-            Response::Result(result::ResultWithDeserializedMetadata::SetKeyspace(set_keyspace)) => {
+            Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
                 if !set_keyspace
                     .keyspace_name
                     .eq_ignore_ascii_case(keyspace_name.as_str())
