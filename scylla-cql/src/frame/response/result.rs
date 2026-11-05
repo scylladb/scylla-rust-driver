@@ -261,18 +261,6 @@ mod self_borrowed_metadata {
     }
 
     impl SelfBorrowedMetadataContainer {
-        /// Creates an empty [SelfBorrowedMetadataContainer].
-        pub fn mock_empty() -> Self {
-            Self {
-                metadata_and_raw_rows: Yoke::attach_to_cart(
-                    BytesWrapper {
-                        inner: Bytes::new(),
-                    },
-                    |_| ResultMetadataWrapper(ResultMetadata::mock_empty()),
-                ),
-            }
-        }
-
         /// Returns a reference to the contained [ResultMetadata].
         pub fn metadata(&self) -> &ResultMetadata<'_> {
             &self.metadata_and_raw_rows.get().0
