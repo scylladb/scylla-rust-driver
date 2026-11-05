@@ -7,9 +7,8 @@ use crate::frame::frame_errors::CustomTypeParseError;
 use crate::frame::frame_errors::{
     ColumnSpecParseError, ColumnSpecParseErrorKind, CqlResultParseError, CqlTypeParseError,
     LowLevelDeserializationError, PreparedMetadataParseError, PreparedParseError,
-    RawRowsAndPagingStateResponseParseError, ResultMetadataAndRowsCountParseError,
-    ResultMetadataParseError, SchemaChangeEventParseError, SetKeyspaceParseError,
-    TableSpecParseError,
+    ResultMetadataAndRowsCountParseError, ResultMetadataParseError, SchemaChangeEventParseError,
+    SetKeyspaceParseError, TableSpecParseError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::request::query::PagingStateResponse;
@@ -645,9 +644,9 @@ impl ResultMetadataHeader {
     fn deserialize(
         buf: &mut &[u8],
         features: &ProtocolFeatures,
-    ) -> StdResult<Self, RawRowsAndPagingStateResponseParseError> {
+    ) -> StdResult<Self, ResultMetadataParseError> {
         let flags = types::read_int(buf)
-            .map_err(|err| RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into()))?;
+            .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
         let global_tables_spec = flags & 0x0001 != 0;
         let has_more_pages = flags & 0x0002 != 0;
         let no_metadata = flags & 0x0004 != 0;
@@ -655,20 +654,19 @@ impl ResultMetadataHeader {
 
         let metadata_presence = match (no_metadata, metadata_changed) {
             (true, true) => {
-                return Err(RawRowsAndPagingStateResponseParseError::IdPresentForEmptyMetadata);
+                return Err(ResultMetadataParseError::IdPresentForEmptyMetadata);
             }
             (true, false) => MetadataPresence::NoMetadata,
             (false, true) => MetadataPresence::MetadataWithNewId,
             (false, false) => MetadataPresence::JustMetadata,
         };
 
-        let col_count = types::read_int_length(buf)
-            .map_err(RawRowsAndPagingStateResponseParseError::ColumnCountParseError)?;
+        let col_count =
+            types::read_int_length(buf).map_err(ResultMetadataParseError::ColumnCountParseError)?;
 
         let raw_paging_state = has_more_pages
             .then(|| {
-                types::read_bytes(buf)
-                    .map_err(RawRowsAndPagingStateResponseParseError::PagingStateParseError)
+                types::read_bytes(buf).map_err(ResultMetadataParseError::PagingStateParseError)
             })
             .transpose()?;
 
@@ -741,7 +739,7 @@ impl DeserializedMetadataAndRawRows {
         mut frame: Bytes,
         cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
         features: &ProtocolFeatures,
-    ) -> StdResult<(Self, PagingStateResponse), CqlResultParseError> {
+    ) -> StdResult<(Self, PagingStateResponse), ResultMetadataAndRowsCountParseError> {
         let ResultMetadataHeader {
             col_count,
             global_tables_spec,
@@ -785,8 +783,7 @@ impl DeserializedMetadataAndRawRows {
                     self_borrowed_metadata::SelfBorrowedMetadataContainer::make_deserialized_metadata(
                         frame,
                         metadata_deserializer(col_count, global_tables_spec, metadata_changed),
-                    )
-                    .map_err(ResultMetadataAndRowsCountParseError::from)?;
+                    )?;
                 (
                     ResultMetadataHolder::SelfBorrowed(Box::new(metadata_container)),
                     raw_rows_with_count,
