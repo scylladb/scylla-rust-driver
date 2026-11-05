@@ -135,11 +135,9 @@ impl Response {
                 Response::Authenticate(authenticate::Authenticate::deserialize(buf)?)
             }
             ResponseOpcode::Supported => Response::Supported(Supported::deserialize(buf)?),
-            ResponseOpcode::Result => Response::Result(result::deserialize_with_features(
-                buf_bytes,
-                cached_metadata,
-                features,
-            )?),
+            ResponseOpcode::Result => {
+                Response::Result(result::deserialize(buf_bytes, cached_metadata, features)?)
+            }
             ResponseOpcode::Event => Response::Event(event::Event::deserialize(buf)?),
             ResponseOpcode::AuthChallenge => {
                 Response::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)
@@ -221,11 +219,9 @@ impl ResponseV2 {
                 Self::Authenticate(authenticate::Authenticate::deserialize(buf)?)
             }
             ResponseOpcode::Supported => Self::Supported(Supported::deserialize(buf)?),
-            ResponseOpcode::Result => Self::Result(result::deserialize_with_features(
-                buf_bytes,
-                cached_metadata,
-                features,
-            )?),
+            ResponseOpcode::Result => {
+                Self::Result(result::deserialize(buf_bytes, cached_metadata, features)?)
+            }
             ResponseOpcode::Event => Self::Event(event::EventV2::deserialize(buf)?),
             ResponseOpcode::AuthChallenge => {
                 Self::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)

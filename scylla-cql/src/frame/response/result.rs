@@ -1045,7 +1045,7 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeE
 /// Deserializes a CQL `RESULT` response from the provided buffer.
 ///
 /// Reuses cached metadata if provided, otherwise deserializes it.
-pub fn deserialize_with_features(
+pub fn deserialize(
     mut buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
     features: &ProtocolFeatures,
