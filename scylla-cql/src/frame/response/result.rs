@@ -136,7 +136,7 @@ impl<'a> ResultMetadata<'a> {
     // Preferred to implementing Default, because users shouldn't be encouraged to create
     // empty ResultMetadata.
     #[inline]
-    pub fn mock_empty() -> Self {
+    pub(crate) fn mock_empty() -> Self {
         Self {
             id: None,
             col_count: 0,
