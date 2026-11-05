@@ -412,4 +412,31 @@ mod tests {
             let _parse_error = Batch::deserialize(&mut &buf[..], &Default::default()).unwrap_err();
         }
     }
+
+    /// A frame cut short must be rejected without panicking.
+    #[test]
+    fn deser_rejects_truncated_query() {
+        // Every optional part is present, so that each one gets cut.
+        let mut values = SerializedValues::new();
+        values
+            .add_value(&2137, &ColumnType::Native(NativeType::Int))
+            .unwrap();
+        let query = Query {
+            contents: Cow::Borrowed("SELECT host_id from system.peers"),
+            parameters: QueryParameters {
+                serial_consistency: Some(SerialConsistency::Serial),
+                timestamp: Some(1),
+                page_size: Some(1),
+                paging_state: PagingState::new_from_raw_bytes(&[1_u8] as &[u8]),
+                values: Cow::Owned(values),
+                ..Default::default()
+            },
+        };
+        let mut buf = Vec::new();
+        query.serialize(&mut buf).unwrap();
+
+        for len in 0..buf.len() {
+            Query::deserialize(&mut &buf[..len], &Default::default()).unwrap_err();
+        }
+    }
 }
