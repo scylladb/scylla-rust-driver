@@ -215,60 +215,6 @@ enum MetadataPresence {
     MetadataWithNewId,
 }
 
-/// RESULT:Rows response, in partially serialized form.
-///
-/// Flags and paging state are deserialized, remaining part of metadata
-/// as well as rows remain serialized.
-#[derive(Debug, Clone)]
-pub struct RawMetadataAndRawRows {
-    // Already deserialized part of metadata:
-    col_count: usize,
-    global_tables_spec: bool,
-    metadata_presence: MetadataPresence,
-
-    /// The remaining part of the RESULT frame.
-    raw_metadata_and_rows: Bytes,
-
-    /// Metadata cached in PreparedStatement, if present.
-    cached_metadata: Option<Arc<ResultMetadata<'static>>>,
-}
-
-impl RawMetadataAndRawRows {
-    /// Creates an empty [RawMetadataAndRawRows].
-    // Preferred to implementing Default, because users shouldn't be encouraged to create
-    // empty RawMetadataAndRawRows.
-    #[inline]
-    pub fn mock_empty() -> Self {
-        // Minimal correct `raw_metadata_and_rows` looks like this:
-        // Empty metadata (0 bytes), rows_count=0 (i32 big endian), empty rows (0 bytes).
-        static EMPTY_METADATA_ZERO_ROWS: &[u8] = &0_i32.to_be_bytes();
-        let raw_metadata_and_rows = Bytes::from_static(EMPTY_METADATA_ZERO_ROWS);
-
-        Self {
-            col_count: 0,
-            global_tables_spec: false,
-            metadata_presence: MetadataPresence::JustMetadata,
-            raw_metadata_and_rows,
-            cached_metadata: None,
-        }
-    }
-
-    /// Returns the serialized size of the raw metadata + raw rows.
-    #[inline]
-    pub fn metadata_and_rows_bytes_size(&self) -> usize {
-        self.raw_metadata_and_rows.len()
-    }
-
-    #[inline]
-    pub fn metadata_changed(&self) -> bool {
-        matches!(self.metadata_presence, MetadataPresence::MetadataWithNewId)
-    }
-
-    pub fn no_metadata(&self) -> bool {
-        matches!(self.metadata_presence, MetadataPresence::NoMetadata)
-    }
-}
-
 mod self_borrowed_metadata {
     use std::ops::Deref;
 
@@ -901,70 +847,6 @@ fn metadata_deserializer(
             }
         };
         Ok(server_metadata)
-    }
-}
-
-impl RawMetadataAndRawRows {
-    /// Deserializes ResultMetadata and deserializes rows count. Keeps rows in the serialized form.
-    ///
-    /// If metadata is cached (in the PreparedStatement), it is reused (shared) from cache
-    /// instead of deserializing.
-    pub fn deserialize_metadata(
-        self,
-    ) -> StdResult<DeserializedMetadataAndRawRows, ResultMetadataAndRowsCountParseError> {
-        let raw_metadata_and_rows_bytes_size = self.metadata_and_rows_bytes_size();
-        let (metadata_deserialized, row_count_and_raw_rows) = match self.cached_metadata {
-            Some(cached) if self.no_metadata() => {
-                // Server sent no metadata, but we have metadata cached. This means that we asked the server
-                // not to send metadata in the response as an optimization. We use cached metadata instead.
-                (
-                    ResultMetadataHolder::SharedCached(cached),
-                    self.raw_metadata_and_rows,
-                )
-            }
-            None if self.no_metadata() => {
-                // Server sent no metadata and we have no metadata cached. Having no metadata cached,
-                // we wouldn't have asked the server for skipping metadata. Therefore, this is most probably
-                // not a SELECT, because in such case the server would send empty metadata both in Prepared
-                // and in Result responses.
-                (
-                    ResultMetadataHolder::mock_empty(),
-                    self.raw_metadata_and_rows,
-                )
-            }
-            Some(_) | None => {
-                // Two possibilities:
-                // 1) no cached_metadata provided. Server is supposed to provide the result metadata.
-                // 2) cached metadata present (so we should have asked for skipping metadata),
-                //    but the server sent result metadata anyway.
-                // In case 1 we have to deserialize result metadata. In case 2 we choose to do that,
-                // too, because it's suspicious, so we had better use the new metadata just in case.
-                // Also, we simply need to advance the buffer pointer past metadata, and this requires
-                // parsing metadata.
-
-                let metadata_changed = self.metadata_changed();
-                let (metadata_container, raw_rows_with_count) =
-                    self_borrowed_metadata::SelfBorrowedMetadataContainer::make_deserialized_metadata(
-                        self.raw_metadata_and_rows,
-                        metadata_deserializer(self.col_count, self.global_tables_spec, metadata_changed),
-                    )?;
-                (
-                    ResultMetadataHolder::SelfBorrowed(Box::new(metadata_container)),
-                    raw_rows_with_count,
-                )
-            }
-        };
-
-        let mut raw_rows = row_count_and_raw_rows;
-        let rows_count = types::parse_prefix(&mut raw_rows, types::read_int_length)
-            .map_err(ResultMetadataAndRowsCountParseError::RowsCountParseError)?;
-
-        Ok(DeserializedMetadataAndRawRows {
-            metadata: metadata_deserialized,
-            rows_count,
-            raw_rows,
-            raw_metadata_and_rows_bytes_size,
-        })
     }
 }
 
