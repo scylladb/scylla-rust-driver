@@ -3,7 +3,6 @@
 use crate::frame::frame_errors::CqlRequestSerializationError;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::response::result::cow_bytes::CowBytes;
-use bytes::Bytes;
 
 use crate::{
     frame::request::{RequestOpcode, SerializableRequest, query},
@@ -14,45 +13,6 @@ use super::{DeserializableRequest, RequestDeserializationError, query::QueryPara
 
 // Re-export for backward compatibility.
 pub use crate::frame::frame_errors::ExecuteSerializationError;
-
-/// CQL protocol-level representation of an `EXECUTE` request,
-/// used to execute a single prepared statement.
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-#[deprecated(since = "1.4.0", note = "Use ExecuteV2 instead")]
-pub struct Execute<'a> {
-    /// ID of the prepared statement to execute.
-    pub id: Bytes,
-
-    /// Various parameters controlling the execution of the statement.
-    pub parameters: query::QueryParameters<'a>,
-}
-
-#[expect(deprecated)]
-impl SerializableRequest for Execute<'_> {
-    const OPCODE: RequestOpcode = RequestOpcode::Execute;
-
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
-        // Serializing statement id
-        types::write_short_bytes(&self.id[..], buf)
-            .map_err(ExecuteSerializationError::StatementIdSerialization)?;
-
-        // Serializing params
-        self.parameters
-            .serialize(buf)
-            .map_err(ExecuteSerializationError::QueryParametersSerialization)?;
-        Ok(())
-    }
-}
-
-#[expect(deprecated)]
-impl DeserializableRequest for Execute<'_> {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
-        let id = types::read_short_bytes(buf)?.to_vec().into();
-        let parameters = QueryParameters::deserialize(buf)?;
-
-        Ok(Self { id, parameters })
-    }
-}
 
 /// CQL protocol-level representation of an `EXECUTE` request,
 /// used to execute a single prepared statement.

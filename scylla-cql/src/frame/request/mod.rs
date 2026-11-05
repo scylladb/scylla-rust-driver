@@ -20,8 +20,6 @@ use bytes::Bytes;
 
 pub use auth_response::AuthResponse;
 pub use batch::Batch;
-#[expect(deprecated)]
-pub use execute::Execute;
 pub use options::Options;
 pub use prepare::Prepare;
 pub use query::Query;
@@ -208,14 +206,10 @@ impl Request<'_> {
 mod tests {
     use std::{borrow::Cow, ops::Deref};
 
-    use bytes::Bytes;
-
     use super::query::PagingState;
     use crate::Consistency;
     use crate::frame::protocol_features::ProtocolFeatures;
     use crate::frame::request::batch::{Batch, BatchStatement, BatchType};
-    #[expect(deprecated)]
-    use crate::frame::request::execute::Execute;
     use crate::frame::request::execute::ExecuteV2;
     use crate::frame::request::query::{Query, QueryParameters};
     use crate::frame::request::{DeserializableRequest, SerializableRequest};
@@ -256,8 +250,7 @@ mod tests {
             assert_eq!(&query_deserialized, &query);
         }
 
-        // Legacy Execute
-        let id: Bytes = vec![2, 4, 5, 2, 6, 7, 3, 1].into();
+        // Execute
         let parameters = QueryParameters {
             consistency: Consistency::Any,
             serial_consistency: None,
@@ -275,22 +268,6 @@ mod tests {
             },
         };
 
-        #[expect(deprecated)]
-        let execute = Execute {
-            id,
-            parameters: parameters.clone(),
-        };
-        {
-            let mut buf = Vec::new();
-            execute.serialize(&mut buf).unwrap();
-
-            #[expect(deprecated)]
-            let execute_deserialized =
-                Execute::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
-            assert_eq!(&execute_deserialized, &execute);
-        }
-
-        // New Execute
         let id = [2, 4, 5, 2, 6, 7, 3, 1].as_slice().into();
         let result_metadata_id = Some([2, 4, 5, 2, 6, 7, 3, 1].as_slice().into());
         let mut execute_with_id = ExecuteV2 {
