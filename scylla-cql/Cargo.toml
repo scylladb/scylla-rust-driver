@@ -60,8 +60,6 @@ full-serialization = [
 ]
 
 ### UNSTABLE FEATURES ###
-# Enables features for use in Node.js-RS Driver.
-unstable-nodejs-rs = []
 # Enables features for use in Python-RS Driver.
 unstable-python-rs = ["scylla-cql-core/unstable-python-rs"]
 
