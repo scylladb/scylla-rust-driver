@@ -1065,19 +1065,6 @@ pub fn deserialize_with_features(
     )
 }
 
-/// Deserializes a CQL `RESULT` response from the provided buffer.
-///
-/// Reuses cached metadata if provided, otherwise deserializes it.
-/// Does not take into account protocol features, so for example will
-/// fail on frames containing result metadata ids.
-#[deprecated(since = "1.14.0", note = "Use `deserialize_with_features` instead")]
-pub fn deserialize(
-    buf_bytes: Bytes,
-    cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
-) -> StdResult<Result, CqlResultParseError> {
-    deserialize_with_features(buf_bytes, cached_metadata, &ProtocolFeatures::default())
-}
-
 // This is not #[cfg(test)], because it is used by scylla crate.
 // Unfortunately, this attribute does not apply recursively to
 // child items. Therefore, every test-only `pub` item here must
