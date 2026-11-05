@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use scylla_cql::frame::flag;
 use scylla_cql::frame::frame_errors::FrameHeaderParseError;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
@@ -432,6 +432,12 @@ pub(crate) async fn write_frame(
     writer: &mut (impl AsyncWrite + Unpin),
     compression: &CompressionReader,
 ) -> Result<(), tokio::io::Error> {
+    #[expect(
+        clippy::disallowed_types,
+        reason = "chain() doesn't panic, and write_all_buf() needs a Buf"
+    )]
+    use bytes::Buf;
+
     let compressed_body = compression
         .maybe_compress_body(params.flags, body)
         .map_err(tokio::io::Error::other)?;
