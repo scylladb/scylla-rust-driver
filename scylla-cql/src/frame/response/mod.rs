@@ -256,44 +256,6 @@ impl NonErrorResponse {
 /// The difference from [NonErrorResponse] is that Result::Rows variant holds [result::DeserializedMetadataAndRawRows]
 /// instead of [result::RawMetadataAndRawRows].
 #[derive(Debug)]
-pub enum NonErrorResponseWithDeserializedMetadata {
-    /// See [`ResponseWithDeserializedMetadataV2::Ready`].
-    Ready,
-    /// See [`ResponseWithDeserializedMetadataV2::Result`].
-    Result(result::ResultWithDeserializedMetadata),
-    /// See [`ResponseWithDeserializedMetadataV2::Authenticate`].
-    Authenticate(authenticate::Authenticate),
-    /// See [`ResponseWithDeserializedMetadataV2::AuthSuccess`].
-    AuthSuccess(authenticate::AuthSuccess),
-    /// See [`ResponseWithDeserializedMetadataV2::AuthChallenge`].
-    AuthChallenge(authenticate::AuthChallenge),
-    /// See [`ResponseWithDeserializedMetadataV2::Supported`].
-    Supported(Supported),
-    /// See [`ResponseWithDeserializedMetadataV2::Event`].
-    Event(event::Event),
-}
-
-impl NonErrorResponseWithDeserializedMetadata {
-    /// Returns the kind of this non-error response.
-    pub fn to_response_kind(&self) -> CqlResponseKind {
-        match self {
-            Self::Ready => CqlResponseKind::Ready,
-            Self::Result(_) => CqlResponseKind::Result,
-            Self::Authenticate(_) => CqlResponseKind::Authenticate,
-            Self::AuthSuccess(_) => CqlResponseKind::AuthSuccess,
-            Self::AuthChallenge(_) => CqlResponseKind::AuthChallenge,
-            Self::Supported(_) => CqlResponseKind::Supported,
-            Self::Event(_) => CqlResponseKind::Event,
-        }
-    }
-}
-
-/// A CQL response that has been received from the server, excluding error responses.
-/// This is used to handle responses that are not errors, allowing for easier processing
-/// of valid responses without need to handle error case any later.
-/// The difference from [NonErrorResponse] is that Result::Rows variant holds [result::DeserializedMetadataAndRawRows]
-/// instead of [result::RawMetadataAndRawRows].
-#[derive(Debug)]
 #[non_exhaustive]
 pub enum NonErrorResponseWithDeserializedMetadataV2 {
     /// See [`ResponseWithDeserializedMetadataV2::Ready`].
