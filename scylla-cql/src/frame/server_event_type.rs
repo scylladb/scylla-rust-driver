@@ -1,5 +1,4 @@
 //! This module defines the `EventType` enum, which represents different types of CQL events.
-// TODO(2.0): Move this to a more appropriate location in the crate structure.
 
 use std::fmt;
 use std::str::FromStr;
