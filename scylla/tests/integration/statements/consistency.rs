@@ -10,12 +10,12 @@ use scylla::cluster::NodeRef;
 use scylla::policies::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::FallthroughRetryPolicy;
 use scylla::routing::{NodeLocationPreference, Shard, Token};
+use scylla::statement::Consistency;
 use scylla::statement::SerialConsistency;
 use scylla::statement::batch::BatchStatement;
 use scylla::statement::batch::{Batch, BatchType};
 use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
-use scylla_cql::Consistency;
 use scylla_cql::frame::response::result::TableSpec;
 use scylla_proxy::ShardAwareness;
 use scylla_proxy::{

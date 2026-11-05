@@ -11,10 +11,10 @@ use scylla::policies::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::{RetryPolicy, RetrySession};
 use scylla::policies::speculative_execution::SpeculativeExecutionPolicy;
 use scylla::routing::Shard;
+use scylla::statement::Consistency;
 use scylla::statement::SerialConsistency;
 use scylla::statement::batch::{Batch, BatchStatement, BatchType};
 use scylla::statement::unprepared::Statement;
-use scylla_cql::Consistency;
 use tokio::sync::mpsc;
 
 use scylla_proxy::{

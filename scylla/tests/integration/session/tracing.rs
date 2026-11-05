@@ -1,10 +1,10 @@
+use scylla::statement::Consistency;
 use scylla::{
     client::session::Session,
     observability::tracing::TracingInfo,
     response::query_result::QueryResult,
     statement::{Statement, batch::Batch},
 };
-use scylla_cql::Consistency;
 use uuid::Uuid;
 
 use crate::utils::{
