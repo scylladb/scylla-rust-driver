@@ -10,7 +10,6 @@
 
 use crate::frame::types::RawValue;
 use crate::serialize::row::SerializedValues;
-use bytes::Buf;
 use std::num::Wrapping;
 
 use crate::routing::Token;
@@ -361,7 +360,7 @@ impl PartitionerHasher for CDCPartitionerHasher {
 
                 // If the buffer is full, we can compute and fix the token.
                 if *len == Self::BUF_CAPACITY {
-                    let token = Token::new((&mut &buf[..]).get_i64());
+                    let token = Token::new(i64::from_be_bytes(*buf));
                     self.state = CDCPartitionerHasherState::Computed(token);
                 }
             }
