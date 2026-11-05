@@ -99,11 +99,9 @@ impl ResponseWithDeserializedMetadataV2 {
                 Self::Authenticate(authenticate::Authenticate::deserialize(buf)?)
             }
             ResponseOpcode::Supported => Self::Supported(Supported::deserialize(buf)?),
-            ResponseOpcode::Result => Self::Result(
-                result::deserialize(buf_bytes, cached_metadata, features)?
-                    .deserialize_metadata()
-                    .map_err(|err| CqlResponseParseError::CqlResultParseError(err.into()))?,
-            ),
+            ResponseOpcode::Result => {
+                Self::Result(result::deserialize(buf_bytes, cached_metadata, features)?)
+            }
             ResponseOpcode::Event => Self::Event(event::Event::deserialize(buf)?),
             ResponseOpcode::AuthChallenge => {
                 Self::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)

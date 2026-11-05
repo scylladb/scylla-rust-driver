@@ -1049,14 +1049,17 @@ pub fn deserialize(
     mut buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
     features: &ProtocolFeatures,
-) -> StdResult<Result, CqlResultParseError> {
-    use self::Result::*;
+) -> StdResult<ResultWithDeserializedMetadata, CqlResultParseError> {
+    use self::ResultWithDeserializedMetadata::*;
     Ok(
         match types::parse_prefix(&mut buf_bytes, types::read_int)
             .map_err(|err| CqlResultParseError::ResultIdParseError(err.into()))?
         {
             0x0001 => Void,
-            0x0002 => Rows(deser_rows(buf_bytes, cached_metadata, features)?),
+            0x0002 => {
+                let (raw_rows, paging_state) = deser_rows(buf_bytes, cached_metadata, features)?;
+                Rows((raw_rows.deserialize_metadata()?, paging_state))
+            }
             0x0003 => SetKeyspace(deser_set_keyspace(&mut &*buf_bytes)?),
             0x0004 => Prepared(deser_prepared(&mut &*buf_bytes, features)?),
             0x0005 => SchemaChange(deser_schema_change(&mut &*buf_bytes)?),
