@@ -444,6 +444,13 @@ mod tests {
             ("xd", 4507812186440344727),
             ("primary_key", -1632642444691073360),
             ("kremówki", 4354931215268080151),
+            // Long enough to be hashed in 16-byte blocks.
+            ("0123456789abcdef", 5467490433528156583),
+            ("Ala ma kota, a kota ma Ala.", -3991649887597208366),
+            (
+                "Zażółć gęślą jaźń. Wsiadł rycerz Szaławiła na bułanego konia. Litwo, ojczyzno moja, ...",
+                -5127121861889103241,
+            ),
         ] {
             assert_correct_murmur3_hash(s.0, s.1);
         }
