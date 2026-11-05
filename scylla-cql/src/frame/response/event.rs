@@ -105,6 +105,7 @@ pub enum SchemaChangeEvent {
 
 /// Type of change that was made to the schema.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum SchemaChangeType {
     /// The affected schema item was created.
     Created,
