@@ -14,7 +14,6 @@ pub use scylla_cql_core::frame::response::CqlResponseKind;
 pub use supported::Supported;
 
 use crate::frame::TryFromPrimitiveError;
-use crate::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::response::result::ResultMetadata;
 
@@ -57,97 +56,6 @@ impl TryFrom<u8> for ResponseOpcode {
             0x10 => Ok(Self::AuthSuccess),
             _ => Err(TryFromPrimitiveError::new("ResponseOpcode", value)),
         }
-    }
-}
-
-/// A CQL response that has been received from the server.
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum ResponseV2 {
-    /// ERROR response, returned by the server when an error occurs.
-    Error(Error),
-    /// READY response, indicating that the server is ready to process requests,
-    /// typically after a connection is established.
-    Ready,
-    /// RESULT response, containing the result of a statement execution.
-    Result(result::Result),
-    /// AUTHENTICATE response, indicating that the server requires authentication.
-    Authenticate(authenticate::Authenticate),
-    /// AUTH_SUCCESS response, indicating that the authentication was successful.
-    AuthSuccess(authenticate::AuthSuccess),
-    /// AUTH_CHALLENGE response, indicating that the server requires further authentication.
-    AuthChallenge(authenticate::AuthChallenge),
-    /// SUPPORTED response, containing the features supported by the server.
-    Supported(Supported),
-    /// EVENT response, containing an event that occurred on the server.
-    Event(event::Event),
-}
-
-impl ResponseV2 {
-    /// Returns the kind of this response.
-    pub fn to_response_kind(&self) -> CqlResponseKind {
-        match self {
-            Self::Error(_) => CqlResponseKind::Error,
-            Self::Ready => CqlResponseKind::Ready,
-            Self::Result(_) => CqlResponseKind::Result,
-            Self::Authenticate(_) => CqlResponseKind::Authenticate,
-            Self::AuthSuccess(_) => CqlResponseKind::AuthSuccess,
-            Self::AuthChallenge(_) => CqlResponseKind::AuthChallenge,
-            Self::Supported(_) => CqlResponseKind::Supported,
-            Self::Event(_) => CqlResponseKind::Event,
-        }
-    }
-
-    /// Deserialize a response from the given bytes.
-    pub fn deserialize(
-        features: &ProtocolFeatures,
-        opcode: ResponseOpcode,
-        buf_bytes: bytes::Bytes,
-        cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
-    ) -> Result<Self, CqlResponseParseError> {
-        let buf = &mut &*buf_bytes;
-        let response = match opcode {
-            ResponseOpcode::Error => Self::Error(Error::deserialize(features, buf)?),
-            ResponseOpcode::Ready => Self::Ready,
-            ResponseOpcode::Authenticate => {
-                Self::Authenticate(authenticate::Authenticate::deserialize(buf)?)
-            }
-            ResponseOpcode::Supported => Self::Supported(Supported::deserialize(buf)?),
-            ResponseOpcode::Result => {
-                Self::Result(result::deserialize(buf_bytes, cached_metadata, features)?)
-            }
-            ResponseOpcode::Event => Self::Event(event::Event::deserialize(buf)?),
-            ResponseOpcode::AuthChallenge => {
-                Self::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)
-            }
-            ResponseOpcode::AuthSuccess => {
-                Self::AuthSuccess(authenticate::AuthSuccess::deserialize(buf)?)
-            }
-        };
-
-        Ok(response)
-    }
-
-    pub fn deserialize_metadata(
-        self,
-    ) -> Result<ResponseWithDeserializedMetadataV2, ResultMetadataAndRowsCountParseError> {
-        let result = match self {
-            Self::Error(e) => ResponseWithDeserializedMetadataV2::Error(e),
-            Self::Ready => ResponseWithDeserializedMetadataV2::Ready,
-            Self::Result(res) => {
-                ResponseWithDeserializedMetadataV2::Result(res.deserialize_metadata()?)
-            }
-            Self::Authenticate(auth) => ResponseWithDeserializedMetadataV2::Authenticate(auth),
-            Self::AuthSuccess(auth_succ) => {
-                ResponseWithDeserializedMetadataV2::AuthSuccess(auth_succ)
-            }
-            Self::AuthChallenge(auth_chal) => {
-                ResponseWithDeserializedMetadataV2::AuthChallenge(auth_chal)
-            }
-            Self::Supported(sup) => ResponseWithDeserializedMetadataV2::Supported(sup),
-            Self::Event(eve) => ResponseWithDeserializedMetadataV2::Event(eve),
-        };
-        Ok(result)
     }
 }
 
