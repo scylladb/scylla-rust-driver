@@ -186,10 +186,13 @@ impl Murmur3PartitionerHasher {
         self.h2 = self.h2 * Wrapping(5) + Wrapping(0x38495ab5);
     }
 
-    fn fetch_16_bytes_from_buf(buf: &mut &[u8]) -> (Wrapping<i64>, Wrapping<i64>) {
-        let k1 = Wrapping(buf.get_i64_le());
-        let k2 = Wrapping(buf.get_i64_le());
-        (k1, k2)
+    fn fetch_16_bytes_from_buf(buf: &[u8; Self::BUF_CAPACITY]) -> (Wrapping<i64>, Wrapping<i64>) {
+        let [k1 @ .., _, _, _, _, _, _, _, _] = *buf;
+        let [_, _, _, _, _, _, _, _, k2 @ ..] = *buf;
+        (
+            Wrapping(i64::from_le_bytes(k1)),
+            Wrapping(i64::from_le_bytes(k2)),
+        )
     }
 
     #[inline]
@@ -233,14 +236,12 @@ impl PartitionerHasher for Murmur3PartitionerHasher {
             // First phase: populate buffer until full, then consume two i64s.
             let to_write = Ord::min(Self::BUF_CAPACITY - buf_len, pk_part.len());
             self.buf[buf_len..buf_len + to_write].copy_from_slice(&pk_part[..to_write]);
-            pk_part.advance(to_write);
+            pk_part = &pk_part[to_write..];
             buf_len += to_write;
 
             debug_assert_eq!(buf_len, Self::BUF_CAPACITY);
             // consume 16 bytes from internal buf
-            let mut buf_ptr = &self.buf[..];
-            let (k1, k2) = Self::fetch_16_bytes_from_buf(&mut buf_ptr);
-            debug_assert!(buf_ptr.is_empty());
+            let (k1, k2) = Self::fetch_16_bytes_from_buf(&self.buf);
             self.hash_16_bytes(k1, k2);
             buf_len = 0;
         }
@@ -249,9 +250,10 @@ impl PartitionerHasher for Murmur3PartitionerHasher {
         // hashed directly from the external buffer.
         if buf_len == 0 {
             // Second phase: fast path for big values.
-            while pk_part.len() >= Self::BUF_CAPACITY {
-                let (k1, k2) = Self::fetch_16_bytes_from_buf(&mut pk_part);
+            while let Some((block, rest)) = pk_part.split_first_chunk::<{ Self::BUF_CAPACITY }>() {
+                let (k1, k2) = Self::fetch_16_bytes_from_buf(block);
                 self.hash_16_bytes(k1, k2);
+                pk_part = rest;
             }
         }
 
@@ -259,7 +261,7 @@ impl PartitionerHasher for Murmur3PartitionerHasher {
         debug_assert!(pk_part.len() < Self::BUF_CAPACITY - buf_len);
         let to_write = pk_part.len();
         self.buf[buf_len..buf_len + to_write].copy_from_slice(&pk_part[..to_write]);
-        pk_part.advance(to_write);
+        pk_part = &pk_part[to_write..];
         buf_len += to_write;
         debug_assert!(pk_part.is_empty());
 
