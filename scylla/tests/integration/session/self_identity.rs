@@ -84,7 +84,8 @@ async fn test_given_self_identity(self_identity: SelfIdentity<'static>) {
                 ),
                 (
                     options::DRIVER_VERSION,
-                    options::DEFAULT_DRIVER_VERSION,
+                    // Version of `scylla`, as this test belongs to its package.
+                    env!("CARGO_PKG_VERSION"),
                     self_identity.get_custom_driver_version(),
                 ),
             ] {

@@ -176,6 +176,9 @@ struct TaskResponse {
     body: Bytes,
 }
 
+// `env!` must be expanded in this crate: `scylla-cql` has its own version number.
+const DEFAULT_DRIVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 impl<'id: 'map, 'map> SelfIdentity<'id> {
     fn add_startup_options(&'id self, options: &'map mut HashMap<Cow<'id, str>, Cow<'id, str>>) {
         /* Driver identity. */
@@ -189,7 +192,7 @@ impl<'id: 'map, 'map> SelfIdentity<'id> {
 
         let driver_version = self
             .get_custom_driver_version()
-            .unwrap_or(options::DEFAULT_DRIVER_VERSION);
+            .unwrap_or(DEFAULT_DRIVER_VERSION);
         options.insert(
             Cow::Borrowed(options::DRIVER_VERSION),
             Cow::Borrowed(driver_version),
