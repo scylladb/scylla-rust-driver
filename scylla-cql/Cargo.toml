@@ -76,15 +76,6 @@ bytes = "1.10"
 # Tracing ids, CqlTimeuuid, ser/deser of CQL UUID
 uuid = "1.0"
 
-#################################
-# Serialization / deserialization
-#################################
-# Ser/deser of time-related types. Not optional, because it is also used by Display impl
-# of CqlValue
-chrono-04 = { package = "chrono", version = "0.4.32", default-features = false, features = [
-    "alloc",
-] }
-
 ####################
 # Internal utilities
 ####################
