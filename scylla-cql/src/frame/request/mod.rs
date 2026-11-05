@@ -121,6 +121,7 @@ pub trait DeserializableRequest: SerializableRequest + Sized {
 /// mainly used by `scylla-proxy` crate.
 #[doc(hidden)]
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RequestDeserializationError {
     #[error("Low level deser error: {0}")]
     LowLevelDeserialization(#[from] LowLevelDeserializationError),
