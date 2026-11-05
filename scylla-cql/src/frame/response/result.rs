@@ -685,34 +685,21 @@ fn deser_result_metadata(
     buf: &mut &[u8],
     features: &ProtocolFeatures,
 ) -> StdResult<(ResultMetadata<'static>, PagingStateResponse), ResultMetadataParseError> {
-    let flags = types::read_int(buf)
-        .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
-    let global_tables_spec = flags & 0x0001 != 0;
-    let has_more_pages = flags & 0x0002 != 0;
-    let no_metadata = flags & 0x0004 != 0;
-    let metadata_changed = features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
+    let ResultMetadataHeader {
+        col_count,
+        global_tables_spec,
+        metadata_presence,
+        paging_state,
+    } = ResultMetadataHeader::deserialize(buf, features)?;
 
-    if metadata_changed && no_metadata {
-        return Err(ResultMetadataParseError::IdPresentForEmptyMetadata);
-    }
-
-    let col_count =
-        types::read_int_length(buf).map_err(ResultMetadataParseError::ColumnCountParseError)?;
-
-    let raw_paging_state = has_more_pages
-        .then(|| types::read_bytes(buf).map_err(ResultMetadataParseError::PagingStateParseError))
-        .transpose()?;
-
-    let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
-
-    let new_metadata_id = metadata_changed
+    let new_metadata_id = matches!(metadata_presence, MetadataPresence::MetadataWithNewId)
         .then(|| {
             types::read_short_bytes(buf).map_err(ResultMetadataParseError::NewMetadataIdParseError)
         })
         .transpose()?
         .map(|x| cow_bytes::CowBytes::from(x).into_owned());
 
-    let col_specs = if no_metadata {
+    let col_specs = if matches!(metadata_presence, MetadataPresence::NoMetadata) {
         vec![]
     } else {
         let global_table_spec = global_tables_spec
