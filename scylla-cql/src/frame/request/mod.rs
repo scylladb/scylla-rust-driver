@@ -147,64 +147,6 @@ pub enum RequestDeserializationError {
 
 /// A CQL request that can be sent to the server.
 #[non_exhaustive] // TODO: add remaining request types
-#[deprecated(
-    since = "1.4.0",
-    note = "Does not support Scylla metadata id extension. Use RequestV2 instead."
-)]
-pub enum Request<'r> {
-    /// QUERY request, used to execute a single unprepared statement.
-    Query(Query<'r>),
-    /// EXECUTE request, used to execute a single prepared statement.
-    #[expect(deprecated)]
-    Execute(Execute<'r>),
-    /// BATCH request, used to execute a batch of (prepared, unprepared, or mix of both)
-    /// statements.
-    Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
-}
-
-#[expect(deprecated)]
-impl Request<'_> {
-    /// Deserializes the request from the provided buffer.
-    pub fn deserialize(
-        buf: &mut &[u8],
-        opcode: RequestOpcode,
-    ) -> Result<Self, RequestDeserializationError> {
-        match opcode {
-            RequestOpcode::Query => Query::deserialize(buf).map(Self::Query),
-            RequestOpcode::Execute => Execute::deserialize(buf).map(Self::Execute),
-            RequestOpcode::Batch => Batch::deserialize(buf).map(Self::Batch),
-            _ => unimplemented!(
-                "Deserialization of opcode {:?} is not yet supported",
-                opcode
-            ),
-        }
-    }
-
-    /// Retrieves consistency from request frame, if present.
-    pub fn get_consistency(&self) -> Option<Consistency> {
-        match self {
-            Request::Query(q) => Some(q.parameters.consistency),
-            Request::Execute(e) => Some(e.parameters.consistency),
-            Request::Batch(b) => Some(b.consistency),
-            #[expect(unreachable_patterns)] // until other opcodes are supported
-            _ => None,
-        }
-    }
-
-    /// Retrieves serial consistency from request frame.
-    pub fn get_serial_consistency(&self) -> Option<Option<SerialConsistency>> {
-        match self {
-            Request::Query(q) => Some(q.parameters.serial_consistency),
-            Request::Execute(e) => Some(e.parameters.serial_consistency),
-            Request::Batch(b) => Some(b.serial_consistency),
-            #[expect(unreachable_patterns)] // until other opcodes are supported
-            _ => None,
-        }
-    }
-}
-
-/// A CQL request that can be sent to the server.
-#[non_exhaustive] // TODO: add remaining request types
 pub enum RequestV2<'r> {
     /// QUERY request, used to execute a single unprepared statement.
     Query(Query<'r>),
