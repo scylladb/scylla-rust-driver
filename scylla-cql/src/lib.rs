@@ -17,7 +17,5 @@ pub mod value;
 
 pub mod utils;
 
-pub use crate::frame::types::Consistency;
-
 #[doc(hidden)]
 pub use scylla_cql_core::_macro_internal;
