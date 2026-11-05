@@ -190,13 +190,6 @@ impl ResultMetadataHolder {
         }
     }
 
-    pub fn make_owned_arced(&self) -> Arc<ResultMetadata<'static>> {
-        match self {
-            Self::SelfBorrowed(container) => Arc::new(container.metadata().clone().into_owned()),
-            Self::SharedCached(metadata) => Arc::clone(metadata),
-        }
-    }
-
     /// Creates an empty [ResultMetadataHolder].
     #[inline]
     pub fn mock_empty() -> Self {
