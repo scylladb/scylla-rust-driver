@@ -80,26 +80,6 @@ impl SerializableRequest for ExecuteV2<'_> {
 }
 
 impl DeserializableRequest for ExecuteV2<'static> {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
-        let id = CowBytes::from(types::read_short_bytes(buf)?).into_owned();
-        let result_metadata_id = CowBytes::from(types::read_short_bytes(buf)?).into_owned();
-        let parameters = QueryParameters::deserialize(buf)?;
-
-        Ok(Self {
-            id,
-            result_metadata_id: Some(result_metadata_id),
-            parameters,
-            // Unlike `result_metadata_id` - whose presence is implied by the frame being an
-            // `ExecuteV2` rather than an `Execute` at all - nothing in the frame or in the
-            // choice of type tells us whether a tablet-version block was appended: that
-            // depends solely on whether the sending connection negotiated
-            // TABLETS_ROUTING_V2. A featureless decoder therefore cannot decode it, and must
-            // not consume a trailing byte that may not be there. Use
-            // `deserialize_with_features` when the negotiated features are known.
-            tablet_version_block: None,
-        })
-    }
-
     fn deserialize_with_features(
         buf: &mut &[u8],
         features: &ProtocolFeatures,

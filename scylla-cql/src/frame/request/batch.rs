@@ -5,6 +5,7 @@ use std::{borrow::Cow, convert::TryInto};
 
 use crate::frame::{
     frame_errors::CqlRequestSerializationError,
+    protocol_features::ProtocolFeatures,
     request::{RequestOpcode, SerializableRequest},
     types::{self, SerialConsistency},
 };
@@ -243,7 +244,10 @@ fn serialize_batch_statement(
 }
 
 impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedValues>> {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
+    fn deserialize_with_features(
+        buf: &mut &[u8],
+        _features: &ProtocolFeatures,
+    ) -> Result<Self, RequestDeserializationError> {
         let batch_type = buf.get_u8().try_into()?;
 
         let statements_count: usize = types::read_short(buf)?.into();

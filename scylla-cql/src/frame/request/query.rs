@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{frame_errors::CqlRequestSerializationError, types::SerialConsistency};
 use crate::serialize::row::SerializedValues;
 use bytes::{Buf, BufMut};
@@ -64,7 +65,10 @@ impl SerializableRequest for Query<'_> {
 }
 
 impl DeserializableRequest for Query<'_> {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
+    fn deserialize_with_features(
+        buf: &mut &[u8],
+        _features: &ProtocolFeatures,
+    ) -> Result<Self, RequestDeserializationError> {
         let contents = Cow::Owned(types::read_long_string(buf)?.to_owned());
         let parameters = QueryParameters::deserialize(buf)?;
 

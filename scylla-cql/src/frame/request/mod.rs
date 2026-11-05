@@ -107,21 +107,16 @@ pub trait SerializableRequest {
 /// but very useful for testing (e.g. asserting that the sent requests have proper parameters set).
 pub trait DeserializableRequest: SerializableRequest + Sized {
     /// Deserializes the request from the provided buffer.
-    /// Use [DeserializableRequest::deserialize_with_features] instead, because some frame types
-    /// require knowing protocol features for correct deserialization.
-    #[deprecated(since = "1.4.0", note = "Use deserialize_with_features instead")]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError>;
-
+    ///
+    /// `features` are the protocol features negotiated on the connection
+    /// that the request was sent over.
     fn deserialize_with_features(
         buf: &mut &[u8],
-        #[allow(unused_variables)] features: &ProtocolFeatures,
-    ) -> Result<Self, RequestDeserializationError> {
-        #[expect(deprecated)]
-        Self::deserialize(buf)
-    }
+        features: &ProtocolFeatures,
+    ) -> Result<Self, RequestDeserializationError>;
 }
 
-/// An error type returned by [`DeserializableRequest::deserialize`].
+/// An error type returned by [`DeserializableRequest::deserialize_with_features`].
 /// This is not intended for driver's direct usage. It's a testing utility,
 /// mainly used by `scylla-proxy` crate.
 #[doc(hidden)]
