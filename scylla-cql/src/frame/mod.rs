@@ -157,10 +157,9 @@ pub async fn read_response_frame(
         .await
         .map_err(FrameHeaderParseError::HeaderIoError)?;
 
-    let mut buf = &raw_header[..];
+    let [version, flags, stream_hi, stream_lo, opcode, length @ ..] = raw_header;
 
     // TODO: Validate version
-    let version = buf.get_u8();
     if version & 0x80 != 0x80 {
         return Err(FrameHeaderParseError::FrameFromClient);
     }
@@ -168,8 +167,7 @@ pub async fn read_response_frame(
         return Err(FrameHeaderParseError::VersionNotSupported(version & 0x7f));
     }
 
-    let flags = buf.get_u8();
-    let stream = buf.get_i16();
+    let stream = i16::from_be_bytes([stream_hi, stream_lo]);
 
     let frame_params = FrameParams {
         version,
@@ -177,10 +175,10 @@ pub async fn read_response_frame(
         stream,
     };
 
-    let opcode = ResponseOpcode::try_from(buf.get_u8())?;
+    let opcode = ResponseOpcode::try_from(opcode)?;
 
     // TODO: Guard from frames that are too large
-    let length = buf.get_u32() as usize;
+    let length = u32::from_be_bytes(length) as usize;
 
     // Every successful write gets a RESULT Void response, so serving its body
     // from a static buffer saves an allocation per write.
