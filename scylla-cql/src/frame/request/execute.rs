@@ -17,7 +17,7 @@ pub use crate::frame::frame_errors::ExecuteSerializationError;
 /// CQL protocol-level representation of an `EXECUTE` request,
 /// used to execute a single prepared statement.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub struct ExecuteV2<'a> {
+pub struct Execute<'a> {
     /// ID of the prepared statement to execute.
     pub id: CowBytes<'a>,
 
@@ -35,7 +35,7 @@ pub struct ExecuteV2<'a> {
     pub tablet_version_block: Option<u8>,
 }
 
-impl SerializableRequest for ExecuteV2<'_> {
+impl SerializableRequest for Execute<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Execute;
 
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
@@ -79,7 +79,7 @@ impl SerializableRequest for ExecuteV2<'_> {
     }
 }
 
-impl DeserializableRequest for ExecuteV2<'static> {
+impl DeserializableRequest for Execute<'static> {
     fn deserialize_with_features(
         buf: &mut &[u8],
         features: &ProtocolFeatures,
@@ -118,7 +118,7 @@ mod tests {
     use crate::frame::response::result::cow_bytes::CowBytes;
     use crate::serialize::row::SerializedValues;
 
-    use super::ExecuteV2;
+    use super::Execute;
     use super::query::{PagingState, QueryParameters};
 
     fn sample_parameters() -> QueryParameters<'static> {
@@ -149,13 +149,13 @@ mod tests {
     /// one trailing tablet-version block byte.
     #[test]
     fn execute_v2_appends_exactly_one_tablet_block_byte() {
-        let with_block = ExecuteV2 {
+        let with_block = Execute {
             id: CowBytes::from([1u8, 2, 3].as_slice()),
             result_metadata_id: None,
             parameters: sample_parameters(),
             tablet_version_block: Some(0xAB),
         };
-        let without_block = ExecuteV2 {
+        let without_block = Execute {
             id: CowBytes::from([1u8, 2, 3].as_slice()),
             result_metadata_id: None,
             parameters: sample_parameters(),
@@ -176,7 +176,7 @@ mod tests {
     /// recover the exact same request, including the tablet block.
     #[test]
     fn execute_v2_tablet_block_roundtrip() {
-        let execute = ExecuteV2 {
+        let execute = Execute {
             id: CowBytes::from([9u8, 8, 7].as_slice()),
             result_metadata_id: None,
             parameters: sample_parameters(),
@@ -187,14 +187,14 @@ mod tests {
         execute.serialize(&mut buf).unwrap();
 
         let deserialized =
-            ExecuteV2::deserialize_with_features(&mut &buf[..], &v2_features()).unwrap();
+            Execute::deserialize_with_features(&mut &buf[..], &v2_features()).unwrap();
         assert_eq!(deserialized, execute);
     }
 
     /// Without the V2 feature negotiated, no trailing byte is expected or consumed.
     #[test]
     fn execute_v2_no_tablet_block_without_feature() {
-        let execute = ExecuteV2 {
+        let execute = Execute {
             id: CowBytes::from([9u8, 8, 7].as_slice()),
             result_metadata_id: None,
             parameters: sample_parameters(),
@@ -205,7 +205,7 @@ mod tests {
         execute.serialize(&mut buf).unwrap();
 
         let deserialized =
-            ExecuteV2::deserialize_with_features(&mut &buf[..], &non_v2_features()).unwrap();
+            Execute::deserialize_with_features(&mut &buf[..], &non_v2_features()).unwrap();
         assert_eq!(deserialized, execute);
         assert!(deserialized.tablet_version_block.is_none());
     }

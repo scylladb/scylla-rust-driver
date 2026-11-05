@@ -14,7 +14,7 @@ use thiserror::Error;
 
 use crate::Consistency;
 use crate::frame::protocol_features::ProtocolFeatures;
-use crate::frame::request::execute::ExecuteV2;
+use crate::frame::request::execute::Execute;
 use crate::serialize::row::SerializedValues;
 use bytes::Bytes;
 
@@ -144,7 +144,7 @@ pub enum Request<'r> {
     /// QUERY request, used to execute a single unprepared statement.
     Query(Query<'r>),
     /// EXECUTE request, used to execute a single prepared statement.
-    Execute(ExecuteV2<'r>),
+    Execute(Execute<'r>),
     /// BATCH request, used to execute a batch of (prepared, unprepared, or mix of both)
     /// statements.
     Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
@@ -162,7 +162,7 @@ impl Request<'_> {
                 Query::deserialize_with_features(buf, features).map(Self::Query)
             }
             RequestOpcode::Execute => {
-                ExecuteV2::deserialize_with_features(buf, features).map(Self::Execute)
+                Execute::deserialize_with_features(buf, features).map(Self::Execute)
             }
             RequestOpcode::Batch => {
                 Batch::deserialize_with_features(buf, features).map(Self::Batch)
@@ -205,7 +205,7 @@ mod tests {
     use crate::Consistency;
     use crate::frame::protocol_features::ProtocolFeatures;
     use crate::frame::request::batch::{Batch, BatchStatement, BatchType};
-    use crate::frame::request::execute::ExecuteV2;
+    use crate::frame::request::execute::Execute;
     use crate::frame::request::query::{Query, QueryParameters};
     use crate::frame::request::{DeserializableRequest, SerializableRequest};
     use crate::frame::response::result::{ColumnType, NativeType};
@@ -265,7 +265,7 @@ mod tests {
 
         let id = [2, 4, 5, 2, 6, 7, 3, 1].as_slice().into();
         let result_metadata_id = Some([2, 4, 5, 2, 6, 7, 3, 1].as_slice().into());
-        let mut execute_with_id = ExecuteV2 {
+        let mut execute_with_id = Execute {
             id,
             result_metadata_id,
             parameters,
@@ -285,7 +285,7 @@ mod tests {
                 default
             };
             let execute_deserialized =
-                ExecuteV2::deserialize_with_features(&mut &buf[..], &features).unwrap();
+                Execute::deserialize_with_features(&mut &buf[..], &features).unwrap();
             assert_eq!(&execute_deserialized, &execute_with_id);
         }
         execute_with_id.tablet_version_block = Some(1);

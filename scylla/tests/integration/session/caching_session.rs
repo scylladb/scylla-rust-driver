@@ -8,7 +8,7 @@ use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancing
 use scylla::statement::batch::{Batch, BatchStatement, BatchType};
 use scylla::statement::prepared::PreparedStatement;
 use scylla_cql::frame::request::Request;
-use scylla_cql::frame::request::execute::ExecuteV2;
+use scylla_cql::frame::request::execute::Execute;
 use scylla_proxy::Condition;
 use scylla_proxy::ProxyError;
 use scylla_proxy::Reaction;
@@ -57,7 +57,7 @@ async fn test_caching_session_metadata_cache() {
                 let (req_frame, _) = feedback.recv().await.unwrap();
                 let _ = feedback.try_recv().unwrap_err(); // There should be only one frame.
                 let request = req_frame.deserialize(&features).unwrap();
-                let Request::Execute(ExecuteV2 { parameters, .. }) = request else {
+                let Request::Execute(Execute { parameters, .. }) = request else {
                     panic!("Unexpected request type");
                 };
                 let has_metadata = !parameters.skip_metadata;

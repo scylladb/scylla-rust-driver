@@ -29,7 +29,7 @@ use uuid::Uuid;
 use scylla_cql::frame::parse_response_body_extensions;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::request::DeserializableRequest;
-use scylla_cql::frame::request::execute::ExecuteV2;
+use scylla_cql::frame::request::execute::Execute;
 use scylla_cql::frame::response::Supported;
 use scylla_cql::frame::types;
 
@@ -253,7 +253,7 @@ async fn create_tablet_table(session: &Session, ks: &str) {
 fn decode_execute_block(frame: RequestFrame, features: &ProtocolFeatures) -> Option<u8> {
     let body = parse_response_body_extensions(frame.params.flags, None, frame.body).unwrap();
     let mut buf: &[u8] = &body.body;
-    let execute = ExecuteV2::deserialize_with_features(&mut buf, features).unwrap();
+    let execute = Execute::deserialize_with_features(&mut buf, features).unwrap();
     assert!(
         buf.is_empty(),
         "EXECUTE body had {} leftover byte(s) after decoding with the negotiated features; \

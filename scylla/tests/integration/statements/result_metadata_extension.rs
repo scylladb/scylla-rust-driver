@@ -13,7 +13,7 @@ use scylla::frame::response::result::{ColumnSpec, TableSpec};
 use scylla::statement::prepared::PreparedStatement;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::request::DeserializableRequest;
-use scylla_cql::frame::request::execute::ExecuteV2;
+use scylla_cql::frame::request::execute::Execute;
 use scylla_cql::frame::response::result::Result;
 use scylla_cql::frame::response::{Response, Supported};
 use scylla_cql::frame::{parse_response_body_extensions, types};
@@ -341,11 +341,9 @@ async fn test_insert_sends_empty_result_metadata_id() {
                 let body_with_extensions =
                     parse_response_body_extensions(req_frame.params.flags, None, req_frame.body)
                         .unwrap();
-                let execute = ExecuteV2::deserialize_with_features(
-                    &mut &*body_with_extensions.body,
-                    &features,
-                )
-                .unwrap();
+                let execute =
+                    Execute::deserialize_with_features(&mut &*body_with_extensions.body, &features)
+                        .unwrap();
                 let Some(id) = execute.result_metadata_id else {
                     panic!("Expected result_metadata_id to be Some (extension is enabled)");
                 };
@@ -513,7 +511,7 @@ async fn test_mixed_cluster() {
                     let body_with_extensions =
                         parse_response_body_extensions(frame.params.flags, None, frame.body)
                             .unwrap();
-                    let execute = ExecuteV2::deserialize_with_features(
+                    let execute = Execute::deserialize_with_features(
                         &mut &*body_with_extensions.body,
                         &features,
                     )

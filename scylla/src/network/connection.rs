@@ -1078,7 +1078,7 @@ impl Connection {
             .tablets_v2_supported
             .then_some(tablet_block_hint);
 
-        let execute_frame = execute::ExecuteV2 {
+        let execute_frame = execute::Execute {
             id: prepared_statement.get_id().as_ref().into(),
             result_metadata_id: cached_metadata_params.result_metadata_id.map(Into::into),
             parameters: query::QueryParameters {
@@ -1130,7 +1130,7 @@ impl Connection {
                     .calculate_cached_metadata_params(prepared_statement, &current_result_metadata);
                 let new_response = self
                     .send_request(
-                        &execute::ExecuteV2 {
+                        &execute::Execute {
                             result_metadata_id: cached_metadata_params
                                 .result_metadata_id
                                 .map(Into::into),
