@@ -15,7 +15,7 @@ use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::request::DeserializableRequest;
 use scylla_cql::frame::request::execute::Execute;
 use scylla_cql::frame::response::result::Result;
-use scylla_cql::frame::response::{Response, Supported};
+use scylla_cql::frame::response::{ResponseV2, Supported};
 use scylla_cql::frame::{parse_response_body_extensions, types};
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestReaction, RequestRule, ResponseFrame,
@@ -225,9 +225,9 @@ async fn perform_test_for_proxy(
         let body_with_extensions =
             parse_response_body_extensions(frame.params.flags, None, frame.body).unwrap();
         let response =
-            Response::deserialize(&features, frame.opcode, body_with_extensions.body, None)
+            ResponseV2::deserialize(&features, frame.opcode, body_with_extensions.body, None)
                 .unwrap();
-        let Response::Result(Result::Rows(raw_rows)) = response else {
+        let ResponseV2::Result(Result::Rows(raw_rows)) = response else {
             panic!("Wrong response type");
         };
         assert!(raw_rows.0.metadata_changed());
@@ -256,9 +256,9 @@ async fn perform_test_for_proxy(
         let body_with_extensions =
             parse_response_body_extensions(frame.params.flags, None, frame.body).unwrap();
         let response =
-            Response::deserialize(&features, frame.opcode, body_with_extensions.body, None)
+            ResponseV2::deserialize(&features, frame.opcode, body_with_extensions.body, None)
                 .unwrap();
-        let Response::Result(Result::Rows(raw_rows)) = response else {
+        let ResponseV2::Result(Result::Rows(raw_rows)) = response else {
             panic!("Wrong response type");
         };
         assert!(!raw_rows.0.metadata_changed());
@@ -356,7 +356,7 @@ async fn test_insert_sends_empty_result_metadata_id() {
                 let body_with_extensions =
                     parse_response_body_extensions(resp_frame.params.flags, None, resp_frame.body)
                         .unwrap();
-                let response = Response::deserialize(
+                let response = ResponseV2::deserialize(
                     &features,
                     resp_frame.opcode,
                     body_with_extensions.body,
@@ -364,7 +364,7 @@ async fn test_insert_sends_empty_result_metadata_id() {
                 )
                 .unwrap();
                 assert!(
-                    matches!(response, Response::Result(Result::Void)),
+                    matches!(response, ResponseV2::Result(Result::Void)),
                     "INSERT should return VOID response, iteration {i}, got: {response:?}"
                 );
             }

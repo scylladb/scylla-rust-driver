@@ -7,7 +7,7 @@ use scylla::value::Row;
 use scylla_cql::frame::parse_response_body_extensions;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::response::result::Result as CqlResult;
-use scylla_cql::frame::response::{Response, Supported};
+use scylla_cql::frame::response::{ResponseV2, Supported};
 use scylla_proxy::{
     Condition, Node, Proxy, ProxyError, Reaction, RequestReaction, RequestRule, ResponseReaction,
     ResponseRule, RunningProxy, ShardAwareness, WorkerError,
@@ -84,10 +84,11 @@ async fn recv_next_rows_response(
         let body_with_extensions =
             parse_response_body_extensions(frame.params.flags, None, frame.body).unwrap();
         let response =
-            Response::deserialize(features, frame.opcode, body_with_extensions.body, None).unwrap();
+            ResponseV2::deserialize(features, frame.opcode, body_with_extensions.body, None)
+                .unwrap();
         match response {
-            Response::Result(CqlResult::Rows(raw_rows)) => return raw_rows.0,
-            Response::Result(_) => {
+            ResponseV2::Result(CqlResult::Rows(raw_rows)) => return raw_rows.0,
+            ResponseV2::Result(_) => {
                 // Skip non-Rows results (e.g. Prepared from auto-reprepare).
                 continue;
             }
