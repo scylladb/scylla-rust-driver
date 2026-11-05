@@ -693,7 +693,7 @@ impl ClusterState {
     ///
     /// Deprecated in favour of [`ClusterState::try_get_token_endpoints`].
     #[deprecated(
-        since = "1.9.0",
+        since = "1.10.0",
         note = "an empty replica set cannot be told apart from a keyspace whose metadata \
                 the driver does not have; use `try_get_token_endpoints` instead"
     )]
