@@ -1,7 +1,7 @@
 //! CQL responses sent by the server.
 
 pub mod authenticate;
-pub mod custom_type_parser;
+mod custom_type_parser;
 pub use scylla_cql_core::frame::response::error;
 pub mod event;
 pub mod result;
