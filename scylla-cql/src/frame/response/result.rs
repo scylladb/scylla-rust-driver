@@ -770,7 +770,7 @@ impl DeserializedMetadataAndRawRows {
                     self_borrowed_metadata::SelfBorrowedMetadataContainer::make_deserialized_metadata(
                         frame,
                         |buf| {
-                            metadata_deserializer(
+                            deser_result_metadata_body_borrowed(
                                 buf,
                                 col_count,
                                 global_tables_spec,
@@ -800,8 +800,8 @@ impl DeserializedMetadataAndRawRows {
     }
 }
 
-/// Deserializes the result metadata that follows its header.
-fn metadata_deserializer<'frame>(
+/// Deserializes the result metadata that follows its header, in the borrowed form.
+fn deser_result_metadata_body_borrowed<'frame>(
     buf: &mut &'frame [u8],
     col_count: usize,
     global_tables_spec: bool,
