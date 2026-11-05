@@ -147,7 +147,7 @@ pub enum RequestDeserializationError {
 
 /// A CQL request that can be sent to the server.
 #[non_exhaustive] // TODO: add remaining request types
-pub enum RequestV2<'r> {
+pub enum Request<'r> {
     /// QUERY request, used to execute a single unprepared statement.
     Query(Query<'r>),
     /// EXECUTE request, used to execute a single prepared statement.
@@ -157,7 +157,7 @@ pub enum RequestV2<'r> {
     Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
 }
 
-impl RequestV2<'_> {
+impl Request<'_> {
     /// Deserializes the request from the provided buffer.
     pub fn deserialize(
         buf: &mut &[u8],

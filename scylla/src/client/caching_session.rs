@@ -428,7 +428,7 @@ mod tests {
     use crate::client::session::Session;
     use crate::client::session_builder::SessionBuilder;
     use crate::frame::protocol_features::ProtocolFeatures;
-    use crate::frame::request::RequestV2;
+    use crate::frame::request::Request;
     use crate::frame::request::execute::ExecuteV2;
     use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
     use crate::frame::types::read_long_string;
@@ -689,7 +689,7 @@ mod tests {
                 .unwrap();
 
             let (frame, _) = executes.try_recv().unwrap();
-            let RequestV2::Execute(ExecuteV2 { parameters, .. }) =
+            let Request::Execute(ExecuteV2 { parameters, .. }) =
                 frame.deserialize(&ProtocolFeatures::default()).unwrap()
             else {
                 panic!("Expected an EXECUTE request");
