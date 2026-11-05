@@ -786,14 +786,16 @@ fn deser_result_metadata(
     Ok((metadata, paging_state))
 }
 
-impl RawMetadataAndRawRows {
-    /// Deserializes flags and paging state; the other part of result metadata
-    /// as well as rows remain serialized.
+impl DeserializedMetadataAndRawRows {
+    /// Deserializes RESULT:Rows: its metadata and rows count. Keeps rows in the serialized form.
+    ///
+    /// If metadata is cached (in the PreparedStatement), it is reused (shared) from cache
+    /// instead of deserializing.
     fn deserialize(
         mut frame: Bytes,
-        cached_metadata: Option<Arc<ResultMetadata<'static>>>,
+        cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
         features: &ProtocolFeatures,
-    ) -> StdResult<(Self, PagingStateResponse), RawRowsAndPagingStateResponseParseError> {
+    ) -> StdResult<(Self, PagingStateResponse), CqlResultParseError> {
         let ResultMetadataHeader {
             col_count,
             global_tables_spec,
@@ -802,16 +804,62 @@ impl RawMetadataAndRawRows {
         } = types::parse_prefix(&mut frame, |buf| {
             ResultMetadataHeader::deserialize(buf, features)
         })?;
+        let no_metadata = matches!(metadata_presence, MetadataPresence::NoMetadata);
 
-        let raw_rows = Self {
-            col_count,
-            global_tables_spec,
-            metadata_presence,
-            raw_metadata_and_rows: frame,
-            cached_metadata,
+        let raw_metadata_and_rows_bytes_size = frame.len();
+        let (metadata_deserialized, row_count_and_raw_rows) = match cached_metadata {
+            Some(cached) if no_metadata => {
+                // Server sent no metadata, but we have metadata cached. This means that we asked the server
+                // not to send metadata in the response as an optimization. We use cached metadata instead.
+                (
+                    ResultMetadataHolder::SharedCached(Arc::clone(cached)),
+                    frame,
+                )
+            }
+            None if no_metadata => {
+                // Server sent no metadata and we have no metadata cached. Having no metadata cached,
+                // we wouldn't have asked the server for skipping metadata. Therefore, this is most probably
+                // not a SELECT, because in such case the server would send empty metadata both in Prepared
+                // and in Result responses.
+                (ResultMetadataHolder::mock_empty(), frame)
+            }
+            Some(_) | None => {
+                // Two possibilities:
+                // 1) no cached_metadata provided. Server is supposed to provide the result metadata.
+                // 2) cached metadata present (so we should have asked for skipping metadata),
+                //    but the server sent result metadata anyway.
+                // In case 1 we have to deserialize result metadata. In case 2 we choose to do that,
+                // too, because it's suspicious, so we had better use the new metadata just in case.
+                // Also, we simply need to advance the buffer pointer past metadata, and this requires
+                // parsing metadata.
+
+                let metadata_changed =
+                    matches!(metadata_presence, MetadataPresence::MetadataWithNewId);
+                let (metadata_container, raw_rows_with_count) =
+                    self_borrowed_metadata::SelfBorrowedMetadataContainer::make_deserialized_metadata(
+                        frame,
+                        metadata_deserializer(col_count, global_tables_spec, metadata_changed),
+                    )
+                    .map_err(ResultMetadataAndRowsCountParseError::from)?;
+                (
+                    ResultMetadataHolder::SelfBorrowed(Box::new(metadata_container)),
+                    raw_rows_with_count,
+                )
+            }
         };
 
-        Ok((raw_rows, paging_state))
+        let mut raw_rows = row_count_and_raw_rows;
+        let rows_count = types::parse_prefix(&mut raw_rows, types::read_int_length)
+            .map_err(ResultMetadataAndRowsCountParseError::RowsCountParseError)?;
+
+        let rows = Self {
+            metadata: metadata_deserialized,
+            rows_count,
+            raw_rows,
+            raw_metadata_and_rows_bytes_size,
+        };
+
+        Ok((rows, paging_state))
     }
 }
 
@@ -957,15 +1005,6 @@ fn deser_prepared_metadata(
     })
 }
 
-fn deser_rows(
-    buf_bytes: Bytes,
-    cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
-    features: &ProtocolFeatures,
-) -> StdResult<(RawMetadataAndRawRows, PagingStateResponse), RawRowsAndPagingStateResponseParseError>
-{
-    RawMetadataAndRawRows::deserialize(buf_bytes, cached_metadata.cloned(), features)
-}
-
 fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspaceParseError> {
     let keyspace_name = types::read_string(buf)?.to_string();
 
@@ -1032,10 +1071,11 @@ pub fn deserialize(
             .map_err(|err| CqlResultParseError::ResultIdParseError(err.into()))?
         {
             0x0001 => Void,
-            0x0002 => {
-                let (raw_rows, paging_state) = deser_rows(buf_bytes, cached_metadata, features)?;
-                Rows((raw_rows.deserialize_metadata()?, paging_state))
-            }
+            0x0002 => Rows(DeserializedMetadataAndRawRows::deserialize(
+                buf_bytes,
+                cached_metadata,
+                features,
+            )?),
             0x0003 => SetKeyspace(deser_set_keyspace(&mut &*buf_bytes)?),
             0x0004 => Prepared(deser_prepared(&mut &*buf_bytes, features)?),
             0x0005 => SchemaChange(deser_schema_change(&mut &*buf_bytes)?),
