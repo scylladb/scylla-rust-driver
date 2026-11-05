@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::frame::request::query::PagingStateResponse;
 use crate::frame::response::{
     NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata,
-    ResponseWithDeserializedMetadataV2 as ResponseWithDeserializedMetadata,
+    Response,
 };
 use bytes::Bytes;
 use tracing::error;
@@ -15,7 +15,7 @@ use crate::response::Coordinator;
 use crate::response::query_result::QueryResult;
 
 pub(crate) struct QueryResponse {
-    pub(crate) response: ResponseWithDeserializedMetadata,
+    pub(crate) response: Response,
     pub(crate) tracing_id: Option<Uuid>,
     pub(crate) warnings: Box<[String]>,
     // This is not exposed to user (yet?)

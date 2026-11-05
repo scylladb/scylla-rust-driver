@@ -14,7 +14,7 @@ use scylla::statement::prepared::PreparedStatement;
 use scylla_cql::frame::request::DeserializableRequest;
 use scylla_cql::frame::request::execute::Execute;
 use scylla_cql::frame::response::result::ResultWithDeserializedMetadata;
-use scylla_cql::frame::response::{ResponseWithDeserializedMetadataV2, Supported};
+use scylla_cql::frame::response::{Response, Supported};
 use scylla_cql::frame::{parse_response_body_extensions, types};
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestReaction, RequestRule, ResponseFrame,
@@ -346,7 +346,7 @@ async fn test_insert_sends_empty_result_metadata_id() {
                 let body_with_extensions =
                     parse_response_body_extensions(resp_frame.params.flags, None, resp_frame.body)
                         .unwrap();
-                let response = ResponseWithDeserializedMetadataV2::deserialize(
+                let response = Response::deserialize(
                     &features,
                     resp_frame.opcode,
                     body_with_extensions.body,
@@ -356,9 +356,7 @@ async fn test_insert_sends_empty_result_metadata_id() {
                 assert!(
                     matches!(
                         response,
-                        ResponseWithDeserializedMetadataV2::Result(
-                            ResultWithDeserializedMetadata::Void
-                        )
+                        Response::Result(ResultWithDeserializedMetadata::Void)
                     ),
                     "INSERT should return VOID response, iteration {i}, got: {response:?}"
                 );

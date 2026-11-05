@@ -62,7 +62,7 @@ impl TryFrom<u8> for ResponseOpcode {
 /// A CQL response that has been received from the server.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum ResponseWithDeserializedMetadataV2 {
+pub enum Response {
     /// ERROR response, returned by the server when an error occurs.
     Error(Error),
     /// READY response, indicating that the server is ready to process requests,
@@ -82,7 +82,7 @@ pub enum ResponseWithDeserializedMetadataV2 {
     Event(event::Event),
 }
 
-impl ResponseWithDeserializedMetadataV2 {
+impl Response {
     /// Deserializes a response from the given bytes, including the metadata
     /// of a RESULT:Rows response.
     pub fn deserialize(
@@ -159,19 +159,19 @@ impl ResponseWithDeserializedMetadataV2 {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum NonErrorResponseWithDeserializedMetadataV2 {
-    /// See [`ResponseWithDeserializedMetadataV2::Ready`].
+    /// See [`Response::Ready`].
     Ready,
-    /// See [`ResponseWithDeserializedMetadataV2::Result`].
+    /// See [`Response::Result`].
     Result(result::ResultWithDeserializedMetadata),
-    /// See [`ResponseWithDeserializedMetadataV2::Authenticate`].
+    /// See [`Response::Authenticate`].
     Authenticate(authenticate::Authenticate),
-    /// See [`ResponseWithDeserializedMetadataV2::AuthSuccess`].
+    /// See [`Response::AuthSuccess`].
     AuthSuccess(authenticate::AuthSuccess),
-    /// See [`ResponseWithDeserializedMetadataV2::AuthChallenge`].
+    /// See [`Response::AuthChallenge`].
     AuthChallenge(authenticate::AuthChallenge),
-    /// See [`ResponseWithDeserializedMetadataV2::Supported`].
+    /// See [`Response::Supported`].
     Supported(Supported),
-    /// See [`ResponseWithDeserializedMetadataV2::Event`].
+    /// See [`Response::Event`].
     Event(event::Event),
 }
 

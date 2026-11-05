@@ -21,9 +21,7 @@ use crate::frame::request::register::Register;
 use crate::frame::response::authenticate::Authenticate;
 use crate::frame::response::result::{ResultMetadata, ResultWithDeserializedMetadata, TableSpec};
 use crate::frame::response::{self, error};
-use crate::frame::response::{
-    Error, ResponseWithDeserializedMetadataV2 as ResponseWithDeserializedMetadata,
-};
+use crate::frame::response::{Error, Response};
 use crate::frame::types::SerialConsistency;
 use crate::frame::{
     self, FrameParams, SerializedRequest,
@@ -570,11 +568,9 @@ impl Connection {
         // Extract the response to STARTUP request and tidy up the errors.
         let response = match req_result {
             Ok(r) => match r.response {
-                ResponseWithDeserializedMetadata::Ready => NonErrorStartupResponse::Ready,
-                ResponseWithDeserializedMetadata::Authenticate(auth) => {
-                    NonErrorStartupResponse::Authenticate(auth)
-                }
-                ResponseWithDeserializedMetadata::Error(Error { error, reason }) => {
+                Response::Ready => NonErrorStartupResponse::Ready,
+                Response::Authenticate(auth) => NonErrorStartupResponse::Authenticate(auth),
+                Response::Error(Error { error, reason }) => {
                     return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)));
                 }
                 _ => {
@@ -621,8 +617,8 @@ impl Connection {
         // Extract the supported options and tidy up the errors.
         let supported = match req_result {
             Ok(r) => match r.response {
-                ResponseWithDeserializedMetadata::Supported(supported) => supported,
-                ResponseWithDeserializedMetadata::Error(Error { error, reason }) => {
+                Response::Supported(supported) => supported,
+                Response::Error(Error { error, reason }) => {
                     return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)));
                 }
                 _ => {
@@ -674,12 +670,10 @@ impl Connection {
             .await?;
 
         match query_response.response {
-            ResponseWithDeserializedMetadata::Error(error::Error { error, reason }) => {
+            Response::Error(error::Error { error, reason }) => {
                 Err(RequestAttemptError::DbError(error, reason))
             }
-            ResponseWithDeserializedMetadata::Result(
-                result::ResultWithDeserializedMetadata::Prepared(p),
-            ) => {
+            Response::Result(result::ResultWithDeserializedMetadata::Prepared(p)) => {
                 let is_lwt = self
                     .features
                     .protocol_features
@@ -822,13 +816,13 @@ impl Connection {
         // Extract non-error response to AUTH_RESPONSE request and tidy up errors.
         let response = match req_result {
             Ok(r) => match r.response {
-                ResponseWithDeserializedMetadata::AuthSuccess(auth_success) => {
+                Response::AuthSuccess(auth_success) => {
                     NonErrorAuthResponse::AuthSuccess(auth_success)
                 }
-                ResponseWithDeserializedMetadata::AuthChallenge(auth_challenge) => {
+                Response::AuthChallenge(auth_challenge) => {
                     NonErrorAuthResponse::AuthChallenge(auth_challenge)
                 }
-                ResponseWithDeserializedMetadata::Error(Error { error, reason }) => {
+                Response::Error(Error { error, reason }) => {
                     return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)));
                 }
                 _ => {
@@ -935,9 +929,8 @@ impl Connection {
         prepared_statement: &PreparedStatement,
         query_response: &QueryResponse,
     ) {
-        if let ResponseWithDeserializedMetadata::Result(ResultWithDeserializedMetadata::Rows(
-            rows_result,
-        )) = &query_response.response
+        if let Response::Result(ResultWithDeserializedMetadata::Rows(rows_result)) =
+            &query_response.response
         {
             // New metadata doesn't have id, so nothing to update.
             if rows_result.0.metadata().id().is_none() {
@@ -1113,7 +1106,7 @@ impl Connection {
         Self::handle_result_metadata_new_id(prepared_statement, &query_response);
 
         match &query_response.response {
-            ResponseWithDeserializedMetadata::Error(frame::response::Error {
+            Response::Error(frame::response::Error {
                 error: DbError::Unprepared { statement_id },
                 ..
             }) => {
@@ -1229,7 +1222,7 @@ impl Connection {
                 .map_err(RequestAttemptError::from)?;
 
             return match query_response.response {
-                ResponseWithDeserializedMetadata::Error(err) => match err.error {
+                Response::Error(err) => match err.error {
                     DbError::Unprepared { statement_id } => {
                         debug!(
                             "Connection::batch: got DbError::Unprepared - repreparing statement with id {:?}",
@@ -1250,7 +1243,7 @@ impl Connection {
                     }
                     _ => Err(err.into()),
                 },
-                ResponseWithDeserializedMetadata::Result(_) => Ok(query_response),
+                Response::Result(_) => Ok(query_response),
                 _ => Err(RequestAttemptError::UnexpectedResponse(
                     query_response.response.to_response_kind(),
                 )),
@@ -1326,9 +1319,7 @@ impl Connection {
         query_response: QueryResponse,
     ) -> Result<(), UseKeyspaceError> {
         match query_response.response {
-            ResponseWithDeserializedMetadata::Result(
-                result::ResultWithDeserializedMetadata::SetKeyspace(set_keyspace),
-            ) => {
+            Response::Result(result::ResultWithDeserializedMetadata::SetKeyspace(set_keyspace)) => {
                 if !set_keyspace
                     .keyspace_name
                     .eq_ignore_ascii_case(keyspace_name.as_str())
@@ -1344,7 +1335,7 @@ impl Connection {
 
                 Ok(())
             }
-            ResponseWithDeserializedMetadata::Error(err) => Err(UseKeyspaceError::RequestError(
+            Response::Error(err) => Err(UseKeyspaceError::RequestError(
                 RequestAttemptError::DbError(err.error, err.reason),
             )),
             _ => Err(UseKeyspaceError::RequestError(
@@ -1368,8 +1359,8 @@ impl Connection {
         // Extract the response and tidy up the errors.
         match self.send_request(&register_frame, true, false, None).await {
             Ok(r) => match r.response {
-                ResponseWithDeserializedMetadata::Ready => Ok(()),
-                ResponseWithDeserializedMetadata::Error(Error { error, reason }) => {
+                Response::Ready => Ok(()),
+                Response::Error(Error { error, reason }) => {
                     Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)))
                 }
                 _ => Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
@@ -1441,7 +1432,7 @@ impl Connection {
             );
         }
 
-        let response = ResponseWithDeserializedMetadata::deserialize(
+        let response = Response::deserialize(
             features,
             task_response.opcode,
             body_with_ext.body,
@@ -1811,7 +1802,7 @@ impl Connection {
 
         let event = match Self::parse_response(task_response, compression, &features, None) {
             Ok(r) => match r.response {
-                ResponseWithDeserializedMetadata::Event(event) => event,
+                Response::Event(event) => event,
                 _ => {
                     error!("Expected to receive Event response, got {:?}", r.response);
                     return Err(CqlEventHandlingError::UnexpectedResponse(
