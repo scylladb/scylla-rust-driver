@@ -6,14 +6,13 @@ use scylla::client::session_builder::SessionBuilder;
 use scylla::value::Row;
 use scylla_cql::frame::parse_response_body_extensions;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
-use scylla_cql::frame::response::result::Result as CqlResult;
-use scylla_cql::frame::response::{ResponseV2, Supported};
+use scylla_cql::frame::response::Supported;
 use scylla_proxy::{
     Condition, Node, Proxy, ProxyError, Reaction, RequestReaction, RequestRule, ResponseReaction,
     ResponseRule, RunningProxy, ShardAwareness, WorkerError,
 };
 
-use crate::utils::setup_tracing;
+use crate::utils::{RowsMetadataFlags, setup_tracing};
 use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
 use scylla_ccm_bridge::{CLUSTER_VERSION, run_ccm_test_with_configuration};
 
@@ -71,28 +70,25 @@ async fn setup_proxy_and_session(cluster: &Cluster) -> (Session, RunningProxy, P
 
 /// Helper: receive the next Result::Rows response from the proxy feedback channel,
 /// skipping any non-Rows Result responses (e.g. Result::Prepared).
-/// Returns the RawMetadataAndRawRows for inspection.
+/// Returns the metadata flags of the response for inspection.
 async fn recv_next_rows_response(
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<(scylla_proxy::ResponseFrame, Option<u16>)>,
-    features: &ProtocolFeatures,
-) -> scylla_cql::frame::response::result::RawMetadataAndRawRows {
+) -> RowsMetadataFlags {
     loop {
         let (frame, _) = rx
             .recv()
             .await
             .expect("Response channel closed unexpectedly");
+        assert_eq!(
+            frame.opcode,
+            scylla_proxy::ResponseOpcode::Result,
+            "Unexpected response type"
+        );
         let body_with_extensions =
             parse_response_body_extensions(frame.params.flags, None, frame.body).unwrap();
-        let response =
-            ResponseV2::deserialize(features, frame.opcode, body_with_extensions.body, None)
-                .unwrap();
-        match response {
-            ResponseV2::Result(CqlResult::Rows(raw_rows)) => return raw_rows.0,
-            ResponseV2::Result(_) => {
-                // Skip non-Rows results (e.g. Prepared from auto-reprepare).
-                continue;
-            }
-            other => panic!("Unexpected response type: {other:?}"),
+        // Skip non-Rows results (e.g. Prepared from auto-reprepare).
+        if let Some(flags) = RowsMetadataFlags::from_result_body(&body_with_extensions.body) {
+            return flags;
         }
     }
 }
@@ -100,7 +96,6 @@ async fn recv_next_rows_response(
 async fn test_special_query_behavior(
     session: &Session,
     running_proxy: &mut RunningProxy,
-    features: &ProtocolFeatures,
     query_str: &str,
 ) {
     // --- Part A: Verify deserialization for special statements ---
@@ -150,10 +145,9 @@ async fn test_special_query_behavior(
     let result = session.execute_unpaged(&prepared, &()).await.unwrap();
     assert!(result.into_rows_result().unwrap().rows_num() > 0);
     {
-        let raw_rows = recv_next_rows_response(&mut rx_result, features).await;
+        let flags = recv_next_rows_response(&mut rx_result).await;
         assert_eq!(
-            raw_rows.no_metadata(),
-            has_real_metadata_in_prepared,
+            flags.no_metadata, has_real_metadata_in_prepared,
             "First execution should have no_metadata=true iff PREPARE returned real metadata (col_count > 0)"
         );
     }
@@ -166,13 +160,13 @@ async fn test_special_query_behavior(
         let result = session.execute_unpaged(&prepared, &()).await.unwrap();
         assert!(result.into_rows_result().unwrap().rows_num() > 0);
         {
-            let raw_rows = recv_next_rows_response(&mut rx_result, features).await;
+            let flags = recv_next_rows_response(&mut rx_result).await;
             assert!(
-                raw_rows.no_metadata(),
+                flags.no_metadata,
                 "Second execution should have no_metadata=true"
             );
             assert!(
-                !raw_rows.metadata_changed(),
+                !flags.metadata_changed,
                 "Second execution should have metadata_changed=false"
             );
         }
@@ -201,14 +195,14 @@ async fn test_special_query_behavior(
         let result = session.execute_unpaged(&prepared, &()).await.unwrap();
         assert!(result.into_rows_result().unwrap().rows_num() > 0);
         {
-            let raw_rows = recv_next_rows_response(&mut rx_result, features).await;
+            let flags = recv_next_rows_response(&mut rx_result).await;
             assert!(
-                raw_rows.no_metadata(),
+                flags.no_metadata,
                 "Execution after auto-reprepare should have no_metadata=true \
                  (driver preserves cached result metadata)"
             );
             assert!(
-                !raw_rows.metadata_changed(),
+                !flags.metadata_changed,
                 "Execution after auto-reprepare should have metadata_changed=false"
             );
         }
@@ -242,7 +236,7 @@ async fn test_result_metadata_extension() {
         }
 
         for query_str in ["LIST ROLES of cassandra", "DESCRIBE KEYSPACE system"] {
-            test_special_query_behavior(&session, &mut running_proxy, &features, query_str).await
+            test_special_query_behavior(&session, &mut running_proxy, query_str).await
         }
 
         process_proxy_result(running_proxy.finish().await);
