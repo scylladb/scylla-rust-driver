@@ -969,6 +969,7 @@ impl MetadataWorker {
                 // Besides the hint, a status change also schedules a topology
                 // re-read - see below the `match`.
 
+                #[deny(clippy::wildcard_enum_match_arm)]
                 match status {
                     StatusChangeEvent::Up(addr) => {
                         // When receiving an UP event, it is likely that the node just came back up and is now reachable.
@@ -1005,6 +1006,7 @@ impl MetadataWorker {
                             return ControlFlow::Break(());
                         }
                     }
+                    _ => unreachable!("clippy testifies that the match is exhaustive"),
                 }
 
                 // A node's `rpc_address` can change while the node itself is

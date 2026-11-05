@@ -41,6 +41,7 @@ pub enum TopologyChangeEvent {
 
 /// Event that notifies about changes in the nodes' status.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum StatusChangeEvent {
     /// A node went up.
     Up(SocketAddr),
