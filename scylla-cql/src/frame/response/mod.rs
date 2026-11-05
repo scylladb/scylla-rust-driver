@@ -253,8 +253,6 @@ impl NonErrorResponse {
 /// A CQL response that has been received from the server, excluding error responses.
 /// This is used to handle responses that are not errors, allowing for easier processing
 /// of valid responses without need to handle error case any later.
-/// The difference from [NonErrorResponse] is that Result::Rows variant holds [result::DeserializedMetadataAndRawRows]
-/// instead of [result::RawMetadataAndRawRows].
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum NonErrorResponseWithDeserializedMetadataV2 {
