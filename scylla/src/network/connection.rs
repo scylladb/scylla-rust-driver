@@ -28,7 +28,7 @@ use crate::frame::types::SerialConsistency;
 use crate::frame::{
     self, FrameParams, SerializedRequest,
     request::{self, SerializableRequest, batch, execute, query},
-    response::{ResponseOpcode, ResponseV2 as Response, event::Event, result},
+    response::{ResponseOpcode, event::Event, result},
     server_event_type::EventType,
 };
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
@@ -1441,18 +1441,12 @@ impl Connection {
             );
         }
 
-        let response = Response::deserialize(
+        let response = ResponseWithDeserializedMetadata::deserialize(
             features,
             task_response.opcode,
             body_with_ext.body,
             cached_metadata,
-        )?
-        .deserialize_metadata()
-        .map_err(|e| {
-            ResponseParseError::CqlResponseParseError(CqlResponseParseError::CqlResultParseError(
-                e.into(),
-            ))
-        })?;
+        )?;
 
         Ok(QueryResponse {
             response,

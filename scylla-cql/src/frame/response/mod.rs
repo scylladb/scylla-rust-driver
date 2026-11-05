@@ -175,6 +175,19 @@ pub enum ResponseWithDeserializedMetadataV2 {
 }
 
 impl ResponseWithDeserializedMetadataV2 {
+    /// Deserializes a response from the given bytes, including the metadata
+    /// of a RESULT:Rows response.
+    pub fn deserialize(
+        features: &ProtocolFeatures,
+        opcode: ResponseOpcode,
+        buf_bytes: bytes::Bytes,
+        cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
+    ) -> Result<Self, CqlResponseParseError> {
+        ResponseV2::deserialize(features, opcode, buf_bytes, cached_metadata)?
+            .deserialize_metadata()
+            .map_err(|err| CqlResponseParseError::CqlResultParseError(err.into()))
+    }
+
     /// Returns the kind of this response.
     pub fn to_response_kind(&self) -> CqlResponseKind {
         match self {
