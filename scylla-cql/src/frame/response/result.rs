@@ -785,7 +785,7 @@ impl RawMetadataAndRawRows {
         cached_metadata: Option<Arc<ResultMetadata<'static>>>,
         features: &ProtocolFeatures,
     ) -> StdResult<(Self, PagingStateResponse), RawRowsAndPagingStateResponseParseError> {
-        let (col_count, global_tables_spec, metadata_presense, paging_state) =
+        let (col_count, global_tables_spec, metadata_presence, paging_state) =
             types::parse_prefix(&mut frame, |buf| {
                 let flags = types::read_int(buf).map_err(|err| {
                     RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into())
@@ -796,7 +796,7 @@ impl RawMetadataAndRawRows {
                 let metadata_changed =
                     features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
 
-                let metadata_presense = match (no_metadata, metadata_changed) {
+                let metadata_presence = match (no_metadata, metadata_changed) {
                     (true, true) => {
                         return Err(
                             RawRowsAndPagingStateResponseParseError::IdPresentForEmptyMetadata,
@@ -822,7 +822,7 @@ impl RawMetadataAndRawRows {
                 Ok((
                     col_count,
                     global_tables_spec,
-                    metadata_presense,
+                    metadata_presence,
                     paging_state,
                 ))
             })?;
@@ -830,7 +830,7 @@ impl RawMetadataAndRawRows {
         let raw_rows = Self {
             col_count,
             global_tables_spec,
-            metadata_presence: metadata_presense,
+            metadata_presence,
             raw_metadata_and_rows: frame,
             cached_metadata,
         };
