@@ -468,47 +468,6 @@ impl DeserializedMetadataAndRawRows {
 
 /// Represents the result of a CQL `RESULT` response.
 #[derive(Debug)]
-pub enum Result {
-    /// A result with no associated data.
-    Void,
-    /// A result with metadata and rows.
-    Rows((RawMetadataAndRawRows, PagingStateResponse)),
-    /// A result indicating that a keyspace was set as an effect
-    /// of the executed request.
-    SetKeyspace(SetKeyspace),
-    /// A result indicating that a statement was prepared
-    /// as an effect of the `PREPARE` request.
-    Prepared(Prepared),
-    /// A result indicating that a schema change occurred
-    /// as an effect of the executed request.
-    SchemaChange(SchemaChange),
-}
-
-impl Result {
-    pub fn deserialize_metadata(
-        self,
-    ) -> StdResult<ResultWithDeserializedMetadata, ResultMetadataAndRowsCountParseError> {
-        let res = match self {
-            Result::Void => ResultWithDeserializedMetadata::Void,
-            Result::Rows((metadata, paging_state)) => ResultWithDeserializedMetadata::Rows((
-                metadata.deserialize_metadata()?,
-                paging_state,
-            )),
-            Result::SetKeyspace(set_keyspace) => {
-                ResultWithDeserializedMetadata::SetKeyspace(set_keyspace)
-            }
-            Result::Prepared(prepared) => ResultWithDeserializedMetadata::Prepared(prepared),
-            Result::SchemaChange(schema_change) => {
-                ResultWithDeserializedMetadata::SchemaChange(schema_change)
-            }
-        };
-
-        Ok(res)
-    }
-}
-
-/// Represents the result of a CQL `RESULT` response.
-#[derive(Debug)]
 pub enum ResultWithDeserializedMetadata {
     /// A result with no associated data.
     Void,
