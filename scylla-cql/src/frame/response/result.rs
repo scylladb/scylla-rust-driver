@@ -256,13 +256,13 @@ mod self_borrowed_metadata {
     /// the held `ResultMetadata`'s lifetime is covariant with the lifetime of this container
     /// itself.
     #[derive(Debug, Clone)]
-    pub struct SelfBorrowedMetadataContainer {
+    pub(crate) struct SelfBorrowedMetadataContainer {
         metadata_and_raw_rows: Yoke<ResultMetadataWrapper<'static>, BytesWrapper>,
     }
 
     impl SelfBorrowedMetadataContainer {
         /// Returns a reference to the contained [ResultMetadata].
-        pub fn metadata(&self) -> &ResultMetadata<'_> {
+        pub(crate) fn metadata(&self) -> &ResultMetadata<'_> {
             &self.metadata_and_raw_rows.get().0
         }
 
@@ -301,7 +301,7 @@ mod self_borrowed_metadata {
         }
     }
 }
-pub use self_borrowed_metadata::SelfBorrowedMetadataContainer;
+use self_borrowed_metadata::SelfBorrowedMetadataContainer;
 
 use super::custom_type_parser::CustomTypeParser;
 
