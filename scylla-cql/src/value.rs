@@ -15,7 +15,6 @@ pub use scylla_cql_core::value::{
 /// Deserializes any CQL value from a byte slice according to the provided CQL type.
 ///
 /// This delegates to the [`DeserializeValue`] implementation for [`CqlValue`].
-/// The `buf` argument is not advanced - it is only `&mut` for legacy reasons.
 ///
 /// The `new_borrowed` version of `FrameSlice` is deficient in that it does not hold
 /// a `Bytes` reference to the frame, only a slice.
@@ -23,7 +22,7 @@ pub use scylla_cql_core::value::{
 /// any `Bytes` - only exclusively owned types - so we never call `FrameSlice::to_bytes()`.
 pub fn deser_cql_value(
     typ: &ColumnType,
-    buf: &mut &[u8],
+    buf: &[u8],
 ) -> std::result::Result<CqlValue, DeserializationError> {
     CqlValue::deserialize(typ, Some(FrameSlice::new_borrowed(buf)))
 }
