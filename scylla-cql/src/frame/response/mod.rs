@@ -183,9 +183,29 @@ impl ResponseWithDeserializedMetadataV2 {
         buf_bytes: bytes::Bytes,
         cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
     ) -> Result<Self, CqlResponseParseError> {
-        ResponseV2::deserialize(features, opcode, buf_bytes, cached_metadata)?
-            .deserialize_metadata()
-            .map_err(|err| CqlResponseParseError::CqlResultParseError(err.into()))
+        let buf = &mut &*buf_bytes;
+        let response = match opcode {
+            ResponseOpcode::Error => Self::Error(Error::deserialize(features, buf)?),
+            ResponseOpcode::Ready => Self::Ready,
+            ResponseOpcode::Authenticate => {
+                Self::Authenticate(authenticate::Authenticate::deserialize(buf)?)
+            }
+            ResponseOpcode::Supported => Self::Supported(Supported::deserialize(buf)?),
+            ResponseOpcode::Result => Self::Result(
+                result::deserialize(buf_bytes, cached_metadata, features)?
+                    .deserialize_metadata()
+                    .map_err(|err| CqlResponseParseError::CqlResultParseError(err.into()))?,
+            ),
+            ResponseOpcode::Event => Self::Event(event::Event::deserialize(buf)?),
+            ResponseOpcode::AuthChallenge => {
+                Self::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)
+            }
+            ResponseOpcode::AuthSuccess => {
+                Self::AuthSuccess(authenticate::AuthSuccess::deserialize(buf)?)
+            }
+        };
+
+        Ok(response)
     }
 
     /// Returns the kind of this response.
