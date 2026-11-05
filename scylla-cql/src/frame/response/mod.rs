@@ -218,42 +218,6 @@ impl ResponseWithDeserializedMetadataV2 {
 /// This is used to handle responses that are not errors, allowing for easier processing
 /// of valid responses without need to handle error case any later.
 #[derive(Debug)]
-pub enum NonErrorResponse {
-    /// See [`ResponseV2::Ready`].
-    Ready,
-    /// See [`ResponseV2::Result`].
-    Result(result::Result),
-    /// See [`ResponseV2::Authenticate`].
-    Authenticate(authenticate::Authenticate),
-    /// See [`ResponseV2::AuthSuccess`].
-    AuthSuccess(authenticate::AuthSuccess),
-    /// See [`ResponseV2::AuthChallenge`].
-    AuthChallenge(authenticate::AuthChallenge),
-    /// See [`ResponseV2::Supported`].
-    Supported(Supported),
-    /// See [`ResponseV2::Event`].
-    Event(event::Event),
-}
-
-impl NonErrorResponse {
-    /// Returns the kind of this non-error response.
-    pub fn to_response_kind(&self) -> CqlResponseKind {
-        match self {
-            NonErrorResponse::Ready => CqlResponseKind::Ready,
-            NonErrorResponse::Result(_) => CqlResponseKind::Result,
-            NonErrorResponse::Authenticate(_) => CqlResponseKind::Authenticate,
-            NonErrorResponse::AuthSuccess(_) => CqlResponseKind::AuthSuccess,
-            NonErrorResponse::AuthChallenge(_) => CqlResponseKind::AuthChallenge,
-            NonErrorResponse::Supported(_) => CqlResponseKind::Supported,
-            NonErrorResponse::Event(_) => CqlResponseKind::Event,
-        }
-    }
-}
-
-/// A CQL response that has been received from the server, excluding error responses.
-/// This is used to handle responses that are not errors, allowing for easier processing
-/// of valid responses without need to handle error case any later.
-#[derive(Debug)]
 #[non_exhaustive]
 pub enum NonErrorResponseWithDeserializedMetadataV2 {
     /// See [`ResponseWithDeserializedMetadataV2::Ready`].
