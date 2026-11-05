@@ -51,20 +51,17 @@ pub enum StatusChangeEvent {
 
 /// Event that notifies about changes in the cluster topology.
 #[derive(Debug)]
-// Check triggers because all variants end with "Change".
-// TODO(2.0): Remove the "Change" postfix from variants.
-#[expect(clippy::enum_variant_names)]
 #[non_exhaustive]
 pub enum SchemaChangeEvent {
     /// Keyspace was altered.
-    KeyspaceChange {
+    Keyspace {
         /// Type of change that was made to the keyspace.
         change_type: SchemaChangeType,
         /// Name of the keyspace that was altered.
         keyspace_name: String,
     },
     /// Table was altered.
-    TableChange {
+    Table {
         /// Type of change that was made to the table.
         change_type: SchemaChangeType,
         /// Name of the keyspace that contains the table.
@@ -73,7 +70,7 @@ pub enum SchemaChangeEvent {
         object_name: String,
     },
     /// Type was altered.
-    TypeChange {
+    Type {
         /// Type of change that was made to the type.
         change_type: SchemaChangeType,
         /// Name of the keyspace that contains the type.
@@ -82,7 +79,7 @@ pub enum SchemaChangeEvent {
         type_name: String,
     },
     /// Function was altered.
-    FunctionChange {
+    Function {
         /// Type of change that was made to the function.
         change_type: SchemaChangeType,
         /// Name of the keyspace that contains the function.
@@ -93,7 +90,7 @@ pub enum SchemaChangeEvent {
         arguments: Vec<String>,
     },
     /// Aggregate was altered.
-    AggregateChange {
+    Aggregate {
         /// Type of change that was made to the aggregate.
         change_type: SchemaChangeType,
         /// Name of the keyspace that contains the aggregate.
@@ -177,26 +174,26 @@ impl SchemaChangeEvent {
     /// Lets test tooling, like `scylla-proxy`, forge `RESULT::SchemaChange` responses.
     pub fn serialize(&self, buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
         let (change_type, target, keyspace_name) = match self {
-            Self::KeyspaceChange {
+            Self::Keyspace {
                 change_type,
                 keyspace_name,
             } => (change_type, "KEYSPACE", keyspace_name),
-            Self::TableChange {
+            Self::Table {
                 change_type,
                 keyspace_name,
                 ..
             } => (change_type, "TABLE", keyspace_name),
-            Self::TypeChange {
+            Self::Type {
                 change_type,
                 keyspace_name,
                 ..
             } => (change_type, "TYPE", keyspace_name),
-            Self::FunctionChange {
+            Self::Function {
                 change_type,
                 keyspace_name,
                 ..
             } => (change_type, "FUNCTION", keyspace_name),
-            Self::AggregateChange {
+            Self::Aggregate {
                 change_type,
                 keyspace_name,
                 ..
@@ -207,19 +204,19 @@ impl SchemaChangeEvent {
         types::write_string(keyspace_name, buf)?;
 
         match self {
-            Self::KeyspaceChange { .. } => (),
-            Self::TableChange {
+            Self::Keyspace { .. } => (),
+            Self::Table {
                 object_name: name, ..
             }
-            | Self::TypeChange {
+            | Self::Type {
                 type_name: name, ..
             } => types::write_string(name, buf)?,
-            Self::FunctionChange {
+            Self::Function {
                 function_name: name,
                 arguments,
                 ..
             }
-            | Self::AggregateChange {
+            | Self::Aggregate {
                 aggregate_name: name,
                 arguments,
                 ..
@@ -252,7 +249,7 @@ impl SchemaChangeEvent {
             .to_string();
 
         match target {
-            "KEYSPACE" => Ok(Self::KeyspaceChange {
+            "KEYSPACE" => Ok(Self::Keyspace {
                 change_type: type_of_change,
                 keyspace_name: keyspace_affected,
             }),
@@ -260,7 +257,7 @@ impl SchemaChangeEvent {
                 let table_name = types::read_string(buf)
                     .map_err(SchemaChangeEventParseError::AffectedTargetNameParseError)?
                     .to_string();
-                Ok(Self::TableChange {
+                Ok(Self::Table {
                     change_type: type_of_change,
                     keyspace_name: keyspace_affected,
                     object_name: table_name,
@@ -270,7 +267,7 @@ impl SchemaChangeEvent {
                 let changed_type = types::read_string(buf)
                     .map_err(SchemaChangeEventParseError::AffectedTargetNameParseError)?
                     .to_string();
-                Ok(Self::TypeChange {
+                Ok(Self::Type {
                     change_type: type_of_change,
                     keyspace_name: keyspace_affected,
                     type_name: changed_type,
@@ -294,7 +291,7 @@ impl SchemaChangeEvent {
                     );
                 }
 
-                Ok(Self::FunctionChange {
+                Ok(Self::Function {
                     change_type: type_of_change,
                     keyspace_name: keyspace_affected,
                     function_name: function,
@@ -319,7 +316,7 @@ impl SchemaChangeEvent {
                     );
                 }
 
-                Ok(Self::AggregateChange {
+                Ok(Self::Aggregate {
                     change_type: type_of_change,
                     keyspace_name: keyspace_affected,
                     aggregate_name: name,

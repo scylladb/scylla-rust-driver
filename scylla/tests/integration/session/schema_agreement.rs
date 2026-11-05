@@ -45,7 +45,7 @@ fn create_keyspace_query() -> Condition {
 /// Forges the `RESULT::SchemaChange` response a server sends after `CREATE KEYSPACE`.
 fn forge_keyspace_created(ks: String) -> RequestReaction {
     RequestReaction::forge_response(Arc::new(move |request: RequestFrame| {
-        let event = SchemaChangeEvent::KeyspaceChange {
+        let event = SchemaChangeEvent::Keyspace {
             change_type: SchemaChangeType::Created,
             keyspace_name: ks.clone(),
         };

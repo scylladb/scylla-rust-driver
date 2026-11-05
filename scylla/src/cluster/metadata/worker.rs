@@ -928,15 +928,15 @@ impl MetadataWorker {
                     // Only dropping the keyspace itself makes it disappear.
                     // Dropping an object inside it leaves the keyspace in
                     // place, so its metadata must be re-read.
-                    SchemaChangeEvent::KeyspaceChange {
+                    SchemaChangeEvent::Keyspace {
                         change_type: SchemaChangeType::Dropped,
                         keyspace_name,
                     } => (keyspace_name, LastKeyspaceChange::Dropped),
-                    SchemaChangeEvent::KeyspaceChange { keyspace_name, .. }
-                    | SchemaChangeEvent::TableChange { keyspace_name, .. }
-                    | SchemaChangeEvent::TypeChange { keyspace_name, .. }
-                    | SchemaChangeEvent::FunctionChange { keyspace_name, .. }
-                    | SchemaChangeEvent::AggregateChange { keyspace_name, .. } => {
+                    SchemaChangeEvent::Keyspace { keyspace_name, .. }
+                    | SchemaChangeEvent::Table { keyspace_name, .. }
+                    | SchemaChangeEvent::Type { keyspace_name, .. }
+                    | SchemaChangeEvent::Function { keyspace_name, .. }
+                    | SchemaChangeEvent::Aggregate { keyspace_name, .. } => {
                         (keyspace_name, LastKeyspaceChange::Altered)
                     }
                     _ => unreachable!("clippy testifies that the match is exhaustive"),
