@@ -2,9 +2,10 @@
 
 use std::borrow::Cow;
 
+use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{frame_errors::CqlRequestSerializationError, types::SerialConsistency};
 use crate::serialize::row::SerializedValues;
-use bytes::{Buf, BufMut};
+use bytes::BufMut;
 
 use crate::{
     frame::request::{RequestOpcode, SerializableRequest},
@@ -13,8 +14,7 @@ use crate::{
 
 use super::{DeserializableRequest, RequestDeserializationError};
 
-// Re-export for backward compatibility.
-pub use crate::frame::frame_errors::{QueryParametersSerializationError, QuerySerializationError};
+use crate::frame::frame_errors::{QueryParametersSerializationError, QuerySerializationError};
 
 // Query flags
 const FLAG_VALUES: u8 = 0x01;
@@ -64,7 +64,10 @@ impl SerializableRequest for Query<'_> {
 }
 
 impl DeserializableRequest for Query<'_> {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
+    fn deserialize(
+        buf: &mut &[u8],
+        _features: &ProtocolFeatures,
+    ) -> Result<Self, RequestDeserializationError> {
         let contents = Cow::Owned(types::read_long_string(buf)?.to_owned());
         let parameters = QueryParameters::deserialize(buf)?;
 
@@ -212,7 +215,7 @@ impl QueryParameters<'_> {
     pub fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let consistency = types::read_consistency(buf)?;
 
-        let flags = buf.get_u8();
+        let flags = types::read_byte(buf)?;
         let unknown_flags = flags & (!ALL_FLAGS);
         if unknown_flags != 0 {
             return Err(RequestDeserializationError::UnknownFlags {

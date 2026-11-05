@@ -34,7 +34,7 @@ use crate::cluster::metadata::{
 };
 use crate::cluster::node::resolve_contact_points;
 use crate::errors::{ConnectionPoolError, MetadataError, NewSessionError};
-use crate::frame::server_event_type::EventTypeV2 as EventType;
+use crate::frame::server_event_type::EventType;
 use crate::network::{ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
 use crate::utils::safe_format::IteratorSafeFormatExt;

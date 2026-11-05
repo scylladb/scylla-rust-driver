@@ -30,7 +30,7 @@ use crate::deserialize::{DeserializationError, TypeCheckError};
 use crate::errors::{PagerExecutionError, RequestAttemptError, RequestError};
 use crate::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use crate::frame::request::query::{PagingState, PagingStateResponse};
-use crate::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
+use crate::frame::response::NonErrorResponse;
 use crate::frame::response::result;
 use crate::frame::response::result::{
     DeserializedMetadataAndRawRows, SchemaChange, SetKeyspace, TableSpec,
@@ -381,9 +381,7 @@ impl PagingExecutor {
         match query_response {
             NonErrorQueryResponse {
                 response:
-                    NonErrorResponseWithDeserializedMetadata::Result(
-                        result::ResultWithDeserializedMetadata::Rows((rows, paging_state_response)),
-                    ),
+                    NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))),
                 tracing_id,
                 ..
             } => {
@@ -407,10 +405,7 @@ impl PagingExecutor {
                 ))
             }
             NonErrorQueryResponse {
-                response:
-                    NonErrorResponseWithDeserializedMetadata::Result(
-                        result::ResultWithDeserializedMetadata::SetKeyspace(set_keyspace),
-                    ),
+                response: NonErrorResponse::Result(result::Result::SetKeyspace(set_keyspace)),
                 tracing_id,
                 ..
             } => Ok((
@@ -422,10 +417,7 @@ impl PagingExecutor {
                 ShouldFetchMorePages::NoMorePages,
             )),
             NonErrorQueryResponse {
-                response:
-                    NonErrorResponseWithDeserializedMetadata::Result(
-                        result::ResultWithDeserializedMetadata::SchemaChange(schema_change),
-                    ),
+                response: NonErrorResponse::Result(result::Result::SchemaChange(schema_change)),
                 tracing_id,
                 ..
             } => Ok((
@@ -437,7 +429,7 @@ impl PagingExecutor {
                 ShouldFetchMorePages::NoMorePages,
             )),
             NonErrorQueryResponse {
-                response: NonErrorResponseWithDeserializedMetadata::Result(_),
+                response: NonErrorResponse::Result(_),
                 tracing_id,
                 ..
             } => {
@@ -469,9 +461,7 @@ impl PagingExecutor {
     ) -> Result<(NextReceivedPage, ShouldFetchMorePages), RequestError> {
         let tracing_id = response.tracing_id;
         match response.response {
-            NonErrorResponseWithDeserializedMetadata::Result(
-                result::ResultWithDeserializedMetadata::Rows((rows, paging_state_response)),
-            ) => {
+            NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))) => {
                 page_span.record_raw_rows_fields(&rows);
 
                 let received_page = NextReceivedPage {
@@ -621,9 +611,7 @@ impl SingleConnectionPagingExecutor {
 
         let tracing_id = response.tracing_id;
         match response.response {
-            NonErrorResponseWithDeserializedMetadata::Result(
-                result::ResultWithDeserializedMetadata::Rows((rows, paging_state_response)),
-            ) => Ok((
+            NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))) => Ok((
                 NextReceivedPage {
                     rows,
                     tracing_id,
@@ -1449,9 +1437,7 @@ If you are using this API, you are probably doing something wrong."
                 //
                 // Let's set the keyspace on the session.
                 let response = NonErrorQueryResponse {
-                    response: NonErrorResponseWithDeserializedMetadata::Result(
-                        result::ResultWithDeserializedMetadata::SetKeyspace(set_keyspace),
-                    ),
+                    response: NonErrorResponse::Result(result::Result::SetKeyspace(set_keyspace)),
                     tracing_id: None,
                     warnings: Box::default(),
                 };
@@ -1468,9 +1454,7 @@ If you are using this API, you are probably doing something wrong."
                 //
                 // Let's await schema agreement, if Session is configured to do so.
                 let response = NonErrorQueryResponse {
-                    response: NonErrorResponseWithDeserializedMetadata::Result(
-                        result::ResultWithDeserializedMetadata::SchemaChange(schema_change),
-                    ),
+                    response: NonErrorResponse::Result(result::Result::SchemaChange(schema_change)),
                     tracing_id: None,
                     warnings: Box::default(),
                 };

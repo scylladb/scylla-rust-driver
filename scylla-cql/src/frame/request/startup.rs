@@ -1,6 +1,7 @@
 //! CQL protocol-level representation of a `STARTUP` request.
 
 use crate::frame::frame_errors::CqlRequestSerializationError;
+use crate::frame::protocol_features::ProtocolFeatures;
 
 use std::{borrow::Cow, collections::HashMap};
 
@@ -11,8 +12,7 @@ use crate::{
 
 use super::DeserializableRequest;
 
-// Re-export for backward compatibility.
-pub use crate::frame::frame_errors::StartupSerializationError;
+use crate::frame::frame_errors::StartupSerializationError;
 
 /// The CQL protocol-level representation of an `STARTUP` request,
 /// used to finalise connection negotiation phase and establish the CQL connection.
@@ -32,7 +32,10 @@ impl SerializableRequest for Startup<'_> {
 }
 
 impl DeserializableRequest for Startup<'_> {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, super::RequestDeserializationError> {
+    fn deserialize(
+        buf: &mut &[u8],
+        _features: &ProtocolFeatures,
+    ) -> Result<Self, super::RequestDeserializationError> {
         // Note: this is inefficient, but it's only used for tests and it's not common
         // to deserialize STARTUP frames anyway.
         let options = types::read_string_map(buf)?

@@ -6,7 +6,7 @@ use scylla_cql::frame::flag;
 use scylla_cql::frame::frame_errors::FrameHeaderParseError;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 pub use scylla_cql::frame::request::RequestOpcode;
-use scylla_cql::frame::request::{RequestDeserializationError, RequestV2};
+use scylla_cql::frame::request::{Request, RequestDeserializationError};
 pub use scylla_cql::frame::response::ResponseOpcode;
 use scylla_cql::frame::response::error::DbError;
 use scylla_cql::frame::response::event::SchemaChangeEvent;
@@ -130,8 +130,8 @@ impl RequestFrame {
     pub fn deserialize(
         &self,
         features: &ProtocolFeatures,
-    ) -> Result<RequestV2<'_>, RequestDeserializationError> {
-        RequestV2::deserialize(&mut &self.body[..], self.opcode, features)
+    ) -> Result<Request<'_>, RequestDeserializationError> {
+        Request::deserialize(&mut &self.body[..], self.opcode, features)
     }
 }
 #[derive(Clone, Debug, Eq)]

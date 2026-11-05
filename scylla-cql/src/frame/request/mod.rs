@@ -12,16 +12,14 @@ pub mod startup;
 use batch::BatchTypeParseError;
 use thiserror::Error;
 
-use crate::Consistency;
 use crate::frame::protocol_features::ProtocolFeatures;
-use crate::frame::request::execute::ExecuteV2;
+use crate::frame::request::execute::Execute;
+use crate::frame::types::Consistency;
 use crate::serialize::row::SerializedValues;
 use bytes::Bytes;
 
 pub use auth_response::AuthResponse;
 pub use batch::Batch;
-#[expect(deprecated)]
-pub use execute::Execute;
 pub use options::Options;
 pub use prepare::Prepare;
 pub use query::Query;
@@ -109,18 +107,13 @@ pub trait SerializableRequest {
 /// but very useful for testing (e.g. asserting that the sent requests have proper parameters set).
 pub trait DeserializableRequest: SerializableRequest + Sized {
     /// Deserializes the request from the provided buffer.
-    /// Use [DeserializableRequest::deserialize_with_features] instead, because some frame types
-    /// require knowing protocol features for correct deserialization.
-    #[deprecated(since = "1.4.0", note = "Use deserialize_with_features instead")]
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError>;
-
-    fn deserialize_with_features(
+    ///
+    /// `features` are the protocol features negotiated on the connection
+    /// that the request was sent over.
+    fn deserialize(
         buf: &mut &[u8],
-        #[allow(unused_variables)] features: &ProtocolFeatures,
-    ) -> Result<Self, RequestDeserializationError> {
-        #[expect(deprecated)]
-        Self::deserialize(buf)
-    }
+        features: &ProtocolFeatures,
+    ) -> Result<Self, RequestDeserializationError>;
 }
 
 /// An error type returned by [`DeserializableRequest::deserialize`].
@@ -128,6 +121,7 @@ pub trait DeserializableRequest: SerializableRequest + Sized {
 /// mainly used by `scylla-proxy` crate.
 #[doc(hidden)]
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RequestDeserializationError {
     #[error("Low level deser error: {0}")]
     LowLevelDeserialization(#[from] LowLevelDeserializationError),
@@ -143,79 +137,23 @@ pub enum RequestDeserializationError {
     BatchTypeParse(#[from] BatchTypeParseError),
     #[error("Unexpected batch statement kind: {0}")]
     UnexpectedBatchStatementKind(u8),
+    #[error("Deserialization of {0:?} requests is not supported")]
+    UnsupportedOpcode(RequestOpcode),
 }
 
 /// A CQL request that can be sent to the server.
 #[non_exhaustive] // TODO: add remaining request types
-#[deprecated(
-    since = "1.4.0",
-    note = "Does not support Scylla metadata id extension. Use RequestV2 instead."
-)]
 pub enum Request<'r> {
     /// QUERY request, used to execute a single unprepared statement.
     Query(Query<'r>),
     /// EXECUTE request, used to execute a single prepared statement.
-    #[expect(deprecated)]
     Execute(Execute<'r>),
     /// BATCH request, used to execute a batch of (prepared, unprepared, or mix of both)
     /// statements.
     Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
 }
 
-#[expect(deprecated)]
 impl Request<'_> {
-    /// Deserializes the request from the provided buffer.
-    pub fn deserialize(
-        buf: &mut &[u8],
-        opcode: RequestOpcode,
-    ) -> Result<Self, RequestDeserializationError> {
-        match opcode {
-            RequestOpcode::Query => Query::deserialize(buf).map(Self::Query),
-            RequestOpcode::Execute => Execute::deserialize(buf).map(Self::Execute),
-            RequestOpcode::Batch => Batch::deserialize(buf).map(Self::Batch),
-            _ => unimplemented!(
-                "Deserialization of opcode {:?} is not yet supported",
-                opcode
-            ),
-        }
-    }
-
-    /// Retrieves consistency from request frame, if present.
-    pub fn get_consistency(&self) -> Option<Consistency> {
-        match self {
-            Request::Query(q) => Some(q.parameters.consistency),
-            Request::Execute(e) => Some(e.parameters.consistency),
-            Request::Batch(b) => Some(b.consistency),
-            #[expect(unreachable_patterns)] // until other opcodes are supported
-            _ => None,
-        }
-    }
-
-    /// Retrieves serial consistency from request frame.
-    pub fn get_serial_consistency(&self) -> Option<Option<SerialConsistency>> {
-        match self {
-            Request::Query(q) => Some(q.parameters.serial_consistency),
-            Request::Execute(e) => Some(e.parameters.serial_consistency),
-            Request::Batch(b) => Some(b.serial_consistency),
-            #[expect(unreachable_patterns)] // until other opcodes are supported
-            _ => None,
-        }
-    }
-}
-
-/// A CQL request that can be sent to the server.
-#[non_exhaustive] // TODO: add remaining request types
-pub enum RequestV2<'r> {
-    /// QUERY request, used to execute a single unprepared statement.
-    Query(Query<'r>),
-    /// EXECUTE request, used to execute a single prepared statement.
-    Execute(ExecuteV2<'r>),
-    /// BATCH request, used to execute a batch of (prepared, unprepared, or mix of both)
-    /// statements.
-    Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
-}
-
-impl RequestV2<'_> {
     /// Deserializes the request from the provided buffer.
     pub fn deserialize(
         buf: &mut &[u8],
@@ -223,19 +161,10 @@ impl RequestV2<'_> {
         features: &ProtocolFeatures,
     ) -> Result<Self, RequestDeserializationError> {
         match opcode {
-            RequestOpcode::Query => {
-                Query::deserialize_with_features(buf, features).map(Self::Query)
-            }
-            RequestOpcode::Execute => {
-                ExecuteV2::deserialize_with_features(buf, features).map(Self::Execute)
-            }
-            RequestOpcode::Batch => {
-                Batch::deserialize_with_features(buf, features).map(Self::Batch)
-            }
-            _ => unimplemented!(
-                "Deserialization of opcode {:?} is not yet supported",
-                opcode
-            ),
+            RequestOpcode::Query => Query::deserialize(buf, features).map(Self::Query),
+            RequestOpcode::Execute => Execute::deserialize(buf, features).map(Self::Execute),
+            RequestOpcode::Batch => Batch::deserialize(buf, features).map(Self::Batch),
+            _ => Err(RequestDeserializationError::UnsupportedOpcode(opcode)),
         }
     }
 
@@ -266,18 +195,17 @@ impl RequestV2<'_> {
 mod tests {
     use std::{borrow::Cow, ops::Deref};
 
-    use bytes::Bytes;
+    use assert_matches::assert_matches;
 
     use super::query::PagingState;
-    use crate::Consistency;
+    use super::{Request, RequestDeserializationError, RequestOpcode};
     use crate::frame::protocol_features::ProtocolFeatures;
     use crate::frame::request::batch::{Batch, BatchStatement, BatchType};
-    #[expect(deprecated)]
     use crate::frame::request::execute::Execute;
-    use crate::frame::request::execute::ExecuteV2;
     use crate::frame::request::query::{Query, QueryParameters};
     use crate::frame::request::{DeserializableRequest, SerializableRequest};
     use crate::frame::response::result::{ColumnType, NativeType};
+    use crate::frame::types::Consistency;
     use crate::frame::types::{self, SerialConsistency};
     use crate::serialize::row::SerializedValues;
 
@@ -310,12 +238,11 @@ mod tests {
             assert_eq!(query.serialized_size_hint(), (buf.len(), Some(buf.len())));
 
             let query_deserialized =
-                Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
+                Query::deserialize(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&query_deserialized, &query);
         }
 
-        // Legacy Execute
-        let id: Bytes = vec![2, 4, 5, 2, 6, 7, 3, 1].into();
+        // Execute
         let parameters = QueryParameters {
             consistency: Consistency::Any,
             serial_consistency: None,
@@ -333,25 +260,9 @@ mod tests {
             },
         };
 
-        #[expect(deprecated)]
-        let execute = Execute {
-            id,
-            parameters: parameters.clone(),
-        };
-        {
-            let mut buf = Vec::new();
-            execute.serialize(&mut buf).unwrap();
-
-            #[expect(deprecated)]
-            let execute_deserialized =
-                Execute::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
-            assert_eq!(&execute_deserialized, &execute);
-        }
-
-        // New Execute
         let id = [2, 4, 5, 2, 6, 7, 3, 1].as_slice().into();
         let result_metadata_id = Some([2, 4, 5, 2, 6, 7, 3, 1].as_slice().into());
-        let mut execute_with_id = ExecuteV2 {
+        let mut execute_with_id = Execute {
             id,
             result_metadata_id,
             parameters,
@@ -370,8 +281,7 @@ mod tests {
                 default.scylla_metadata_id_supported = true;
                 default
             };
-            let execute_deserialized =
-                ExecuteV2::deserialize_with_features(&mut &buf[..], &features).unwrap();
+            let execute_deserialized = Execute::deserialize(&mut &buf[..], &features).unwrap();
             assert_eq!(&execute_deserialized, &execute_with_id);
         }
         execute_with_id.tablet_version_block = Some(1);
@@ -416,7 +326,7 @@ mod tests {
             );
 
             let batch_deserialized =
-                Batch::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
+                Batch::deserialize(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&batch_deserialized, &batch);
         }
     }
@@ -445,7 +355,7 @@ mod tests {
 
             // Sanity check: query deserializes to the equivalent.
             let query_deserialized =
-                Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
+                Query::deserialize(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&query_deserialized.contents, &query.contents);
             assert_eq!(&query_deserialized.parameters, &query.parameters);
 
@@ -468,8 +378,7 @@ mod tests {
 
             // Unknown flag should lead to frame rejection, as unknown flags can be new protocol extensions
             // leading to different semantics.
-            let _parse_error =
-                Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap_err();
+            let _parse_error = Query::deserialize(&mut &buf[..], &Default::default()).unwrap_err();
         }
 
         // Batch
@@ -491,7 +400,7 @@ mod tests {
 
             // Sanity check: batch deserializes to the equivalent.
             let batch_deserialized =
-                Batch::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
+                Batch::deserialize(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(batch, batch_deserialized);
 
             // Now modify flags by adding an unknown one.
@@ -503,8 +412,78 @@ mod tests {
 
             // Unknown flag should lead to frame rejection, as unknown flags can be new protocol extensions
             // leading to different semantics.
-            let _parse_error =
-                Batch::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap_err();
+            let _parse_error = Batch::deserialize(&mut &buf[..], &Default::default()).unwrap_err();
         }
+    }
+
+    /// A frame cut short must be rejected without panicking.
+    #[test]
+    fn deser_rejects_truncated_query() {
+        // Every optional part is present, so that each one gets cut.
+        let mut values = SerializedValues::new();
+        values
+            .add_value(&2137, &ColumnType::Native(NativeType::Int))
+            .unwrap();
+        let query = Query {
+            contents: Cow::Borrowed("SELECT host_id from system.peers"),
+            parameters: QueryParameters {
+                serial_consistency: Some(SerialConsistency::Serial),
+                timestamp: Some(1),
+                page_size: Some(1),
+                paging_state: PagingState::new_from_raw_bytes(&[1_u8] as &[u8]),
+                values: Cow::Owned(values),
+                ..Default::default()
+            },
+        };
+        let mut buf = Vec::new();
+        query.serialize(&mut buf).unwrap();
+
+        for len in 0..buf.len() {
+            Query::deserialize(&mut &buf[..len], &Default::default()).unwrap_err();
+        }
+    }
+
+    /// A frame cut short must be rejected without panicking.
+    #[test]
+    fn deser_rejects_truncated_batch() {
+        // Every optional part and statement kind is present, so that each one gets cut.
+        let mut values = SerializedValues::new();
+        values
+            .add_value(&2137, &ColumnType::Native(NativeType::Int))
+            .unwrap();
+        let batch = Batch {
+            statements: Cow::Owned(vec![
+                BatchStatement::Query {
+                    text: Cow::Borrowed("INSERT INTO ks.t (a) VALUES (?)"),
+                },
+                BatchStatement::Prepared {
+                    id: Cow::Borrowed(&[1, 2, 3]),
+                },
+            ]),
+            batch_type: BatchType::Logged,
+            consistency: Consistency::Quorum,
+            serial_consistency: Some(SerialConsistency::Serial),
+            timestamp: Some(1),
+            values: vec![values.clone(), values],
+        };
+        let mut buf = Vec::new();
+        batch.serialize(&mut buf).unwrap();
+
+        for len in 0..buf.len() {
+            Batch::deserialize(&mut &buf[..len], &Default::default()).unwrap_err();
+        }
+    }
+
+    /// Requests that can't be deserialized yet must be rejected without panicking.
+    #[test]
+    fn deser_rejects_unsupported_opcode() {
+        let result =
+            Request::deserialize(&mut &[][..], RequestOpcode::Options, &Default::default());
+        assert_matches!(
+            result.err(),
+            Some(RequestDeserializationError::UnsupportedOpcode(
+                RequestOpcode::Options
+            ))
+        );
     }
 }

@@ -20,7 +20,7 @@ use crate::errors::{
     BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, MetadataError,
 };
 use crate::frame::response::event::ClientRoutesChangeEvent;
-use crate::frame::response::event::EventV2 as Event;
+use crate::frame::response::event::Event;
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::response::event::SchemaChangeType;
 use crate::frame::response::event::StatusChangeEvent;
@@ -923,21 +923,23 @@ impl MetadataWorker {
             // The work is recorded rather than started right away; see the
             // schema rule in the docs of [`work_on_cc`](Self::work_on_cc).
             Event::SchemaChange(change) => {
+                #[deny(clippy::wildcard_enum_match_arm)]
                 let (keyspace_name, last_change) = match change {
                     // Only dropping the keyspace itself makes it disappear.
                     // Dropping an object inside it leaves the keyspace in
                     // place, so its metadata must be re-read.
-                    SchemaChangeEvent::KeyspaceChange {
+                    SchemaChangeEvent::Keyspace {
                         change_type: SchemaChangeType::Dropped,
                         keyspace_name,
                     } => (keyspace_name, LastKeyspaceChange::Dropped),
-                    SchemaChangeEvent::KeyspaceChange { keyspace_name, .. }
-                    | SchemaChangeEvent::TableChange { keyspace_name, .. }
-                    | SchemaChangeEvent::TypeChange { keyspace_name, .. }
-                    | SchemaChangeEvent::FunctionChange { keyspace_name, .. }
-                    | SchemaChangeEvent::AggregateChange { keyspace_name, .. } => {
+                    SchemaChangeEvent::Keyspace { keyspace_name, .. }
+                    | SchemaChangeEvent::Table { keyspace_name, .. }
+                    | SchemaChangeEvent::Type { keyspace_name, .. }
+                    | SchemaChangeEvent::Function { keyspace_name, .. }
+                    | SchemaChangeEvent::Aggregate { keyspace_name, .. } => {
                         (keyspace_name, LastKeyspaceChange::Altered)
                     }
+                    _ => unreachable!("clippy testifies that the match is exhaustive"),
                 };
                 plan.note_schema(keyspace_name, last_change);
             }
@@ -967,6 +969,7 @@ impl MetadataWorker {
                 // Besides the hint, a status change also schedules a topology
                 // re-read - see below the `match`.
 
+                #[deny(clippy::wildcard_enum_match_arm)]
                 match status {
                     StatusChangeEvent::Up(addr) => {
                         // When receiving an UP event, it is likely that the node just came back up and is now reachable.
@@ -1003,6 +1006,7 @@ impl MetadataWorker {
                             return ControlFlow::Break(());
                         }
                     }
+                    _ => unreachable!("clippy testifies that the match is exhaustive"),
                 }
 
                 // A node's `rpc_address` can change while the node itself is

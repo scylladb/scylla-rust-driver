@@ -900,16 +900,44 @@ pub(crate) async fn fetch_negotiated_features(server: Option<String>) -> Protoco
         .unwrap()
         .options;
     let startup_frame = startup_feedback_rx.recv().await.unwrap().0;
-    let startup =
-        Startup::deserialize_with_features(&mut &*startup_frame.body, &Default::default())
-            .unwrap()
-            .options;
+    let startup = Startup::deserialize(&mut &*startup_frame.body, &Default::default())
+        .unwrap()
+        .options;
     // We only want to return negotiated features.
     supported.retain(|key, _| startup.contains_key(&Cow::Borrowed(key.as_str())));
 
     running_proxy.finish().await.unwrap();
 
     ProtocolFeatures::parse_from_supported(&supported)
+}
+
+/// Flags of the result metadata in a RESULT:Rows response.
+///
+/// They are read straight from the response body, so that tests can check
+/// what the server sent rather than how the driver parsed it.
+pub(crate) struct RowsMetadataFlags {
+    pub(crate) no_metadata: bool,
+    pub(crate) metadata_changed: bool,
+}
+
+impl RowsMetadataFlags {
+    /// Reads the flags from the body of a RESULT response, with its extensions
+    /// already parsed. Returns `None` if the result is not of kind Rows.
+    pub(crate) fn from_result_body(mut body: &[u8]) -> Option<Self> {
+        const ROWS_KIND: i32 = 0x0002;
+        const NO_METADATA: i32 = 0x0004;
+        const METADATA_CHANGED: i32 = 0x0008;
+
+        let kind = scylla_cql::frame::types::read_int(&mut body).unwrap();
+        if kind != ROWS_KIND {
+            return None;
+        }
+        let flags = scylla_cql::frame::types::read_int(&mut body).unwrap();
+        Some(Self {
+            no_metadata: flags & NO_METADATA != 0,
+            metadata_changed: flags & METADATA_CHANGED != 0,
+        })
+    }
 }
 
 /// A retry policy that captures the consistency seen on the second failure.

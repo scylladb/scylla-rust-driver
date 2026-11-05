@@ -7,9 +7,8 @@ use crate::frame::frame_errors::CustomTypeParseError;
 use crate::frame::frame_errors::{
     ColumnSpecParseError, ColumnSpecParseErrorKind, CqlResultParseError, CqlTypeParseError,
     LowLevelDeserializationError, PreparedMetadataParseError, PreparedParseError,
-    RawRowsAndPagingStateResponseParseError, ResultMetadataAndRowsCountParseError,
-    ResultMetadataParseError, SchemaChangeEventParseError, SetKeyspaceParseError,
-    TableSpecParseError,
+    ResultMetadataAndRowsCountParseError, ResultMetadataParseError, SchemaChangeEventParseError,
+    SetKeyspaceParseError, TableSpecParseError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::request::query::PagingStateResponse;
@@ -137,7 +136,7 @@ impl<'a> ResultMetadata<'a> {
     // Preferred to implementing Default, because users shouldn't be encouraged to create
     // empty ResultMetadata.
     #[inline]
-    pub fn mock_empty() -> Self {
+    pub(crate) fn mock_empty() -> Self {
         Self {
             id: None,
             col_count: 0,
@@ -163,7 +162,7 @@ impl<'a> ResultMetadata<'a> {
 /// 1. owning it in a borrowed form, self-borrowed from the RESULT:Rows frame;
 /// 2. sharing ownership of metadata cached in PreparedStatement.
 #[derive(Debug, Clone)]
-pub enum ResultMetadataHolder {
+pub(crate) enum ResultMetadataHolder {
     /// [ResultMetadata] that is self-borrowed from the RESULT:Rows frame.
     ///
     /// Boxed, because the container is several times larger than the other
@@ -184,23 +183,16 @@ impl ResultMetadataHolder {
     /// because `Deref` does not permit that `Deref::Target`'s lifetime depend on
     /// lifetime of `&self`.
     #[inline]
-    pub fn inner(&self) -> &ResultMetadata<'_> {
+    pub(crate) fn inner(&self) -> &ResultMetadata<'_> {
         match self {
             ResultMetadataHolder::SelfBorrowed(c) => c.metadata(),
             ResultMetadataHolder::SharedCached(s) => s,
         }
     }
 
-    pub fn make_owned_arced(&self) -> Arc<ResultMetadata<'static>> {
-        match self {
-            Self::SelfBorrowed(container) => Arc::new(container.metadata().clone().into_owned()),
-            Self::SharedCached(metadata) => Arc::clone(metadata),
-        }
-    }
-
     /// Creates an empty [ResultMetadataHolder].
     #[inline]
-    pub fn mock_empty() -> Self {
+    pub(crate) fn mock_empty() -> Self {
         // Shared, so that creating it doesn't allocate.
         static EMPTY: LazyLock<Arc<ResultMetadata<'static>>> =
             LazyLock::new(|| Arc::new(ResultMetadata::mock_empty()));
@@ -213,60 +205,6 @@ enum MetadataPresence {
     NoMetadata,
     JustMetadata,
     MetadataWithNewId,
-}
-
-/// RESULT:Rows response, in partially serialized form.
-///
-/// Flags and paging state are deserialized, remaining part of metadata
-/// as well as rows remain serialized.
-#[derive(Debug, Clone)]
-pub struct RawMetadataAndRawRows {
-    // Already deserialized part of metadata:
-    col_count: usize,
-    global_tables_spec: bool,
-    metadata_presence: MetadataPresence,
-
-    /// The remaining part of the RESULT frame.
-    raw_metadata_and_rows: Bytes,
-
-    /// Metadata cached in PreparedStatement, if present.
-    cached_metadata: Option<Arc<ResultMetadata<'static>>>,
-}
-
-impl RawMetadataAndRawRows {
-    /// Creates an empty [RawMetadataAndRawRows].
-    // Preferred to implementing Default, because users shouldn't be encouraged to create
-    // empty RawMetadataAndRawRows.
-    #[inline]
-    pub fn mock_empty() -> Self {
-        // Minimal correct `raw_metadata_and_rows` looks like this:
-        // Empty metadata (0 bytes), rows_count=0 (i32 big endian), empty rows (0 bytes).
-        static EMPTY_METADATA_ZERO_ROWS: &[u8] = &0_i32.to_be_bytes();
-        let raw_metadata_and_rows = Bytes::from_static(EMPTY_METADATA_ZERO_ROWS);
-
-        Self {
-            col_count: 0,
-            global_tables_spec: false,
-            metadata_presence: MetadataPresence::JustMetadata,
-            raw_metadata_and_rows,
-            cached_metadata: None,
-        }
-    }
-
-    /// Returns the serialized size of the raw metadata + raw rows.
-    #[inline]
-    pub fn metadata_and_rows_bytes_size(&self) -> usize {
-        self.raw_metadata_and_rows.len()
-    }
-
-    #[inline]
-    pub fn metadata_changed(&self) -> bool {
-        matches!(self.metadata_presence, MetadataPresence::MetadataWithNewId)
-    }
-
-    pub fn no_metadata(&self) -> bool {
-        matches!(self.metadata_presence, MetadataPresence::NoMetadata)
-    }
 }
 
 mod self_borrowed_metadata {
@@ -318,25 +256,13 @@ mod self_borrowed_metadata {
     /// the held `ResultMetadata`'s lifetime is covariant with the lifetime of this container
     /// itself.
     #[derive(Debug, Clone)]
-    pub struct SelfBorrowedMetadataContainer {
+    pub(crate) struct SelfBorrowedMetadataContainer {
         metadata_and_raw_rows: Yoke<ResultMetadataWrapper<'static>, BytesWrapper>,
     }
 
     impl SelfBorrowedMetadataContainer {
-        /// Creates an empty [SelfBorrowedMetadataContainer].
-        pub fn mock_empty() -> Self {
-            Self {
-                metadata_and_raw_rows: Yoke::attach_to_cart(
-                    BytesWrapper {
-                        inner: Bytes::new(),
-                    },
-                    |_| ResultMetadataWrapper(ResultMetadata::mock_empty()),
-                ),
-            }
-        }
-
         /// Returns a reference to the contained [ResultMetadata].
-        pub fn metadata(&self) -> &ResultMetadata<'_> {
+        pub(crate) fn metadata(&self) -> &ResultMetadata<'_> {
             &self.metadata_and_raw_rows.get().0
         }
 
@@ -375,7 +301,7 @@ mod self_borrowed_metadata {
         }
     }
 }
-pub use self_borrowed_metadata::SelfBorrowedMetadataContainer;
+use self_borrowed_metadata::SelfBorrowedMetadataContainer;
 
 use super::custom_type_parser::CustomTypeParser;
 
@@ -396,13 +322,6 @@ impl DeserializedMetadataAndRawRows {
     #[inline]
     pub fn metadata(&self) -> &ResultMetadata<'_> {
         self.metadata.inner()
-    }
-
-    /// Consumes the `DeserializedMetadataAndRawRows` and returns metadata
-    /// associated with the response (or cached metadata, if used in its stead).
-    #[inline]
-    pub fn into_metadata(self) -> ResultMetadataHolder {
-        self.metadata
     }
 
     /// Returns the number of rows that the RESULT:Rows contain.
@@ -469,47 +388,6 @@ impl DeserializedMetadataAndRawRows {
 /// Represents the result of a CQL `RESULT` response.
 #[derive(Debug)]
 pub enum Result {
-    /// A result with no associated data.
-    Void,
-    /// A result with metadata and rows.
-    Rows((RawMetadataAndRawRows, PagingStateResponse)),
-    /// A result indicating that a keyspace was set as an effect
-    /// of the executed request.
-    SetKeyspace(SetKeyspace),
-    /// A result indicating that a statement was prepared
-    /// as an effect of the `PREPARE` request.
-    Prepared(Prepared),
-    /// A result indicating that a schema change occurred
-    /// as an effect of the executed request.
-    SchemaChange(SchemaChange),
-}
-
-impl Result {
-    pub fn deserialize_metadata(
-        self,
-    ) -> StdResult<ResultWithDeserializedMetadata, ResultMetadataAndRowsCountParseError> {
-        let res = match self {
-            Result::Void => ResultWithDeserializedMetadata::Void,
-            Result::Rows((metadata, paging_state)) => ResultWithDeserializedMetadata::Rows((
-                metadata.deserialize_metadata()?,
-                paging_state,
-            )),
-            Result::SetKeyspace(set_keyspace) => {
-                ResultWithDeserializedMetadata::SetKeyspace(set_keyspace)
-            }
-            Result::Prepared(prepared) => ResultWithDeserializedMetadata::Prepared(prepared),
-            Result::SchemaChange(schema_change) => {
-                ResultWithDeserializedMetadata::SchemaChange(schema_change)
-            }
-        };
-
-        Ok(res)
-    }
-}
-
-/// Represents the result of a CQL `RESULT` response.
-#[derive(Debug)]
-pub enum ResultWithDeserializedMetadata {
     /// A result with no associated data.
     Void,
     /// A result with metadata and rows.
@@ -728,185 +606,116 @@ fn deser_col_specs_owned<'frame>(
     result
 }
 
+/// The flags, column count and paging state, which start result metadata.
+struct ResultMetadataHeader {
+    col_count: usize,
+    global_tables_spec: bool,
+    metadata_presence: MetadataPresence,
+    paging_state: PagingStateResponse,
+}
+
+impl ResultMetadataHeader {
+    fn deserialize(
+        buf: &mut &[u8],
+        features: &ProtocolFeatures,
+    ) -> StdResult<Self, ResultMetadataParseError> {
+        let flags = types::read_int(buf)
+            .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
+        let global_tables_spec = flags & 0x0001 != 0;
+        let has_more_pages = flags & 0x0002 != 0;
+        let no_metadata = flags & 0x0004 != 0;
+        let metadata_changed = features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
+
+        let metadata_presence = match (no_metadata, metadata_changed) {
+            (true, true) => {
+                return Err(ResultMetadataParseError::IdPresentForEmptyMetadata);
+            }
+            (true, false) => MetadataPresence::NoMetadata,
+            (false, true) => MetadataPresence::MetadataWithNewId,
+            (false, false) => MetadataPresence::JustMetadata,
+        };
+
+        let col_count =
+            types::read_int_length(buf).map_err(ResultMetadataParseError::ColumnCountParseError)?;
+
+        let raw_paging_state = has_more_pages
+            .then(|| {
+                types::read_bytes(buf).map_err(ResultMetadataParseError::PagingStateParseError)
+            })
+            .transpose()?;
+
+        let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
+
+        Ok(Self {
+            col_count,
+            global_tables_spec,
+            metadata_presence,
+            paging_state,
+        })
+    }
+}
+
 fn deser_result_metadata(
     buf: &mut &[u8],
     features: &ProtocolFeatures,
 ) -> StdResult<(ResultMetadata<'static>, PagingStateResponse), ResultMetadataParseError> {
-    let flags = types::read_int(buf)
-        .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
-    let global_tables_spec = flags & 0x0001 != 0;
-    let has_more_pages = flags & 0x0002 != 0;
-    let no_metadata = flags & 0x0004 != 0;
-    let metadata_changed = features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
-
-    if metadata_changed && no_metadata {
-        return Err(ResultMetadataParseError::IdPresentForEmptyMetadata);
-    }
-
-    let col_count =
-        types::read_int_length(buf).map_err(ResultMetadataParseError::ColumnCountParseError)?;
-
-    let raw_paging_state = has_more_pages
-        .then(|| types::read_bytes(buf).map_err(ResultMetadataParseError::PagingStateParseError))
-        .transpose()?;
-
-    let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
-
-    let new_metadata_id = metadata_changed
-        .then(|| {
-            types::read_short_bytes(buf).map_err(ResultMetadataParseError::NewMetadataIdParseError)
-        })
-        .transpose()?
-        .map(|x| cow_bytes::CowBytes::from(x).into_owned());
-
-    let col_specs = if no_metadata {
-        vec![]
-    } else {
-        let global_table_spec = global_tables_spec
-            .then(|| deser_table_spec(buf))
-            .transpose()?;
-
-        deser_col_specs_owned(buf, global_table_spec, col_count)?
-    };
-
-    let metadata = ResultMetadata {
-        id: new_metadata_id,
+    let ResultMetadataHeader {
         col_count,
-        col_specs: col_specs.into_boxed_slice(),
+        global_tables_spec,
+        metadata_presence,
+        paging_state,
+    } = ResultMetadataHeader::deserialize(buf, features)?;
+
+    let metadata_changed = matches!(metadata_presence, MetadataPresence::MetadataWithNewId);
+    let metadata = if matches!(metadata_presence, MetadataPresence::NoMetadata) {
+        // The header rules out a new metadata id without metadata.
+        ResultMetadata {
+            id: None,
+            col_count,
+            col_specs: Box::default(),
+        }
+    } else {
+        deser_result_metadata_body_owned(buf, col_count, global_tables_spec, metadata_changed)?
     };
     Ok((metadata, paging_state))
 }
 
-impl RawMetadataAndRawRows {
-    /// Deserializes flags and paging state; the other part of result metadata
-    /// as well as rows remain serialized.
-    fn deserialize(
-        mut frame: Bytes,
-        cached_metadata: Option<Arc<ResultMetadata<'static>>>,
-        features: &ProtocolFeatures,
-    ) -> StdResult<(Self, PagingStateResponse), RawRowsAndPagingStateResponseParseError> {
-        let (col_count, global_tables_spec, metadata_presense, paging_state) =
-            types::parse_prefix(&mut frame, |buf| {
-                let flags = types::read_int(buf).map_err(|err| {
-                    RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into())
-                })?;
-                let global_tables_spec = flags & 0x0001 != 0;
-                let has_more_pages = flags & 0x0002 != 0;
-                let no_metadata = flags & 0x0004 != 0;
-                let metadata_changed =
-                    features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
-
-                let metadata_presense = match (no_metadata, metadata_changed) {
-                    (true, true) => {
-                        return Err(
-                            RawRowsAndPagingStateResponseParseError::IdPresentForEmptyMetadata,
-                        );
-                    }
-                    (true, false) => MetadataPresence::NoMetadata,
-                    (false, true) => MetadataPresence::MetadataWithNewId,
-                    (false, false) => MetadataPresence::JustMetadata,
-                };
-
-                let col_count = types::read_int_length(buf)
-                    .map_err(RawRowsAndPagingStateResponseParseError::ColumnCountParseError)?;
-
-                let raw_paging_state = has_more_pages
-                    .then(|| {
-                        types::read_bytes(buf)
-                            .map_err(RawRowsAndPagingStateResponseParseError::PagingStateParseError)
-                    })
-                    .transpose()?;
-
-                let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
-
-                Ok((
-                    col_count,
-                    global_tables_spec,
-                    metadata_presense,
-                    paging_state,
-                ))
-            })?;
-
-        let raw_rows = Self {
-            col_count,
-            global_tables_spec,
-            metadata_presence: metadata_presense,
-            raw_metadata_and_rows: frame,
-            cached_metadata,
-        };
-
-        Ok((raw_rows, paging_state))
-    }
-}
-
-impl RawMetadataAndRawRows {
-    // This function is needed because creating the deserializer closure
-    // directly in the enclosing function does not provide enough type hints
-    // for the compiler (and having a function with a verbose signature does),
-    // so it demands a type annotation. We cannot, however, write a correct
-    // type annotation, because this way we would limit the lifetime
-    // to a concrete lifetime, and our closure needs to be `impl for<'frame> ...`.
-    // This is a proud trick by Wojciech Przytuła, which crowns the brilliant
-    // idea of Karol Baryła to use Yoke to enable borrowing ResultMetadata
-    // from itself.
-    fn metadata_deserializer(
-        col_count: usize,
-        global_tables_spec: bool,
-        metadata_changed: bool,
-    ) -> impl for<'frame> FnOnce(
-        &mut &'frame [u8],
-    ) -> StdResult<ResultMetadata<'frame>, ResultMetadataParseError> {
-        move |buf| {
-            let server_metadata = {
-                let new_metadata_id = metadata_changed
-                    .then(|| {
-                        types::read_short_bytes(buf)
-                            .map_err(ResultMetadataParseError::NewMetadataIdParseError)
-                    })
-                    .transpose()?
-                    .map(cow_bytes::CowBytes::Borrowed);
-                let global_table_spec = global_tables_spec
-                    .then(|| deser_table_spec(buf))
-                    .transpose()?;
-
-                let col_specs = deser_col_specs_borrowed(buf, global_table_spec, col_count)?;
-
-                ResultMetadata {
-                    id: new_metadata_id,
-                    col_count,
-                    col_specs: col_specs.into_boxed_slice(),
-                }
-            };
-            Ok(server_metadata)
-        }
-    }
-
-    /// Deserializes ResultMetadata and deserializes rows count. Keeps rows in the serialized form.
+impl DeserializedMetadataAndRawRows {
+    /// Deserializes RESULT:Rows: its metadata and rows count. Keeps rows in the serialized form.
     ///
     /// If metadata is cached (in the PreparedStatement), it is reused (shared) from cache
     /// instead of deserializing.
-    pub fn deserialize_metadata(
-        self,
-    ) -> StdResult<DeserializedMetadataAndRawRows, ResultMetadataAndRowsCountParseError> {
-        let raw_metadata_and_rows_bytes_size = self.metadata_and_rows_bytes_size();
-        let (metadata_deserialized, row_count_and_raw_rows) = match self.cached_metadata {
-            Some(cached) if self.no_metadata() => {
+    fn deserialize(
+        mut frame: Bytes,
+        cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
+        features: &ProtocolFeatures,
+    ) -> StdResult<(Self, PagingStateResponse), ResultMetadataAndRowsCountParseError> {
+        let ResultMetadataHeader {
+            col_count,
+            global_tables_spec,
+            metadata_presence,
+            paging_state,
+        } = types::parse_prefix(&mut frame, |buf| {
+            ResultMetadataHeader::deserialize(buf, features)
+        })?;
+        let no_metadata = matches!(metadata_presence, MetadataPresence::NoMetadata);
+
+        let raw_metadata_and_rows_bytes_size = frame.len();
+        let (metadata_deserialized, row_count_and_raw_rows) = match cached_metadata {
+            Some(cached) if no_metadata => {
                 // Server sent no metadata, but we have metadata cached. This means that we asked the server
                 // not to send metadata in the response as an optimization. We use cached metadata instead.
                 (
-                    ResultMetadataHolder::SharedCached(cached),
-                    self.raw_metadata_and_rows,
+                    ResultMetadataHolder::SharedCached(Arc::clone(cached)),
+                    frame,
                 )
             }
-            None if self.no_metadata() => {
+            None if no_metadata => {
                 // Server sent no metadata and we have no metadata cached. Having no metadata cached,
                 // we wouldn't have asked the server for skipping metadata. Therefore, this is most probably
                 // not a SELECT, because in such case the server would send empty metadata both in Prepared
                 // and in Result responses.
-                (
-                    ResultMetadataHolder::mock_empty(),
-                    self.raw_metadata_and_rows,
-                )
+                (ResultMetadataHolder::mock_empty(), frame)
             }
             Some(_) | None => {
                 // Two possibilities:
@@ -918,11 +727,19 @@ impl RawMetadataAndRawRows {
                 // Also, we simply need to advance the buffer pointer past metadata, and this requires
                 // parsing metadata.
 
-                let metadata_changed = self.metadata_changed();
+                let metadata_changed =
+                    matches!(metadata_presence, MetadataPresence::MetadataWithNewId);
                 let (metadata_container, raw_rows_with_count) =
                     self_borrowed_metadata::SelfBorrowedMetadataContainer::make_deserialized_metadata(
-                        self.raw_metadata_and_rows,
-                        Self::metadata_deserializer(self.col_count, self.global_tables_spec, metadata_changed),
+                        frame,
+                        |buf| {
+                            deser_result_metadata_body_borrowed(
+                                buf,
+                                col_count,
+                                global_tables_spec,
+                                metadata_changed,
+                            )
+                        },
                     )?;
                 (
                     ResultMetadataHolder::SelfBorrowed(Box::new(metadata_container)),
@@ -935,13 +752,84 @@ impl RawMetadataAndRawRows {
         let rows_count = types::parse_prefix(&mut raw_rows, types::read_int_length)
             .map_err(ResultMetadataAndRowsCountParseError::RowsCountParseError)?;
 
-        Ok(DeserializedMetadataAndRawRows {
+        let rows = Self {
             metadata: metadata_deserialized,
             rows_count,
             raw_rows,
             raw_metadata_and_rows_bytes_size,
-        })
+        };
+
+        Ok((rows, paging_state))
     }
+}
+
+/// [`deser_col_specs_borrowed`] or [`deser_col_specs_owned`].
+type DeserColSpecs<'frame, 'result> =
+    fn(
+        &mut &'frame [u8],
+        Option<TableSpec<'frame>>,
+        usize,
+    ) -> StdResult<Vec<ColumnSpec<'result>>, ColumnSpecParseError>;
+
+fn deser_result_metadata_body_generic<'frame, 'result>(
+    buf: &mut &'frame [u8],
+    col_count: usize,
+    global_tables_spec: bool,
+    metadata_changed: bool,
+    make_id: fn(&'frame [u8]) -> cow_bytes::CowBytes<'result>,
+    deser_col_specs: DeserColSpecs<'frame, 'result>,
+) -> StdResult<ResultMetadata<'result>, ResultMetadataParseError> {
+    let new_metadata_id = metadata_changed
+        .then(|| {
+            types::read_short_bytes(buf).map_err(ResultMetadataParseError::NewMetadataIdParseError)
+        })
+        .transpose()?
+        .map(make_id);
+    let global_table_spec = global_tables_spec
+        .then(|| deser_table_spec(buf))
+        .transpose()?;
+
+    let col_specs = deser_col_specs(buf, global_table_spec, col_count)?;
+
+    Ok(ResultMetadata {
+        id: new_metadata_id,
+        col_count,
+        col_specs: col_specs.into_boxed_slice(),
+    })
+}
+
+/// Deserializes the result metadata that follows its header, in the borrowed form.
+fn deser_result_metadata_body_borrowed<'frame>(
+    buf: &mut &'frame [u8],
+    col_count: usize,
+    global_tables_spec: bool,
+    metadata_changed: bool,
+) -> StdResult<ResultMetadata<'frame>, ResultMetadataParseError> {
+    deser_result_metadata_body_generic(
+        buf,
+        col_count,
+        global_tables_spec,
+        metadata_changed,
+        cow_bytes::CowBytes::Borrowed,
+        deser_col_specs_borrowed,
+    )
+}
+
+/// Deserializes the result metadata that follows its header, in the owned form.
+fn deser_result_metadata_body_owned(
+    buf: &mut &[u8],
+    col_count: usize,
+    global_tables_spec: bool,
+    metadata_changed: bool,
+) -> StdResult<ResultMetadata<'static>, ResultMetadataParseError> {
+    deser_result_metadata_body_generic(
+        buf,
+        col_count,
+        global_tables_spec,
+        metadata_changed,
+        |id| cow_bytes::CowBytes::from(id).into_owned(),
+        deser_col_specs_owned,
+    )
 }
 
 fn deser_prepared_metadata(
@@ -979,15 +867,6 @@ fn deser_prepared_metadata(
         pk_indexes,
         col_specs,
     })
-}
-
-fn deser_rows(
-    buf_bytes: Bytes,
-    cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
-    features: &ProtocolFeatures,
-) -> StdResult<(RawMetadataAndRawRows, PagingStateResponse), RawRowsAndPagingStateResponseParseError>
-{
-    RawMetadataAndRawRows::deserialize(buf_bytes, cached_metadata.cloned(), features)
 }
 
 fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspaceParseError> {
@@ -1042,40 +921,33 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeE
     })
 }
 
-/// Deserializes a CQL `RESULT` response from the provided buffer.
-///
-/// Reuses cached metadata if provided, otherwise deserializes it.
-pub fn deserialize_with_features(
-    mut buf_bytes: Bytes,
-    cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
-    features: &ProtocolFeatures,
-) -> StdResult<Result, CqlResultParseError> {
-    use self::Result::*;
-    Ok(
-        match types::parse_prefix(&mut buf_bytes, types::read_int)
-            .map_err(|err| CqlResultParseError::ResultIdParseError(err.into()))?
-        {
-            0x0001 => Void,
-            0x0002 => Rows(deser_rows(buf_bytes, cached_metadata, features)?),
-            0x0003 => SetKeyspace(deser_set_keyspace(&mut &*buf_bytes)?),
-            0x0004 => Prepared(deser_prepared(&mut &*buf_bytes, features)?),
-            0x0005 => SchemaChange(deser_schema_change(&mut &*buf_bytes)?),
-            id => return Err(CqlResultParseError::UnknownResultId(id)),
-        },
-    )
-}
-
-/// Deserializes a CQL `RESULT` response from the provided buffer.
-///
-/// Reuses cached metadata if provided, otherwise deserializes it.
-/// Does not take into account protocol features, so for example will
-/// fail on frames containing result metadata ids.
-#[deprecated(since = "1.14.0", note = "Use `deserialize_with_features` instead")]
-pub fn deserialize(
-    buf_bytes: Bytes,
-    cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
-) -> StdResult<Result, CqlResultParseError> {
-    deserialize_with_features(buf_bytes, cached_metadata, &ProtocolFeatures::default())
+impl Result {
+    /// Deserializes a CQL `RESULT` response from the provided buffer.
+    ///
+    /// Reuses cached metadata if provided, otherwise deserializes it.
+    pub fn deserialize(
+        mut buf_bytes: Bytes,
+        cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
+        features: &ProtocolFeatures,
+    ) -> StdResult<Result, CqlResultParseError> {
+        use self::Result::*;
+        Ok(
+            match types::parse_prefix(&mut buf_bytes, types::read_int)
+                .map_err(|err| CqlResultParseError::ResultIdParseError(err.into()))?
+            {
+                0x0001 => Void,
+                0x0002 => Rows(DeserializedMetadataAndRawRows::deserialize(
+                    buf_bytes,
+                    cached_metadata,
+                    features,
+                )?),
+                0x0003 => SetKeyspace(deser_set_keyspace(&mut &*buf_bytes)?),
+                0x0004 => Prepared(deser_prepared(&mut &*buf_bytes, features)?),
+                0x0005 => SchemaChange(deser_schema_change(&mut &*buf_bytes)?),
+                id => return Err(CqlResultParseError::UnknownResultId(id)),
+            },
+        )
+    }
 }
 
 // This is not #[cfg(test)], because it is used by scylla crate.
@@ -1086,7 +958,7 @@ pub fn deserialize(
 mod test_utils {
     use std::num::TryFromIntError;
 
-    use bytes::{BufMut, BytesMut};
+    use bytes::BufMut;
 
     use super::*;
 
@@ -1303,43 +1175,6 @@ mod test_utils {
             serialize_col_specs(&metadata.col_specs, None, buf)?;
 
             self.result_metadata.serialize(buf, false, false, None)
-        }
-    }
-
-    impl RawMetadataAndRawRows {
-        #[doc(hidden)]
-        #[inline]
-        pub fn new_for_test(
-            cached_metadata: Option<Arc<ResultMetadata<'static>>>,
-            metadata: Option<ResultMetadata>,
-            global_tables_spec: bool,
-            rows_count: usize,
-            raw_rows: &[u8],
-        ) -> StdResult<Self, TryFromIntError> {
-            let no_metadata = metadata.is_none();
-            let empty_metadata = ResultMetadata::mock_empty();
-            let used_metadata = metadata
-                .as_ref()
-                .or(cached_metadata.as_deref())
-                .unwrap_or(&empty_metadata);
-
-            let raw_result_rows = {
-                let mut buf = BytesMut::new();
-                used_metadata.serialize(&mut buf, no_metadata, global_tables_spec, None)?;
-                types::write_int_length(rows_count, &mut buf)?;
-                buf.extend_from_slice(raw_rows);
-
-                buf.freeze()
-            };
-
-            let (raw_rows, _paging_state_response) = Self::deserialize(
-                raw_result_rows,
-                cached_metadata,
-                &ProtocolFeatures::default(),
-            )
-            .expect("Ill-formed serialized metadata for tests - likely bug in serialization code");
-
-            Ok(raw_rows)
         }
     }
 

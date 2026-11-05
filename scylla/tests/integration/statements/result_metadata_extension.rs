@@ -11,9 +11,8 @@ use scylla::cluster::metadata::{ColumnType, NativeType};
 use scylla::errors::DbError;
 use scylla::frame::response::result::{ColumnSpec, TableSpec};
 use scylla::statement::prepared::PreparedStatement;
-use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::request::DeserializableRequest;
-use scylla_cql::frame::request::execute::ExecuteV2;
+use scylla_cql::frame::request::execute::Execute;
 use scylla_cql::frame::response::result::Result;
 use scylla_cql::frame::response::{Response, Supported};
 use scylla_cql::frame::{parse_response_body_extensions, types};
@@ -23,8 +22,8 @@ use scylla_proxy::{
 };
 
 use crate::utils::{
-    PerformDDL, fetch_negotiated_features, setup_tracing, test_with_3_node_cluster,
-    unique_keyspace_name,
+    PerformDDL, RowsMetadataFlags, fetch_negotiated_features, setup_tracing,
+    test_with_3_node_cluster, unique_keyspace_name,
 };
 
 async fn prepare_schema_and_data(session: &Session, ks: &str) {
@@ -105,7 +104,6 @@ async fn perform_test_for_proxy(
     proxy_uris: &[String; 3],
     translation_map: &HashMap<SocketAddr, SocketAddr>,
     mut running_proxy: RunningProxy,
-    features: ProtocolFeatures,
     apply_prepare_rules: impl FnOnce(&mut RunningProxy),
     apply_execution_rules: impl FnOnce(&mut RunningProxy),
 ) -> RunningProxy {
@@ -224,13 +222,9 @@ async fn perform_test_for_proxy(
         let frame = rx_result.recv().await.unwrap().0;
         let body_with_extensions =
             parse_response_body_extensions(frame.params.flags, None, frame.body).unwrap();
-        let response =
-            Response::deserialize(&features, frame.opcode, body_with_extensions.body, None)
-                .unwrap();
-        let Response::Result(Result::Rows(raw_rows)) = response else {
-            panic!("Wrong response type");
-        };
-        assert!(raw_rows.0.metadata_changed());
+        let flags = RowsMetadataFlags::from_result_body(&body_with_extensions.body)
+            .expect("Wrong response type");
+        assert!(flags.metadata_changed);
 
         let rows: Vec<_> = result_2
             .rows::<(i32, &str, Option<&str>)>()
@@ -255,14 +249,10 @@ async fn perform_test_for_proxy(
         let frame = rx_result.recv().await.unwrap().0;
         let body_with_extensions =
             parse_response_body_extensions(frame.params.flags, None, frame.body).unwrap();
-        let response =
-            Response::deserialize(&features, frame.opcode, body_with_extensions.body, None)
-                .unwrap();
-        let Response::Result(Result::Rows(raw_rows)) = response else {
-            panic!("Wrong response type");
-        };
-        assert!(!raw_rows.0.metadata_changed());
-        assert!(raw_rows.0.no_metadata());
+        let flags = RowsMetadataFlags::from_result_body(&body_with_extensions.body)
+            .expect("Wrong response type");
+        assert!(!flags.metadata_changed);
+        assert!(flags.no_metadata);
 
         let rows: Vec<_> = result_2_again
             .rows::<(i32, &str, Option<&str>)>()
@@ -341,11 +331,8 @@ async fn test_insert_sends_empty_result_metadata_id() {
                 let body_with_extensions =
                     parse_response_body_extensions(req_frame.params.flags, None, req_frame.body)
                         .unwrap();
-                let execute = ExecuteV2::deserialize_with_features(
-                    &mut &*body_with_extensions.body,
-                    &features,
-                )
-                .unwrap();
+                let execute =
+                    Execute::deserialize(&mut &*body_with_extensions.body, &features).unwrap();
                 let Some(id) = execute.result_metadata_id else {
                     panic!("Expected result_metadata_id to be Some (extension is enabled)");
                 };
@@ -403,15 +390,8 @@ async fn test_basic_metadata_update() {
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
         |proxy_uris, translation_map, running_proxy| async move {
-            perform_test_for_proxy(
-                &proxy_uris,
-                &translation_map,
-                running_proxy,
-                features,
-                |_| (),
-                |_| (),
-            )
-            .await
+            perform_test_for_proxy(&proxy_uris, &translation_map, running_proxy, |_| (), |_| ())
+                .await
         },
     )
     .await;
@@ -499,7 +479,6 @@ async fn test_mixed_cluster() {
                 &proxy_uris,
                 &translation_map,
                 running_proxy,
-                features,
                 &apply_prepare_rules,
                 apply_execute_rules,
             )
@@ -513,11 +492,8 @@ async fn test_mixed_cluster() {
                     let body_with_extensions =
                         parse_response_body_extensions(frame.params.flags, None, frame.body)
                             .unwrap();
-                    let execute = ExecuteV2::deserialize_with_features(
-                        &mut &*body_with_extensions.body,
-                        &features,
-                    )
-                    .unwrap();
+                    let execute =
+                        Execute::deserialize(&mut &*body_with_extensions.body, &features).unwrap();
 
                     execute.result_metadata_id
                 });

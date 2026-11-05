@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 
 use assert_matches::assert_matches;
 use futures::{StreamExt as _, TryStreamExt as _};
+use scylla::statement::Consistency;
 use scylla::{
     client::execution_profile::ExecutionProfile,
     cluster::{ClusterState, NodeRef},
@@ -24,7 +25,6 @@ use scylla::{
     client::{session::Session, session_builder::SessionBuilder},
     errors::{NextPageError, NextRowError, PagerExecutionError, RequestError},
 };
-use scylla_cql::Consistency;
 use scylla_cql::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
 use scylla_proxy::{
     Condition, ProxyError, Reaction as _, RequestFrame, RequestOpcode, RequestReaction,
