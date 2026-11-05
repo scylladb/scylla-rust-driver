@@ -162,7 +162,7 @@ impl<'a> ResultMetadata<'a> {
 /// 1. owning it in a borrowed form, self-borrowed from the RESULT:Rows frame;
 /// 2. sharing ownership of metadata cached in PreparedStatement.
 #[derive(Debug, Clone)]
-pub enum ResultMetadataHolder {
+pub(crate) enum ResultMetadataHolder {
     /// [ResultMetadata] that is self-borrowed from the RESULT:Rows frame.
     ///
     /// Boxed, because the container is several times larger than the other
@@ -183,7 +183,7 @@ impl ResultMetadataHolder {
     /// because `Deref` does not permit that `Deref::Target`'s lifetime depend on
     /// lifetime of `&self`.
     #[inline]
-    pub fn inner(&self) -> &ResultMetadata<'_> {
+    pub(crate) fn inner(&self) -> &ResultMetadata<'_> {
         match self {
             ResultMetadataHolder::SelfBorrowed(c) => c.metadata(),
             ResultMetadataHolder::SharedCached(s) => s,
@@ -192,7 +192,7 @@ impl ResultMetadataHolder {
 
     /// Creates an empty [ResultMetadataHolder].
     #[inline]
-    pub fn mock_empty() -> Self {
+    pub(crate) fn mock_empty() -> Self {
         // Shared, so that creating it doesn't allocate.
         static EMPTY: LazyLock<Arc<ResultMetadata<'static>>> =
             LazyLock::new(|| Arc::new(ResultMetadata::mock_empty()));
