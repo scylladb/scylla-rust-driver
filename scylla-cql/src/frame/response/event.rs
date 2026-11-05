@@ -31,6 +31,7 @@ pub enum Event {
 
 /// Event that notifies about changes in the cluster topology.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum TopologyChangeEvent {
     /// A new node was added to the cluster.
     NewNode(SocketAddr),
