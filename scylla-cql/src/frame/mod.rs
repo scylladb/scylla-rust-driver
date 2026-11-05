@@ -15,7 +15,7 @@ pub mod response;
 pub mod server_event_type;
 pub mod types;
 
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{BufMut, Bytes};
 use frame_errors::{
     CqlRequestSerializationError, FrameBodyExtensionsParseError, FrameHeaderParseError,
     LowLevelDeserializationError,
@@ -322,19 +322,20 @@ pub fn compress_append(
 /// Deompresses the response body using the specified compression algorithm
 /// and returns the decompressed data as an owned buffer.
 pub fn decompress(
-    mut comp_body: &[u8],
+    comp_body: &[u8],
     compression: Compression,
 ) -> Result<Vec<u8>, FrameBodyExtensionsParseError> {
     match compression {
         Compression::Lz4 => {
-            let uncomp_len = comp_body.try_get_u32().map_err(|_| {
+            let (uncomp_len, comp_body) = comp_body.split_first_chunk::<4>().ok_or_else(|| {
                 FrameBodyExtensionsParseError::Lz4DecompressError(Arc::new(
                     LowLevelDeserializationError::IoError(Arc::new(std::io::Error::new(
                         std::io::ErrorKind::UnexpectedEof,
                         "lz4 frame body is shorter than its 4-byte size prefix",
                     ))),
                 ))
-            })? as usize;
+            })?;
+            let uncomp_len = u32::from_be_bytes(*uncomp_len) as usize;
             let uncomp_body = lz4_flex::decompress(comp_body, uncomp_len)
                 .map_err(|err| FrameBodyExtensionsParseError::Lz4DecompressError(Arc::new(err)))?;
             Ok(uncomp_body)
