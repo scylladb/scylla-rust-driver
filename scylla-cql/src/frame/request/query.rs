@@ -14,8 +14,7 @@ use crate::{
 
 use super::{DeserializableRequest, RequestDeserializationError};
 
-// Re-export for backward compatibility.
-pub use crate::frame::frame_errors::{QueryParametersSerializationError, QuerySerializationError};
+use crate::frame::frame_errors::{QueryParametersSerializationError, QuerySerializationError};
 
 // Query flags
 const FLAG_VALUES: u8 = 0x01;

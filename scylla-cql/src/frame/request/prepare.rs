@@ -7,8 +7,7 @@ use crate::{
     frame::types,
 };
 
-// Re-export for backward compatibility.
-pub use crate::frame::frame_errors::PrepareSerializationError;
+use crate::frame::frame_errors::PrepareSerializationError;
 
 /// CQL protocol-level representation of an `PREPARE` request,
 /// used to prepare a single statement for further execution.

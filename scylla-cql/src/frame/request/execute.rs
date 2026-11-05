@@ -11,8 +11,7 @@ use crate::{
 
 use super::{DeserializableRequest, RequestDeserializationError, query::QueryParameters};
 
-// Re-export for backward compatibility.
-pub use crate::frame::frame_errors::ExecuteSerializationError;
+use crate::frame::frame_errors::ExecuteSerializationError;
 
 /// CQL protocol-level representation of an `EXECUTE` request,
 /// used to execute a single prepared statement.

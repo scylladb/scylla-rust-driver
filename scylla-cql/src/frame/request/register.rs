@@ -7,8 +7,7 @@ use crate::frame::{
     types,
 };
 
-// Re-export for backward compatibility.
-pub use crate::frame::frame_errors::RegisterSerializationError;
+use crate::frame::frame_errors::RegisterSerializationError;
 
 /// The CQL protocol-level representation of an `REGISTER` request,
 /// used to subscribe for server events.

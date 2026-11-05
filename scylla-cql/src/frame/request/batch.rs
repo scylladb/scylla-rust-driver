@@ -17,8 +17,7 @@ use crate::serialize::{
 
 use super::{DeserializableRequest, RequestDeserializationError};
 
-// Re-export for backward compatibility.
-pub use crate::frame::frame_errors::{BatchSerializationError, BatchStatementSerializationError};
+use crate::frame::frame_errors::{BatchSerializationError, BatchStatementSerializationError};
 
 pub use scylla_cql_core::frame::request::batch::{BatchStatement, BatchType, BatchTypeParseError};
 

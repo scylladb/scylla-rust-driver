@@ -12,8 +12,7 @@ use crate::{
 
 use super::DeserializableRequest;
 
-// Re-export for backward compatibility.
-pub use crate::frame::frame_errors::StartupSerializationError;
+use crate::frame::frame_errors::StartupSerializationError;
 
 /// The CQL protocol-level representation of an `STARTUP` request,
 /// used to finalise connection negotiation phase and establish the CQL connection.

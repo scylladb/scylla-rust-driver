@@ -5,8 +5,7 @@ use crate::frame::frame_errors::CqlRequestSerializationError;
 use crate::frame::request::{RequestOpcode, SerializableRequest};
 use crate::frame::types::write_bytes_opt;
 
-// Re-export for backward compatibility.
-pub use crate::frame::frame_errors::AuthResponseSerializationError;
+use crate::frame::frame_errors::AuthResponseSerializationError;
 
 /// Represents AUTH_RESPONSE CQL request.
 ///
