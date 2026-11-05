@@ -128,25 +128,18 @@ impl Response {
         }
     }
 
-    /// Converts this response into a `NonErrorResponseV2`, returning an error if it is an `Error` response.
-    pub fn into_non_error_response(
-        self,
-    ) -> Result<NonErrorResponseWithDeserializedMetadataV2, error::Error> {
+    /// Converts this response into a [`NonErrorResponse`], returning an error
+    /// if it is an `Error` response.
+    pub fn into_non_error_response(self) -> Result<NonErrorResponse, error::Error> {
         let non_error_response = match self {
             Self::Error(e) => return Err(e),
-            Self::Ready => NonErrorResponseWithDeserializedMetadataV2::Ready,
-            Self::Result(res) => NonErrorResponseWithDeserializedMetadataV2::Result(res),
-            Self::Authenticate(auth) => {
-                NonErrorResponseWithDeserializedMetadataV2::Authenticate(auth)
-            }
-            Self::AuthSuccess(auth_succ) => {
-                NonErrorResponseWithDeserializedMetadataV2::AuthSuccess(auth_succ)
-            }
-            Self::AuthChallenge(auth_chal) => {
-                NonErrorResponseWithDeserializedMetadataV2::AuthChallenge(auth_chal)
-            }
-            Self::Supported(sup) => NonErrorResponseWithDeserializedMetadataV2::Supported(sup),
-            Self::Event(eve) => NonErrorResponseWithDeserializedMetadataV2::Event(eve),
+            Self::Ready => NonErrorResponse::Ready,
+            Self::Result(res) => NonErrorResponse::Result(res),
+            Self::Authenticate(auth) => NonErrorResponse::Authenticate(auth),
+            Self::AuthSuccess(auth_succ) => NonErrorResponse::AuthSuccess(auth_succ),
+            Self::AuthChallenge(auth_chal) => NonErrorResponse::AuthChallenge(auth_chal),
+            Self::Supported(sup) => NonErrorResponse::Supported(sup),
+            Self::Event(eve) => NonErrorResponse::Event(eve),
         };
 
         Ok(non_error_response)
@@ -158,7 +151,7 @@ impl Response {
 /// of valid responses without need to handle error case any later.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum NonErrorResponseWithDeserializedMetadataV2 {
+pub enum NonErrorResponse {
     /// See [`Response::Ready`].
     Ready,
     /// See [`Response::Result`].
@@ -175,7 +168,7 @@ pub enum NonErrorResponseWithDeserializedMetadataV2 {
     Event(event::Event),
 }
 
-impl NonErrorResponseWithDeserializedMetadataV2 {
+impl NonErrorResponse {
     /// Returns the kind of this non-error response.
     pub fn to_response_kind(&self) -> CqlResponseKind {
         match self {

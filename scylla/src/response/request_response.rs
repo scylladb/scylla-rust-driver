@@ -1,10 +1,7 @@
 use std::collections::HashMap;
 
 use crate::frame::request::query::PagingStateResponse;
-use crate::frame::response::{
-    NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata,
-    Response,
-};
+use crate::frame::response::{NonErrorResponse, Response};
 use bytes::Bytes;
 use tracing::error;
 use uuid::Uuid;
@@ -28,7 +25,7 @@ pub(crate) struct QueryResponse {
 
 // A QueryResponse in which response can not be Response::Error
 pub(crate) struct NonErrorQueryResponse {
-    pub(crate) response: NonErrorResponseWithDeserializedMetadata,
+    pub(crate) response: NonErrorResponse,
     pub(crate) tracing_id: Option<Uuid>,
     pub(crate) warnings: Box<[String]>,
 }
@@ -48,18 +45,14 @@ impl QueryResponse {
 impl NonErrorQueryResponse {
     pub(crate) fn as_set_keyspace(&self) -> Option<&result::SetKeyspace> {
         match &self.response {
-            NonErrorResponseWithDeserializedMetadata::Result(result::Result::SetKeyspace(sk)) => {
-                Some(sk)
-            }
+            NonErrorResponse::Result(result::Result::SetKeyspace(sk)) => Some(sk),
             _ => None,
         }
     }
 
     pub(crate) fn as_schema_change(&self) -> Option<&result::SchemaChange> {
         match &self.response {
-            NonErrorResponseWithDeserializedMetadata::Result(result::Result::SchemaChange(sc)) => {
-                Some(sc)
-            }
+            NonErrorResponse::Result(result::Result::SchemaChange(sc)) => Some(sc),
             _ => None,
         }
     }
@@ -74,13 +67,10 @@ impl NonErrorQueryResponse {
             warnings,
         } = self;
         let (raw_rows, paging_state_response) = match response {
-            NonErrorResponseWithDeserializedMetadata::Result(result::Result::Rows((
-                rs,
-                paging_state_response,
-            ))) => (Some(rs), paging_state_response),
-            NonErrorResponseWithDeserializedMetadata::Result(_) => {
-                (None, PagingStateResponse::NoMorePages)
+            NonErrorResponse::Result(result::Result::Rows((rs, paging_state_response))) => {
+                (Some(rs), paging_state_response)
             }
+            NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages),
             _ => {
                 return Err(RequestAttemptError::UnexpectedResponse(
                     response.to_response_kind(),

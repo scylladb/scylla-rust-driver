@@ -25,7 +25,7 @@ use crate::errors::{
     PagerExecutionError, PrepareError, RequestAttemptError, RequestError, SchemaAgreementError,
     TracingError, UseKeyspaceError,
 };
-use crate::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
+use crate::frame::response::NonErrorResponse;
 use crate::frame::response::result;
 use crate::network::tls::TlsProvider;
 use crate::network::{
@@ -1759,7 +1759,7 @@ impl Session {
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
-                response: NonErrorResponseWithDeserializedMetadata::Result(result::Result::Void),
+                response: NonErrorResponse::Result(result::Result::Void),
                 tracing_id: None,
                 warnings: Box::default(),
             },
@@ -2171,7 +2171,7 @@ impl Session {
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
-                response: NonErrorResponseWithDeserializedMetadata::Result(result::Result::Void),
+                response: NonErrorResponse::Result(result::Result::Void),
                 tracing_id: None,
                 warnings: Box::default(),
             },
