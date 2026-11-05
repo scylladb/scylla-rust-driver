@@ -7,23 +7,9 @@ use crate::frame::frame_errors::{
     ClientRoutesChangeEventParseError, ClusterChangeEventParseError, CqlEventParseError,
     SchemaChangeEventParseError,
 };
-use crate::frame::server_event_type::{EventType, EventTypeV2};
+use crate::frame::server_event_type::EventTypeV2;
 use crate::frame::types;
 use std::net::SocketAddr;
-
-/// Event that the server notified the client about.
-#[derive(Debug)]
-// Check triggers because all variants end with "Change".
-// TODO(2.0): Remove the "Change" postfix from variants.
-#[expect(clippy::enum_variant_names)]
-pub enum Event {
-    /// Topology changed.
-    TopologyChange(TopologyChangeEvent),
-    /// Status of a node changed.
-    StatusChange(StatusChangeEvent),
-    /// Schema changed.
-    SchemaChange(SchemaChangeEvent),
-}
 
 /// Event that the server notified the client about.
 #[derive(Debug)]
@@ -144,26 +130,6 @@ pub enum ClientRoutesChangeEvent {
         /// Affected host IDs.
         host_ids: Vec<Uuid>,
     },
-}
-
-impl Event {
-    /// Deserialize an event from the provided buffer.
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlEventParseError> {
-        let event_type: EventType = types::read_string(buf)
-            .map_err(CqlEventParseError::EventTypeParseError)?
-            .parse()?;
-        match event_type {
-            EventType::TopologyChange => Ok(Self::TopologyChange(
-                TopologyChangeEvent::deserialize(buf)
-                    .map_err(CqlEventParseError::TopologyChangeEventParseError)?,
-            )),
-            EventType::StatusChange => Ok(Self::StatusChange(
-                StatusChangeEvent::deserialize(buf)
-                    .map_err(CqlEventParseError::StatusChangeEventParseError)?,
-            )),
-            EventType::SchemaChange => Ok(Self::SchemaChange(SchemaChangeEvent::deserialize(buf)?)),
-        }
-    }
 }
 
 impl EventV2 {
