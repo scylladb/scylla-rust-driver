@@ -1052,7 +1052,7 @@ pub fn deserialize(
 mod test_utils {
     use std::num::TryFromIntError;
 
-    use bytes::{BufMut, BytesMut};
+    use bytes::BufMut;
 
     use super::*;
 
@@ -1269,43 +1269,6 @@ mod test_utils {
             serialize_col_specs(&metadata.col_specs, None, buf)?;
 
             self.result_metadata.serialize(buf, false, false, None)
-        }
-    }
-
-    impl RawMetadataAndRawRows {
-        #[doc(hidden)]
-        #[inline]
-        pub fn new_for_test(
-            cached_metadata: Option<Arc<ResultMetadata<'static>>>,
-            metadata: Option<ResultMetadata>,
-            global_tables_spec: bool,
-            rows_count: usize,
-            raw_rows: &[u8],
-        ) -> StdResult<Self, TryFromIntError> {
-            let no_metadata = metadata.is_none();
-            let empty_metadata = ResultMetadata::mock_empty();
-            let used_metadata = metadata
-                .as_ref()
-                .or(cached_metadata.as_deref())
-                .unwrap_or(&empty_metadata);
-
-            let raw_result_rows = {
-                let mut buf = BytesMut::new();
-                used_metadata.serialize(&mut buf, no_metadata, global_tables_spec, None)?;
-                types::write_int_length(rows_count, &mut buf)?;
-                buf.extend_from_slice(raw_rows);
-
-                buf.freeze()
-            };
-
-            let (raw_rows, _paging_state_response) = Self::deserialize(
-                raw_result_rows,
-                cached_metadata,
-                &ProtocolFeatures::default(),
-            )
-            .expect("Ill-formed serialized metadata for tests - likely bug in serialization code");
-
-            Ok(raw_rows)
         }
     }
 
