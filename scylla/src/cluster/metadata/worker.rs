@@ -923,6 +923,7 @@ impl MetadataWorker {
             // The work is recorded rather than started right away; see the
             // schema rule in the docs of [`work_on_cc`](Self::work_on_cc).
             Event::SchemaChange(change) => {
+                #[deny(clippy::wildcard_enum_match_arm)]
                 let (keyspace_name, last_change) = match change {
                     // Only dropping the keyspace itself makes it disappear.
                     // Dropping an object inside it leaves the keyspace in
@@ -938,6 +939,7 @@ impl MetadataWorker {
                     | SchemaChangeEvent::AggregateChange { keyspace_name, .. } => {
                         (keyspace_name, LastKeyspaceChange::Altered)
                     }
+                    _ => unreachable!("clippy testifies that the match is exhaustive"),
                 };
                 plan.note_schema(keyspace_name, last_change);
             }

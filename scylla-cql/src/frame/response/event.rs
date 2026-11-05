@@ -52,6 +52,7 @@ pub enum StatusChangeEvent {
 // Check triggers because all variants end with "Change".
 // TODO(2.0): Remove the "Change" postfix from variants.
 #[expect(clippy::enum_variant_names)]
+#[non_exhaustive]
 pub enum SchemaChangeEvent {
     /// Keyspace was altered.
     KeyspaceChange {
