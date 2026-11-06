@@ -54,17 +54,16 @@ where
     pub values: Values,
 
     /// Trailing routing hint defined by the `TABLETS_ROUTING_V2` protocol extension.
-    /// When `Some`, it is appended after the batch parameters. The connection layer sets
-    /// this to `Some(_)` on every `BATCH` sent over a connection that negotiated V2,
-    /// and to `None` otherwise.
+    /// It's set by the connection layer depending on whether a connection
+    /// negotiated `TABLETS_ROUTING_V2`: `Some(_)` if it did, `None` otherwise.
     pub routing_hint: Option<BatchRoutingHint>,
 }
 
 /// Routing hint appended to a `BATCH` request by the `TABLETS_ROUTING_V2` protocol extension.
 ///
-/// It names the statement the driver routed the batch by and carries a tablet-version block
-/// for the tablet of that statement, so that the server can return fresh routing information
-/// for it. A batch that wasn't routed by any statement carries a hint that names none.
+/// It names the routing statement of the batch and carries the tablet-version block
+/// of the corresponding tablet. A batch that wasn't routed by any statement carries
+/// a hint that doesn't name any statement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BatchRoutingHint {
     /// The 0-based index of the routing statement, or [`Self::NO_ROUTING_STATEMENT`].
@@ -80,8 +79,9 @@ impl BatchRoutingHint {
     /// The number of statements in a batch is a `[short]`, so this never names a statement.
     const NO_ROUTING_STATEMENT: u16 = 0xFFFF;
 
-    /// Creates a hint naming the statement at the 0-based `index` as the one the batch was
-    /// routed by, with `tablet_version_block` for that statement's tablet.
+    /// Creates a hint naming the routing statement for a batch. The 0-based `index`
+    /// specifies the index of the statement in the batch, and `tablet_version_block`
+    /// corresponds to the tablet it targets.
     ///
     /// The routing statement must be a prepared statement with partition key
     /// bind indices; otherwise the server rejects the request.
@@ -101,8 +101,8 @@ impl BatchRoutingHint {
 
     /// Creates a hint for a batch that wasn't routed by any statement.
     ///
-    /// The server ignores its tablet-version block and never returns routing information
-    /// for such a batch.
+    /// The server ignores its tablet-version block and never returns
+    /// routing information for such a batch.
     pub fn without_routing_statement() -> Self {
         Self {
             routing_statement_index: Self::NO_ROUTING_STATEMENT,
@@ -110,8 +110,8 @@ impl BatchRoutingHint {
         }
     }
 
-    /// Returns the 0-based index of the statement the batch was routed by, or `None` if it
-    /// wasn't routed by any statement.
+    /// Returns the 0-based index of the statement the batch was routed by,
+    /// or `None` if it wasn't routed by any statement.
     pub fn get_routing_statement_index(&self) -> Option<u16> {
         (self.routing_statement_index != Self::NO_ROUTING_STATEMENT)
             .then_some(self.routing_statement_index)
