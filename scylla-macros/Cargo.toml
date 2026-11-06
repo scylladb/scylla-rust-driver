@@ -1,6 +1,6 @@
 [package]
 name = "scylla-macros"
-version = "1.9.0"
+version = "1.10.0"
 edition = "2024"
 rust-version = "1.94"
 description = "proc macros for the ScyllaDB async CQL driver"
