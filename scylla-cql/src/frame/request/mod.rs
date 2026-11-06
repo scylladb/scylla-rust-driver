@@ -200,7 +200,7 @@ mod tests {
     use super::query::PagingState;
     use super::{Request, RequestDeserializationError, RequestOpcode};
     use crate::frame::protocol_features::ProtocolFeatures;
-    use crate::frame::request::batch::{Batch, BatchStatement, BatchType};
+    use crate::frame::request::batch::{Batch, BatchRoutingHint, BatchStatement, BatchType};
     use crate::frame::request::execute::Execute;
     use crate::frame::request::query::{Query, QueryParameters};
     use crate::frame::request::{DeserializableRequest, SerializableRequest};
@@ -315,6 +315,7 @@ mod tests {
                 query.parameters.values.deref().clone(),
                 query.parameters.values.deref().clone(),
             ],
+            routing_hint: None,
         };
         {
             let mut buf = Vec::new();
@@ -393,6 +394,7 @@ mod tests {
             timestamp: None,
 
             values: vec![query.parameters.values.deref().clone()],
+            routing_hint: None,
         };
         {
             let mut buf = Vec::new();
@@ -465,12 +467,18 @@ mod tests {
             serial_consistency: Some(SerialConsistency::Serial),
             timestamp: Some(1),
             values: vec![values.clone(), values],
+            routing_hint: Some(BatchRoutingHint::with_routing_statement(1, 0x5C)),
         };
         let mut buf = Vec::new();
         batch.serialize(&mut buf).unwrap();
 
+        let features = {
+            let mut default = ProtocolFeatures::default();
+            default.tablets_v2_supported = true;
+            default
+        };
         for len in 0..buf.len() {
-            Batch::deserialize(&mut &buf[..len], &Default::default()).unwrap_err();
+            Batch::deserialize(&mut &buf[..len], &features).unwrap_err();
         }
     }
 

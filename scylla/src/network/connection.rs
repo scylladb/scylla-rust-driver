@@ -1250,6 +1250,7 @@ impl Connection {
             consistency,
             serial_consistency,
             timestamp,
+            routing_hint: None,
         };
 
         loop {

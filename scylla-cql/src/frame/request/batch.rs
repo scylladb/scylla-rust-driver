@@ -52,6 +52,77 @@ where
 
     /// The bound values for the batch statements.
     pub values: Values,
+
+    /// Trailing routing hint defined by the `TABLETS_ROUTING_V2` protocol extension.
+    /// When `Some`, it is appended after the batch parameters. The connection layer sets
+    /// this to `Some(_)` on every `BATCH` sent over a connection that negotiated V2,
+    /// and to `None` otherwise.
+    pub routing_hint: Option<BatchRoutingHint>,
+}
+
+/// Routing hint appended to a `BATCH` request by the `TABLETS_ROUTING_V2` protocol extension.
+///
+/// It names the statement the driver routed the batch by and carries a tablet-version block
+/// for the tablet of that statement, so that the server can return fresh routing information
+/// for it. A batch that wasn't routed by any statement carries a hint that names none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BatchRoutingHint {
+    /// The 0-based index of the routing statement, or [`Self::NO_ROUTING_STATEMENT`].
+    routing_statement_index: u16,
+
+    /// The tablet-version block for the tablet of the routing statement.
+    tablet_version_block: u8,
+}
+
+impl BatchRoutingHint {
+    /// The on-wire routing statement index of a batch that wasn't routed by any statement.
+    ///
+    /// The number of statements in a batch is a `[short]`, so this never names a statement.
+    const NO_ROUTING_STATEMENT: u16 = 0xFFFF;
+
+    /// Creates a hint naming the statement at the 0-based `index` as the one the batch was
+    /// routed by, with `tablet_version_block` for that statement's tablet.
+    ///
+    /// The routing statement must be a prepared statement with partition key
+    /// bind indices; otherwise the server rejects the request.
+    ///
+    /// A batch holds at most `0xFFFF` statements, so `index` must be lower than `0xFFFF`.
+    pub fn with_routing_statement(index: u16, tablet_version_block: u8) -> Self {
+        debug_assert_ne!(
+            index,
+            Self::NO_ROUTING_STATEMENT,
+            "{index:#06x} can't name a statement of a batch"
+        );
+        Self {
+            routing_statement_index: index,
+            tablet_version_block,
+        }
+    }
+
+    /// Creates a hint for a batch that wasn't routed by any statement.
+    ///
+    /// The server ignores its tablet-version block and never returns routing information
+    /// for such a batch.
+    pub fn without_routing_statement() -> Self {
+        Self {
+            routing_statement_index: Self::NO_ROUTING_STATEMENT,
+            tablet_version_block: 0,
+        }
+    }
+
+    /// Returns the 0-based index of the statement the batch was routed by, or `None` if it
+    /// wasn't routed by any statement.
+    pub fn get_routing_statement_index(&self) -> Option<u16> {
+        (self.routing_statement_index != Self::NO_ROUTING_STATEMENT)
+            .then_some(self.routing_statement_index)
+    }
+
+    /// Returns the tablet-version block for the tablet of the routing statement.
+    ///
+    /// It's meaningless if the batch wasn't routed by any statement.
+    pub fn get_tablet_version_block(&self) -> u8 {
+        self.tablet_version_block
+    }
 }
 
 impl<Statement, Values> Batch<'_, Statement, Values>
@@ -155,6 +226,13 @@ where
             types::write_long(timestamp, buf);
         }
 
+        // Serializing the trailing TABLETS_ROUTING_V2 routing hint. On a V2 connection the
+        // server requires it on every BATCH, so the connection layer always sets it there.
+        if let Some(routing_hint) = self.routing_hint {
+            types::write_short(routing_hint.routing_statement_index, buf);
+            buf.put_u8(routing_hint.tablet_version_block);
+        }
+
         Ok(())
     }
 }
@@ -245,7 +323,7 @@ fn serialize_batch_statement(
 impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedValues>> {
     fn deserialize(
         buf: &mut &[u8],
-        _features: &ProtocolFeatures,
+        features: &ProtocolFeatures,
     ) -> Result<Self, RequestDeserializationError> {
         let batch_type = types::read_byte(buf)?.try_into()?;
 
@@ -290,6 +368,19 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
             .then(|| types::read_long(buf))
             .transpose()?;
 
+        // On a V2 connection every BATCH carries a routing hint after the batch parameters.
+        let routing_hint = features
+            .tablets_v2_supported
+            .then(|| -> Result<_, RequestDeserializationError> {
+                let routing_statement_index = types::read_short(buf)?;
+                let tablet_version_block = types::read_byte(buf)?;
+                Ok(BatchRoutingHint {
+                    routing_statement_index,
+                    tablet_version_block,
+                })
+            })
+            .transpose()?;
+
         let (statements, values): (Vec<BatchStatement>, Vec<SerializedValues>) =
             statements_with_values.into_iter().unzip();
 
@@ -300,6 +391,114 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
             timestamp,
             statements: Cow::Owned(statements),
             values,
+            routing_hint,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use crate::frame::protocol_features::ProtocolFeatures;
+    use crate::frame::request::{DeserializableRequest, SerializableRequest};
+    use crate::frame::types::Consistency;
+    use crate::serialize::row::SerializedValues;
+
+    use super::{Batch, BatchRoutingHint, BatchStatement, BatchType};
+
+    fn sample_batch(
+        routing_hint: Option<BatchRoutingHint>,
+    ) -> Batch<'static, BatchStatement<'static>, Vec<SerializedValues>> {
+        Batch {
+            statements: Cow::Owned(vec![
+                BatchStatement::Prepared {
+                    id: Cow::Borrowed(&[1, 2, 3]),
+                },
+                BatchStatement::Query {
+                    text: Cow::Borrowed("INSERT INTO ks.t (pk, v) VALUES (1, 2)"),
+                },
+            ]),
+            batch_type: BatchType::Logged,
+            consistency: Consistency::Quorum,
+            serial_consistency: None,
+            timestamp: Some(42),
+            values: vec![SerializedValues::new(), SerializedValues::new()],
+            routing_hint,
+        }
+    }
+
+    fn v2_features() -> ProtocolFeatures {
+        let mut features = ProtocolFeatures::default();
+        features.tablets_v2_supported = true;
+        features
+    }
+
+    fn non_v2_features() -> ProtocolFeatures {
+        let mut features = ProtocolFeatures::default();
+        features.tablets_v2_supported = false;
+        features
+    }
+
+    /// On a TABLETS_ROUTING_V2 connection the frame is exactly the base BATCH frame plus
+    /// the routing hint: a [short] statement index followed by a tablet-version block byte.
+    #[test]
+    fn batch_appends_routing_hint() {
+        let with_hint = sample_batch(Some(BatchRoutingHint::with_routing_statement(0x0102, 0xAB)));
+        let without_hint = sample_batch(None);
+
+        let mut buf_with = Vec::new();
+        with_hint.serialize(&mut buf_with).unwrap();
+        let mut buf_without = Vec::new();
+        without_hint.serialize(&mut buf_without).unwrap();
+
+        assert_eq!(&buf_with[..buf_without.len()], buf_without.as_slice());
+        assert_eq!(&buf_with[buf_without.len()..], &[0x01, 0x02, 0xAB]);
+    }
+
+    /// Serializing with a hint and deserializing with the V2 feature negotiated
+    /// must recover the exact same request, including the hint.
+    #[test]
+    fn batch_routing_hint_roundtrip() {
+        for routing_hint in [
+            BatchRoutingHint::with_routing_statement(0, 0x5C),
+            BatchRoutingHint::with_routing_statement(1, 0x5C),
+            BatchRoutingHint::without_routing_statement(),
+        ] {
+            let batch = sample_batch(Some(routing_hint));
+
+            let mut buf = Vec::new();
+            batch.serialize(&mut buf).unwrap();
+
+            let mut slice = &buf[..];
+            let deserialized = Batch::deserialize(&mut slice, &v2_features()).unwrap();
+            assert!(slice.is_empty());
+            assert_eq!(deserialized, batch);
+        }
+    }
+
+    /// A hint names a routing statement exactly when it was created with one.
+    #[test]
+    fn batch_routing_hint_getters() {
+        let routed = BatchRoutingHint::with_routing_statement(7, 0x5C);
+        assert_eq!(routed.get_routing_statement_index(), Some(7));
+        assert_eq!(routed.get_tablet_version_block(), 0x5C);
+
+        let unrouted = BatchRoutingHint::without_routing_statement();
+        assert_eq!(unrouted.get_routing_statement_index(), None);
+    }
+
+    /// Without the V2 feature negotiated, no routing hint is expected or consumed.
+    #[test]
+    fn batch_no_routing_hint_without_feature() {
+        let batch = sample_batch(None);
+
+        let mut buf = Vec::new();
+        batch.serialize(&mut buf).unwrap();
+
+        let mut slice = &buf[..];
+        let deserialized = Batch::deserialize(&mut slice, &non_v2_features()).unwrap();
+        assert!(slice.is_empty());
+        assert_eq!(deserialized, batch);
     }
 }
