@@ -674,6 +674,19 @@ pub enum TranslationError {
     #[error("DNS lookup failed: {0}")]
     DnsLookupFailed(DnsLookupError),
 
+    /// DNS lookup failed during client-route address translation.
+    #[non_exhaustive]
+    #[error("DNS lookup failed for client route (host_id: {host_id}, address: {address}): {error}", address = .host.escape_debug())]
+    DnsLookupFailedForHost {
+        /// The ID of the node whose client route could not be resolved.
+        host_id: Uuid,
+        /// The hostname or IP address and port passed to the resolver.
+        host: Box<str>,
+        /// The underlying DNS lookup error.
+        #[source]
+        error: DnsLookupError,
+    },
+
     /// system.client_routes is missing a port for a host.
     #[error("Missing port for host {0} in system.client_routes")]
     MissingPortForHost(Uuid),
