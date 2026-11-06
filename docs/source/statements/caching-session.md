@@ -9,10 +9,8 @@ reuses the cached one.
 Use it when you do not want to prepare statements up front and keep them around yourself,
 but you still want the [benefits of prepared statements](prepared.md).
 
-:::{note}
-The cache key is the statement string. Two strings that differ in any way are two cache entries,
+**Note:** The cache key is the statement string. Two strings that differ in any way are two cache entries,
 so put values in bind markers (`?`) instead of formatting them into the string.
-:::
 
 :::{warning}
 The keyspace is not part of the cache key. A statement written without a keyspace name is prepared
