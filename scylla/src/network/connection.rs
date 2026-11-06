@@ -41,9 +41,10 @@ use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::{PreparedStatement, RawPreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
+use crate::utils::background_tasks::BackgroundTasks;
 use bytes::Bytes;
 use futures::FutureExt;
-use futures::future::{BoxFuture, RemoteHandle};
+use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, TryStreamExt};
 use socket2::{SockRef, TcpKeepalive};
 use std::borrow::Cow;
@@ -60,6 +61,7 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter, split};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{Notify, mpsc};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
@@ -97,7 +99,7 @@ pub enum WriteCoalescingDelay {
 }
 
 pub(crate) struct Connection {
-    _worker_handle: RemoteHandle<()>,
+    _worker_handle: AbortOnDropHandle<()>,
 
     connect_address: SocketAddr,
     config: HostConnectionConfig,
@@ -122,6 +124,23 @@ struct RouterHandle {
     /// already hold, so the hint needs no extra plumbing through
     /// `HostConnectionConfig` or `router()`.
     keepalive_hint: Notify,
+}
+
+/// Fails the requests of a connection when its router stops.
+///
+/// The router can be aborted while requests wait for their responses, for
+/// example by a session shutdown. An abort runs only `Drop`, so the error
+/// path at the end of `router` does not run. Without this, the waiting requests would wait
+/// until their request timeout.
+struct FailRequestsOnDrop<'a>(&'a StreamSlots);
+
+impl Drop for FailRequestsOnDrop<'_> {
+    fn drop(&mut self) {
+        // After the error path of `router`, this changes nothing: `fail_all`
+        // keeps the error of its first call.
+        self.0
+            .fail_all(&BrokenConnectionErrorKind::ChannelError.into());
+    }
 }
 
 impl RouterHandle {
@@ -311,6 +330,10 @@ pub(crate) struct ConnectionConfig {
     /// [`ControlConnectionEstablisher::new`]:
     ///     crate::cluster::metadata::cc_establisher::ControlConnectionEstablisher::new
     pub(crate) driver_config_reporter: Option<Arc<DriverConfigReporter>>,
+
+    /// Spawns the background tasks of the session: the workers, the pool
+    /// refillers and the connection routers. A graceful shutdown stops them.
+    pub(crate) background_tasks: BackgroundTasks,
 }
 
 impl ConnectionConfig {
@@ -343,6 +366,7 @@ impl ConnectionConfig {
             identity: self.identity.clone(),
             session_id: self.session_id,
             driver_config_reporter: self.driver_config_reporter.clone(),
+            background_tasks: self.background_tasks.clone(),
             #[cfg(test)]
             transport_factory: None,
         }
@@ -376,6 +400,7 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) session_id: Uuid,
     // should be Some only in control connections
     pub(crate) driver_config_reporter: Option<Arc<DriverConfigReporter>>,
+    pub(crate) background_tasks: BackgroundTasks,
 
     #[cfg(test)]
     pub(crate) transport_factory: Option<Arc<scylla_proxy::TransportFactory>>,
@@ -411,6 +436,8 @@ impl Default for HostConnectionConfig {
 
             // Test connections do not report their configuration.
             driver_config_reporter: None,
+
+            background_tasks: BackgroundTasks::new(),
 
             #[cfg(test)]
             transport_factory: None,
@@ -448,6 +475,8 @@ impl Default for ConnectionConfig {
 
             // Test connections do not report their configuration.
             driver_config_reporter: None,
+
+            background_tasks: BackgroundTasks::new(),
         }
     }
 }
@@ -1506,7 +1535,7 @@ impl Connection {
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
         router_handle: Arc<RouterHandle>,
         node_address: SocketAddr,
-    ) -> Result<RemoteHandle<()>, std::io::Error> {
+    ) -> Result<AbortOnDropHandle<()>, std::io::Error> {
         async fn spawn_router_and_get_handle(
             config: HostConnectionConfig,
             stream: impl AsyncRead + AsyncWrite + Send + 'static,
@@ -1514,18 +1543,17 @@ impl Connection {
             error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
             router_handle: Arc<RouterHandle>,
             node_address: SocketAddr,
-        ) -> RemoteHandle<()> {
-            let (task, handle) = Connection::router(
+        ) -> AbortOnDropHandle<()> {
+            // When the router stops, it drops the stream, which closes the socket.
+            let background_tasks = config.background_tasks.clone();
+            background_tasks.spawn(Connection::router(
                 config,
                 stream,
                 receiver,
                 error_sender,
                 router_handle,
                 node_address,
-            )
-            .remote_handle();
-            tokio::task::spawn(task);
-            handle
+            ))
         }
 
         if let Some(tls_config) = &config.tls_config {
@@ -1589,6 +1617,7 @@ impl Connection {
     ) {
         let (read_half, write_half) = split(stream);
         let streams = &router_handle.streams;
+        let _fail_requests_on_stop = FailRequestsOnDrop(streams);
 
         let write_coalescing_delay = config.write_coalescing_delay;
 

@@ -21,13 +21,14 @@ use crate::client::execution::{
     NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RequestPaging,
     RunRequestResult, SingleConnectionTarget, choose_tablet_block_hint,
 };
+use crate::client::in_flight::{InFlightGuard, InFlightRequests};
 use crate::client::session::Session;
 use crate::cluster::{ClusterState, Node};
 use crate::deserialize::DeserializeOwnedRow;
 use crate::deserialize::result::RawRowLendingIterator;
 use crate::deserialize::row::{ColumnIterator, DeserializeRow};
 use crate::deserialize::{DeserializationError, TypeCheckError};
-use crate::errors::{PagerExecutionError, RequestAttemptError, RequestError};
+use crate::errors::{PagerExecutionError, RequestAttemptError, RequestError, SessionShutDownError};
 use crate::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use crate::frame::request::query::{PagingState, PagingStateResponse};
 use crate::frame::response::NonErrorResponse;
@@ -141,6 +142,8 @@ struct PagingExecutor {
     consistency: Consistency,
     serial_consistency: Option<SerialConsistency>,
     metrics: Arc<Metrics>,
+    /// Each page that the background task fetches is a new request.
+    in_flight: Arc<InFlightRequests>,
     history_listener: Option<Arc<dyn HistoryListener>>,
     paging_state: PagingState,
     stable_coordinator: Option<Coordinator>,
@@ -184,6 +187,7 @@ impl PagingExecutor {
                 .serial_consistency
                 .unwrap_or(execution_profile.serial_consistency),
             metrics: session.get_metrics_priv(),
+            in_flight: Arc::clone(session.get_in_flight_requests()),
             history_listener: statement.history_listener.as_ref().map(Arc::clone),
             paging_state: PagingState::start(),
             stable_coordinator: None,
@@ -212,12 +216,22 @@ impl PagingExecutor {
     {
         // Iterates over pages until exhaustion or non-retriable error.
         loop {
+            // After a session shutdown starts, the pager must not send new requests.
+            let Some(request) = self.in_flight.try_enter() else {
+                let _ = sender.send(Err(SessionShutDownError.into())).await;
+                return;
+            };
+
             let page_span = span_creator(&self.cluster_state);
 
             let page_res = await_in_span!(
-                self.fetch_one_page(&routing_info, &page_span, &page_query),
+                self.fetch_one_page(&request, &routing_info, &page_span, &page_query),
                 page_span.span()
             );
+
+            // The request is complete. Release it before the page waits in the
+            // channel: a user who does not read the pager must not delay a shutdown.
+            drop(request);
 
             let page_res = match page_res {
                 Ok(RequestExecutionOutcome {
@@ -259,6 +273,7 @@ impl PagingExecutor {
     /// Returns the first page and whether more pages should be fetched.
     async fn query_first_page<QueryFunc, QueryFut>(
         &mut self,
+        request: &InFlightGuard,
         request_span: &RequestSpan,
         routing_info: &RoutingInfo<'_>,
         page_query: QueryFunc,
@@ -268,7 +283,7 @@ impl PagingExecutor {
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
         let fetch_result = await_in_span!(
-            self.fetch_one_page(routing_info, request_span, &page_query),
+            self.fetch_one_page(request, routing_info, request_span, &page_query),
             request_span.span()
         );
 
@@ -305,6 +320,7 @@ impl PagingExecutor {
     /// of the fresh load balancing plan so it is not attempted twice).
     async fn fetch_one_page<PageQuery, QueryFut>(
         &self,
+        _request: &InFlightGuard,
         routing_info: &RoutingInfo<'_>,
         page_span: &RequestSpan,
         page_query: &PageQuery,
@@ -1052,6 +1068,7 @@ If you are using this API, you are probably doing something wrong."
     }
 
     pub(crate) async fn new_for_unprepared_statement_without_values(
+        request: &InFlightGuard,
         session: &Session,
         statement: Statement,
     ) -> Result<Self, PagerExecutionError> {
@@ -1096,7 +1113,7 @@ If you are using this API, you are probably doing something wrong."
             let request_span = create_span(&statement.contents);
 
             executor
-                .query_first_page(&request_span, &routing_info, page_query)
+                .query_first_page(request, &request_span, &routing_info, page_query)
                 .await
                 .map_err(NextPageError::RequestFailure)?
         };
@@ -1142,15 +1159,20 @@ If you are using this API, you are probably doing something wrong."
                         .query_remaining_pages(sender, page_query, routing_info, span_creator)
                         .await;
                 };
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "A shutdown must not wait for a pager that the user does not read"
+                )]
                 let _worker_handle = tokio::task::spawn(worker_task);
                 Some(receiver)
             }
         };
 
-        Self::new_from_first_page(first_page, receiver, session).await
+        Self::new_from_first_page(request, first_page, receiver, session).await
     }
 
     pub(crate) async fn new_for_prepared_statement(
+        request: &InFlightGuard,
         session: &Session,
         prepared: PreparedStatement,
         values: SerializedValues,
@@ -1257,7 +1279,7 @@ If you are using this API, you are probably doing something wrong."
         );
 
         let (first_page, should_fetch_more_pages) = executor
-            .query_first_page(&request_span, &routing_info, page_query)
+            .query_first_page(request, &request_span, &routing_info, page_query)
             .await
             .map_err(NextPageError::RequestFailure)?;
 
@@ -1334,12 +1356,16 @@ If you are using this API, you are probably doing something wrong."
                         .query_remaining_pages(sender, page_query, routing_info, span_creator)
                         .await;
                 };
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "A shutdown must not wait for a pager that the user does not read"
+                )]
                 let _worker_handle = tokio::task::spawn(worker_task);
                 Some(receiver)
             }
         };
 
-        Self::new_from_first_page(first_page, receiver, session).await
+        Self::new_from_first_page(request, first_page, receiver, session).await
     }
 
     pub(crate) async fn new_for_connection_execute_iter(
@@ -1397,6 +1423,10 @@ If you are using this API, you are probably doing something wrong."
                 let worker_task =
                     async move { executor.fetch_remaining_pages(state, sender).await }
                         .instrument(parent_span);
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "A shutdown must not wait for a pager that the user does not read"
+                )]
                 let _worker_handle = tokio::task::spawn(worker_task);
                 Some(receiver)
             }
@@ -1417,6 +1447,7 @@ If you are using this API, you are probably doing something wrong."
     }
 
     async fn new_from_first_page(
+        request: &InFlightGuard,
         first_page: FirstReceivedPage,
         receiver: Option<SlotReceiver<ResultNextPage>>,
         session: &Session,
@@ -1442,7 +1473,7 @@ If you are using this API, you are probably doing something wrong."
                     warnings: Box::default(),
                 };
                 // Rare, so boxed to keep it out of every pager's future.
-                Box::pin(session.handle_set_keyspace_response(&response)).await?;
+                Box::pin(session.handle_set_keyspace_response(request, &response)).await?;
                 // The stream will be empty.
                 RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
             }
@@ -1460,8 +1491,12 @@ If you are using this API, you are probably doing something wrong."
                     warnings: Box::default(),
                 };
                 // Rare, so boxed to keep it out of every pager's future.
-                Box::pin(session.handle_auto_await_schema_agreement(&response, coordinator_id))
-                    .await?;
+                Box::pin(session.handle_auto_await_schema_agreement(
+                    request,
+                    &response,
+                    coordinator_id,
+                ))
+                .await?;
                 // The stream will be empty.
                 RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
             }
@@ -1611,6 +1646,10 @@ pub enum NextPageError {
     /// Failed to type check a received page.
     #[error("Failed to type check a received page: {0}")]
     TypeCheckError(#[from] TypeCheckError),
+
+    /// The session is shut down. It does not accept new requests.
+    #[error(transparent)]
+    SessionShutDown(#[from] SessionShutDownError),
 }
 
 /// An error returned by async pager API.
