@@ -11,7 +11,7 @@ pub(crate) use connection::HostConnectionConfig;
 pub(crate) use connection::open_connection;
 
 pub(crate) use connection::{
-    Connection, ConnectionConfig, MAX_IN_FLIGHT_REQUESTS, OLD_ORPHAN_COUNT_THRESHOLD,
+    Connection, ConnectionConfig, ExecuteArgs, MAX_IN_FLIGHT_REQUESTS, OLD_ORPHAN_COUNT_THRESHOLD,
     TcpSocketOptions, VerifiedKeyspaceName,
 };
 

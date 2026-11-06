@@ -36,7 +36,7 @@ use crate::frame::response::result::{
     DeserializedMetadataAndRawRows, SchemaChange, SetKeyspace, TableSpec,
 };
 use crate::frame::types::{Consistency, SerialConsistency};
-use crate::network::Connection;
+use crate::network::{Connection, ExecuteArgs};
 use crate::observability::driver_tracing::{RequestSpan, await_in_span};
 use crate::observability::history::HistoryListener;
 use crate::observability::metrics::Metrics;
@@ -261,14 +261,16 @@ impl PagingExecutor {
         &mut self,
         request_span: &RequestSpan,
         routing_info: &RoutingInfo<'_>,
-        page_query: QueryFunc,
+        // Taken by reference: an async fn keeps arguments taken by value twice in
+        // its state.
+        page_query: &QueryFunc,
     ) -> Result<(FirstReceivedPage, ShouldFetchMorePages), RequestError>
     where
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
         let fetch_result = await_in_span!(
-            self.fetch_one_page(routing_info, request_span, &page_query),
+            self.fetch_one_page(routing_info, request_span, page_query),
             request_span.span()
         );
 
@@ -331,7 +333,7 @@ impl PagingExecutor {
         // Adapt the paging-aware `page_query` to the two-argument closure
         // expected by the execution core, injecting the current paging state
         // and normalizing error responses.
-        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| async move {
+        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| async move {
             page_query(connection, consistency, self.paging_state.clone())
                 .await
                 .and_then(QueryResponse::into_non_error_query_response)
@@ -574,20 +576,20 @@ impl SingleConnectionPagingExecutor {
         };
 
         let run_request_once = |connection: Arc<Connection>, consistency: Consistency| {
-            let paging_state = paging_state.clone();
+            let args = ExecuteArgs {
+                prepared_statement: &self.prepared,
+                values: &self.values,
+                consistency,
+                serial_consistency: self.serial_consistency,
+                page_size: Some(self.page_size),
+                paging_state,
+                // This API executes on one given connection and has no `ClusterState`
+                // to consult, so there is no cached tablet version to probe.
+                tablet_block_hint: 0,
+            };
             async move {
                 connection
-                    .execute_raw_with_consistency(
-                        &self.prepared,
-                        &self.values,
-                        consistency,
-                        self.serial_consistency,
-                        Some(self.page_size),
-                        paging_state,
-                        // This API executes on one given connection and has no `ClusterState`
-                        // to consult, so there is no cached tablet version to probe.
-                        0,
-                    )
+                    .execute_raw_with_consistency(&args)
                     .await
                     .and_then(QueryResponse::into_non_error_query_response)
             }
@@ -1104,7 +1106,7 @@ If you are using this API, you are probably doing something wrong."
             let request_span = create_span(&statement.contents);
 
             executor
-                .query_first_page(&request_span, &routing_info, page_query)
+                .query_first_page(&request_span, &routing_info, &page_query)
                 .await
                 .map_err(NextPageError::RequestFailure)?
         };
@@ -1158,6 +1160,10 @@ If you are using this API, you are probably doing something wrong."
         Self::new_from_first_page(first_page, receiver, session).await
     }
 
+    /// Executes a prepared statement and fetches its first page.
+    ///
+    /// The values are not checked to match the statement, so this must not be
+    /// exposed to end users. It isn't generic, to reduce code bloat.
     pub(crate) async fn new_for_prepared_statement(
         session: &Session,
         prepared: PreparedStatement,
@@ -1168,7 +1174,9 @@ If you are using this API, you are probably doing something wrong."
         let consistency = executor.consistency;
         let serial_consistency = executor.serial_consistency;
 
-        type Replicas = smallvec::SmallVec<[(Arc<Node>, Shard); 8]>;
+        // Computed only if some span is enabled, so allocating doesn't matter, while
+        // a `SmallVec` would make the pager's futures bigger.
+        type Replicas = Vec<(Arc<Node>, Shard)>;
 
         fn create_span(
             partition_key: &Option<PartitionKey>,
@@ -1206,17 +1214,36 @@ If you are using this API, you are probably doing something wrong."
             span
         }
 
-        let (partition_key, token) =
-            match prepared.extract_partition_key_and_calculate_token(&values) {
-                Ok(res) => res.unzip(),
-                Err(err) => {
-                    return Err(PagerExecutionError::NextPageError(
-                        NextPageError::PartitionKeyError(err),
-                    ));
-                }
-            };
-
+        let serialized_values_size = values.buffer_size();
         let table_spec = prepared.get_table_spec();
+
+        // Shared by the first page and every remaining page, so that the replica set is
+        // computed at most once - and only if at least one of those spans is enabled.
+        let replicas: OnceCell<Option<Replicas>> = OnceCell::new();
+
+        // Scoped, so that the partition key, needed only for the span, is not kept
+        // in this future's state while the first page is fetched.
+        let (token, request_span) = {
+            let (partition_key, token) =
+                match prepared.extract_partition_key_and_calculate_token(&values) {
+                    Ok(res) => res.unzip(),
+                    Err(err) => {
+                        return Err(PagerExecutionError::NextPageError(
+                            NextPageError::PartitionKeyError(err),
+                        ));
+                    }
+                };
+            let request_span = create_span(
+                &partition_key,
+                token,
+                serialized_values_size,
+                &executor.cluster_state,
+                table_spec,
+                &replicas,
+            );
+            (token, request_span)
+        };
+
         let routing_info = RoutingInfo {
             consistency,
             serial_consistency,
@@ -1233,44 +1260,26 @@ If you are using this API, you are probably doing something wrong."
         // first page and reused as-is for every remaining page.
         let tablet_block_hint =
             choose_tablet_block_hint(&executor.cluster_state, table_spec, token);
-        let page_query = |connection: Arc<Connection>,
-                          consistency: Consistency,
-                          paging_state: PagingState| async move {
+        let page_query = move |connection: Arc<Connection>,
+                               consistency: Consistency,
+                               paging_state: PagingState| async move {
             connection
-                .execute_raw_with_consistency(
-                    prepared_ref,
-                    values_ref,
+                .execute_raw_with_consistency(&ExecuteArgs {
+                    prepared_statement: prepared_ref,
+                    values: values_ref,
                     consistency,
                     serial_consistency,
-                    Some(page_size),
-                    paging_state,
+                    page_size: Some(page_size),
+                    paging_state: &paging_state,
                     tablet_block_hint,
-                )
+                })
                 .await
         };
 
-        let serialized_values_size = values.buffer_size();
-
-        // Shared by the first page and every remaining page, so that the replica set is
-        // computed at most once - and only if at least one of those spans is enabled.
-        let replicas: OnceCell<Option<Replicas>> = OnceCell::new();
-
-        let request_span = create_span(
-            &partition_key,
-            token,
-            serialized_values_size,
-            &executor.cluster_state,
-            table_spec,
-            &replicas,
-        );
-
         let (first_page, should_fetch_more_pages) = executor
-            .query_first_page(&request_span, &routing_info, page_query)
+            .query_first_page(&request_span, &routing_info, &page_query)
             .await
             .map_err(NextPageError::RequestFailure)?;
-
-        // Required to end the borrow of `partition_key`, so `config` can be moved into the worker task.
-        std::mem::drop(partition_key);
 
         /* PROCESS FIRST PAGE */
         let receiver = match should_fetch_more_pages {
@@ -1311,19 +1320,19 @@ If you are using this API, you are probably doing something wrong."
                     let prepared = &prepared;
                     let values_ref = &values;
                     let page_query =
-                        |connection: Arc<Connection>,
-                         consistency: Consistency,
-                         paging_state: PagingState| async move {
+                        move |connection: Arc<Connection>,
+                              consistency: Consistency,
+                              paging_state: PagingState| async move {
                             connection
-                                .execute_raw_with_consistency(
-                                    prepared,
-                                    values_ref,
+                                .execute_raw_with_consistency(&ExecuteArgs {
+                                    prepared_statement: prepared,
+                                    values: values_ref,
                                     consistency,
                                     serial_consistency,
-                                    Some(page_size),
-                                    paging_state,
+                                    page_size: Some(page_size),
+                                    paging_state: &paging_state,
                                     tablet_block_hint,
-                                )
+                                })
                                 .await
                         };
 
