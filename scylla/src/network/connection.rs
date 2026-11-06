@@ -1263,8 +1263,8 @@ impl Connection {
             routing_hint,
         };
 
-        // Routing information returned for a batch describes the tablet of the statement the
-        // hint named, so it's filed under that statement's table.
+        // Routing information returned for a batch describes the tablet of
+        // the routing statement, so it's filed under that statement's table.
         let routing_table_spec = routing_hint
             .and_then(|hint| hint.get_routing_statement_index())
             .and_then(|index| batch.statements.get(usize::from(index)))
