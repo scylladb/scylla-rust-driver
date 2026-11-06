@@ -880,9 +880,10 @@ async fn test_tablets_routing_v2_batch_carries_routing_hint_and_converges() {
                  {warmup_batches}"
             );
 
-            // Phase 2, retried: with the cache warm, no response may carry a payload. A
-            // migration mid-phase would make the server send one through no fault of the
-            // driver, so retry if the driver's routing view moved.
+            // Phase 2, retried: with the cache warm, no response should carry a payload.
+            // However, a tablet migration mid-phase would recompute the tablet version
+            // and the driver would receive the new one in a payload, so retry if the
+            // the driver's routing cache changed.
             with_migration_retry(
                 async || cached_tablet_routing(&session, &ks, PK).await,
                 async |_| {
