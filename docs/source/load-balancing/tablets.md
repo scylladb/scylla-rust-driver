@@ -57,6 +57,19 @@ within a few requests. When the driver has no version cached for a tablet, it
 sends a random byte, which almost certainly disagrees and so prompts the server
 to send the routing information straight away.
 
+Batches take part as well:
+
+- A [`Batch`](../statements/batch.md) is routed by its first statement, provided
+  that statement is prepared and its partition key is bound by markers. On a V2
+  connection, every `BATCH` request names the statement it was routed by (or
+  none) and carries the tablet-version block for that statement's tablet. The
+  server then answers as for an `EXECUTE`, and the driver caches the routing
+  information under that statement's table. A batch whose first statement is
+  unprepared isn't token-routed and never receives routing information.
+- A prepared `BEGIN BATCH ... APPLY BATCH` is sent as an `EXECUTE`, like any
+  other prepared statement. The server only returns routing information for it
+  when the batch targets a strongly-consistent table.
+
 Compared to V1, this costs one byte on every request and, in exchange:
 
 - staleness is detected without having to misroute a request first, so a changed
@@ -68,7 +81,7 @@ Compared to V1, this costs one byte on every request and, in exchange:
 
 ```{note}
 `TABLETS_ROUTING_V2` is experimental. A node advertises it (on the wire as
-`TABLETS_ROUTING_V2_EXPERIMENTAL`) only when started with the
+`TABLETS_ROUTING_V2_EXPERIMENTAL_V2`) only when started with the
 `strongly-consistent-tables` experimental feature enabled; otherwise it offers
 only `TABLETS_ROUTING_V1`. Negotiation is per connection, so during a rolling
 upgrade a session can hold V2 connections to some nodes and V1 connections to

@@ -13,7 +13,7 @@ pub const SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION: &str = "SCYLLA_LWT_ADD_METADAT
 /// which entry is a bit mask for the frame flags used to mark LWT frames.
 pub const LWT_OPTIMIZATION_META_BIT_MASK_KEY: &str = "LWT_OPTIMIZATION_META_BIT_MASK";
 const TABLETS_ROUTING_V1_KEY: &str = "TABLETS_ROUTING_V1";
-const TABLETS_ROUTING_V2_KEY: &str = "TABLETS_ROUTING_V2_EXPERIMENTAL";
+const TABLETS_ROUTING_V2_KEY: &str = "TABLETS_ROUTING_V2_EXPERIMENTAL_V2";
 const SCYLLA_USE_METADATA_ID_KEY: &str = "SCYLLA_USE_METADATA_ID";
 
 /// Which protocol extensions are supported by the server.
