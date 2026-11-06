@@ -1,6 +1,6 @@
 [project]
 name = "sphinx-docs"
-version = "1.9"
+version = "1.10"
 description = "ScyllaDB Documentation"
 requires-python = ">=3.11"
 dependencies = [
