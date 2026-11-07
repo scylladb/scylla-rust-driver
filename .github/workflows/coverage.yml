@@ -32,7 +32,7 @@ jobs:
       # doctest coverage support is nightly-only); the rest of this repo's CI
       # keeps using stable, this job is the only one that needs nightly.
       - name: Setup rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
         with:
           toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
           components: llvm-tools
