@@ -125,6 +125,30 @@ struct RouterHandle {
     keepalive_hint: Notify,
 }
 
+/// The part of [`HostConnectionConfig`] that the router uses.
+struct RouterConfig {
+    write_coalescing_delay: Option<WriteCoalescingDelay>,
+    keepalive_interval: Option<Duration>,
+    keepalive_timeout: Option<Duration>,
+    event_sender: Option<mpsc::Sender<Event>>,
+    compression: Option<Compression>,
+}
+
+impl RouterConfig {
+    fn new(config: &HostConnectionConfig) -> Self {
+        Self {
+            write_coalescing_delay: config.write_coalescing_delay.clone(),
+            keepalive_interval: config.keepalive_interval,
+            keepalive_timeout: config.keepalive_timeout,
+            event_sender: config
+                .event_sender
+                .as_ref()
+                .map(|(sender, _)| sender.clone()),
+            compression: config.compression,
+        }
+    }
+}
+
 /// Fails the requests of a connection when its router stops.
 ///
 /// The router can be aborted while requests wait for their responses, for
@@ -1592,7 +1616,7 @@ impl Connection {
                 receiver,
             };
             AbortOnDropHandle::new(tokio::task::spawn(Connection::router(
-                config,
+                RouterConfig::new(&config),
                 stream,
                 guard,
                 error_sender,
@@ -1652,7 +1676,7 @@ impl Connection {
     }
 
     async fn router(
-        config: HostConnectionConfig,
+        config: RouterConfig,
         stream: impl AsyncRead + AsyncWrite + Send,
         mut guard: RouterGuard,
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
@@ -1673,7 +1697,7 @@ impl Connection {
         let r = Self::reader(
             BufReader::with_capacity(8192, read_half),
             streams,
-            config.event_sender.map(|(sender, _)| sender),
+            config.event_sender,
             config.compression,
         );
         let w = Self::writer(
