@@ -70,7 +70,7 @@ pub enum RetryDecision {
 
 /// Specifies a policy used to decide when to retry a request
 pub trait RetryPolicy: std::fmt::Debug + Send + Sync {
-    /// Called for each new request, starts a session of deciding about retries
+    /// Starts a session of deciding about retries.
     fn new_session(&self) -> Box<dyn RetrySession>;
 
     /// Lets the driver recognise its own built-in policies by downcasting, so that
