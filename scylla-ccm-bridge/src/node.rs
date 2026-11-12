@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use anyhow::Error;
@@ -110,6 +110,12 @@ impl Node {
     /// Returns the native transport port for this node (typically 9042).
     pub fn native_transport_port(&self) -> u16 {
         9042
+    }
+
+    /// Returns the address of the shard-aware native transport port of this node
+    /// (typically 19042).
+    pub fn shard_aware_address(&self) -> SocketAddr {
+        SocketAddr::new(self.broadcast_rpc_address(), 19042)
     }
 
     /// Returns the 0-based datacenter index for this node.
