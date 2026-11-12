@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-use crate::utils::{HEALTHCHECK_QUERY, setup_tracing};
+use crate::utils::{HEALTHCHECK_QUERY, setup_tracing, wait_until_all_shards_are_connected};
 use scylla_ccm_bridge::CLUSTER_VERSION;
 use scylla_ccm_bridge::client_routes::{
     ClientRoutesCluster, FeedbackItem, drain_feedback, run_client_routes_test,
@@ -30,6 +30,7 @@ use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
 use scylla::statement::unprepared::Statement;
+use scylla_proxy::{Condition, RequestOpcode};
 use tracing::info;
 
 /// Timeout for waiting for the driver to open connections to all proxy nodes.
@@ -56,6 +57,17 @@ fn cluster_2dc_2_2() -> ClusterOptions {
         name: "client_routes_2dc".to_string(),
         version: CLUSTER_VERSION.clone(),
         nodes_per_dc: vec![2, 2],
+        ..ClusterOptions::default()
+    }
+}
+
+fn cluster_1_node_4_shards() -> ClusterOptions {
+    ClusterOptions {
+        name: "client_routes_4_shards".to_string(),
+        version: CLUSTER_VERSION.clone(),
+        nodes_per_dc: vec![1],
+        smp: 4,
+        memory: 2048,
         ..ClusterOptions::default()
     }
 }
@@ -664,4 +676,48 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
 async fn test_client_routes_event_driven_reroute() {
     setup_tracing();
     run_client_routes_test(cluster_2dc_2_2, event_driven_reroute).await;
+}
+
+// ---------------------------------------------------------------------------
+// Advanced shard awareness (1 DC, 1 node, 4 shards)
+// ---------------------------------------------------------------------------
+
+/// **Goal**: Verify that advanced shard awareness works by default when the
+/// routes' endpoints carry the source port to the node's shard-aware port, as
+/// Private Service Connect endpoints do.
+///
+/// **Scenario**: Build a session with default settings and wait until it can
+/// reach all shards. The pool must have opened exactly one connection per
+/// shard: one to whichever shard the node assigned it, and one to each other
+/// shard, requested with the source port. A connection landing on an
+/// unrequested shard would have made the pool open more of them.
+async fn advanced_shard_awareness(plc: &mut ClientRoutesCluster) {
+    // Every connection starts with a STARTUP. The control connection's one
+    // carries the driver's configuration report, which tells it apart.
+    let mut startups = plc.setup_request_feedback(
+        Condition::RequestOpcode(RequestOpcode::Startup).and(Condition::not(
+            Condition::BodyContainsCaseSensitive(Box::from(*b"DRIVER_CONFIG")),
+        )),
+    );
+
+    let session = plc
+        .make_session_builder()
+        .build()
+        .await
+        .expect("Failed to build client-routes session");
+    wait_until_all_shards_are_connected(&session).await;
+
+    for (node_id, rx) in &mut startups {
+        let mut shards: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|(_frame, shard)| shard.expect("the proxy knows the node's shards"))
+            .collect();
+        shards.sort_unstable();
+        assert_eq!(shards, [0, 1, 2, 3], "pool connections to node {node_id}");
+    }
+}
+
+#[tokio::test]
+async fn test_client_routes_advanced_shard_awareness() {
+    setup_tracing();
+    run_client_routes_test(cluster_1_node_4_shards, advanced_shard_awareness).await;
 }
