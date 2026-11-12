@@ -2492,6 +2492,76 @@ mod tests {
         let _ = proxy.finish().await;
     }
 
+    /// Under client routes, the route alone decides where a node is reachable. The shard-aware
+    /// port that the node advertises is a port of the node itself, which the route's endpoint
+    /// does not have to expose, so advanced shard awareness attempts must go to the route too.
+    #[cfg(feature = "unstable-client-routes")]
+    #[tokio::test]
+    async fn shard_aware_attempt_through_client_routes_reaches_route() {
+        use crate::client::client_routes::{
+            ClientRoutesAddressTranslator, ClientRoutesConfig, ClientRoutesProxy,
+            ClientRoutesSubscriber as _,
+        };
+        use crate::cluster::metadata::{ClientRoute, ClientRoutes};
+
+        setup_tracing();
+
+        let shard_info = ShardInfo {
+            shard: 0,
+            nr_shards: ShardCount::new(4).unwrap(),
+            msb_ignore: 12,
+        };
+        let sharder = shard_info.get_sharder();
+        // Listens only at the route, not at the shard-aware port it advertises.
+        let (proxy, route_endpoint) = start_simulated_node(shard_info).await;
+        let route_addr = route_endpoint.address().into_inner();
+
+        let host_id = Uuid::new_v4();
+        let connection_id = "conn".to_owned();
+        let translator = ClientRoutesAddressTranslator::new(
+            ClientRoutesConfig::new(vec![ClientRoutesProxy::new_with_connection_id(
+                connection_id.clone(),
+            )])
+            .unwrap(),
+            None,
+            false,
+        );
+        let mut routes = ClientRoutes::default();
+        routes.extend([ClientRoute {
+            connection_id,
+            host_id,
+            hostname: route_addr.ip().to_string(),
+            port: Some(route_addr.port()),
+            tls_port: None,
+        }]);
+        translator.replace_client_routes(routes);
+
+        let mut refiller = refiller_aware_of(&sharder);
+        refiller.pool_config.connection_config.address_translator = Some(Arc::new(translator));
+        // Nothing listens at the advertised address.
+        *refiller.endpoint.write().unwrap() = UntranslatedEndpoint::Peer(PeerEndpoint {
+            host_id,
+            address: NodeAddr::Translatable(SocketAddr::new(
+                scylla_proxy::get_exclusive_local_address(),
+                9042,
+            )),
+            datacenter: None,
+            rack: None,
+        });
+
+        refiller.start_opening_connection(Some(1));
+        let event = refiller.ready_connections.next().await.unwrap();
+        assert!(event.requested_shard.is_some());
+        let Ok((connection, _error_receiver)) = event.result else {
+            panic!("the shard-aware attempt did not reach the route");
+        };
+        assert_eq!(connection.get_connect_address(), route_addr);
+
+        drop(connection);
+        drop(refiller);
+        let _ = proxy.finish().await;
+    }
+
     #[tokio::test]
     async fn unexpected_host_id_is_reported() {
         setup_tracing();
