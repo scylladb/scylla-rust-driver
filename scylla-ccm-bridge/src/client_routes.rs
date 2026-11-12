@@ -15,6 +15,8 @@
 //! reach the node's shard-aware port, so advanced shard awareness works through it:
 //! the NLBs pass the driver's address to the proxies with the PROXY protocol, and
 //! the proxies connect to the node from ports that target the same shard.
+//! [`ClientRoutesCluster::set_node_port`] makes the chains lead to the node's regular
+//! port instead, like an endpoint that does not carry the source port.
 //!
 //! The proxy provides CQL-level feedback (proves queries reached nodes). Since
 //! the driver only knows NLB addresses (from `client_routes`), if a proxy sees
@@ -61,7 +63,7 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 use super::cluster::{Cluster, ClusterOptions};
-use super::node::NodeId;
+use super::node::{Node, NodeId};
 
 /// Re-export the feedback frame type used by proxy feedback channels.
 pub type FeedbackItem = (
@@ -71,6 +73,26 @@ pub type FeedbackItem = (
 
 /// Base name for test connection IDs. Each DC gets `"{BASE}-dc{dc_id}"`.
 const CONNECTION_ID_BASE: &str = "rust-driver-test";
+
+/// The port of a node that its proxy chain leads to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodePort {
+    /// The shard-aware port, where the shard of a connection follows from its source port.
+    ShardAware,
+    /// The regular CQL port, where the node picks the shard of a connection.
+    Regular,
+}
+
+impl NodePort {
+    fn address_of(self, node: &Node) -> SocketAddr {
+        match self {
+            NodePort::ShardAware => node.shard_aware_address(),
+            NodePort::Regular => {
+                SocketAddr::new(node.broadcast_rpc_address(), node.native_transport_port())
+            }
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Per-node proxy chain
@@ -104,8 +126,8 @@ impl NodeChain {
         self.proxy_addr
     }
 
-    /// Start a proxy + NLB chain for a single Scylla node (plaintext), whose
-    /// shard-aware port is at `real_addr`.
+    /// Start a proxy + NLB chain leading to `real_addr` of a single Scylla node
+    /// (plaintext).
     ///
     /// 1. Allocate a unique proxy address via `get_exclusive_local_address()`
     /// 2. Start the NLB frontend first so a bind failure cannot leak a proxy
@@ -242,6 +264,8 @@ pub struct ClientRoutesCluster {
     dc_configs: BTreeMap<u16, DcConfig>,
     /// Mapping from CCM node ID to its Scylla host_id UUID.
     host_ids: HashMap<NodeId, Uuid>,
+    /// The port of the nodes that the proxy chains lead to.
+    node_port: NodePort,
 }
 
 impl ClientRoutesCluster {
@@ -293,7 +317,8 @@ impl ClientRoutesCluster {
 
         // Step 4: start per-node proxy chains.
         info!("Starting per-node proxy chains");
-        let dc_configs = build_dc_configs(&cluster)
+        let node_port = NodePort::ShardAware;
+        let dc_configs = build_dc_configs(&cluster, node_port)
             .await
             .inspect_err(|_| cluster.mark_as_failed())
             .context("Failed to build DC configs / start proxy chains")?;
@@ -312,6 +337,7 @@ impl ClientRoutesCluster {
             cluster,
             dc_configs,
             host_ids,
+            node_port,
         };
 
         // Step 5: POST client routes to the cluster.
@@ -603,12 +629,9 @@ impl ClientRoutesCluster {
             .map(|n| n.datacenter_id())
             .with_context(|| format!("Node {} not found in cluster", node_id))?;
 
-        let shard_aware_addr = self
-            .cluster
-            .nodes()
-            .get_by_id(node_id)
-            .unwrap()
-            .shard_aware_address();
+        let real_addr = self
+            .node_port
+            .address_of(self.cluster.nodes().get_by_id(node_id).unwrap());
 
         // Shut down the old chain if still present (it may already have
         // been removed by stop_node_chain).
@@ -621,7 +644,7 @@ impl ClientRoutesCluster {
         }
 
         // Start fresh chain.
-        let new_chain = NodeChain::start(shard_aware_addr, node_id)
+        let new_chain = NodeChain::start(real_addr, node_id)
             .await
             .with_context(|| format!("Failed to start new chain for restarted node {}", node_id))?;
         info!(
@@ -646,6 +669,18 @@ impl ClientRoutesCluster {
             dc_cfg.refresh_contact_point_backends();
         }
 
+        Ok(())
+    }
+
+    /// Make the proxy chains lead to `node_port` of the nodes.
+    ///
+    /// Restarts the chains of all active nodes, which breaks the connections
+    /// made through them, and re-posts the routes with the new NLB addresses.
+    pub async fn set_node_port(&mut self, node_port: NodePort) -> Result<(), Error> {
+        self.node_port = node_port;
+        for node_id in self.active_node_ids() {
+            self.restart_node_chain(node_id).await?;
+        }
         Ok(())
     }
 
@@ -695,7 +730,7 @@ impl ClientRoutesCluster {
             .expect("just added node must exist");
         let real_ip = node_ref.broadcast_rpc_address();
         let real_addr = SocketAddr::new(real_ip, node_ref.native_transport_port());
-        let shard_aware_addr = node_ref.shard_aware_address();
+        let chain_addr = self.node_port.address_of(node_ref);
         let actual_dc_id = node_ref.datacenter_id();
 
         let host_id = discover_single_host_id(real_addr)
@@ -708,7 +743,7 @@ impl ClientRoutesCluster {
         self.host_ids.insert(new_node_id, host_id);
 
         // Step 4: start proxy chain.
-        let chain = NodeChain::start(shard_aware_addr, new_node_id)
+        let chain = NodeChain::start(chain_addr, new_node_id)
             .await
             .with_context(|| format!("Failed to start chain for new node {}", new_node_id))?;
 
@@ -1006,10 +1041,13 @@ impl ClientRoutesCluster {
 /// - A connection ID of the form `"rust-driver-test-dc{dc_id}"`
 ///
 /// ```text
-/// Driver →  Per-DC NLB →  Proxy →  ScyllaDB :19042
+/// Driver →  Per-DC NLB →  Proxy →  ScyllaDB (`node_port`)
 /// ```
-async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, Error> {
-    // Group nodes by DC: DcId -> {(NodeId, shard-aware address)}.
+async fn build_dc_configs(
+    cluster: &Cluster,
+    node_port: NodePort,
+) -> Result<BTreeMap<u16, DcConfig>, Error> {
+    // Group nodes by DC: DcId -> {(NodeId, address that the chain leads to)}.
     let dc_nodes: BTreeMap<u16, Vec<(NodeId, SocketAddr)>> =
         cluster
             .nodes()
@@ -1017,7 +1055,7 @@ async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, 
             .fold(BTreeMap::new(), |mut acc, node| {
                 acc.entry(node.datacenter_id())
                     .or_default()
-                    .push((node.id(), node.shard_aware_address()));
+                    .push((node.id(), node_port.address_of(node)));
                 acc
             });
 
@@ -1028,8 +1066,8 @@ async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, 
             nodes
                 .iter()
                 .copied()
-                .map(move |(node_id, shard_aware_addr)| async move {
-                    let chain = NodeChain::start(shard_aware_addr, node_id)
+                .map(move |(node_id, real_addr)| async move {
+                    let chain = NodeChain::start(real_addr, node_id)
                         .await
                         .with_context(|| {
                             format!("Failed to start chain for DC {} node {}", dc_id, node_id)
