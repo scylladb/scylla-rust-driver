@@ -42,10 +42,13 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
 use tracing::{debug, error, info};
 
+use crate::proxy_protocol;
+
 /// Builder for [`NlbFrontend`].
 pub struct NlbFrontendBuilder {
     listen_addr: Option<SocketAddr>,
     backends: Vec<SocketAddr>,
+    proxy_protocol: bool,
 }
 
 impl NlbFrontendBuilder {
@@ -71,6 +74,14 @@ impl NlbFrontendBuilder {
         self
     }
 
+    /// Makes the NLB start each backend connection with a PROXY protocol v2 header carrying
+    /// the client's address, as cloud NLBs can be configured to do. The backends must expect
+    /// it, which [`Node`](crate::Node)s do if built with `proxy_protocol(true)`.
+    pub fn proxy_protocol(mut self, proxy_protocol: bool) -> Self {
+        self.proxy_protocol = proxy_protocol;
+        self
+    }
+
     /// Build the [`NlbFrontend`].
     ///
     /// # Panics
@@ -88,6 +99,7 @@ impl NlbFrontendBuilder {
         NlbFrontend {
             listen_addr: self.listen_addr.unwrap(),
             backends: self.backends,
+            proxy_protocol: self.proxy_protocol,
         }
     }
 }
@@ -98,6 +110,7 @@ impl NlbFrontendBuilder {
 pub struct NlbFrontend {
     listen_addr: SocketAddr,
     backends: Vec<SocketAddr>,
+    proxy_protocol: bool,
 }
 
 impl NlbFrontend {
@@ -106,6 +119,7 @@ impl NlbFrontend {
         NlbFrontendBuilder {
             listen_addr: None,
             backends: vec![],
+            proxy_protocol: false,
         }
     }
 
@@ -119,6 +133,7 @@ impl NlbFrontend {
 
         let shared = Arc::new(NlbShared {
             backends: RwLock::new(self.backends),
+            proxy_protocol: self.proxy_protocol,
             connection_tasks: tokio::sync::Mutex::new(JoinSet::new()),
             accepted_connections: AtomicU64::new(0),
         });
@@ -183,9 +198,13 @@ impl NlbFrontend {
             driver_addr, backend_addr
         );
 
+        let nlb_addr = driver_stream.local_addr()?;
         let (mut driver_read, mut driver_write) = driver_stream.into_split();
 
-        let backend_tcp = TcpStream::connect(backend_addr).await?;
+        let mut backend_tcp = TcpStream::connect(backend_addr).await?;
+        if shared.proxy_protocol {
+            proxy_protocol::write_header(&mut backend_tcp, driver_addr, nlb_addr).await?;
+        }
         let (mut backend_read, mut backend_write) = backend_tcp.into_split();
 
         // --- Bidirectional copy via two concurrent tasks ---
@@ -233,6 +252,7 @@ struct NlbShared {
     /// (not `tokio::sync::RwLock`) because the lock is held only long enough
     /// to clone a `SocketAddr` -- no async work under the lock.
     backends: RwLock<Vec<SocketAddr>>,
+    proxy_protocol: bool,
     connection_tasks: tokio::sync::Mutex<JoinSet<()>>,
     /// Number of TCP connections accepted by the listener since it started.
     accepted_connections: AtomicU64,

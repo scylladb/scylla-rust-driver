@@ -4,7 +4,7 @@ use crate::frame::{
     self, FrameOpcode, FrameParams, RequestFrame, ResponseFrame, ResponseOpcode,
     read_response_frame, write_frame,
 };
-use crate::{RequestOpcode, TargetShard};
+use crate::{RequestOpcode, TargetShard, proxy_protocol};
 use bytes::Bytes;
 use compression::no_compression;
 use itertools::Either;
@@ -99,6 +99,7 @@ enum NodeType {
 
 pub struct Node {
     proxy_addr: SocketAddr,
+    proxy_protocol: bool,
     request_rules: Option<Vec<RequestRule>>,
     node_type: NodeType,
 }
@@ -114,6 +115,7 @@ impl Node {
     ) -> Self {
         Self {
             proxy_addr,
+            proxy_protocol: false,
             request_rules,
             node_type: NodeType::Real {
                 real_addr,
@@ -127,6 +129,7 @@ impl Node {
     pub fn new_dry_mode(proxy_addr: SocketAddr, request_rules: Option<Vec<RequestRule>>) -> Self {
         Self {
             proxy_addr,
+            proxy_protocol: false,
             request_rules,
             node_type: NodeType::Simulated,
         }
@@ -136,6 +139,7 @@ impl Node {
         NodeBuilder {
             real_addr: None,
             proxy_addr: None,
+            proxy_protocol: false,
             shard_awareness: None,
             request_rules: None,
             response_rules: None,
@@ -146,6 +150,7 @@ impl Node {
 pub struct NodeBuilder {
     real_addr: Option<SocketAddr>,
     proxy_addr: Option<SocketAddr>,
+    proxy_protocol: bool,
     shard_awareness: Option<ShardAwareness>,
     request_rules: Option<Vec<RequestRule>>,
     response_rules: Option<Vec<ResponseRule>>,
@@ -159,6 +164,14 @@ impl NodeBuilder {
 
     pub fn proxy_address(mut self, proxy_addr: SocketAddr) -> Self {
         self.proxy_addr = Some(proxy_addr);
+        self
+    }
+
+    /// Makes the node expect a PROXY protocol v2 header at the start of each driver connection,
+    /// as sent by a load balancer in front of it. The client address from the header then
+    /// stands for the driver's address; in particular, shard awareness preserves its port.
+    pub fn proxy_protocol(mut self, proxy_protocol: bool) -> Self {
+        self.proxy_protocol = proxy_protocol;
         self
     }
 
@@ -181,6 +194,7 @@ impl NodeBuilder {
     pub fn build(self) -> Node {
         Node {
             proxy_addr: self.proxy_addr.expect("Proxy addr is required!"),
+            proxy_protocol: self.proxy_protocol,
             request_rules: self.request_rules,
             node_type: NodeType::Real {
                 real_addr: self.real_addr.expect("Real addr is required!"),
@@ -194,6 +208,7 @@ impl NodeBuilder {
     pub fn build_dry_mode(self) -> Node {
         Node {
             proxy_addr: self.proxy_addr.expect("Proxy addr is required!"),
+            proxy_protocol: self.proxy_protocol,
             request_rules: self.request_rules,
             node_type: NodeType::Simulated,
         }
@@ -228,12 +243,14 @@ enum InternalNode {
     Real {
         real_addr: SocketAddr,
         proxy_addr: SocketAddr,
+        proxy_protocol: bool,
         shard_awareness: ShardAwareness,
         request_rules: Arc<Mutex<Vec<RequestRule>>>,
         response_rules: Arc<Mutex<Vec<ResponseRule>>>,
     },
     Simulated {
         proxy_addr: SocketAddr,
+        proxy_protocol: bool,
         request_rules: Arc<Mutex<Vec<RequestRule>>>,
     },
 }
@@ -243,6 +260,12 @@ impl InternalNode {
         match *self {
             InternalNode::Real { proxy_addr, .. } => proxy_addr,
             InternalNode::Simulated { proxy_addr, .. } => proxy_addr,
+        }
+    }
+    fn proxy_protocol(&self) -> bool {
+        match *self {
+            InternalNode::Real { proxy_protocol, .. } => proxy_protocol,
+            InternalNode::Simulated { proxy_protocol, .. } => proxy_protocol,
         }
     }
     fn real_addr(&self) -> Option<SocketAddr> {
@@ -269,6 +292,7 @@ impl From<Node> for InternalNode {
             } => InternalNode::Real {
                 real_addr,
                 proxy_addr: node.proxy_addr,
+                proxy_protocol: node.proxy_protocol,
                 shard_awareness,
                 request_rules: node
                     .request_rules
@@ -280,6 +304,7 @@ impl From<Node> for InternalNode {
             },
             NodeType::Simulated => InternalNode::Simulated {
                 proxy_addr: node.proxy_addr,
+                proxy_protocol: node.proxy_protocol,
                 request_rules: node
                     .request_rules
                     .map(|rules| Arc::new(Mutex::new(rules)))
@@ -979,9 +1004,13 @@ impl Doorkeeper {
     ) -> Result<(Either<TcpStream, DuplexStream>, SocketAddr), DoorkeeperError> {
         let (driver_stream, driver_addr) = tokio::select! {
             v = self.listener.accept() => {
-                let (stream, addr) = v.map_err(|err| DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr(), err))?;
+                let driver_connection_error = |err| DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr(), err);
+                let (mut stream, mut addr) = v.map_err(driver_connection_error)?;
                 // See the comment in `make_cluster_stream`.
-                stream.set_nodelay(true).map_err(|err| DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr(), err))?;
+                stream.set_nodelay(true).map_err(driver_connection_error)?;
+                if self.node.proxy_protocol() {
+                    addr = proxy_protocol::read_header(&mut stream).await.map_err(driver_connection_error)?;
+                }
                 (Either::Left(stream), addr)
             },
             v = self.duplex_receiver.recv(), if !self.duplex_receiver.is_closed() => {
@@ -1840,6 +1869,7 @@ mod tests {
     use super::*;
     use crate::errors::ReadFrameError;
     use crate::frame::{FrameType, read_frame, read_request_frame, read_response_frame};
+    use crate::nlb::NlbFrontend;
     use crate::proxy::compression::with_compression;
     use crate::{
         Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction, setup_tracing,
@@ -2121,6 +2151,48 @@ mod tests {
         for shard_num in 1..6 {
             test_for_shards_num(shard_num).await;
         }
+    }
+
+    /// Behind an NLB, the proxy sees the NLB's source ports instead of the driver's,
+    /// unless the NLB passes the driver's address on with the PROXY protocol.
+    #[tokio::test]
+    async fn shard_aware_proxy_behind_nlb_with_proxy_protocol_preserves_driver_shard() {
+        setup_tracing();
+        // A large shard count makes a match by chance unlikely.
+        let shards_num = 1000;
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let running_proxy = Proxy::new([Node::builder()
+            .real_address(node_real_addr)
+            .proxy_address(node_proxy_addr)
+            .shard_awareness(ShardAwareness::FixedNum(shards_num))
+            .proxy_protocol(true)
+            .build()])
+        .run()
+        .await
+        .unwrap();
+        let nlb = NlbFrontend::builder()
+            .listen_addr(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
+            .backend(node_proxy_addr)
+            .proxy_protocol(true)
+            .build()
+            .run()
+            .await
+            .unwrap();
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        let driver_conn = TcpStream::connect(nlb.listen_addr()).await.unwrap();
+        let (node_conn, driver_addr_seen_by_node) = mock_node_listener.accept().await.unwrap();
+        assert_eq!(
+            driver_addr_seen_by_node.port() % shards_num,
+            driver_conn.local_addr().unwrap().port() % shards_num
+        );
+
+        // The node connection is kept open until the proxy finishes to let it exit cleanly.
+        drop(driver_conn);
+        nlb.finish().await;
+        running_proxy.finish().await.unwrap();
+        drop(node_conn);
     }
 
     #[tokio::test]
