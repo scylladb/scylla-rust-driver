@@ -389,8 +389,6 @@ pub struct SessionConfig {
     ///
     /// Prefer [`ClientRoutesSessionBuilder`](crate::client::session_builder::ClientRoutesSessionBuilder)
     /// to setting this field directly. Setting this field does not change other options.
-    /// In particular, it does not set [`SessionConfig::disallow_shard_aware_port`].
-    /// `ClientRoutesSessionBuilder` sets that option to `true`.
     #[cfg(feature = "unstable-client-routes")]
     pub client_routes_config: Option<super::client_routes::ClientRoutesConfig>,
 
