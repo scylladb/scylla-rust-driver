@@ -348,14 +348,26 @@ impl ClientRoutesCluster {
 
     /// Set up QUERY feedback rules on proxy nodes.
     ///
-    /// Returns a map from `NodeId` to the feedback receiver for that node.
-    /// Each call replaces previous rules/senders, so new queries go to new
-    /// channels. This allows "fresh" counting per test phase.
-    ///
     /// The condition matches only user QUERY frames, excluding control
     /// connection traffic (REGISTER-ed connections).
+    /// See [`Self::setup_request_feedback`].
     pub fn setup_query_feedback(
         &mut self,
+    ) -> HashMap<NodeId, mpsc::UnboundedReceiver<FeedbackItem>> {
+        self.setup_request_feedback(
+            Condition::RequestOpcode(RequestOpcode::Query)
+                .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
+        )
+    }
+
+    /// Set up feedback rules on proxy nodes for the requests matching `condition`.
+    ///
+    /// Returns a map from `NodeId` to the feedback receiver for that node.
+    /// Each call replaces previous rules/senders, so new requests go to new
+    /// channels. This allows "fresh" counting per test phase.
+    pub fn setup_request_feedback(
+        &mut self,
+        condition: Condition,
     ) -> HashMap<NodeId, mpsc::UnboundedReceiver<FeedbackItem>> {
         let mut receivers = HashMap::new();
 
@@ -363,10 +375,8 @@ impl ClientRoutesCluster {
             for (&node_id, chain) in dc_cfg.per_node_chains.iter_mut() {
                 let (tx, rx) = mpsc::unbounded_channel();
 
-                let condition = Condition::RequestOpcode(RequestOpcode::Query)
-                    .and(Condition::not(Condition::ConnectionRegisteredAnyEvent));
                 let rule = RequestRule(
-                    condition,
+                    condition.clone(),
                     RequestReaction::noop().with_feedback_when_performed(tx),
                 );
 
