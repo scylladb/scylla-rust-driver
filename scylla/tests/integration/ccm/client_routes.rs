@@ -18,10 +18,13 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-use crate::utils::{HEALTHCHECK_QUERY, setup_tracing};
+use crate::utils::{
+    CapturedLogs, HEALTHCHECK_QUERY, run_capturing_logs, setup_tracing,
+    wait_until_all_shards_are_connected,
+};
 use scylla_ccm_bridge::CLUSTER_VERSION;
 use scylla_ccm_bridge::client_routes::{
-    ClientRoutesCluster, FeedbackItem, drain_feedback, run_client_routes_test,
+    ClientRoutesCluster, FeedbackItem, NodePort, drain_feedback, run_client_routes_test,
 };
 use scylla_ccm_bridge::cluster::ClusterOptions;
 use scylla_ccm_bridge::node::NodeId;
@@ -30,6 +33,7 @@ use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
 use scylla::statement::unprepared::Statement;
+use scylla_proxy::{Condition, RequestOpcode};
 use tracing::info;
 
 /// Timeout for waiting for the driver to open connections to all proxy nodes.
@@ -56,6 +60,17 @@ fn cluster_2dc_2_2() -> ClusterOptions {
         name: "client_routes_2dc".to_string(),
         version: CLUSTER_VERSION.clone(),
         nodes_per_dc: vec![2, 2],
+        ..ClusterOptions::default()
+    }
+}
+
+fn cluster_1_node_4_shards() -> ClusterOptions {
+    ClusterOptions {
+        name: "client_routes_4_shards".to_string(),
+        version: CLUSTER_VERSION.clone(),
+        nodes_per_dc: vec![1],
+        smp: 4,
+        memory: 2048,
         ..ClusterOptions::default()
     }
 }
@@ -664,4 +679,92 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
 async fn test_client_routes_event_driven_reroute() {
     setup_tracing();
     run_client_routes_test(cluster_2dc_2_2, event_driven_reroute).await;
+}
+
+// ---------------------------------------------------------------------------
+// Advanced shard awareness (1 DC, 1 node, 4 shards)
+// ---------------------------------------------------------------------------
+
+/// Part of the warning that the driver logs when a connection opened with
+/// advanced shard awareness lands on an unrequested shard.
+const SHARD_MISMATCH_WARNING: &str = "landed on an unrequested shard";
+
+/// How many sessions may reach all shards through routes to the regular port
+/// before one of them must have had a connection land on an unrequested shard.
+const MAX_SESSIONS_WITHOUT_SHARD_MISMATCH: usize = 10;
+
+/// **Goal**: Verify that advanced shard awareness, enabled by default, works
+/// when the routes' endpoints carry the source port to the node's shard-aware
+/// port, as Private Service Connect endpoints do, and that the driver notices
+/// and falls back when they lead to the regular port instead.
+///
+/// **Scenario**:
+/// 1. Build a session with default settings and wait until it can reach all
+///    shards. The pool must have opened exactly one connection per shard: one
+///    to whichever shard the node assigned it, and one to each other shard,
+///    requested with the source port. A connection landing on an unrequested
+///    shard would have made the pool open more of them.
+/// 2. Make the endpoints lead to the regular port, where the node picks the
+///    shard of each connection, and build sessions with default settings until
+///    the driver warns that a connection landed on an unrequested shard. Each
+///    session must still reach all shards. The pool requests 3 shards at once,
+///    so it is unlikely for the node to assign all of them as requested in
+///    every session.
+async fn advanced_shard_awareness(plc: &mut ClientRoutesCluster, logs: &CapturedLogs) {
+    // Every connection starts with a STARTUP. The control connection's one
+    // carries the driver's configuration report, which tells it apart.
+    let mut startups = plc.setup_request_feedback(
+        Condition::RequestOpcode(RequestOpcode::Startup).and(Condition::not(
+            Condition::BodyContainsCaseSensitive(Box::from(*b"DRIVER_CONFIG")),
+        )),
+    );
+
+    let session = plc
+        .make_session_builder()
+        .build()
+        .await
+        .expect("Failed to build client-routes session");
+    wait_until_all_shards_are_connected(&session).await;
+
+    for (node_id, rx) in &mut startups {
+        let mut shards: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|(_frame, shard)| shard.expect("the proxy knows the node's shards"))
+            .collect();
+        shards.sort_unstable();
+        assert_eq!(shards, [0, 1, 2, 3], "pool connections to node {node_id}");
+    }
+    assert!(!logs.text().contains(SHARD_MISMATCH_WARNING));
+    drop(session);
+
+    plc.set_node_port(NodePort::Regular)
+        .await
+        .expect("Failed to make the routes lead to the regular port");
+    for _ in 0..MAX_SESSIONS_WITHOUT_SHARD_MISMATCH {
+        let session = plc
+            .make_session_builder()
+            .build()
+            .await
+            .expect("Failed to build client-routes session");
+        wait_until_all_shards_are_connected(&session).await;
+        if logs.text().contains(SHARD_MISMATCH_WARNING) {
+            return;
+        }
+    }
+    panic!(
+        "No connection landed on an unrequested shard in {MAX_SESSIONS_WITHOUT_SHARD_MISMATCH} sessions"
+    );
+}
+
+#[test]
+fn test_client_routes_advanced_shard_awareness() {
+    setup_tracing();
+    let logs = CapturedLogs::default();
+    run_capturing_logs(
+        &logs,
+        tracing::Level::WARN,
+        run_client_routes_test(
+            cluster_1_node_4_shards,
+            async |plc: &mut ClientRoutesCluster| advanced_shard_awareness(plc, &logs).await,
+        ),
+    );
 }

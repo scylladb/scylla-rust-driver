@@ -120,9 +120,12 @@ impl GenericSessionBuilder<ClientRoutesMode> {
     /// in particular have corresponding entries in `system.client_routes`. Otherwise, the driver will
     /// fail to contact them.
     ///
-    /// **Note:** Advanced shard awareness (clever port setting by the driver to target
-    /// a desired shard) is not yet supported in ClientRoutes Scylla Cloud deployments
-    /// at the moment of writing, so using shard-aware port is disabled by default.
+    /// **Note:** Advanced shard awareness (the driver choosing the source port so that the node
+    /// assigns a desired shard) is enabled by default. Such connections go to the route's port,
+    /// so they reach the desired shard only if the route's endpoint forwards the source port to
+    /// the node's shard-aware port (e.g. with Proxy Protocol v2). Otherwise, the driver notices it
+    /// and falls back to letting the node choose the shard, which
+    /// [`disallow_shard_aware_port`](Self::disallow_shard_aware_port) makes it do from the start.
     ///
     /// # Example
     /// ```
@@ -147,10 +150,6 @@ impl GenericSessionBuilder<ClientRoutesMode> {
         ClientRoutesSessionBuilder {
             config: SessionConfig {
                 client_routes_config: Some(config),
-                // Advanced shard awareness (clever port setting by the driver to target
-                // a desired shard) is not yet supported in ClientRoutes Cloud deployments
-                // at the moment of writing, so this is disabled by default.
-                disallow_shard_aware_port: true,
                 ..SessionConfig::new()
             },
             kind: PhantomData,

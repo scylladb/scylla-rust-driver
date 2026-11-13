@@ -8,8 +8,15 @@
 //! ## Test chain per node
 //!
 //! ```text
-//! Driver →  Per-node NLB →  Per-node Proxy (1 node) →  Real ScyllaDB
+//! Driver →  Per-node NLB →  Per-node Proxy (1 node) →  Real ScyllaDB (shard-aware port)
 //! ```
+//!
+//! Like a Private Service Connect endpoint, the chain lets the driver's source port
+//! reach the node's shard-aware port, so advanced shard awareness works through it:
+//! the NLBs pass the driver's address to the proxies with the PROXY protocol, and
+//! the proxies connect to the node from ports that target the same shard.
+//! [`ClientRoutesCluster::set_node_port`] makes the chains lead to the node's regular
+//! port instead, like an endpoint that does not carry the source port.
 //!
 //! The proxy provides CQL-level feedback (proves queries reached nodes). Since
 //! the driver only knows NLB addresses (from `client_routes`), if a proxy sees
@@ -56,7 +63,7 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 use super::cluster::{Cluster, ClusterOptions};
-use super::node::NodeId;
+use super::node::{Node, NodeId};
 
 /// Re-export the feedback frame type used by proxy feedback channels.
 pub type FeedbackItem = (
@@ -66,6 +73,26 @@ pub type FeedbackItem = (
 
 /// Base name for test connection IDs. Each DC gets `"{BASE}-dc{dc_id}"`.
 const CONNECTION_ID_BASE: &str = "rust-driver-test";
+
+/// The port of a node that its proxy chain leads to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodePort {
+    /// The shard-aware port, where the shard of a connection follows from its source port.
+    ShardAware,
+    /// The regular CQL port, where the node picks the shard of a connection.
+    Regular,
+}
+
+impl NodePort {
+    fn address_of(self, node: &Node) -> SocketAddr {
+        match self {
+            NodePort::ShardAware => node.shard_aware_address(),
+            NodePort::Regular => {
+                SocketAddr::new(node.broadcast_rpc_address(), node.native_transport_port())
+            }
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Per-node proxy chain
@@ -99,7 +126,8 @@ impl NodeChain {
         self.proxy_addr
     }
 
-    /// Start a proxy + NLB chain for a single Scylla node (plaintext).
+    /// Start a proxy + NLB chain leading to `real_addr` of a single Scylla node
+    /// (plaintext).
     ///
     /// 1. Allocate a unique proxy address via `get_exclusive_local_address()`
     /// 2. Start the NLB frontend first so a bind failure cannot leak a proxy
@@ -129,12 +157,14 @@ impl NodeChain {
         let node = ProxyNode::builder()
             .real_address(real_addr)
             .proxy_address(proxy_addr)
+            .proxy_protocol(true)
             .shard_awareness(shard_awareness)
             .build();
 
         let nlb = NlbFrontend::builder()
             .listen_addr(nlb_listen_addr)
             .backend(proxy_addr)
+            .proxy_protocol(true)
             .build()
             .run()
             .await
@@ -234,6 +264,8 @@ pub struct ClientRoutesCluster {
     dc_configs: BTreeMap<u16, DcConfig>,
     /// Mapping from CCM node ID to its Scylla host_id UUID.
     host_ids: HashMap<NodeId, Uuid>,
+    /// The port of the nodes that the proxy chains lead to.
+    node_port: NodePort,
 }
 
 impl ClientRoutesCluster {
@@ -285,7 +317,8 @@ impl ClientRoutesCluster {
 
         // Step 4: start per-node proxy chains.
         info!("Starting per-node proxy chains");
-        let dc_configs = build_dc_configs(&cluster)
+        let node_port = NodePort::ShardAware;
+        let dc_configs = build_dc_configs(&cluster, node_port)
             .await
             .inspect_err(|_| cluster.mark_as_failed())
             .context("Failed to build DC configs / start proxy chains")?;
@@ -304,6 +337,7 @@ impl ClientRoutesCluster {
             cluster,
             dc_configs,
             host_ids,
+            node_port,
         };
 
         // Step 5: POST client routes to the cluster.
@@ -340,14 +374,26 @@ impl ClientRoutesCluster {
 
     /// Set up QUERY feedback rules on proxy nodes.
     ///
-    /// Returns a map from `NodeId` to the feedback receiver for that node.
-    /// Each call replaces previous rules/senders, so new queries go to new
-    /// channels. This allows "fresh" counting per test phase.
-    ///
     /// The condition matches only user QUERY frames, excluding control
     /// connection traffic (REGISTER-ed connections).
+    /// See [`Self::setup_request_feedback`].
     pub fn setup_query_feedback(
         &mut self,
+    ) -> HashMap<NodeId, mpsc::UnboundedReceiver<FeedbackItem>> {
+        self.setup_request_feedback(
+            Condition::RequestOpcode(RequestOpcode::Query)
+                .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
+        )
+    }
+
+    /// Set up feedback rules on proxy nodes for the requests matching `condition`.
+    ///
+    /// Returns a map from `NodeId` to the feedback receiver for that node.
+    /// Each call replaces previous rules/senders, so new requests go to new
+    /// channels. This allows "fresh" counting per test phase.
+    pub fn setup_request_feedback(
+        &mut self,
+        condition: Condition,
     ) -> HashMap<NodeId, mpsc::UnboundedReceiver<FeedbackItem>> {
         let mut receivers = HashMap::new();
 
@@ -355,10 +401,8 @@ impl ClientRoutesCluster {
             for (&node_id, chain) in dc_cfg.per_node_chains.iter_mut() {
                 let (tx, rx) = mpsc::unbounded_channel();
 
-                let condition = Condition::RequestOpcode(RequestOpcode::Query)
-                    .and(Condition::not(Condition::ConnectionRegisteredAnyEvent));
                 let rule = RequestRule(
-                    condition,
+                    condition.clone(),
                     RequestReaction::noop().with_feedback_when_performed(tx),
                 );
 
@@ -585,10 +629,9 @@ impl ClientRoutesCluster {
             .map(|n| n.datacenter_id())
             .with_context(|| format!("Node {} not found in cluster", node_id))?;
 
-        let real_ip = {
-            let node = self.cluster.nodes().get_by_id(node_id).unwrap();
-            node.broadcast_rpc_address()
-        };
+        let real_addr = self
+            .node_port
+            .address_of(self.cluster.nodes().get_by_id(node_id).unwrap());
 
         // Shut down the old chain if still present (it may already have
         // been removed by stop_node_chain).
@@ -601,7 +644,7 @@ impl ClientRoutesCluster {
         }
 
         // Start fresh chain.
-        let new_chain = NodeChain::start(SocketAddr::new(real_ip, 9042), node_id)
+        let new_chain = NodeChain::start(real_addr, node_id)
             .await
             .with_context(|| format!("Failed to start new chain for restarted node {}", node_id))?;
         info!(
@@ -626,6 +669,18 @@ impl ClientRoutesCluster {
             dc_cfg.refresh_contact_point_backends();
         }
 
+        Ok(())
+    }
+
+    /// Make the proxy chains lead to `node_port` of the nodes.
+    ///
+    /// Restarts the chains of all active nodes, which breaks the connections
+    /// made through them, and re-posts the routes with the new NLB addresses.
+    pub async fn set_node_port(&mut self, node_port: NodePort) -> Result<(), Error> {
+        self.node_port = node_port;
+        for node_id in self.active_node_ids() {
+            self.restart_node_chain(node_id).await?;
+        }
         Ok(())
     }
 
@@ -675,6 +730,7 @@ impl ClientRoutesCluster {
             .expect("just added node must exist");
         let real_ip = node_ref.broadcast_rpc_address();
         let real_addr = SocketAddr::new(real_ip, node_ref.native_transport_port());
+        let chain_addr = self.node_port.address_of(node_ref);
         let actual_dc_id = node_ref.datacenter_id();
 
         let host_id = discover_single_host_id(real_addr)
@@ -687,7 +743,7 @@ impl ClientRoutesCluster {
         self.host_ids.insert(new_node_id, host_id);
 
         // Step 4: start proxy chain.
-        let chain = NodeChain::start(SocketAddr::new(real_ip, 9042), new_node_id)
+        let chain = NodeChain::start(chain_addr, new_node_id)
             .await
             .with_context(|| format!("Failed to start chain for new node {}", new_node_id))?;
 
@@ -985,18 +1041,21 @@ impl ClientRoutesCluster {
 /// - A connection ID of the form `"rust-driver-test-dc{dc_id}"`
 ///
 /// ```text
-/// Driver →  Per-DC NLB →  Proxy →  ScyllaDB :9042
+/// Driver →  Per-DC NLB →  Proxy →  ScyllaDB (`node_port`)
 /// ```
-async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, Error> {
-    // Group nodes by DC: DcId -> {(NodeId, IpAddr)}.
-    let dc_nodes: BTreeMap<u16, Vec<(NodeId, IpAddr)>> =
+async fn build_dc_configs(
+    cluster: &Cluster,
+    node_port: NodePort,
+) -> Result<BTreeMap<u16, DcConfig>, Error> {
+    // Group nodes by DC: DcId -> {(NodeId, address that the chain leads to)}.
+    let dc_nodes: BTreeMap<u16, Vec<(NodeId, SocketAddr)>> =
         cluster
             .nodes()
             .iter()
             .fold(BTreeMap::new(), |mut acc, node| {
                 acc.entry(node.datacenter_id())
                     .or_default()
-                    .push((node.id(), node.broadcast_rpc_address()));
+                    .push((node.id(), node_port.address_of(node)));
                 acc
             });
 
@@ -1007,8 +1066,8 @@ async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, 
             nodes
                 .iter()
                 .copied()
-                .map(move |(node_id, real_ip)| async move {
-                    let chain = NodeChain::start(SocketAddr::new(real_ip, 9042), node_id)
+                .map(move |(node_id, real_addr)| async move {
+                    let chain = NodeChain::start(real_addr, node_id)
                         .await
                         .with_context(|| {
                             format!("Failed to start chain for DC {} node {}", dc_id, node_id)
@@ -1054,6 +1113,7 @@ async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, 
             let nlb_result = NlbFrontend::builder()
                 .listen_addr("127.0.0.1:0".parse().unwrap())
                 .backends(backends.iter().copied())
+                .proxy_protocol(true)
                 .build()
                 .run()
                 .await

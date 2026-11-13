@@ -3,6 +3,7 @@ mod errors;
 mod frame;
 pub mod nlb;
 mod proxy;
+mod proxy_protocol;
 
 pub type TargetShard = u16;
 

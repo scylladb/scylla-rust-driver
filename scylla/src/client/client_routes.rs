@@ -411,6 +411,11 @@ impl AddressTranslator for ClientRoutesAddressTranslator {
                 // This is typical case.
                 .unwrap_or(&client_route.hostname);
 
+            // The port of `untranslated_peer` is ignored on purpose. The connection pool sets it
+            // to the node's shard-aware port for advanced shard awareness, but that is a port
+            // of the node, not of the route's endpoint. Such connections go to the route's port
+            // as well, and deployments supporting advanced shard awareness forward their source
+            // port to the node's shard-aware port.
             let port = if self.use_tls {
                 client_route
                     .tls_port
