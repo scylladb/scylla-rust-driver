@@ -23,6 +23,8 @@ unstable-client-routes = [
     "scylla/unstable-client-routes",
     "dep:scylla-cql",
     "dep:scylla-proxy",
+    "dep:rand",
+    "dep:uuid",
 ]
 
 [dependencies]
@@ -37,10 +39,10 @@ tokio = { version = "1.40", features = [
 anyhow = "1.0.98"
 futures = "0.3.6"
 bytes = "1.10"
-rand = "0.9.0"
+rand = { version = "0.9.0", optional = true }
 tempfile = "3.19"
 tracing = "0.1.36"
-uuid = { version = "1.0", features = ["v4"] }
+uuid = { version = "1.0", features = ["v4"], optional = true }
 itertools = "0.15.0"
 
 # Needed for client routes feature only
