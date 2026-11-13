@@ -253,8 +253,9 @@ async fn test_execution_profiles() {
             Condition::True,
             RequestReaction::forge().overloaded()
         );
-        for i in 0..=2 {
-            running_proxy.running_nodes[i].change_request_rules(Some(vec![rule_overloaded.clone()]));
+
+        for node in running_proxy.running_nodes.iter_mut() {
+            node.change_request_rules(Some(vec![rule_overloaded.clone()]));
         }
 
         profile_rx.try_recv().unwrap_err();
@@ -322,9 +323,7 @@ async fn test_execution_profiles() {
         consistency_rx.try_recv().unwrap_err();
         assert_lb_and_retry_reports(&mut profile_rx, 2).await;
 
-        for i in 0..=2 {
-            running_proxy.running_nodes[i].change_request_rules(None);
-        }
+        running_proxy.turn_off_rules();
 
         session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
