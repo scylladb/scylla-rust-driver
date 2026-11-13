@@ -427,12 +427,16 @@ mod tests {
 
     /// Performs one real TLS handshake against `server`, with the driver told that it is
     /// talking to the node at `node_ip`. Returns whether OpenSSL considered the session
-    /// resumed.
+    /// resumed, or the error if the handshake failed.
     ///
     /// This goes through [`OpenSsl010Config::new_ssl`], so it exercises the whole path:
     /// the session cache mode, the new-session callback, the ex-data key that tells the
     /// callback which node a session belongs to, and offering a banked session.
-    fn handshake(context: &OpenSsl010Config, server: &TestServer, node_ip: IpAddr) -> bool {
+    fn handshake(
+        context: &OpenSsl010Config,
+        server: &TestServer,
+        node_ip: IpAddr,
+    ) -> Result<bool, openssl::ssl::Error> {
         let tcp = TcpStream::connect(server.addr).unwrap();
         // A clone per connection, as the driver does: `TlsProvider::make_tls_config`
         // clones the context for every `TlsConfig` it hands out, so the store only works
@@ -443,13 +447,13 @@ mod tests {
             .new_ssl(SocketAddr::new(node_ip, server.addr.port()))
             .unwrap();
         let mut stream = SslStream::new(ssl, tcp).unwrap();
-        stream.connect().unwrap();
+        stream.connect()?;
         let mut byte = [0u8; 1];
         stream.read_exact(&mut byte).unwrap();
         assert_eq!(&byte, b"x");
         stream.write_all(b"y").unwrap();
         stream.flush().unwrap();
-        stream.ssl().session_reused()
+        Ok(stream.ssl().session_reused())
     }
 
     /// One handshake per entry of `node_ips`, in order, all through a single
@@ -465,7 +469,7 @@ mod tests {
         let context = client_context(version, version).set_use_tls_tickets(use_tickets);
         let reused = node_ips
             .iter()
-            .map(|&node_ip| handshake(&context, &server, node_ip))
+            .map(|&node_ip| handshake(&context, &server, node_ip).unwrap())
             .collect();
         server.join();
         (context, reused)
@@ -682,7 +686,7 @@ mod tests {
 
         context.tickets.store(NODE_A, &tls13_tickets(1)[0]);
         assert!(
-            !handshake(&context, &server, NODE_A),
+            !handshake(&context, &server, NODE_A).unwrap(),
             "a TLS 1.3 ticket was resumed by a TLS 1.2 connection"
         );
 
@@ -694,7 +698,7 @@ mod tests {
             },
         );
         assert!(
-            !handshake(&context, &server, NODE_B),
+            !handshake(&context, &server, NODE_B).unwrap(),
             "an undecodable banked session was somehow resumed"
         );
 
