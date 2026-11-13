@@ -58,6 +58,9 @@ mod statements {
     mod bound {
         #![doc = include_str!("../../docs/source/statements/bound.md")]
     }
+    mod caching_session {
+        #![doc = include_str!("../../docs/source/statements/caching-session.md")]
+    }
     mod batch {
         #![doc = include_str!("../../docs/source/statements/batch.md")]
     }

@@ -59,6 +59,10 @@ name = "bound_statement"
 path = "bound_statement.rs"
 
 [[example]]
+name = "caching_session"
+path = "caching_session.rs"
+
+[[example]]
 name = "client_routes"
 path = "client_routes.rs"
 

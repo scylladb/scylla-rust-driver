@@ -23,6 +23,7 @@
     - [Query result](statements/result.md)
     - [Prepared statement](statements/prepared.md)
     - [Bound statement](statements/bound.md)
+    - [Caching session](statements/caching-session.md)
     - [Batch statement](statements/batch.md)
     - [Paged query](statements/paged.md)
     - [Lightweight transaction statement (LWT)](statements/lwt.md)
