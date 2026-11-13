@@ -37,6 +37,7 @@ use crate::errors::{ConnectionPoolError, MetadataError, NewSessionError};
 use crate::frame::server_event_type::EventType;
 use crate::network::{ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
+use crate::routing::NodeLocationPreference;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
 /// Maintains the persistent state needed to create control connections and
@@ -56,6 +57,8 @@ pub(crate) struct ControlConnectionEstablisher {
     cc_config: ControlConnectionConfig,
     hostname_resolution_timeout: Option<Duration>,
     host_filter: Option<Arc<dyn HostFilter>>,
+    /// The session-level location preference; known peers matching it are tried first.
+    node_location_preference: Arc<NodeLocationPreference>,
     // When no known peer is reachable, initial known nodes are resolved once again as a fallback
     // and establishing control connection to them is attempted.
     initial_known_nodes: Vec<KnownNode>,
@@ -109,6 +112,7 @@ impl ControlConnectionEstablisher {
         hostname_resolution_timeout: Option<Duration>,
         connection_config: ConnectionConfig,
         driver_config_reporter: Option<Arc<DriverConfigReporter>>,
+        node_location_preference: Arc<NodeLocationPreference>,
         request_timeouts: MetadataRequestTimeouts,
         keyspaces_to_fetch: Vec<String>,
         schema_metadata_fetch_mode: SchemaMetadataFetchMode,
@@ -143,6 +147,7 @@ impl ControlConnectionEstablisher {
                 .map(UntranslatedEndpoint::ContactPoint)
                 .collect(),
             host_filter: host_filter.clone(),
+            node_location_preference,
             initial_known_nodes,
             cc_cache,
         })
@@ -150,9 +155,10 @@ impl ControlConnectionEstablisher {
 
     /// Establishes a control connection and fetches metadata in one go.
     ///
-    /// Iterates over known peers (shuffled), trying to connect and run
-    /// `fetcher` on each. If `initial` is false and all known peers are
-    /// exhausted, falls back to re-resolving the initial contact points.
+    /// Iterates over known peers (shuffled, but with the ones matching the session's
+    /// location preference first), trying to connect and run `fetcher` on each.
+    /// If `initial` is false and all known peers are exhausted, falls back to
+    /// re-resolving the initial contact points.
     ///
     /// `fetcher` is invoked once per candidate connection and must perform the
     /// metadata fetch on it; it is also free to consume the connection's server
@@ -183,8 +189,7 @@ impl ControlConnectionEstablisher {
         ),
         MetadataError,
     > {
-        // shuffle known_peers to iterate through them in random order
-        self.known_peers.shuffle(&mut rng());
+        order_peers_for_cc(&mut self.known_peers, &self.node_location_preference);
         debug!(
             "Known peers: {:?}",
             self.known_peers.iter().safe_format(", ")
@@ -491,9 +496,127 @@ impl TopologyUpdateGuard<Vec<Peer>> {
     }
 }
 
+/// Orders `peers` for control connection attempts.
+///
+/// Peers matching `preference` go first, so that metadata is fetched from a nearby
+/// node, and server events keep arriving when remote datacenters are unreachable.
+/// Peers of equal locality are shuffled, so that control connections of many
+/// sessions spread over the cluster.
+fn order_peers_for_cc(peers: &mut [UntranslatedEndpoint], preference: &NodeLocationPreference) {
+    peers.shuffle(&mut rng());
+    // The sort is stable, so it keeps the shuffled order within each locality.
+    peers.sort_by_key(|peer| Locality::of(peer, preference));
+}
+
+/// Where a peer is with respect to a [`NodeLocationPreference`],
+/// from the most to the least preferred.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Locality {
+    /// Matches the preference fully.
+    Local,
+    /// In the preferred datacenter, but not in the preferred rack.
+    LocalDatacenter,
+    /// Outside the preferred datacenter, or of unknown location.
+    Remote,
+}
+
+impl Locality {
+    fn of(peer: &UntranslatedEndpoint, preference: &NodeLocationPreference) -> Self {
+        let (datacenter, rack) = match peer {
+            UntranslatedEndpoint::Peer(PeerEndpoint {
+                datacenter, rack, ..
+            }) => (datacenter.as_deref(), rack.as_deref()),
+            // Contact points are of unknown location until metadata is fetched.
+            UntranslatedEndpoint::ContactPoint(_) => (None, None),
+        };
+        let Some(preferred_datacenter) = preference.datacenter() else {
+            // No preference: all nodes are local.
+            return Self::Local;
+        };
+        if datacenter != Some(preferred_datacenter) {
+            return Self::Remote;
+        }
+        match preference.rack() {
+            Some(preferred_rack) if rack != Some(preferred_rack) => Self::LocalDatacenter,
+            _ => Self::Local,
+        }
+    }
+}
+
 /// Error to report when there was not a single node to even attempt a control
 /// connection on (e.g. all known peers were rejected by the host filter and the
 /// initial contact points failed to resolve to any address).
 fn no_nodes_available_error() -> MetadataError {
     MetadataError::ConnectionPoolError(ConnectionPoolError::NodeDisabledByHostFilter)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    use uuid::Uuid;
+
+    use super::order_peers_for_cc;
+    use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
+    use crate::cluster::node::NodeAddr;
+    use crate::routing::NodeLocationPreference;
+
+    fn peer(datacenter: &str, rack: &str) -> UntranslatedEndpoint {
+        UntranslatedEndpoint::Peer(PeerEndpoint {
+            host_id: Uuid::new_v4(),
+            address: NodeAddr::Translatable(SocketAddr::from((Ipv4Addr::LOCALHOST, 9042))),
+            datacenter: Some(datacenter.to_owned()),
+            rack: Some(rack.to_owned()),
+        })
+    }
+
+    fn location(peer: &UntranslatedEndpoint) -> (&str, &str) {
+        let UntranslatedEndpoint::Peer(PeerEndpoint {
+            datacenter: Some(datacenter),
+            rack: Some(rack),
+            ..
+        }) = peer
+        else {
+            unreachable!("only peers of known location are used in this test")
+        };
+        (datacenter, rack)
+    }
+
+    /// Asserts that ordering yields peers in `expected_groups` of locations, in order.
+    /// The order within a group is random.
+    fn assert_ordered(preference: NodeLocationPreference, expected_groups: &[&[(&str, &str)]]) {
+        // The input is ordered from the least preferred, and peers are shuffled
+        // before sorting, so a few rounds make a missing sort fail reliably.
+        for _ in 0..20 {
+            let mut peers = [peer("dc2", "r1"), peer("dc1", "r2"), peer("dc1", "r1")];
+            order_peers_for_cc(&mut peers, &preference);
+
+            let mut rest = &peers[..];
+            for expected_group in expected_groups {
+                let (group, tail) = rest.split_at(expected_group.len());
+                let mut locations: Vec<_> = group.iter().map(location).collect();
+                locations.sort();
+                let mut expected_locations = expected_group.to_vec();
+                expected_locations.sort();
+                assert_eq!(locations, expected_locations, "preference: {preference:?}");
+                rest = tail;
+            }
+        }
+    }
+
+    #[test]
+    fn peers_matching_location_preference_go_first() {
+        assert_ordered(
+            NodeLocationPreference::Any,
+            &[&[("dc2", "r1"), ("dc1", "r2"), ("dc1", "r1")]],
+        );
+        assert_ordered(
+            NodeLocationPreference::Datacenter("dc1".to_owned()),
+            &[&[("dc1", "r2"), ("dc1", "r1")], &[("dc2", "r1")]],
+        );
+        assert_ordered(
+            NodeLocationPreference::DatacenterAndRack("dc1".to_owned(), "r1".to_owned()),
+            &[&[("dc1", "r1")], &[("dc1", "r2")], &[("dc2", "r1")]],
+        );
+    }
 }

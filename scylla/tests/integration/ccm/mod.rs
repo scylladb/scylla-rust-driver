@@ -1,6 +1,7 @@
 mod authenticate;
 #[cfg(feature = "unstable-client-routes")]
 mod client_routes;
+mod control_connection;
 mod example;
 #[cfg(all(scylla_unstable, feature = "unstable-host-listener"))]
 mod host_listener;

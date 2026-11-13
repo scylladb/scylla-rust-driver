@@ -110,6 +110,7 @@ impl Cluster {
             hostname_resolution_timeout,
             pool_config.connection_config.clone(),
             driver_config_reporter,
+            Arc::clone(&node_location_preference),
             metadata_request_timeouts,
             keyspaces_to_fetch,
             schema_metadata_fetch_mode,

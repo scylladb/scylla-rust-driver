@@ -6,7 +6,7 @@ When the policy is datacenter-aware, you can configure whether to allow datacent
 (sending query to a node from a remote datacenter).
 
 Node location preferences (datacenter/rack) can be configured at two levels:
-- **Session level** — via `SessionBuilder::prefer_datacenter()`, `SessionBuilder::prefer_datacenter_and_rack()`, or `SessionBuilder::prefer_no_datacenter()`. This sets a default preference used by all policies that don't override it.
+- **Session level** — via `SessionBuilder::prefer_datacenter()`, `SessionBuilder::prefer_datacenter_and_rack()`, or `SessionBuilder::prefer_no_datacenter()`. This sets a default preference used by all policies that don't override it. It is also used when re-establishing the control connection (which fetches cluster metadata); policy-level preferences don't affect it.
 - **Policy level** — directly on `DefaultPolicyBuilder`. When set, the policy-level preference overrides the session-level one.
 
 ## Creating a DefaultPolicy

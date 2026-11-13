@@ -1,12 +1,12 @@
 use crate::utils::{
-    create_new_session_builder, execute_unprepared_statement_on_every_node, setup_tracing,
-    test_with_3_node_cluster,
+    create_new_session_builder, session_client_options, setup_tracing,
+    system_clients_has_client_options, test_with_3_node_cluster,
 };
+use futures::future::join_all;
 use scylla::client::PoolSize;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::policies::address_translator::AddressTranslator;
-use scylla::statement::Statement;
 use scylla_cql::frame::request::options;
 use scylla_cql::frame::types;
 use scylla_proxy::{
@@ -266,26 +266,7 @@ async fn driver_config_is_readable_from_system_clients() {
         .await
         .unwrap();
 
-    // Capability detection rather than a version check: `client_options` was
-    // added to the virtual table at some point and older clusters simply do not
-    // have the column.
-    let has_column = session
-        .query_unpaged(
-            "SELECT column_name FROM system_schema.columns \
-             WHERE keyspace_name = 'system' AND table_name = 'clients' \
-             AND column_name = 'client_options'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .into_rows_result()
-        .unwrap()
-        .rows::<(String,)>()
-        .unwrap()
-        .next()
-        .is_some();
-
-    if !has_column {
+    if !system_clients_has_client_options(&session).await {
         tracing::warn!(
             "skipping: this cluster's system.clients has no client_options column, \
              so there is nothing for the driver configuration report to land in"
@@ -293,33 +274,22 @@ async fn driver_config_is_readable_from_system_clients() {
         return;
     }
 
-    let session_id = session.session_id().to_string();
-    let statement = Statement::new("SELECT client_options FROM system.clients");
-    let cluster = session.get_cluster_state();
-    let results = execute_unprepared_statement_on_every_node(&session, &cluster, &statement, &[])
-        .await
-        .unwrap();
-
-    let mut own_rows = Vec::new();
-    for result in results {
-        let rows = result.into_rows_result().unwrap();
-        for row in rows
-            .rows::<(Option<HashMap<String, String>>,)>()
-            .unwrap()
-            .map(Result::unwrap)
-        {
-            let Some(client_options) = row.0 else {
-                continue;
-            };
-            if client_options.get("SESSION_ID") == Some(&session_id) {
-                own_rows.push(client_options);
-            }
-        }
-    }
+    let cluster_state = session.get_cluster_state();
+    let own_rows: Vec<_> = join_all(
+        cluster_state
+            .get_nodes_info()
+            .iter()
+            .map(|node| session_client_options(&session, node)),
+    )
+    .await
+    .into_iter()
+    .flatten()
+    .collect();
 
     assert!(
         !own_rows.is_empty(),
-        "no system.clients row reports this session's SESSION_ID {session_id}"
+        "no system.clients row reports this session's SESSION_ID {}",
+        session.session_id()
     );
 
     let reports: Vec<&String> = own_rows

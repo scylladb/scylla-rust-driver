@@ -215,6 +215,8 @@ pub struct SessionConfig {
     /// When set to a specific datacenter (or datacenter and rack), the driver
     /// treats matching nodes as "local" and prioritizes them in query plans.
     /// This acts as a default that load balancing policies can use or override.
+    /// Local nodes are also tried first when the control connection, used to
+    /// fetch cluster metadata, has to be re-established.
     ///
     /// Default: [`NodeLocationPreference::Any`].
     pub node_location_preference: NodeLocationPreference,
