@@ -394,7 +394,11 @@ mod tests {
                     let mut ssl = Ssl::new(&context).unwrap();
                     ssl.set_accept_state();
                     let mut stream = SslStream::new(ssl, stream).unwrap();
-                    stream.accept().unwrap();
+                    if stream.accept().is_err() {
+                        // The client rejected the certificate. Whether it should have is
+                        // for the client side to assert.
+                        continue;
+                    }
                     // TLS 1.3 tickets are only sent after the handshake, so the client has
                     // to read something to see them.
                     stream.write_all(b"x").unwrap();
