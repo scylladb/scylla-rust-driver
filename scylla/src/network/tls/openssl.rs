@@ -185,6 +185,7 @@ pub struct OpenSsl010Config {
     context: SslContext,
     tickets: Arc<TicketStore>,
     use_tls_tickets: bool,
+    verify_hostname: bool,
 }
 
 impl OpenSsl010Config {
@@ -201,6 +202,7 @@ impl OpenSsl010Config {
             context: builder.build().into_context(),
             tickets,
             use_tls_tickets: true,
+            verify_hostname: true,
         }
     }
 
@@ -217,6 +219,7 @@ impl OpenSsl010Config {
             context: builder.build(),
             tickets,
             use_tls_tickets: true,
+            verify_hostname: true,
         }
     }
 
@@ -267,10 +270,32 @@ impl OpenSsl010Config {
         self
     }
 
+    /// Whether the driver checks that a node's certificate is issued for the IP address
+    /// the driver connects to.
+    ///
+    /// Enabled by default.
+    pub fn verify_hostname(&self) -> bool {
+        self.verify_hostname
+    }
+
+    /// Enables or disables checking that a node's certificate is issued for the IP address
+    /// the driver connects to.
+    ///
+    /// Enabled by default. Disable it if node certificates don't contain the addresses the
+    /// driver connects to.
+    ///
+    /// Disabling it skips only this check: certificates are still verified as configured in
+    /// the context, e.g. that they are signed by a trusted CA. But then a certificate signed
+    /// by any trusted CA is accepted for any node, so trust only the cluster's CA.
+    pub fn set_verify_hostname(mut self, verify_hostname: bool) -> Self {
+        self.verify_hostname = verify_hostname;
+        self
+    }
+
     /// Creates a fresh per-connection [`Ssl`] object out of this context.
     pub(crate) fn new_ssl(&self, node_address: SocketAddr) -> Result<Ssl, ErrorStack> {
         let node_ip = node_address.ip();
-        let mut ssl = new_ssl(&self.context, node_ip)?;
+        let mut ssl = new_ssl(&self.context, self.verify_hostname.then_some(node_ip))?;
 
         if !self.use_tls_tickets {
             // Leaving the node address unrecorded is what keeps the store empty: the
@@ -315,12 +340,16 @@ impl OpenSsl010Config {
 }
 
 /// Creates a fresh per-connection [`Ssl`] object out of an [`SslContext`].
-pub(crate) fn new_ssl(context: &SslContext, node_ip: IpAddr) -> Result<Ssl, ErrorStack> {
+///
+/// With `verify_ip` set, the node's certificate must be issued for that IP address.
+pub(crate) fn new_ssl(context: &SslContext, verify_ip: Option<IpAddr>) -> Result<Ssl, ErrorStack> {
     let mut ssl = Ssl::new(context)?;
     ssl.set_connect_state();
-    // Makes OpenSSL verify the node's certificate against its IP address.
-    // Corresponds to `X509_VERIFY_PARAM_set1_ip`.
-    ssl.param_mut().set_ip(node_ip)?;
+    // Without an expected IP (or host) in the verify params, OpenSSL verifies the
+    // certificate chain only. Corresponds to `X509_VERIFY_PARAM_set1_ip`.
+    if let Some(ip) = verify_ip {
+        ssl.param_mut().set_ip(ip)?;
+    }
     Ok(ssl)
 }
 
@@ -349,8 +378,9 @@ mod tests {
     use std::thread::JoinHandle;
 
     use openssl::pkey::PKey;
-    use openssl::ssl::{SslMethod, SslStream, SslVerifyMode};
+    use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
     use openssl::x509::X509;
+    use openssl::x509::store::X509StoreBuilder;
     use rcgen::{CertificateParams, CertifiedIssuer, KeyPair, SanType};
 
     use super::*;
@@ -362,6 +392,8 @@ mod tests {
     /// fixed number of connections and then exits.
     struct TestServer {
         addr: SocketAddr,
+        /// The server's self-signed certificate, issued for 127.0.0.1.
+        cert: X509,
         thread: JoinHandle<()>,
     }
 
@@ -373,14 +405,15 @@ mod tests {
             params
                 .subject_alt_names
                 .push(SanType::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST)));
-            let cert = CertifiedIssuer::self_signed(params, key).unwrap();
+            let issuer = CertifiedIssuer::self_signed(params, key).unwrap();
+            let cert = X509::from_der(issuer.der()).unwrap();
 
             let mut builder = SslContext::builder(SslMethod::tls_server()).unwrap();
+            builder.set_certificate(&cert).unwrap();
             builder
-                .set_certificate(&X509::from_der(cert.der()).unwrap())
-                .unwrap();
-            builder
-                .set_private_key(&PKey::private_key_from_der(&cert.key().serialize_der()).unwrap())
+                .set_private_key(
+                    &PKey::private_key_from_der(&issuer.key().serialize_der()).unwrap(),
+                )
                 .unwrap();
             builder.set_min_proto_version(Some(version)).unwrap();
             builder.set_max_proto_version(Some(version)).unwrap();
@@ -409,7 +442,7 @@ mod tests {
                 }
             });
 
-            Self { addr, thread }
+            Self { addr, cert, thread }
         }
 
         fn join(self) {
@@ -705,6 +738,33 @@ mod tests {
             !handshake(&context, &server, NODE_B).unwrap(),
             "an undecodable banked session was somehow resumed"
         );
+
+        server.join();
+    }
+
+    /// Disabling hostname verification skips only the check that the certificate is
+    /// issued for the node's address: the certificate itself is still verified.
+    #[test]
+    fn disabling_hostname_verification_still_verifies_the_certificate() {
+        // The server's certificate is issued for 127.0.0.1, but the driver is told it is
+        // talking to NODE_A.
+        let server = TestServer::start(SslVersion::TLS1_3, 3);
+        let context = |trusted: Option<&X509>, verify_hostname: bool| {
+            let mut builder = SslConnector::builder(SslMethod::tls()).unwrap();
+            let mut store = X509StoreBuilder::new().unwrap();
+            if let Some(cert) = trusted {
+                store.add_cert(cert.clone()).unwrap();
+            }
+            builder.set_cert_store(store.build());
+            OpenSsl010Config::new(builder).set_verify_hostname(verify_hostname)
+        };
+
+        handshake(&context(Some(&server.cert), true), &server, NODE_A)
+            .expect_err("a certificate issued for another address was accepted");
+        handshake(&context(Some(&server.cert), false), &server, NODE_A)
+            .expect("a trusted certificate was rejected with hostname verification disabled");
+        handshake(&context(None, false), &server, NODE_A)
+            .expect_err("an untrusted certificate was accepted");
 
         server.join();
     }

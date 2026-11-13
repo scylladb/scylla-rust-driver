@@ -139,7 +139,7 @@ impl TlsConfig {
             #[expect(deprecated)]
             TlsContext::OpenSsl010(ref context) => Ok(Tls::OpenSsl010(openssl::new_ssl(
                 context,
-                node_address.ip(),
+                Some(node_address.ip()),
             )?)),
             #[cfg(feature = "openssl-010")]
             TlsContext::OpenSsl010Config(ref context) => {

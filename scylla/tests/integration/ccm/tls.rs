@@ -244,7 +244,8 @@ async fn test_connect_tls_no_client_auth() {
 }
 
 // Verifies that if a node presents a certificate without a subject alternative name
-// matching the node's IP address, the driver won't connect to it.
+// matching the node's IP address, the driver won't connect to it, unless hostname
+// verification is disabled.
 #[tokio::test]
 async fn test_tls_verifies_hostname() {
     setup_tracing();
@@ -270,6 +271,19 @@ async fn test_tls_verifies_hostname() {
                 .build()
                 .await
                 .unwrap_err();
+        }
+
+        {
+            tracing::info!("OpenSsl010Config without hostname verification sub-test");
+            let tls_context = openssl_010_builder_context(configure).set_verify_hostname(false);
+            let session = cluster
+                .make_session_builder()
+                .await
+                .tls_context(Some(tls_context))
+                .build()
+                .await
+                .unwrap();
+            check_session_works_and_fully_connected(cluster.nodes().len(), &session).await;
         }
 
         {

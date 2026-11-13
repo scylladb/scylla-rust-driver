@@ -15,6 +15,28 @@ Implementation details (might change in the future):
 For openssl we use `set_ip` method on `X509VerifyParamRef`, which corresponds to `X509_VERIFY_PARAM_set1_ip` openssl function.
 For rustls, we use `ServerName::IpAddress`, which is passed to `ClientConnection::new_with_alpn` (by `tokio_rustls`).
 
+If node certificates don't contain the addresses the driver connects to, `OpenSsl010Config` can
+skip this check:
+
+```rust
+# extern crate scylla;
+# extern crate openssl;
+use scylla::client::session::OpenSsl010Config;
+use openssl::ssl::{SslConnector, SslMethod};
+
+# use std::error::Error;
+# fn check_only_compiles() -> Result<(), Box<dyn Error>> {
+let builder = SslConnector::builder(SslMethod::tls())?;
+let context = OpenSsl010Config::new(builder).set_verify_hostname(false);
+# Ok(())
+# }
+```
+
+The certificate itself is still verified as configured in the context (e.g. that it is signed by a
+trusted CA), but a certificate signed by any trusted CA is then accepted for any node. Trust only
+your cluster's CA when doing this (see `set_cert_store` below). The rustls backend has no such
+option.
+
 
 ### Enabling feature
 
