@@ -285,7 +285,7 @@ impl TypeCheckAssumeOrderGenerator<'_> {
 struct DeserializeAssumeOrderGenerator<'sd>(&'sd StructDesc);
 
 impl DeserializeAssumeOrderGenerator<'_> {
-    fn generate_finalize_field(&self, field_index: usize, field: &Field) -> syn::Expr {
+    fn generate_finalize_field(&self, field: &Field) -> syn::Expr {
         if field.skip {
             // Skipped fields are initialized with Default::default()
             return parse_quote!(::std::default::Default::default());
@@ -311,7 +311,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
                 <::std::option::Option<#deserializer> as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(col.spec.typ(), col.slice)
                     .map_err(|err| #macro_internal::mk_row_deser_err::<Self>(
                         #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
-                            column_index: #field_index,
+                            column_index: col.index,
                             column_name: <_ as ::std::borrow::ToOwned>::to_owned(col.spec.name()),
                             err,
                         }
@@ -323,7 +323,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
                 <#deserializer as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(col.spec.typ(), col.slice)
                     .map_err(|err| #macro_internal::mk_row_deser_err::<Self>(
                         #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
-                            column_index: #field_index,
+                            column_index: col.index,
                             column_name: <_ as ::std::borrow::ToOwned>::to_owned(col.spec.name()),
                             err,
                         }
@@ -350,10 +350,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
 
         let fields = self.0.fields();
         let field_idents = fields.iter().map(|f| f.ident.as_ref().unwrap());
-        let field_finalizers = fields
-            .iter()
-            .enumerate()
-            .map(|(field_idx, f)| self.generate_finalize_field(field_idx, f));
+        let field_finalizers = fields.iter().map(|f| self.generate_finalize_field(f));
 
         parse_quote! {
             fn deserialize(
@@ -553,7 +550,7 @@ impl DeserializeUnorderedGenerator<'_> {
 
     // Generated code that performs deserialization when the raw field
     // is being processed
-    fn generate_deserialization(&self, column_index: usize, field: &Field) -> syn::Expr {
+    fn generate_deserialization(&self, field: &Field) -> syn::Expr {
         assert!(!field.skip);
         let macro_internal = self.0.struct_attrs().macro_internal_path();
         let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
@@ -566,7 +563,7 @@ impl DeserializeUnorderedGenerator<'_> {
                     .map_err(|err| {
                         #macro_internal::mk_row_deser_err::<Self>(
                             #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
-                                column_index: #column_index,
+                                column_index: col.index,
                                 column_name: <_ as ::std::borrow::ToOwned>::to_owned(col.spec.name()),
                                 err,
                             }
@@ -580,7 +577,7 @@ impl DeserializeUnorderedGenerator<'_> {
                     .map_err(|err| {
                         #macro_internal::mk_row_deser_err::<Self>(
                             #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
-                                column_index: #column_index,
+                                column_index: col.index,
                                 column_name: <_ as ::std::borrow::ToOwned>::to_owned(col.spec.name()),
                                 err,
                             }
@@ -626,8 +623,7 @@ impl DeserializeUnorderedGenerator<'_> {
         let deserialize_blocks = fields
             .iter()
             .filter(|f| !f.skip)
-            .enumerate()
-            .map(|(col_idx, f)| self.generate_deserialization(col_idx, f));
+            .map(|f| self.generate_deserialization(f));
         let field_idents = fields.iter().map(|f| f.ident.as_ref().unwrap());
         let nonskipped_field_names = fields
             .iter()
