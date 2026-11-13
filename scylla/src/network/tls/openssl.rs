@@ -270,7 +270,7 @@ impl OpenSsl010Config {
     /// Creates a fresh per-connection [`Ssl`] object out of this context.
     pub(crate) fn new_ssl(&self, node_address: SocketAddr) -> Result<Ssl, ErrorStack> {
         let node_ip = node_address.ip();
-        let mut ssl = new_ssl(&self.context, node_address)?;
+        let mut ssl = new_ssl(&self.context, node_ip)?;
 
         if !self.use_tls_tickets {
             // Leaving the node address unrecorded is what keeps the store empty: the
@@ -315,12 +315,12 @@ impl OpenSsl010Config {
 }
 
 /// Creates a fresh per-connection [`Ssl`] object out of an [`SslContext`].
-pub(crate) fn new_ssl(context: &SslContext, node_address: SocketAddr) -> Result<Ssl, ErrorStack> {
+pub(crate) fn new_ssl(context: &SslContext, node_ip: IpAddr) -> Result<Ssl, ErrorStack> {
     let mut ssl = Ssl::new(context)?;
     ssl.set_connect_state();
     // Makes OpenSSL verify the node's certificate against its IP address.
     // Corresponds to `X509_VERIFY_PARAM_set1_ip`.
-    ssl.param_mut().set_ip(node_address.ip())?;
+    ssl.param_mut().set_ip(node_ip)?;
     Ok(ssl)
 }
 

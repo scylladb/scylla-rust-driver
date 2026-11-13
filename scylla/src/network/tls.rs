@@ -137,9 +137,10 @@ impl TlsConfig {
             // The driver cannot install a session callback on a context it did not build,
             // so connections made through it never resume a TLS session.
             #[expect(deprecated)]
-            TlsContext::OpenSsl010(ref context) => {
-                Ok(Tls::OpenSsl010(openssl::new_ssl(context, node_address)?))
-            }
+            TlsContext::OpenSsl010(ref context) => Ok(Tls::OpenSsl010(openssl::new_ssl(
+                context,
+                node_address.ip(),
+            )?)),
             #[cfg(feature = "openssl-010")]
             TlsContext::OpenSsl010Config(ref context) => {
                 Ok(Tls::OpenSsl010(context.new_ssl(node_address)?))
