@@ -127,7 +127,7 @@ impl Sharder {
     /// If we connect to ScyllaDB using ScyllaDB's shard aware port, then ScyllaDB assigns a shard to the
     /// connection based on the source port. This calculates the assigned shard.
     pub fn shard_of_source_port(&self, source_port: u16) -> Shard {
-        (source_port % self.nr_shards.get()) as Shard
+        (source_port % self.nr_shards) as Shard
     }
 
     /// Randomly choose a source port `p` such that `shard == shard_of_source_port(p)`.
