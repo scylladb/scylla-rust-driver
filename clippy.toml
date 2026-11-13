@@ -2,6 +2,11 @@ avoid-breaking-exported-api = false
 disallowed-methods = [
     { path = "itertools::Itertools::format", reason = "Footgun: panics on double formatting.", replacement = "crate::utils::safe_format::IteratorSafeFormatExt::safe_format" }
 ]
+# Buf is a trait, but disallowed-methods takes neither traits nor wildcards.
+# Disallowing the trait also disallows calling its methods, as they need it in scope.
+disallowed-types = [
+    { path = "bytes::Buf", reason = "Most of its methods panic on short input. Use the fallible frame::types::read_* functions, or slice and array methods (split_first_chunk, from_be_bytes, ...)." }
+]
 # TODO(2.0): Some of our error types are big. We need to address this in 2.0
 large-error-ignored = [
     "scylla::errors::PagerExecutionError",

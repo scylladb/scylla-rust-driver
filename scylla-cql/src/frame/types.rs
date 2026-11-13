@@ -4,10 +4,10 @@ use super::frame_errors::LowLevelDeserializationError;
 #[cfg(test)]
 use assert_matches::assert_matches;
 use byteorder::{BigEndian, ReadBytesExt};
+use bytes::BufMut;
 use bytes::Bytes;
 #[cfg(test)]
 use bytes::BytesMut;
-use bytes::{Buf, BufMut};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
@@ -31,6 +31,12 @@ pub use scylla_cql_core::frame::types::{
 // ~0.3% instructions.
 #[inline]
 pub(crate) fn parse_prefix<R>(bytes: &mut Bytes, parse: impl FnOnce(&mut &[u8]) -> R) -> R {
+    #[expect(
+        clippy::disallowed_types,
+        reason = "advance() drops the prefix without cloning, and can't panic: parsed <= bytes.len()"
+    )]
+    use bytes::Buf;
+
     let mut buf = &bytes[..];
     let ret = parse(&mut buf);
     // Readers only consume the front of the buffer.

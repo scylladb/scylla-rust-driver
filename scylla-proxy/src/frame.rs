@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use scylla_cql::frame::flag;
 use scylla_cql::frame::frame_errors::FrameHeaderParseError;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
@@ -432,6 +432,12 @@ pub(crate) async fn write_frame(
     writer: &mut (impl AsyncWrite + Unpin),
     compression: &CompressionReader,
 ) -> Result<(), tokio::io::Error> {
+    #[expect(
+        clippy::disallowed_types,
+        reason = "chain() doesn't panic, and write_all_buf() needs a Buf"
+    )]
+    use bytes::Buf;
+
     let compressed_body = compression
         .maybe_compress_body(params.flags, body)
         .map_err(tokio::io::Error::other)?;
@@ -474,9 +480,8 @@ pub(crate) async fn read_frame(
         .await
         .map_err(FrameHeaderParseError::HeaderIoError)?;
 
-    let mut buf = &raw_header[..];
+    let [version, flags, stream_hi, stream_lo, opcode, length @ ..] = raw_header;
 
-    let version = buf.get_u8();
     {
         let (err, valid_direction, direction_str) = match frame_type {
             FrameType::Request => (FrameHeaderParseError::FrameFromServer, 0x00, "request"),
@@ -494,8 +499,7 @@ pub(crate) async fn read_frame(
         }
     }
 
-    let flags = buf.get_u8();
-    let stream = buf.get_i16();
+    let stream = i16::from_be_bytes([stream_hi, stream_lo]);
 
     let frame_params = FrameParams {
         version,
@@ -505,16 +509,14 @@ pub(crate) async fn read_frame(
 
     let opcode = match frame_type {
         FrameType::Request => FrameOpcode::Request(
-            RequestOpcode::try_from(buf.get_u8())
-                .map_err(|_| FrameHeaderParseError::FrameFromServer)?,
+            RequestOpcode::try_from(opcode).map_err(|_| FrameHeaderParseError::FrameFromServer)?,
         ),
         FrameType::Response => FrameOpcode::Response(
-            ResponseOpcode::try_from(buf.get_u8())
-                .map_err(|_| FrameHeaderParseError::FrameFromClient)?,
+            ResponseOpcode::try_from(opcode).map_err(|_| FrameHeaderParseError::FrameFromClient)?,
         ),
     };
 
-    let length = buf.get_u32() as usize;
+    let length = u32::from_be_bytes(length) as usize;
 
     let mut body = Vec::with_capacity(length).limit(length);
 
