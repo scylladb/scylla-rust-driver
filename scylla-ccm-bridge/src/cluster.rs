@@ -206,8 +206,8 @@ impl Cluster {
             allocated_prefix,
         };
 
-        for datacenter_id in 0..opts.nodes_per_dc.len() {
-            for _ in 0..opts.nodes_per_dc[datacenter_id] {
+        for (datacenter_id, dc_nodes_count) in opts.nodes_per_dc.iter().enumerate() {
+            for _ in 0..*dc_nodes_count {
                 let node_options = NodeOptions {
                     id: cluster
                         .nodes
