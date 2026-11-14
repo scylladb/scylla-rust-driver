@@ -14,7 +14,7 @@ cache-mode: none
 
 jobs:
   jira-sync:
-    uses: scylladb/github-automation/.github/workflows/main_pr_events_jira_sync.yml@575136ad5a73f08deb5b726dba1ebb492873c026 # main
+    uses: scylladb/github-automation/.github/workflows/main_pr_events_jira_sync.yml@2f8e395c1a71852499728f95ae3353ea65b5dd02 # main
     with:
       caller_action: ${{ github.event.action }}
     secrets:
