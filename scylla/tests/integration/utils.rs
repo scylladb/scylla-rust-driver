@@ -93,7 +93,8 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogs {
     }
 }
 
-/// Drives `test_body` to completion with everything it logs at ERROR level appended to `capture`.
+/// Drives `test_body` to completion with everything it logs at `level` or above appended to
+/// `capture`.
 ///
 /// The driver emits the logs a test may want to assert on from tasks it spawns itself, so the
 /// capturing subscriber has to be active while those tasks are polled. A **scoped** subscriber
@@ -109,13 +110,17 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogs {
 /// concurrently in the same process. The flip side is that anything the driver logs off this
 /// thread - currently only `tokio::task::spawn_blocking` work - falls back to the global
 /// subscriber and is not captured.
-pub(crate) fn run_capturing_errors<F: Future>(capture: &CapturedLogs, test_body: F) -> F::Output {
+pub(crate) fn run_capturing_logs<F: Future>(
+    capture: &CapturedLogs,
+    level: tracing::Level,
+    test_body: F,
+) -> F::Output {
     let testing_layer = tracing_subscriber::fmt::layer()
         .with_test_writer()
         .with_filter(tracing_subscriber::EnvFilter::from_default_env());
     let capturing_layer = tracing_subscriber::fmt::layer()
         .with_writer(capture.clone())
-        .with_filter(tracing_subscriber::filter::LevelFilter::ERROR);
+        .with_filter(tracing_subscriber::filter::LevelFilter::from_level(level));
     let subscriber = tracing_subscriber::registry()
         .with(testing_layer)
         .with(capturing_layer);

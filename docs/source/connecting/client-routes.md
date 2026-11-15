@@ -135,7 +135,14 @@ let session: Session = ClientRoutesSessionBuilder::new(config)
   so `address_translator()` is not available.
 * **TLS** is not yet supported on Client Routes sessions.
 
-Additionally, _advanced shard awareness_ (the driver choosing a source port to target a specific
-shard) is disabled by default because the proxy infrastructure does not preserve it.
-**Note:** _basic shard awareness_ still works, meaning that driver routes requests optimally - to
-the correct shards.
+## Shard awareness
+
+_Advanced shard awareness_ (the driver choosing a source port so that the node assigns a specific
+shard to the connection) is enabled by default, as in a regular session. Such connections go to
+the node's endpoint from `system.client_routes`, so they reach the requested shard only if that
+endpoint forwards the source port to the node's shard-aware port, e.g. with Proxy Protocol v2.
+If it does not, the driver notices that connections land on other shards, logs a warning and falls
+back to letting the node choose the shard. Use `disallow_shard_aware_port(true)` to skip the
+attempts in such deployments.
+
+_Basic shard awareness_ (sending each request to the correct shard) works either way.

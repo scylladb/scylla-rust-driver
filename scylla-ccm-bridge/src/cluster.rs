@@ -20,9 +20,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Default memory size in MB for cluster nodes.
-pub const DEFAULT_MEMORY: u32 = 512;
+pub const DEFAULT_MEMORY: u32 = 1024;
 /// Default number of SMPs for cluster nodes.
-pub const DEFAULT_SMP: u16 = 1;
+pub const DEFAULT_SMP: u16 = 2;
 
 /// Configuration options for creating a CCM cluster.
 #[derive(Debug, Clone)]

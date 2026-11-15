@@ -25,7 +25,7 @@ use scylla_proxy::{
 use uuid::Uuid;
 
 use crate::utils::{
-    CapturedLogs, HEALTHCHECK_QUERY, run_capturing_errors, setup_tracing, test_with_3_node_cluster,
+    CapturedLogs, HEALTHCHECK_QUERY, run_capturing_logs, setup_tracing, test_with_3_node_cluster,
     wait_until_all_nodes_are_connected,
 };
 
@@ -35,8 +35,9 @@ fn mismatched_host_id_is_reported() {
     let captured = CapturedLogs::default();
     let logs_of_run = captured.clone();
 
-    let res = run_capturing_errors(
+    let res = run_capturing_logs(
         &captured,
+        tracing::Level::ERROR,
         test_with_3_node_cluster(
             ShardAwareness::Unaware,
             |proxy_uris, translation_map, mut running_proxy| async move {

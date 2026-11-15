@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-use std::fmt::Write;
 use std::path::Path;
 use std::process::ExitStatus;
 use std::sync::Arc;
@@ -176,25 +174,21 @@ impl ClusterStart<'_> {
         self
     }
 
-    fn get_ccm_env(&self) -> HashMap<String, String> {
-        let mut value = String::new();
+    /// ccm takes ScyllaDB's `--smp` and `--memory` from `--jvm_arg`, but ignores them in
+    /// `SCYLLA_EXT_OPTS`.
+    fn scylla_args(&self) -> Vec<String> {
+        let mut args = Vec::new();
         if let Some(smp) = self.scylla_smp {
-            write!(value, "--smp={smp} ").unwrap();
+            args.push(format!("--jvm_arg=--smp={smp}"));
         }
         if let Some(mem_megabytes) = self.scylla_mem_megabytes {
-            write!(value, "--memory={mem_megabytes}M ").unwrap();
+            args.push(format!("--jvm_arg=--memory={mem_megabytes}M"));
         }
-
-        let mut env = HashMap::new();
-        if !value.is_empty() {
-            env.insert("SCYLLA_EXT_OPTS".to_string(), value);
-        }
-
-        env
+        args
     }
 
     pub(crate) async fn run(self) -> Result<ExitStatus, anyhow::Error> {
-        let env = self.get_ccm_env();
+        let scylla_args = self.scylla_args();
         let mut args = vec!["start", "--config-dir", self.ccm.config_dir.as_str()];
 
         let NodeStartOptions {
@@ -211,10 +205,11 @@ impl ClusterStart<'_> {
         if wait_for_binary_proto {
             args.push(NodeStartOptions::WAIT_FOR_BINARY_PROTO);
         }
+        args.extend(scylla_args.iter().map(String::as_str));
 
         self.ccm
             .cmd
-            .run_command("ccm", &args, RunOptions::new().with_env(env))
+            .run_command("ccm", &args, RunOptions::new())
             .await
     }
 }

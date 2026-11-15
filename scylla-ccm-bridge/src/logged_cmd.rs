@@ -32,6 +32,7 @@ impl RunOptions {
         }
     }
 
+    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn with_env(mut self, env: HashMap<String, String>) -> Self {
         self.env = env;
         self
