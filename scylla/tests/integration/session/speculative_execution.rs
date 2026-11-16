@@ -13,8 +13,10 @@
 //! - whether an attempt went to a node that an earlier attempt used,
 //! - how many speculative fibers started.
 //!
-//! The history of the driver is the source of truth. All the other parts are
-//! simulated. The three nodes are `scylla-proxy` nodes in dry mode, with no
+//! The history of the driver is the source of truth for the sequence. The
+//! proxy confirms it: each node counts the EXECUTE frames that it receives.
+//! The test compares these counts with the attempts per node in the history.
+//! All the other parts are simulated. The three nodes are `scylla-proxy` nodes in dry mode, with no
 //! ScyllaDB behind them. They answer each request from the rules below. Thus:
 //! - The cases can depend on time and still run fast. `TICK` is the unit of
 //!   the interval of the speculative policy.
@@ -40,6 +42,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+
+use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
@@ -239,6 +244,80 @@ fn check_attempts(expected: &[ExpectedAttempt], actual: &[Attempt]) -> Result<()
     }
 
     Ok(())
+}
+
+/// Counts the EXECUTE frames that each node received.
+///
+/// The history of the driver says what the driver believes it sent. The proxy
+/// says what arrived. This function reads the second record.
+///
+/// A frame that the driver sent may still be in flight when the request ends.
+/// For example, the driver may cancel a fiber right after it wrote a frame.
+/// Thus, the function:
+/// - waits until it has seen `expected` frames, but at most `SETTLE_TIMEOUT`,
+/// - then waits a short time more, to catch a frame that the history does not
+///   explain. This frame would be the sign of a bug.
+///
+/// A frame that arrives after this extra wait is not detected. An absence
+/// cannot be proven by waiting. Thus, the check can miss a very late frame.
+/// It never fails a healthy run because of one.
+async fn executes_seen_by_proxy(
+    nodes: &[SocketAddr; NODES],
+    receivers: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>],
+    expected: usize,
+) -> HashMap<SocketAddr, usize> {
+    const SETTLE_TIMEOUT: Duration = Duration::from_millis(500);
+    const EXTRA_WAIT: Duration = Duration::from_millis(50);
+
+    let mut counts: HashMap<SocketAddr, usize> = HashMap::new();
+    let drain = |receivers: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>],
+                 counts: &mut HashMap<SocketAddr, usize>| {
+        for (node, receiver) in nodes.iter().zip(receivers.iter_mut()) {
+            while let Ok((frame, _shard)) = receiver.try_recv() {
+                if frame.opcode == RequestOpcode::Execute {
+                    *counts.entry(*node).or_default() += 1;
+                }
+            }
+        }
+    };
+
+    let deadline = Instant::now() + SETTLE_TIMEOUT;
+    loop {
+        drain(receivers, &mut counts);
+        if counts.values().sum::<usize>() >= expected || Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    tokio::time::sleep(EXTRA_WAIT).await;
+    drain(receivers, &mut counts);
+    counts
+}
+
+/// Checks that each node received exactly the attempts that the history
+/// assigns to it.
+fn check_history_against_proxy(
+    attempts: &[Attempt],
+    seen_by_proxy: &HashMap<SocketAddr, usize>,
+) -> Result<(), String> {
+    let mut in_history: HashMap<SocketAddr, usize> = HashMap::new();
+    for attempt in attempts {
+        *in_history.entry(attempt.node).or_default() += 1;
+    }
+
+    if &in_history == seen_by_proxy {
+        return Ok(());
+    }
+    let show = |counts: &HashMap<SocketAddr, usize>| {
+        let mut counts: Vec<_> = counts.iter().map(|(n, c)| format!("{n}: {c}")).collect();
+        counts.sort();
+        counts.join(", ")
+    };
+    Err(format!(
+        "the history and the proxy disagree about the attempts per node\n  history: {}\n  proxy:   {}",
+        show(&in_history),
+        show(seen_by_proxy),
+    ))
 }
 
 /// The prepared statement id in the forged `RESULT:Prepared`. The value is
@@ -822,8 +901,21 @@ async fn test_speculative_execution_and_retries() {
             // case builds its own session. This session must connect again.
             let case_rules = into_request_rules(proxy_rules);
             let rules = [case_rules.rules.clone(), handshake_rules()].concat();
+            // Each node reports the frames it receives on a channel of its
+            // own. The history of the driver does not feed these channels.
+            // Thus, they are an independent record of the attempts.
+            let mut feedback_receivers = Vec::with_capacity(NODES);
             for node in running_proxy.running_nodes.iter_mut() {
-                node.change_request_rules(Some(rules.clone()));
+                let (tx, rx) = mpsc::unbounded_channel();
+                feedback_receivers.push(rx);
+                let rules = rules
+                    .iter()
+                    .cloned()
+                    .map(|RequestRule(condition, reaction)| {
+                        RequestRule(condition, reaction.with_feedback_when_performed(tx.clone()))
+                    })
+                    .collect();
+                node.change_request_rules(Some(rules));
             }
 
             // Each case has its own session. Thus, no state goes from one case
@@ -898,6 +990,13 @@ async fn test_speculative_execution_and_retries() {
                     "{name}: expected {expected_speculative_fibers} speculative fibers to start, \
                      {speculative_fibers} started"
                 ));
+            }
+
+            let seen_by_proxy =
+                executes_seen_by_proxy(&contact_points, &mut feedback_receivers, attempts.len())
+                    .await;
+            if let Err(mismatch) = check_history_against_proxy(&attempts, &seen_by_proxy) {
+                failures.push(format!("{}: {mismatch}", name));
             }
             if let Err(mismatch) = check_attempts(&expected_attempts, &attempts) {
                 failures.push(format!(
