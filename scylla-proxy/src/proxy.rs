@@ -1603,6 +1603,7 @@ impl ProxyWorker {
                                 let to_addressee_action = request_rule.1.to_addressee;
                                 let to_sender_action = request_rule.1.to_sender;
                                 let drop_connection_action = request_rule.1.drop_connection;
+                                let open_gate = request_rule.1.open_gate_when_performed;
 
                                 let cluster_tx_clone = cluster_tx.clone();
                                 let request_clone = request.clone();
@@ -1653,8 +1654,11 @@ impl ProxyWorker {
                                     }
                                 };
 
-                                tokio::task::spawn(async {
+                                tokio::task::spawn(async move {
                                     futures::join!(pass_action, forge_action, drop_action);
+                                    if let Some(gate) = open_gate {
+                                        gate.open();
+                                    }
                                 });
 
                                 continue 'mainloop; // only one rule can be applied to one frame
@@ -1724,6 +1728,7 @@ impl ProxyWorker {
                                 let to_addressee_action = response_rule.1.to_addressee;
                                 let to_sender_action = response_rule.1.to_sender;
                                 let drop_connection_action = response_rule.1.drop_connection;
+                                let open_gate = response_rule.1.open_gate_when_performed;
 
                                 let response_clone = response.clone();
                                 let driver_tx_clone = driver_tx.clone();
@@ -1774,8 +1779,11 @@ impl ProxyWorker {
                                     }
                                 };
 
-                                tokio::task::spawn(async {
+                                tokio::task::spawn(async move {
                                     futures::join!(pass_action, forge_action, drop_action);
+                                    if let Some(gate) = open_gate {
+                                        gate.open();
+                                    }
                                 });
 
                                 continue 'mainloop;
@@ -2934,6 +2942,74 @@ mod tests {
         running_proxy.finish().await.unwrap();
 
         assert_matches!(conn.read(&mut [0u8; 1]).await, Ok(0));
+    }
+
+    // The test asserts that a reaction opens its gate only after it performed
+    // its actions. The gate is closed while the proxy holds the frame.
+    #[tokio::test]
+    async fn dry_mode_proxy_opens_gate_when_reaction_performed() {
+        setup_tracing();
+        let node_addr = next_local_address_with_port(9876);
+
+        let gate = crate::Gate::new();
+        let delay = Duration::from_millis(200);
+
+        let proxy = Proxy::new([Node::new_dry_mode(
+            node_addr,
+            Some(vec![RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Options),
+                RequestReaction::forge_response_with_delay(
+                    delay,
+                    Arc::new(|RequestFrame { params, .. }| {
+                        ResponseFrame::new(
+                            params.for_response(),
+                            ResponseOpcode::Supported,
+                            Bytes::new(),
+                        )
+                    }),
+                )
+                .with_gate_opened_when_performed(gate.clone()),
+            )]),
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let mut conn = TcpStream::connect(node_addr).await.unwrap();
+        write_frame(
+            FrameParams {
+                flags: 0,
+                version: 0x04,
+                stream: 1,
+            },
+            FrameOpcode::Request(RequestOpcode::Options),
+            &random_body(),
+            &mut conn,
+            &no_compression(),
+        )
+        .await
+        .unwrap();
+
+        // The proxy still holds the response for `delay`.
+        tokio::time::sleep(delay / 4).await;
+        assert!(
+            !gate.is_open(),
+            "The gate opened before the reaction was performed"
+        );
+
+        let response = read_response_frame(&mut conn, &no_compression())
+            .await
+            .unwrap();
+        assert_eq!(response.opcode, ResponseOpcode::Supported);
+
+        // The proxy opens the gate right after it queued the response.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !gate.is_open() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("The gate did not open after the reaction was performed");
+
+        running_proxy.finish().await.unwrap();
     }
 
     // The test asserts that once a (mock) driver connects to the proxy from some port,

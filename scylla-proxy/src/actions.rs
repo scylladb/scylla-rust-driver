@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{fmt, sync::Arc, time::Duration};
 
 use bytes::Bytes;
@@ -260,6 +260,12 @@ pub trait Reaction: Sized {
         self,
         tx: mpsc::UnboundedSender<(Self::Incoming, Option<TargetShard>)>,
     ) -> Self;
+
+    /// Opens `gate` after the proxy has performed all the actions of this
+    /// `Reaction`, e.g. after it has queued a forged response. Modifies the
+    /// existing `Reaction`.
+    ///
+    fn with_gate_opened_when_performed(self, gate: Gate) -> Self;
 }
 
 fn fmt_reaction(
@@ -291,6 +297,8 @@ pub struct RequestReaction {
     pub to_sender: Option<Action<RequestFrame, ResponseFrame>>,
     pub drop_connection: Option<Option<Duration>>,
     pub feedback_channel: Option<mpsc::UnboundedSender<(RequestFrame, Option<TargetShard>)>>,
+    /// Opened after all the actions of this reaction have been performed.
+    pub open_gate_when_performed: Option<Gate>,
 }
 
 impl fmt::Debug for RequestReaction {
@@ -312,6 +320,8 @@ pub struct ResponseReaction {
     pub to_sender: Option<Action<ResponseFrame, RequestFrame>>,
     pub drop_connection: Option<Option<Duration>>,
     pub feedback_channel: Option<mpsc::UnboundedSender<(ResponseFrame, Option<TargetShard>)>>,
+    /// Opened after all the actions of this reaction have been performed.
+    pub open_gate_when_performed: Option<Gate>,
 }
 
 impl fmt::Debug for ResponseReaction {
@@ -340,6 +350,7 @@ impl Reaction for RequestReaction {
             to_sender: None,
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -349,6 +360,7 @@ impl Reaction for RequestReaction {
             to_sender: None,
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -361,6 +373,7 @@ impl Reaction for RequestReaction {
             to_sender: None,
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -373,6 +386,7 @@ impl Reaction for RequestReaction {
             }),
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -388,6 +402,7 @@ impl Reaction for RequestReaction {
             }),
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -400,6 +415,7 @@ impl Reaction for RequestReaction {
             to_sender: None,
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -409,6 +425,7 @@ impl Reaction for RequestReaction {
             to_sender: None,
             drop_connection: Some(None),
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -418,6 +435,7 @@ impl Reaction for RequestReaction {
             to_sender: None,
             drop_connection: Some(Some(time)),
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -427,6 +445,13 @@ impl Reaction for RequestReaction {
     ) -> Self {
         Self {
             feedback_channel: Some(tx),
+            ..self
+        }
+    }
+
+    fn with_gate_opened_when_performed(self, gate: Gate) -> Self {
+        Self {
+            open_gate_when_performed: Some(gate),
             ..self
         }
     }
@@ -453,6 +478,7 @@ impl RequestReaction {
             }),
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -489,6 +515,7 @@ impl RequestReaction {
             }),
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -701,6 +728,7 @@ impl Reaction for ResponseReaction {
             to_sender: None,
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -710,6 +738,7 @@ impl Reaction for ResponseReaction {
             to_sender: None,
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -722,6 +751,7 @@ impl Reaction for ResponseReaction {
             to_sender: None,
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -734,6 +764,7 @@ impl Reaction for ResponseReaction {
             }),
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -749,6 +780,7 @@ impl Reaction for ResponseReaction {
             }),
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -761,6 +793,7 @@ impl Reaction for ResponseReaction {
             to_sender: None,
             drop_connection: None,
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -770,6 +803,7 @@ impl Reaction for ResponseReaction {
             to_sender: None,
             drop_connection: Some(None),
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -779,6 +813,7 @@ impl Reaction for ResponseReaction {
             to_sender: None,
             drop_connection: Some(Some(time)),
             feedback_channel: None,
+            open_gate_when_performed: None,
         }
     }
 
@@ -790,6 +825,46 @@ impl Reaction for ResponseReaction {
             feedback_channel: Some(tx),
             ..self
         }
+    }
+
+    fn with_gate_opened_when_performed(self, gate: Gate) -> Self {
+        Self {
+            open_gate_when_performed: Some(gate),
+            ..self
+        }
+    }
+}
+
+/// A one-shot signal. Clones share the signal.
+///
+/// A reaction can open a gate with
+/// [`with_gate_opened_when_performed`](Reaction::with_gate_opened_when_performed).
+/// A gate stays open after the first `open()`.
+#[derive(Clone, Default)]
+pub struct Gate {
+    is_open: Arc<AtomicBool>,
+}
+
+impl Gate {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Opens the gate.
+    pub fn open(&self) {
+        self.is_open.store(true, Ordering::Release);
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.is_open.load(Ordering::Acquire)
+    }
+}
+
+impl fmt::Debug for Gate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Gate")
+            .field("is_open", &self.is_open())
+            .finish()
     }
 }
 
