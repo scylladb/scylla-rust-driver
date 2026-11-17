@@ -1612,6 +1612,9 @@ impl ProxyWorker {
                                         if let Some(time) = pass_action.delay {
                                             tokio::time::sleep(time).await;
                                         }
+                                        if let Some(ref gate) = pass_action.wait_for {
+                                            gate.wait().await;
+                                        }
                                         let passed_frame = match pass_action.msg_processor {
                                             Some(ref processor) => processor(request_clone),
                                             None => request_clone,
@@ -1626,6 +1629,9 @@ impl ProxyWorker {
                                     if let Some(ref forge_action) = to_sender_action {
                                         if let Some(time) = forge_action.delay {
                                             tokio::time::sleep(time).await;
+                                        }
+                                        if let Some(ref gate) = forge_action.wait_for {
+                                            gate.wait().await;
                                         }
                                         let forged_frame = {
                                             let processor = forge_action.msg_processor.as_ref()
@@ -1737,6 +1743,9 @@ impl ProxyWorker {
                                         if let Some(time) = pass_action.delay {
                                             tokio::time::sleep(time).await;
                                         }
+                                        if let Some(ref gate) = pass_action.wait_for {
+                                            gate.wait().await;
+                                        }
                                         let passed_frame = match pass_action.msg_processor {
                                             Some(ref processor) => processor(response_clone),
                                             None => response_clone,
@@ -1751,6 +1760,9 @@ impl ProxyWorker {
                                     if let Some(ref forge_action) = to_sender_action {
                                         if let Some(time) = forge_action.delay {
                                             tokio::time::sleep(time).await;
+                                        }
+                                        if let Some(ref gate) = forge_action.wait_for {
+                                            gate.wait().await;
                                         }
                                         let forged_frame = {
                                             let processor = forge_action.msg_processor.as_ref()
@@ -3010,6 +3022,107 @@ mod tests {
         .expect("The gate did not open after the reaction was performed");
 
         running_proxy.finish().await.unwrap();
+    }
+
+    // The test asserts that a response held for a gate is sent only after the
+    // gate opens. The gate opens after the proxy answered another request.
+    // The two requests arrive on different connections. The held response
+    // belongs to the first request, which arrives first.
+    #[tokio::test]
+    async fn dry_mode_proxy_holds_response_until_gate_opens() {
+        setup_tracing();
+        let node_addr = next_local_address_with_port(9876);
+
+        let gate = crate::Gate::new();
+        let ready = |opcode: ResponseOpcode| {
+            Arc::new(move |RequestFrame { params, .. }: RequestFrame| {
+                ResponseFrame::new(params.for_response(), opcode, Bytes::new())
+            })
+        };
+
+        let proxy = Proxy::new([Node::new_dry_mode(
+            node_addr,
+            Some(vec![
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Startup),
+                    RequestReaction::forge_response_after_gate(
+                        gate.clone(),
+                        ready(ResponseOpcode::Ready),
+                    ),
+                ),
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Options),
+                    RequestReaction::forge_response(ready(ResponseOpcode::Supported))
+                        .with_gate_opened_when_performed(gate),
+                ),
+            ]),
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let params = |stream| FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream,
+        };
+        let mut held_conn = TcpStream::connect(node_addr).await.unwrap();
+        let mut other_conn = TcpStream::connect(node_addr).await.unwrap();
+
+        write_frame(
+            params(1),
+            FrameOpcode::Request(RequestOpcode::Startup),
+            &random_body(),
+            &mut held_conn,
+            &no_compression(),
+        )
+        .await
+        .unwrap();
+
+        // While the gate is closed, the response must not arrive.
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(100),
+                read_response_frame(&mut held_conn, &no_compression())
+            )
+            .await
+            .is_err(),
+            "The proxy sent a response while the gate was closed"
+        );
+
+        write_frame(
+            params(2),
+            FrameOpcode::Request(RequestOpcode::Options),
+            &random_body(),
+            &mut other_conn,
+            &no_compression(),
+        )
+        .await
+        .unwrap();
+        let other = read_response_frame(&mut other_conn, &no_compression())
+            .await
+            .unwrap();
+        assert_eq!(other.opcode, ResponseOpcode::Supported);
+
+        let held = tokio::time::timeout(
+            Duration::from_secs(5),
+            read_response_frame(&mut held_conn, &no_compression()),
+        )
+        .await
+        .expect("The proxy did not send the held response after the gate opened")
+        .unwrap();
+        assert_eq!(held.opcode, ResponseOpcode::Ready);
+        assert_eq!(held.params, params(1).for_response());
+
+        running_proxy.finish().await.unwrap();
+    }
+
+    // A gate that opens before the wait begins must not block the wait.
+    #[tokio::test]
+    async fn gate_opened_before_wait_does_not_block() {
+        let gate = crate::Gate::new();
+        gate.open();
+        tokio::time::timeout(Duration::from_secs(5), gate.wait())
+            .await
+            .expect("A wait on an open gate blocked");
     }
 
     // The test asserts that once a (mock) driver connects to the proxy from some port,

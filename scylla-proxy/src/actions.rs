@@ -1,9 +1,9 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{fmt, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use rand::{Rng, RngCore};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 
 #[cfg(test)]
 use crate::setup_tracing;
@@ -261,10 +261,19 @@ pub trait Reaction: Sized {
         tx: mpsc::UnboundedSender<(Self::Incoming, Option<TargetShard>)>,
     ) -> Self;
 
+    /// The same as [forge_response](Self::forge_response), but the proxy holds
+    /// the response until `gate` opens. The wait has no time limit.
+    fn forge_response_after_gate(
+        gate: Gate,
+        f: Arc<dyn Fn(Self::Incoming) -> Self::Returning + Send + Sync>,
+    ) -> Self;
+
     /// Opens `gate` after the proxy has performed all the actions of this
     /// `Reaction`, e.g. after it has queued a forged response. Modifies the
     /// existing `Reaction`.
     ///
+    /// Together with [forge_response_after_gate](Self::forge_response_after_gate),
+    /// this orders the responses by events and not by time.
     fn with_gate_opened_when_performed(self, gate: Gate) -> Self;
 }
 
@@ -345,6 +354,7 @@ impl Reaction for RequestReaction {
         RequestReaction {
             to_addressee: Some(Action {
                 delay: None,
+                wait_for: None,
                 msg_processor: None,
             }),
             to_sender: None,
@@ -368,6 +378,7 @@ impl Reaction for RequestReaction {
         RequestReaction {
             to_addressee: Some(Action {
                 delay: Some(time),
+                wait_for: None,
                 msg_processor: None,
             }),
             to_sender: None,
@@ -382,6 +393,7 @@ impl Reaction for RequestReaction {
             to_addressee: None,
             to_sender: Some(Action {
                 delay: None,
+                wait_for: None,
                 msg_processor: Some(f),
             }),
             drop_connection: None,
@@ -398,6 +410,7 @@ impl Reaction for RequestReaction {
             to_addressee: None,
             to_sender: Some(Action {
                 delay: Some(time),
+                wait_for: None,
                 msg_processor: Some(f),
             }),
             drop_connection: None,
@@ -410,6 +423,7 @@ impl Reaction for RequestReaction {
         RequestReaction {
             to_addressee: Some(Action {
                 delay: None,
+                wait_for: None,
                 msg_processor: Some(f),
             }),
             to_sender: None,
@@ -449,6 +463,23 @@ impl Reaction for RequestReaction {
         }
     }
 
+    fn forge_response_after_gate(
+        gate: Gate,
+        f: Arc<dyn Fn(Self::Incoming) -> Self::Returning + Send + Sync>,
+    ) -> Self {
+        RequestReaction {
+            to_addressee: None,
+            to_sender: Some(Action {
+                delay: None,
+                wait_for: Some(gate),
+                msg_processor: Some(f),
+            }),
+            drop_connection: None,
+            feedback_channel: None,
+            open_gate_when_performed: None,
+        }
+    }
+
     fn with_gate_opened_when_performed(self, gate: Gate) -> Self {
         Self {
             open_gate_when_performed: Some(gate),
@@ -471,6 +502,7 @@ impl RequestReaction {
             to_addressee: None,
             to_sender: Some(Action {
                 delay,
+                wait_for: None,
                 msg_processor: Some(Arc::new(move |request: RequestFrame| {
                     ResponseFrame::forged_error(request.params.for_response(), gen_error(), None)
                         .unwrap()
@@ -504,6 +536,7 @@ impl RequestReaction {
             to_addressee: None,
             to_sender: Some(Action {
                 delay: None,
+                wait_for: None,
                 msg_processor: Some(Arc::new(move |request: RequestFrame| {
                     ResponseFrame::forged_error(
                         request.params.for_response(),
@@ -723,6 +756,7 @@ impl Reaction for ResponseReaction {
         ResponseReaction {
             to_addressee: Some(Action {
                 delay: None,
+                wait_for: None,
                 msg_processor: None,
             }),
             to_sender: None,
@@ -746,6 +780,7 @@ impl Reaction for ResponseReaction {
         ResponseReaction {
             to_addressee: Some(Action {
                 delay: Some(time),
+                wait_for: None,
                 msg_processor: None,
             }),
             to_sender: None,
@@ -760,6 +795,7 @@ impl Reaction for ResponseReaction {
             to_addressee: None,
             to_sender: Some(Action {
                 delay: None,
+                wait_for: None,
                 msg_processor: Some(f),
             }),
             drop_connection: None,
@@ -776,6 +812,7 @@ impl Reaction for ResponseReaction {
             to_addressee: None,
             to_sender: Some(Action {
                 delay: Some(time),
+                wait_for: None,
                 msg_processor: Some(f),
             }),
             drop_connection: None,
@@ -788,6 +825,7 @@ impl Reaction for ResponseReaction {
         ResponseReaction {
             to_addressee: Some(Action {
                 delay: None,
+                wait_for: None,
                 msg_processor: Some(f),
             }),
             to_sender: None,
@@ -827,6 +865,23 @@ impl Reaction for ResponseReaction {
         }
     }
 
+    fn forge_response_after_gate(
+        gate: Gate,
+        f: Arc<dyn Fn(Self::Incoming) -> Self::Returning + Send + Sync>,
+    ) -> Self {
+        ResponseReaction {
+            to_addressee: None,
+            to_sender: Some(Action {
+                delay: None,
+                wait_for: Some(gate),
+                msg_processor: Some(f),
+            }),
+            drop_connection: None,
+            feedback_channel: None,
+            open_gate_when_performed: None,
+        }
+    }
+
     fn with_gate_opened_when_performed(self, gate: Gate) -> Self {
         Self {
             open_gate_when_performed: Some(gate),
@@ -837,12 +892,27 @@ impl Reaction for ResponseReaction {
 
 /// A one-shot signal. Clones share the signal.
 ///
-/// A reaction can open a gate with
-/// [`with_gate_opened_when_performed`](Reaction::with_gate_opened_when_performed).
-/// A gate stays open after the first `open()`.
+/// A reaction can wait for a gate, and another reaction can open it. This
+/// orders the actions of the proxy by events and not by time.
+///
+/// A gate stays open after the first `open()`. A wait that starts later
+/// still returns at once. Thus, an `open()` that comes before the wait is not
+/// lost.
+///
+/// `Gate` is the special case of the Java `CountDownLatch(1)`:
+/// - `open()` is `countDown()`.
+/// - `wait()` is `await()`.
+/// - Both are one-shot. The state does not reset.
+/// - Both wake all the waiters.
 #[derive(Clone, Default)]
 pub struct Gate {
-    is_open: Arc<AtomicBool>,
+    inner: Arc<GateInner>,
+}
+
+#[derive(Default)]
+struct GateInner {
+    is_open: std::sync::atomic::AtomicBool,
+    notify: Notify,
 }
 
 impl Gate {
@@ -850,13 +920,26 @@ impl Gate {
         Self::default()
     }
 
-    /// Opens the gate.
+    /// Opens the gate. All current and future waits return.
     pub fn open(&self) {
-        self.is_open.store(true, Ordering::Release);
+        self.inner.is_open.store(true, Ordering::Release);
+        self.inner.notify.notify_waiters();
     }
 
     pub fn is_open(&self) -> bool {
-        self.is_open.load(Ordering::Acquire)
+        self.inner.is_open.load(Ordering::Acquire)
+    }
+
+    pub(crate) async fn wait(&self) {
+        loop {
+            // Register for the notification first. Then `open()` cannot fall
+            // between the check and the wait.
+            let notified = self.inner.notify.notified();
+            if self.is_open() {
+                return;
+            }
+            notified.await;
+        }
     }
 }
 
@@ -873,6 +956,8 @@ impl fmt::Debug for Gate {
 #[derive(Clone)]
 pub struct Action<TFrom, TTo> {
     pub delay: Option<Duration>,
+    /// If set, the action waits until this gate opens. It waits after `delay`.
+    pub wait_for: Option<Gate>,
     pub msg_processor: Option<Arc<dyn Fn(TFrom) -> TTo + Send + Sync>>,
 }
 
@@ -882,6 +967,7 @@ impl<TFrom, TTo> std::fmt::Debug for Action<TFrom, TTo> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Action")
             .field("delay", &self.delay)
+            .field("wait_for", &self.wait_for.is_some())
             .field(
                 "msg_processor",
                 match self.msg_processor {
