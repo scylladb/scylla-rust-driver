@@ -3,8 +3,8 @@
 [`CachingSession`](https://docs.rs/scylla/latest/scylla/client/caching_session/struct.CachingSession.html)
 wraps a `Session` and prepares statements for you.
 The first time a statement string is executed through it, the string is prepared and the
-resulting prepared statement is stored in a cache. Every later execution of the same string
-reuses the cached one.
+resulting prepared statement is stored in a cache. Later executions of the same string
+reuse the cached one for as long as it stays in the cache.
 
 Use it when you do not want to prepare statements up front and keep them around yourself,
 but you still want the [benefits of prepared statements](prepared.md).
@@ -16,8 +16,15 @@ so put values in bind markers (`?`) instead of formatting them into the string.
 The keyspace is not part of the cache key. A statement written without a keyspace name is prepared
 against the session's keyspace at that moment, and the cached statement keeps running against it:
 after `use_keyspace` switches the session to another keyspace, the same string still reads and writes
-the first one, and there is no error. Set the keyspace before you use the caching session and do not
-change it, or write the keyspace name in each statement (`ks.tab`, as the examples here do).
+the first one, and there is no error.
+
+It gets worse when the server forgets the statement. The driver then prepares it again on a connection
+that now uses the new keyspace and gets a different statement id, so the request fails. ScyllaDB always
+includes the connection's keyspace in the id, so this also affects statements that name the keyspace
+explicitly (`ks.tab`).
+
+Changing the keyspace after preparing any statement is a bad idea. Set the keyspace before you use
+the caching session and do not change it.
 :::
 
 ## Creating a caching session
@@ -69,12 +76,13 @@ caching_session
 - `execute_unpaged`, `execute_iter` and `execute_single_page` work as their `Session`
   counterparts do; see [paged queries](paged.md) for when to use which.
 - `batch` prepares the statements of a [batch](batch.md) through the cache.
-  `prepare_batch` does so without executing it.
+  `prepare_batch` does so without executing it. The consistency and request timeout of a batch
+  are those set on the `Batch`, not the ones of the statements in it.
 - `add_prepared_statement` puts a statement in the cache ahead of time, for example at startup,
   so that the first real request does not pay for the preparation.
 - `get_session` gives you the wrapped `Session`.
 
-A `Statement` keeps its own options (consistency, timeout, page size, ...),
+For single executions, a `Statement` keeps its own options (consistency, timeout, page size, ...),
 and they apply to the executions that go through the cache:
 
 ```rust

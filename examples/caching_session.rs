@@ -13,7 +13,15 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    // The string is split in two because rustfmt does not format a line with a string
+    // that is too long.
+    session
+        .query_unpaged(
+            "CREATE KEYSPACE IF NOT EXISTS examples_ks WITH \
+            REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}",
+            &[],
+        )
+        .await?;
 
     session
         .query_unpaged(
