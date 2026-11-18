@@ -97,7 +97,9 @@ pub(in super::super) struct EstablishedCc {
 /// trait that [`ControlConnectionEstablisher::establish_cc_and_fetch_metadata`] consumes,
 /// lending it the worker's updates channel.
 struct CandidateFetcher<'a> {
-    updates: &'a mut merge_channel::Sender<MetadataUpdate>,
+    /// Where the status hints of the candidate's server events go. Without it,
+    /// they are dropped.
+    updates: Option<&'a mut merge_channel::Sender<MetadataUpdate>>,
 }
 
 impl FetchOnCandidate for CandidateFetcher<'_> {
@@ -108,7 +110,7 @@ impl FetchOnCandidate for CandidateFetcher<'_> {
         cc: &ControlConnection,
         cc_events: &mut ControlConnectionEvents,
     ) -> Result<(TopologyUpdateGuard, FetchPlan), MetadataError> {
-        MetadataWorker::fetch_on_candidate(self.updates, cc, cc_events).await
+        MetadataWorker::fetch_on_candidate(self.updates.as_deref_mut(), cc, cc_events).await
     }
 }
 
@@ -539,7 +541,7 @@ impl MetadataWorker {
         initial: bool,
     ) -> Result<(Option<EstablishedCc>, Metadata), MetadataError> {
         let mut fetcher = CandidateFetcher {
-            updates: &mut self.updates,
+            updates: Some(&mut self.updates),
         };
         // Boxed AND `dyn`-erased for the same reason as the `query_metadata`
         // future in [`fetch_on_candidate`](Self::fetch_on_candidate): this
@@ -575,7 +577,7 @@ impl MetadataWorker {
     /// Hence the fetch is awaited only in `select!`, with event draining as
     /// the other branch.
     async fn fetch_on_candidate(
-        updates: &mut merge_channel::Sender<MetadataUpdate>,
+        mut updates: Option<&mut merge_channel::Sender<MetadataUpdate>>,
         cc: &ControlConnection,
         cc_events: &mut ControlConnectionEvents,
     ) -> Result<(TopologyUpdateGuard, FetchPlan), MetadataError> {
@@ -607,7 +609,7 @@ impl MetadataWorker {
                         // even returning dummy metadata on initial fetch.
                         // If ClusterWorker is shutting down (which is the only case this
                         // could happen), then we will shutdown soon too, so ignoring is not a problem.
-                        let _ = Self::handle_server_event(updates, event, &mut plan);
+                        let _ = Self::handle_server_event(updates.as_deref_mut(), event, &mut plan);
                     }
                     ControlConnectionEvent::Broken(err) => {
                         return Err(MetadataError::ConnectionPoolError(
@@ -883,7 +885,7 @@ impl MetadataWorker {
                             return ControlFlow::Continue(());
                         },
                         ControlConnectionEvent::ServerEvent(event) => {
-                            Self::handle_server_event(&mut self.updates, event, &mut plan)?;
+                            Self::handle_server_event(Some(&mut self.updates), event, &mut plan)?;
                         }
                     }
                 }
@@ -901,7 +903,8 @@ impl MetadataWorker {
     }
 
     /// Handles a single server event synchronously (status hints are published
-    /// right away) and updates the fetch plan accordingly.
+    /// right away, if there is `updates` to publish them on) and updates the
+    /// fetch plan accordingly.
     ///
     /// An associated function taking just the updates sender, so that event
     /// handling does not require exclusive access to the whole worker.
@@ -909,7 +912,7 @@ impl MetadataWorker {
     /// Returns [`ControlFlow::Break`] if the worker should stop (the cluster
     /// worker is gone).
     fn handle_server_event(
-        updates: &mut merge_channel::Sender<MetadataUpdate>,
+        updates: Option<&mut merge_channel::Sender<MetadataUpdate>>,
         event: Event,
         plan: &mut FetchPlan,
     ) -> ControlFlow<()> {
@@ -981,10 +984,11 @@ impl MetadataWorker {
                         // then new connections will be opened to it, and if it is not reachable,
                         // then connection attempts will fail and the node will be marked as unreachable by `PoolRefiller`,
                         // so it won't be targeted by the load balancing policy.
-                        if Self::send_update_on(updates, |slot| {
-                            MetadataUpdate::merge_up_hint(slot, addr)
-                        })
-                        .is_err()
+                        if let Some(updates) = updates
+                            && Self::send_update_on(updates, |slot| {
+                                MetadataUpdate::merge_up_hint(slot, addr)
+                            })
+                            .is_err()
                         {
                             return ControlFlow::Break(());
                         }
@@ -998,10 +1002,11 @@ impl MetadataWorker {
                         // and thus the node will not be targeted by the LoadBalancingPolicy,
                         // which is the desired behaviour. However, if the keepalive query succeeds,
                         // then the node is likely still alive (got stale event?), and we keep targeting it.
-                        if Self::send_update_on(updates, |slot| {
-                            MetadataUpdate::merge_down_hint(slot, addr)
-                        })
-                        .is_err()
+                        if let Some(updates) = updates
+                            && Self::send_update_on(updates, |slot| {
+                                MetadataUpdate::merge_down_hint(slot, addr)
+                            })
+                            .is_err()
                         {
                             return ControlFlow::Break(());
                         }
