@@ -74,6 +74,13 @@ ignore = [
     #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
     #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
     #{ crate = "a-crate-that-is-yanked@0.1.1", reason = "you can specify why you are ignoring the yanked crate" },
+    # chrono is unmaintained: https://github.com/chronotope/chrono/issues/1768.
+    # We cannot drop it:
+    # - `scylla` uses `chrono::DateTime<Utc>` as `TimePoint` in its public request history API.
+    # - `scylla-cql-core` uses chrono in the `Display` impl of `CqlValue`.
+    # - The `chrono-04` feature lets users serialize and deserialize chrono types.
+    #   We will keep this feature after we add jiff support (#1816).
+    { id = "RUSTSEC-2026-0543", reason = "chrono is a part of our public API" },
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
