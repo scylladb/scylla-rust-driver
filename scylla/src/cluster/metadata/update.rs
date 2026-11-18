@@ -827,6 +827,7 @@ mod tests {
                 .collect(),
             cluster_name: None,
             client_routes: None,
+            fetched_from: None,
         }
     }
 

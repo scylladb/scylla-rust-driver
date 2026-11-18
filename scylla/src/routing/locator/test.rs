@@ -172,6 +172,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
         keyspaces,
         cluster_name: Some("TestCluster".into()),
         client_routes: None,
+        fetched_from: None,
     }
 }
 

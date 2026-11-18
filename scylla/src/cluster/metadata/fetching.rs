@@ -184,14 +184,14 @@ impl ControlConnection {
                 .await
                 .map(Some)
         };
-        let peers_and_cluster_name;
+        let fetched_peers;
         let client_routes: Option<ClientRoutes>;
         let keyspaces: HashMap<String, Result<Arc<Keyspace>, SingleKeyspaceMetadataError>>;
 
-        (peers_and_cluster_name, client_routes, keyspaces) =
+        (fetched_peers, client_routes, keyspaces) =
             tokio::try_join!(peers_query, client_routes_query, keyspaces_query)?;
 
-        let (peers, cluster_name) = peers_and_cluster_name;
+        let (peers, cluster_name, fetched_from) = fetched_peers;
 
         Self::validate_peers(&peers)?;
 
@@ -200,6 +200,7 @@ impl ControlConnection {
             keyspaces,
             cluster_name,
             client_routes,
+            fetched_from,
         }))
     }
 
@@ -208,6 +209,8 @@ impl ControlConnection {
     ///
     /// The `cluster_name` that comes along the peers is dropped: it is fixed for
     /// the lifetime of a cluster, so the one read by the last full fetch stands.
+    /// So is the host ID of the queried node, needed only when a control
+    /// connection is established.
     ///
     /// The result comes wrapped in a [`TopologyUpdateGuard`] for the same reason
     /// as in `query_metadata`: the establisher must absorb the new peer list
@@ -217,7 +220,7 @@ impl ControlConnection {
     ) -> Result<TopologyUpdateGuard<Vec<Peer>>, MetadataError> {
         let connect_port = self.endpoint().address().port();
 
-        let (peers, _cluster_name) = self.query_peers(connect_port).await?;
+        let (peers, _cluster_name, _fetched_from) = self.query_peers(connect_port).await?;
 
         Self::validate_peers(&peers)?;
 
@@ -282,10 +285,14 @@ impl NodeInfoSource {
 }
 
 impl ControlConnection {
+    /// Queries `system.peers` and `system.local`.
+    ///
+    /// Returns, besides the peers, the cluster name and the host ID of the queried
+    /// node, both read from its `system.local`.
     async fn query_peers(
         &self,
         connect_port: u16,
-    ) -> Result<(Vec<Peer>, Option<String>), MetadataError> {
+    ) -> Result<(Vec<Peer>, Option<String>, Option<Uuid>), MetadataError> {
         let peers_query_stream = self
             .query_iter(
                 "SELECT host_id, rpc_address, data_center, rack, tokens FROM system.peers",
@@ -342,34 +349,38 @@ impl ControlConnection {
             match row_result {
                 Ok((source, row, cluster_name)) => {
                     let peer = Self::create_peer_from_row(source, row, local_address).await;
-                    (peer, cluster_name)
+                    let local_host_id = match source {
+                        NodeInfoSource::Local => peer.as_ref().map(|peer| peer.host_id),
+                        NodeInfoSource::Peer => None,
+                    };
+                    (peer, cluster_name, local_host_id)
                 }
                 Err(err) => {
                     warn!(
                         "system.peers or system.local has an invalid row, skipping it: {}",
                         err
                     );
-                    (None, None)
+                    (None, None, None)
                 }
             }
         });
 
-        let (peers, cluster_name) = translated_peers_futures
+        let (peers, cluster_name, local_host_id) = translated_peers_futures
             .buffer_unordered(256)
             .collect::<Vec<_>>()
             .await
             .into_iter()
             .fold(
-                (Vec::new(), None),
-                |(mut peers, cluster_name), (peer, name)| {
+                (Vec::new(), None, None),
+                |(mut peers, cluster_name, local_host_id), (peer, name, host_id)| {
                     if let Some(peer) = peer {
                         peers.push(peer);
                     }
-                    (peers, cluster_name.or(name))
+                    (peers, cluster_name.or(name), local_host_id.or(host_id))
                 },
             );
 
-        Ok((peers, cluster_name))
+        Ok((peers, cluster_name, local_host_id))
     }
 
     async fn create_peer_from_row(

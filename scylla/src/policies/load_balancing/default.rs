@@ -1597,6 +1597,7 @@ mod tests {
                 keyspaces: HashMap::new(),
                 client_routes: None,
                 cluster_name: Some("TestCluster".into()),
+                fetched_from: None,
             };
 
             let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
