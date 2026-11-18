@@ -2,6 +2,7 @@ use crate::utils::{
     PerformDDL, create_new_session_builder, setup_tracing, supports_feature, unique_keyspace_name,
 };
 
+use crate::entry_point::EntryPoint;
 use scylla::errors::OperationType;
 use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
 
@@ -113,4 +114,39 @@ async fn test_rate_limit_exceeded_exception() {
     }
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+/// The database rejects a statement that reads a table that does not exist.
+/// The error must reach the caller from every entry point.
+///
+/// The statement runs once without values and once with a value. The two
+/// differ for `query_iter`. Without values, it sends the request, and the
+/// error comes from the first page. With values, it prepares the statement
+/// first, and the error comes from the preparation.
+#[tokio::test]
+async fn test_db_error_reaches_every_entry_point() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+
+    for entry_point in EntryPoint::ALL {
+        let err = entry_point
+            .send(&session, "SELECT * FROM system.no_such_table", ())
+            .await
+            .unwrap_err();
+        let (db_error, message) = err.into_db_error(entry_point);
+        assert_eq!(db_error, DbError::Invalid, "{}", entry_point.name());
+        assert!(message.contains("no_such_table"), "{message}");
+
+        let err = entry_point
+            .send(
+                &session,
+                "SELECT * FROM system.no_such_table WHERE k = ?",
+                ("key",),
+            )
+            .await
+            .unwrap_err();
+        let (db_error, message) = err.into_db_error(entry_point);
+        assert_eq!(db_error, DbError::Invalid, "{}", entry_point.name());
+        assert!(message.contains("no_such_table"), "{message}");
+    }
 }

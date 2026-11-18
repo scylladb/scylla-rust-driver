@@ -22,8 +22,8 @@ use scylla::client::pager::QueryPager;
 use scylla::client::session::Session;
 use scylla::deserialize::row::DeserializeRow;
 use scylla::errors::{
-    BadQuery, DbError, ExecutionError, NextPageError, PagerExecutionError, RequestAttemptError,
-    RequestError, SchemaAgreementError,
+    BadQuery, DbError, ExecutionError, NextPageError, PagerExecutionError, PrepareError,
+    RequestAttemptError, RequestError, SchemaAgreementError,
 };
 use scylla::response::query_result::QueryResult;
 use scylla::response::{PagingState, PagingStateResponse};
@@ -339,6 +339,44 @@ impl SendError {
             SendError::Execution(ExecutionError::LastAttemptError(
                 RequestAttemptError::SerializationError(err),
             )) if !entry_point.is_prepared() => err,
+            other => panic!(
+                "{} failed with an unexpected error: {other:?}",
+                entry_point.name()
+            ),
+        }
+    }
+
+    /// Returns the error that the database sent, from wherever the entry
+    /// point reports it.
+    ///
+    /// The place depends on the entry point:
+    /// - An unprepared statement sends the request. Thus, the database error
+    ///   is the error of the last attempt.
+    /// - A prepared entry point prepares the statement first. Thus, the
+    ///   database error is the error of the first preparation attempt.
+    /// - `query_iter` with values also prepares the statement first.
+    /// - An iterating entry point wraps either error in its own
+    ///   `PagerExecutionError`.
+    pub(crate) fn into_db_error(self, entry_point: EntryPoint) -> (DbError, String) {
+        match self {
+            SendError::Execution(ExecutionError::LastAttemptError(
+                RequestAttemptError::DbError(err, message),
+            ))
+            | SendError::Execution(ExecutionError::PrepareError(
+                PrepareError::AllAttemptsFailed {
+                    first_attempt: RequestAttemptError::DbError(err, message),
+                },
+            ))
+            | SendError::Pager(PagerExecutionError::PrepareError(
+                PrepareError::AllAttemptsFailed {
+                    first_attempt: RequestAttemptError::DbError(err, message),
+                },
+            ))
+            | SendError::Pager(PagerExecutionError::NextPageError(
+                NextPageError::RequestFailure(RequestError::LastAttemptError(
+                    RequestAttemptError::DbError(err, message),
+                )),
+            )) => (err, message),
             other => panic!(
                 "{} failed with an unexpected error: {other:?}",
                 entry_point.name()
