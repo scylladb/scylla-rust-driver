@@ -3,6 +3,7 @@ mod cluster_reachability;
 mod compression;
 mod db_errors;
 mod history;
+mod host_filter;
 mod host_id_mismatch;
 mod internal_requests;
 #[cfg(feature = "metrics")]
