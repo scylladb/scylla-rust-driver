@@ -653,8 +653,9 @@ impl MetadataWorker {
 
             match self.work_on_cc(established).await {
                 ControlFlow::Break(()) => return,
-                // The control connection is defunct - establish a new one.
-                ControlFlow::Continue(()) => (),
+                // `None`: the control connection is defunct - establish a new one.
+                // `Some`: serve its replacement.
+                ControlFlow::Continue(replacement) => next_cc = replacement,
             }
         }
     }
@@ -750,10 +751,14 @@ impl MetadataWorker {
     /// while the establishment fetch was in flight may postdate its data, so
     /// the fetch work they imply is still owed.
     ///
-    /// Returns [`ControlFlow::Continue`] once the control connection is deemed
-    /// defunct and should be replaced, or [`ControlFlow::Break`] if the worker
-    /// should stop.
-    async fn work_on_cc(&mut self, established: EstablishedCc) -> ControlFlow<()> {
+    /// Returns [`ControlFlow::Continue`] once the control connection is to be
+    /// replaced: with its replacement, or with `None` if it is deemed defunct and
+    /// a new one is to be established. Returns [`ControlFlow::Break`] if the
+    /// worker should stop.
+    async fn work_on_cc(
+        &mut self,
+        established: EstablishedCc,
+    ) -> ControlFlow<(), Option<EstablishedCc>> {
         let EstablishedCc {
             cc,
             events: mut cc_events,
@@ -797,7 +802,7 @@ impl MetadataWorker {
                             );
                             // The control connection is considered defunct - drop it. The pending
                             // request, if any, is retried (and answered) while establishing a new one.
-                            return ControlFlow::Continue(());
+                            return ControlFlow::Continue(None);
                         }
                         FetchOutcome::Topology(Ok(topology_update)) => {
                             debug!("Fetched new topology");
@@ -882,7 +887,7 @@ impl MetadataWorker {
                             // The in-flight fetches, if any, are abandoned: establishing
                             // a new control connection fetches full metadata, which
                             // subsumes them.
-                            return ControlFlow::Continue(());
+                            return ControlFlow::Continue(None);
                         },
                         ControlConnectionEvent::ServerEvent(event) => {
                             Self::handle_server_event(Some(&mut self.updates), event, &mut plan)?;
