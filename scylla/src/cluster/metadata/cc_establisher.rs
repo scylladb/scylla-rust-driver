@@ -99,6 +99,28 @@ pub(super) trait FetchOnCandidate {
     ) -> Result<(TopologyUpdateGuard, Self::Payload), MetadataError>;
 }
 
+/// What [`ControlConnectionEstablisher::try_establish_on_nodes`] obtained. The
+/// fetched topology is yet to be applied to the establisher.
+// Built once per establishment and consumed right away, so the size of `Kept`
+// costs nothing worth an allocation.
+#[expect(clippy::large_enum_variant)]
+enum EstablishOutcome<P> {
+    /// A working, host-filter-accepted control connection, with the topology
+    /// and the payload the fetcher produced on it.
+    Kept {
+        cc: ControlConnection,
+        events: ControlConnectionEvents,
+        payload: P,
+        topology_update: TopologyUpdateGuard,
+    },
+    /// Metadata was fetched only on nodes rejected by the host filter. It is
+    /// valid cluster-wide, but none of the connections may be kept.
+    Rejected(TopologyUpdateGuard),
+    /// `initial` was set, and a connection was established, but its metadata
+    /// fetch failed. Dummy metadata is to be used, so the session can still start.
+    InitialFetchFailed(MetadataError),
+}
+
 impl ControlConnectionEstablisher {
     /// Creates a new ControlConnectionEstablisher.
     ///
@@ -203,7 +225,7 @@ impl ControlConnectionEstablisher {
             .try_establish_on_nodes(initial, self.known_peers.clone().into_iter(), fetcher)
             .await
         {
-            Ok(result) => return Ok(result),
+            Ok(outcome) => return Ok(self.apply_outcome(outcome)),
             Err(err) => err,
         };
 
@@ -235,7 +257,7 @@ impl ControlConnectionEstablisher {
             )
             .await
         {
-            Ok(result) => Ok(result),
+            Ok(outcome) => Ok(self.apply_outcome(outcome)),
             Err(fallback_err) => {
                 let err = fallback_err
                     .or(known_peers_err)
@@ -249,37 +271,57 @@ impl ControlConnectionEstablisher {
         }
     }
 
+    /// Updates `known_peers` from the topology fetched by
+    /// [`try_establish_on_nodes`](Self::try_establish_on_nodes), and returns what
+    /// [`establish_cc_and_fetch_metadata`](Self::establish_cc_and_fetch_metadata) does.
+    fn apply_outcome<P>(
+        &mut self,
+        outcome: EstablishOutcome<P>,
+    ) -> (
+        Option<(ControlConnection, ControlConnectionEvents, P)>,
+        Metadata,
+    ) {
+        match outcome {
+            EstablishOutcome::Kept {
+                cc,
+                events,
+                payload,
+                topology_update,
+            } => (Some((cc, events, payload)), topology_update.apply(self)),
+            EstablishOutcome::Rejected(topology_update) => (None, topology_update.apply(self)),
+            EstablishOutcome::InitialFetchFailed(err) => {
+                warn!(
+                    error = ?err,
+                    "Initial metadata read failed, proceeding with metadata \
+                    consisting only of the initial peer list and dummy tokens. \
+                    This might result in suboptimal performance and schema \
+                    information not being available."
+                );
+                (None, Metadata::new_dummy(&self.known_peers))
+            }
+        }
+    }
+
     /// Tries to establish a control connection and fetch metadata (through the
     /// caller-provided `fetch`) on each node from the given iterator.
     ///
-    /// Returns the first working, host-filter-accepted control connection
-    /// together with its metadata and the payload `fetch` produced on it. Two
-    /// situations yield metadata but no control connection (`Ok((None, metadata))`):
-    /// - every node that could be queried is rejected by the host filter — the
-    ///   metadata is valid cluster-wide, but none of the connections may be kept;
-    /// - `initial` is true and a connection was established but its metadata fetch
-    ///   failed — dummy metadata is returned so the session can still start.
+    /// The fetched topology is returned for the caller to apply, so trying the
+    /// nodes needs no exclusive access to the establisher.
     ///
     /// Returns `Err(None)` if the iterator was empty (no connection was ever
     /// attempted), or `Err(Some(err))` with the most recent error otherwise.
     #[expect(clippy::result_large_err)] // The `Option` in Err variant causes the ignore in `clippy.toml` to not work here.
     async fn try_establish_on_nodes<F: FetchOnCandidate>(
-        &mut self,
+        &self,
         initial: bool,
         nodes: impl Iterator<Item = UntranslatedEndpoint>,
         fetcher: &mut F,
-    ) -> Result<
-        (
-            Option<(ControlConnection, ControlConnectionEvents, F::Payload)>,
-            Metadata,
-        ),
-        Option<MetadataError>,
-    > {
+    ) -> Result<EstablishOutcome<F::Payload>, Option<MetadataError>> {
         let mut last_err: Option<MetadataError> = None;
         // Metadata fetched from a host-filter-rejected node. It is valid cluster-wide,
         // so it is kept as a fallback in case no accepted node can be reached, while we
         // keep looking for an accepted node to host the control connection on.
-        let mut rejected_metadata: Option<Metadata> = None;
+        let mut rejected_metadata: Option<TopologyUpdateGuard> = None;
 
         for peer in nodes {
             let peer_address = peer.address();
@@ -311,20 +353,14 @@ impl ControlConnectionEstablisher {
                     if initial {
                         // The control connection was established, but the initial
                         // metadata fetch failed. Prefer any valid metadata already
-                        // obtained from a rejected node; otherwise fall back to dummy
-                        // metadata so the session can still start. Either way, drop the
-                        // control connection so it is re-established at the repair cadence.
-                        let metadata = rejected_metadata.take().unwrap_or_else(|| {
-                            warn!(
-                                error = ?err,
-                                "Initial metadata read failed, proceeding with metadata \
-                                consisting only of the initial peer list and dummy tokens. \
-                                This might result in suboptimal performance and schema \
-                                information not being available."
-                            );
-                            Metadata::new_dummy(&self.known_peers)
+                        // obtained from a rejected node; otherwise the caller falls back
+                        // to dummy metadata so the session can still start. Either way,
+                        // drop the control connection so it is re-established at the
+                        // repair cadence.
+                        return Ok(match rejected_metadata {
+                            Some(topology_update) => EstablishOutcome::Rejected(topology_update),
+                            None => EstablishOutcome::InitialFetchFailed(err),
                         });
-                        return Ok((None, metadata));
                     }
                     warn!(
                         control_connection_address = %peer_address,
@@ -337,22 +373,26 @@ impl ControlConnectionEstablisher {
                 }
             };
 
-            let metadata = topology_update.apply(self);
             debug!("Fetched new metadata");
 
-            if self.is_cc_endpoint_rejected(cc.endpoint(), &metadata) {
+            if self.is_cc_endpoint_rejected(cc.endpoint(), topology_update.peek()) {
                 // The node hosting this control connection is rejected by the host
                 // filter. The metadata is valid cluster-wide, so remember it, but drop
                 // the connection and keep looking for a host-filter-accepted node.
-                rejected_metadata = Some(metadata);
+                rejected_metadata = Some(topology_update);
                 continue;
             }
 
-            return Ok((Some((cc, cc_events, payload)), metadata));
+            return Ok(EstablishOutcome::Kept {
+                cc,
+                events: cc_events,
+                payload,
+                topology_update,
+            });
         }
 
         match rejected_metadata {
-            Some(metadata) => Ok((None, metadata)),
+            Some(topology_update) => Ok(EstablishOutcome::Rejected(topology_update)),
             None => Err(last_err),
         }
     }
@@ -465,7 +505,7 @@ impl ControlConnectionEstablisher {
 /// guard, so that what was fetched cannot be used without the establisher
 /// updating its known peers from it first: the only way to extract the payload
 /// (full [`Metadata`], or just the peer list of a partial topology fetch) is
-/// [`apply`](Self::apply).
+/// [`apply`](Self::apply). It can only be inspected before that.
 #[must_use = "the fetched topology must be applied to the ControlConnectionEstablisher"]
 pub(super) struct TopologyUpdateGuard<T = Metadata> {
     inner: T,
@@ -474,6 +514,11 @@ pub(super) struct TopologyUpdateGuard<T = Metadata> {
 impl<T> TopologyUpdateGuard<T> {
     pub(super) fn new(inner: T) -> Self {
         Self { inner }
+    }
+
+    /// The fetched topology, to inspect before it is applied.
+    pub(super) fn peek(&self) -> &T {
+        &self.inner
     }
 }
 
