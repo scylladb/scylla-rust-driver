@@ -528,6 +528,14 @@ impl Locality {
             // Contact points are of unknown location until metadata is fetched.
             UntranslatedEndpoint::ContactPoint(_) => (None, None),
         };
+        Self::of_location(datacenter, rack, preference)
+    }
+
+    fn of_location(
+        datacenter: Option<&str>,
+        rack: Option<&str>,
+        preference: &NodeLocationPreference,
+    ) -> Self {
         let Some(preferred_datacenter) = preference.datacenter() else {
             // No preference: all nodes are local.
             return Self::Local;
