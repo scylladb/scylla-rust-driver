@@ -395,8 +395,8 @@ pub struct SessionConfig {
     pub client_routes_config: Option<super::client_routes::ClientRoutesConfig>,
 
     /// The host filter decides whether any connections should be opened
-    /// to the node or not. The driver will also avoid filtered out nodes when
-    /// re-establishing the control connection.
+    /// to the node or not. The control connection is not kept on filtered out
+    /// nodes either, even if they are contact points.
     pub host_filter: Option<Arc<dyn HostFilter>>,
 
     #[cfg(all(scylla_unstable, feature = "unstable-host-listener"))]

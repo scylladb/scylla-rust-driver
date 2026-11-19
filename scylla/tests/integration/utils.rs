@@ -49,7 +49,7 @@ use uuid::Uuid;
 
 use scylla_proxy::{
     Condition, Node, Proxy, ProxyError, Reaction, RequestOpcode, RequestReaction, RequestRule,
-    ResponseOpcode, ResponseReaction, ResponseRule, RunningProxy, ShardAwareness,
+    ResponseOpcode, ResponseReaction, ResponseRule, RunningProxy, ShardAwareness, WorkerError,
 };
 
 pub(crate) fn setup_tracing() {
@@ -913,8 +913,7 @@ pub(crate) async fn fetch_negotiated_features(server: Option<String>) -> Protoco
 
     let _session = SessionBuilder::new()
         .address_translator(Arc::new(translation_map))
-        // The way I understand it, contact point will always be Untranslatable, which is
-        // always accepted by the AllowListHostFilter, so we don't need to create the allowlist.
+        // Rejects every node, so that no pools are opened.
         .host_filter(Arc::new(
             AllowListHostFilter::new(iter::empty::<&str>()).unwrap(),
         ))
@@ -936,7 +935,12 @@ pub(crate) async fn fetch_negotiated_features(server: Option<String>) -> Protoco
     // We only want to return negotiated features.
     supported.retain(|key, _| startup.contains_key(&Cow::Borrowed(key.as_str())));
 
-    running_proxy.finish().await.unwrap();
+    // The control connection's node is rejected too, so the driver drops that
+    // connection once it fetched metadata on it.
+    match running_proxy.finish().await {
+        Ok(()) | Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{err}"),
+    }
 
     ProtocolFeatures::parse_from_supported(&supported)
 }

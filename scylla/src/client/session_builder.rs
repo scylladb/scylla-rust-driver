@@ -1259,8 +1259,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     }
 
     /// Sets the host filter. The host filter decides whether any connections
-    /// should be opened to the node or not. The driver will also avoid
-    /// those nodes when re-establishing the control connection.
+    /// should be opened to the node or not. The control connection is not kept
+    /// on those nodes either, even if they are contact points.
     ///
     /// See the [host filter](crate::policies::host_filter) module for a list
     /// of pre-defined filters. It is also possible to provide a custom filter

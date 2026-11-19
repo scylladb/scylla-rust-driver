@@ -382,16 +382,15 @@ impl ControlConnectionEstablisher {
     /// Returns true if the control connection endpoint is on a node rejected
     /// by the host filter, meaning the caller should re-establish the CC on
     /// an accepted node.
+    ///
+    /// The node is the one `metadata` was fetched from, identified by its
+    /// `system.local`: the endpoint's address can't identify a contact point.
     fn is_cc_endpoint_rejected(
         &self,
         endpoint: &UntranslatedEndpoint,
         metadata: &Metadata,
     ) -> bool {
-        let control_connection_peer = metadata
-            .peers
-            .iter()
-            .find(|peer| matches!(endpoint, UntranslatedEndpoint::Peer(PeerEndpoint{address, ..}) if *address == peer.address));
-        if let Some(peer) = control_connection_peer
+        if let Some(peer) = metadata.fetched_from_peer()
             && !self.host_filter.as_ref().is_none_or(|f| f.accept(peer))
         {
             warn!(

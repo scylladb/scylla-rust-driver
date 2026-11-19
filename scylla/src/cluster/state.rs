@@ -1080,6 +1080,7 @@ mod tests {
             keyspaces,
             client_routes: None,
             cluster_name: Some("Test Cluster".into()),
+            fetched_from: None,
         }
     }
 

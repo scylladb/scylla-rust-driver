@@ -100,6 +100,13 @@ pub(crate) struct Metadata {
     /// `None` if client routes are not configured for this session - in that case
     /// the table is not queried at all and nothing should be applied.
     pub(crate) client_routes: Option<ClientRoutes>,
+
+    /// Host ID of the node this metadata was fetched from, as its `system.local`
+    /// reports it. Unlike the connection's address, it identifies the node however
+    /// it was reached (address translation, hostnames, load balancers).
+    ///
+    /// `None` in dummy metadata, or if the `system.local` row was invalid.
+    pub(crate) fetched_from: Option<Uuid>,
 }
 
 /// Represents a node in the cluster, as fetched from the `system.{peers,local}` tables.
@@ -473,6 +480,13 @@ impl Metadata {
             keyspaces: HashMap::new(),
             cluster_name: None,
             client_routes: None,
+            fetched_from: None,
         }
+    }
+
+    /// The peer this metadata was fetched from, if known.
+    pub(crate) fn fetched_from_peer(&self) -> Option<&Peer> {
+        let host_id = self.fetched_from?;
+        self.peers.iter().find(|peer| peer.host_id == host_id)
     }
 }
