@@ -198,10 +198,15 @@ impl NlbFrontend {
             driver_addr, backend_addr
         );
 
+        // Without this, Nagle's algorithm together with the peer's delayed ACK
+        // can hold back a write for ~40 ms. For example, a response that comes
+        // right after another one waits until the driver acknowledges the first.
+        driver_stream.set_nodelay(true)?;
         let nlb_addr = driver_stream.local_addr()?;
         let (mut driver_read, mut driver_write) = driver_stream.into_split();
 
         let mut backend_tcp = TcpStream::connect(backend_addr).await?;
+        backend_tcp.set_nodelay(true)?;
         if shared.proxy_protocol {
             proxy_protocol::write_header(&mut backend_tcp, driver_addr, nlb_addr).await?;
         }
