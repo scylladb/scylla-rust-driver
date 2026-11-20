@@ -3,7 +3,6 @@
 use super::frame_errors::LowLevelDeserializationError;
 #[cfg(test)]
 use assert_matches::assert_matches;
-use byteorder::{BigEndian, ReadBytesExt};
 use bytes::BufMut;
 use bytes::Bytes;
 #[cfg(test)]
@@ -86,15 +85,20 @@ fn type_int() {
 }
 
 pub fn read_long(buf: &mut &[u8]) -> Result<i64, std::io::Error> {
-    let v = buf.read_i64::<BigEndian>()?;
-    Ok(v)
+    let (bytes, rest) = buf
+        .split_first_chunk()
+        .ok_or(std::io::ErrorKind::UnexpectedEof)?;
+    *buf = rest;
+    Ok(i64::from_be_bytes(*bytes))
 }
 
 /// Reads a single byte from the buffer, advancing it past that byte.
 /// Fails if the buffer is empty.
 pub fn read_byte(buf: &mut &[u8]) -> Result<u8, std::io::Error> {
-    let v = buf.read_u8()?;
-    Ok(v)
+    let byte = buf
+        .split_off_first()
+        .ok_or(std::io::ErrorKind::UnexpectedEof)?;
+    Ok(*byte)
 }
 
 #[test]
@@ -442,7 +446,7 @@ fn type_consistency() {
 }
 
 pub fn read_inet(buf: &mut &[u8]) -> Result<SocketAddr, LowLevelDeserializationError> {
-    let len = buf.read_u8()?;
+    let len = read_byte(buf)?;
     let ip_addr = match len {
         4 => {
             let ip_bytes = read_raw_bytes(4, buf)?;
