@@ -1,3 +1,5 @@
+//! Shows how to wrap a session in a `tower` `Service`.
+
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::value::Row;

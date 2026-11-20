@@ -1,3 +1,5 @@
+//! Shows how to see the driver's log messages with a `tracing` subscriber.
+
 use anyhow::Result;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;

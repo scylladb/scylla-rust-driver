@@ -1,3 +1,5 @@
+//! Shows how to read results page by page, both automatically and manually.
+
 use anyhow::Result;
 use futures::StreamExt as _;
 use scylla::client::session::Session;
