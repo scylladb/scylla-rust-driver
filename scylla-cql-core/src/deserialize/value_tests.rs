@@ -1,5 +1,5 @@
-use assert_matches::assert_matches;
 use bytes::{BufMut, Bytes, BytesMut};
+use std::assert_matches;
 use uuid::Uuid;
 
 use std::borrow::Cow;
@@ -1505,7 +1505,7 @@ macro_rules! assert_given_error {
         let err = $get_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<$DestT>());
         assert_eq!(err.cql_type, cql_typ);
-        assert_matches::assert_matches!(err.kind, $kind);
+        std::assert_matches!(err.kind, $kind);
     };
 }
 

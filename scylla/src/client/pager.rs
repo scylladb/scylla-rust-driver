@@ -831,7 +831,7 @@ mod slot_channel {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::task::{Context, Poll, Wake, Waker};
 
-        use assert_matches::assert_matches;
+        use std::assert_matches;
 
         use super::{ReceiverDropped, slot_channel};
 

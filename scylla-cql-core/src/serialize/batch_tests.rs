@@ -4,8 +4,8 @@ use crate::serialize::RowWriter;
 use crate::serialize::batch::{BatchValues, BatchValuesIterator};
 use crate::serialize::row::RowSerializationContext;
 
-use assert_matches::assert_matches;
 use bytes::BufMut;
+use std::assert_matches;
 
 fn col<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
     ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))

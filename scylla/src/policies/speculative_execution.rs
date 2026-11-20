@@ -253,7 +253,7 @@ mod tests {
     use std::sync::LazyLock;
     use std::time::Duration;
 
-    use assert_matches::assert_matches;
+    use std::assert_matches;
 
     use crate::errors::{RequestAttemptError, RequestError};
     #[cfg(feature = "metrics")]

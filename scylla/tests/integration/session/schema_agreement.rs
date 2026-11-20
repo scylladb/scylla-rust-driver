@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use assert_matches::assert_matches;
 use scylla::client::PoolSize;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -15,6 +14,7 @@ use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
     ResponseFrame, RunningProxy, ShardAwareness, WorkerError,
 };
+use std::assert_matches;
 use tracing::info;
 use uuid::Uuid;
 

@@ -1087,7 +1087,7 @@ mod tests {
             CUSTOM_PAYLOAD_TABLETS_V1_KEY.to_string(),
             Bytes::from_static(&[1, 2, 3]),
         )]);
-        assert_matches::assert_matches!(
+        std::assert_matches!(
             RawTablet::from_custom_payload(&custom_payload),
             Some(Err(TabletParsingError::Deserialization(_)))
         );
@@ -1120,7 +1120,7 @@ mod tests {
 
         custom_payload.insert(CUSTOM_PAYLOAD_TABLETS_V1_KEY.to_string(), Bytes::from(data));
 
-        assert_matches::assert_matches!(
+        std::assert_matches!(
             RawTablet::from_custom_payload(&custom_payload),
             Some(Err(TabletParsingError::Deserialization(_)))
         );
@@ -1148,28 +1148,28 @@ mod tests {
     fn test_raw_tablet_deser_wrong_token_range() {
         // last_token < first_token
         let payload = make_tablet_custom_payload(100, -50);
-        assert_matches::assert_matches!(
+        std::assert_matches!(
             RawTablet::from_custom_payload(&payload),
             Some(Err(TabletParsingError::WrongTokenRange(100, -50)))
         );
 
         // last_token == first_token (range would be empty since it's left-open)
         let payload = make_tablet_custom_payload(100, 100);
-        assert_matches::assert_matches!(
+        std::assert_matches!(
             RawTablet::from_custom_payload(&payload),
             Some(Err(TabletParsingError::WrongTokenRange(100, 100)))
         );
 
         // Edge case: i64::MAX as first_token, i64::MIN as last_token
         let payload = make_tablet_custom_payload(i64::MAX, i64::MIN);
-        assert_matches::assert_matches!(
+        std::assert_matches!(
             RawTablet::from_custom_payload(&payload),
             Some(Err(TabletParsingError::WrongTokenRange(i64::MAX, i64::MIN)))
         );
 
         // Sanity check: valid range still works
         let payload = make_tablet_custom_payload(99, 100);
-        assert_matches::assert_matches!(RawTablet::from_custom_payload(&payload), Some(Ok(_)));
+        std::assert_matches!(RawTablet::from_custom_payload(&payload), Some(Ok(_)));
     }
 
     #[test]

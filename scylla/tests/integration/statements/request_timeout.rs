@@ -1,6 +1,5 @@
 use std::{sync::Arc, time::Duration};
 
-use assert_matches::assert_matches;
 use scylla::{
     client::{execution_profile::ExecutionProfile, session_builder::SessionBuilder},
     errors::ExecutionError,
@@ -12,6 +11,7 @@ use scylla::{
 use scylla_proxy::{
     Condition, ProxyError, Reaction as _, RequestOpcode, RequestReaction, RequestRule, WorkerError,
 };
+use std::assert_matches;
 
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
 

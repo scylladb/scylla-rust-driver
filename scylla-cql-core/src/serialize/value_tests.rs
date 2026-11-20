@@ -20,8 +20,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 use std::sync::Arc;
 
-use assert_matches::assert_matches;
 use bytes::Bytes;
+use std::assert_matches;
 use thiserror::Error;
 use uuid::Uuid;
 

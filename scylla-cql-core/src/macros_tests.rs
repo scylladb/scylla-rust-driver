@@ -258,7 +258,7 @@ mod derive_macros_integration {
         mod serialize {
             use std::sync::Arc;
 
-            use assert_matches::assert_matches;
+            use std::assert_matches;
 
             use crate::SerializeValue;
             use crate::frame::response::result::{CollectionType, UserDefinedType};
@@ -1219,8 +1219,8 @@ mod derive_macros_integration {
         mod deserialize {
             use std::sync::Arc;
 
-            use assert_matches::assert_matches;
             use bytes::{BufMut, Bytes, BytesMut};
+            use std::assert_matches;
 
             use super::{TestDeserializeError, deserialize, udt_def_with_fields};
             use crate::DeserializeValue;
@@ -2327,7 +2327,7 @@ mod derive_macros_integration {
         }
 
         mod serialize {
-            use assert_matches::assert_matches;
+            use std::assert_matches;
 
             use crate::SerializeRow;
             use crate::deserialize::tests::spec;
@@ -2957,8 +2957,8 @@ mod derive_macros_integration {
         }
 
         mod deserialize {
-            use assert_matches::assert_matches;
             use bytes::Bytes;
+            use std::assert_matches;
 
             use super::{TestDeserializeError, deserialize, spec};
             use crate::DeserializeRow;

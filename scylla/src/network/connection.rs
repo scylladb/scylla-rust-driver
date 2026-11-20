@@ -2447,11 +2447,11 @@ mod tests {
     };
     use crate::frame::types;
     use crate::serialize::row::SerializedValues;
-    use assert_matches::assert_matches;
     use scylla_proxy::{
         Condition, Node, Proxy, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction,
         RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, WorkerError,
     };
+    use std::assert_matches;
 
     use bytes::Bytes;
     use tokio::select;

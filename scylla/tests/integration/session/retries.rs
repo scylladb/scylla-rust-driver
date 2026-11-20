@@ -2,7 +2,6 @@ use crate::utils::{
     CapturingRetryPolicy, PerformDDL, fetch_negotiated_features, setup_tracing,
     test_with_3_node_cluster, unique_keyspace_name,
 };
-use assert_matches::assert_matches;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -11,6 +10,7 @@ use scylla::policies::retry::{DowngradingConsistencyRetryPolicy, FallthroughRetr
 use scylla::policies::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::statement::Consistency;
 use scylla::statement::unprepared::Statement;
+use std::assert_matches;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;

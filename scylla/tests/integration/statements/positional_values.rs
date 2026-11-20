@@ -9,11 +9,11 @@
 //! All the cases are in one `#[tokio::test]`. They share one session and one
 //! keyspace. Thus, the shared cluster does not get one keyspace for each case.
 
-use assert_matches::assert_matches;
 use scylla::client::session::Session;
 use scylla::serialize::SerializationError;
 use scylla::serialize::row::{BuiltinTypeCheckError, BuiltinTypeCheckErrorKind};
 use scylla::value::MaybeUnset;
+use std::assert_matches;
 
 use crate::entry_point::EntryPoint;
 

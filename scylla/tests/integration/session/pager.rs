@@ -7,7 +7,6 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-use assert_matches::assert_matches;
 use futures::{StreamExt as _, TryStreamExt as _};
 use scylla::statement::Consistency;
 use scylla::{
@@ -30,6 +29,7 @@ use scylla_proxy::{
     Condition, ProxyError, Reaction as _, RequestFrame, RequestOpcode, RequestReaction,
     RequestRule, ResponseFrame, WorkerError, example_db_errors,
 };
+use std::assert_matches;
 use tracing::info;
 
 use crate::utils::{
