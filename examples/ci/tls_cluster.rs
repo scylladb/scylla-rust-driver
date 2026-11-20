@@ -27,7 +27,7 @@ use std::path::Path;
 ///
 /// The cluster is destroyed when this value is dropped, so keep it alive for as
 /// long as you use the session.
-pub struct CiTlsCluster {
+pub(crate) struct CiTlsCluster {
     cluster: Cluster,
     ca: CertifiedIssuer<'static, KeyPair>,
 }
@@ -37,18 +37,18 @@ impl CiTlsCluster {
     ///
     /// A client has to trust it in order to complete the TLS handshake; this is
     /// the CI equivalent of the `ca.crt` file you would ship to your clients.
-    pub fn ca_cert_der(&self) -> &[u8] {
+    pub(crate) fn ca_cert_der(&self) -> &[u8] {
         self.ca.der()
     }
 
     /// A [`SessionBuilder`] already pointed at the cluster's contact points.
-    pub async fn session_builder(&self) -> SessionBuilder {
+    pub(crate) async fn session_builder(&self) -> SessionBuilder {
         self.cluster.make_session_builder().await
     }
 }
 
 /// Starts a one-node cluster named `cluster_name` with client encryption enabled.
-pub async fn start(cluster_name: &str) -> Result<CiTlsCluster> {
+pub(crate) async fn start(cluster_name: &str) -> Result<CiTlsCluster> {
     // The certificate authority that vouches for every node in the cluster.
     let ca = CertifiedIssuer::self_signed(authority_cert_params()?, KeyPair::generate()?)
         .context("failed to create the CA certificate")?;
