@@ -201,6 +201,11 @@ fn read_array<const N: usize>(buf: &mut &[u8]) -> Result<[u8; N], std::io::Error
     Ok(*bytes)
 }
 
+pub(crate) fn read_byte(buf: &mut &[u8]) -> Result<u8, std::io::Error> {
+    let [byte] = read_array(buf)?;
+    Ok(byte)
+}
+
 pub fn read_int(buf: &mut &[u8]) -> Result<i32, std::io::Error> {
     read_array(buf).map(i32::from_be_bytes)
 }
