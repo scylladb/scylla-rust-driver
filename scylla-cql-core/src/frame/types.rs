@@ -1,6 +1,5 @@
 //! CQL binary protocol in-wire types.
 
-use byteorder::{BigEndian, ReadBytesExt};
 use bytes::BufMut;
 
 use crate::frame::frame_errors::LowLevelDeserializationError;
@@ -291,7 +290,7 @@ pub(crate) fn unsigned_vint_encode(v: u64, buf: &mut impl BufMut) {
 }
 
 pub(crate) fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, std::io::Error> {
-    let first_byte = buf.read_u8()?;
+    let first_byte = read_byte(buf)?;
     let extra_bytes = first_byte.leading_ones() as usize;
 
     let mut v = if extra_bytes != 8 {
@@ -301,9 +300,12 @@ pub(crate) fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, std::io::Erro
         0
     };
 
-    if extra_bytes != 0 {
-        v += buf.read_uint::<BigEndian>(extra_bytes)?;
-    }
+    let extra = buf
+        .split_off(..extra_bytes)
+        .ok_or(std::io::ErrorKind::UnexpectedEof)?;
+    let mut be_bytes = [0; 8];
+    be_bytes[8 - extra_bytes..].copy_from_slice(extra);
+    v += u64::from_be_bytes(be_bytes);
 
     Ok(v)
 }
