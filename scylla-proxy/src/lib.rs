@@ -8,12 +8,15 @@ mod proxy_protocol;
 pub type TargetShard = u16;
 
 pub use actions::{
-    Action, Condition, Reaction, RequestReaction, RequestRule, ResponseReaction, ResponseRule,
-    example_db_errors,
+    Action, Condition, Reaction, RequestReaction, RequestRule, ResponseForger, ResponseReaction,
+    ResponseRule, example_db_errors,
 };
-pub use errors::{DoorkeeperError, ForgedRowsError, ProxyError, WorkerError};
-pub use frame::{RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode};
-pub use proxy::{Node, Proxy, RunningProxy, ShardAwareness, TransportFactory};
+pub use errors::{DoorkeeperError, ForgedRowsError, ProxyError, ReadFrameError, WorkerError};
+pub use frame::{FrameParams, RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode};
+pub use proxy::{
+    Node, NodeBuilder, Proxy, ProxyBuilder, RunningNode, RunningProxy, ShardAwareness,
+    TransportFactory,
+};
 
 pub use proxy::get_exclusive_local_address;
 
