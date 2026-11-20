@@ -123,7 +123,7 @@ async fn test_custom_metadata_timeouts() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let (feedback_tx, mut feedback_rx) = mpsc::unbounded_channel();
 
             // This rule feeds back all QUERY and PREPARE requests that are executed

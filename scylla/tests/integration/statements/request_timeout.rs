@@ -21,7 +21,7 @@ async fn test_request_timeout() {
 
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let short_timeout = Duration::from_millis(1);
             let very_long_timeout = Duration::from_secs(10000);
             let query_str = "SELECT host_id FROM system.local WHERE key='local'";

@@ -252,7 +252,7 @@ async fn consistency_is_correctly_set_in_cql_requests() {
     let features = fetch_negotiated_features(None).await;
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let request_rule = |tx| {
                 RequestRule(
                     Condition::and(

@@ -76,7 +76,7 @@ async fn metadata_fetch_completes_despite_event_flood() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map.clone()))
@@ -155,7 +155,7 @@ async fn session_build_completes_despite_event_flood() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             // Stall every metadata query on the control connection from the
             // very start: the session's initial fetch is the one under test.
             let (fetch_started_tx, mut fetch_started_rx) = mpsc::unbounded_channel();
@@ -228,7 +228,7 @@ async fn cc_reestablishment_completes_despite_event_flood() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map.clone()))

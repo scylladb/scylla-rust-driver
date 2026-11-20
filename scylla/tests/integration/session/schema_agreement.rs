@@ -144,7 +144,7 @@ async fn test_schema_await_with_unreachable_node() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let builder = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map.clone()))
@@ -234,7 +234,7 @@ async fn test_schema_await_with_transient_failure() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             // DB preparation phase
             let builder = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
@@ -312,7 +312,7 @@ async fn test_schema_await_required_host_absent() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             // DB preparation phase
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
@@ -423,7 +423,7 @@ async fn test_schema_await_with_various_apis() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             // DB preparation phase
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())

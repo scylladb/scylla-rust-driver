@@ -124,7 +124,7 @@ async fn test_prepare_query_with_values() {
     // unprepared query with non empty values should be prepared
     const TIMEOUT_PER_REQUEST: Duration = Duration::from_millis(1000);
 
-    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, async move |proxy_uris, translation_map, mut running_proxy| {
         // DB preparation phase
         let session: Session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
@@ -176,7 +176,7 @@ async fn test_query_with_no_values() {
     // unprepared query with empty values should not be prepared
     const TIMEOUT_PER_REQUEST: Duration = Duration::from_millis(1000);
 
-    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, async move |proxy_uris, translation_map, mut running_proxy| {
         // DB preparation phase
         let session: Session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())

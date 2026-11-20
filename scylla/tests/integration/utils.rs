@@ -163,14 +163,10 @@ pub(crate) fn unique_keyspace_name() -> String {
     name
 }
 
-pub(crate) async fn test_with_3_node_cluster<F, Fut>(
+pub(crate) async fn test_with_3_node_cluster(
     shard_awareness: ShardAwareness,
-    test: F,
-) -> Result<(), ProxyError>
-where
-    F: FnOnce([String; 3], HashMap<SocketAddr, SocketAddr>, RunningProxy) -> Fut,
-    Fut: Future<Output = RunningProxy>,
-{
+    test: impl AsyncFnOnce([String; 3], HashMap<SocketAddr, SocketAddr>, RunningProxy) -> RunningProxy,
+) -> Result<(), ProxyError> {
     let real1_uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
     let proxy1_uri = format!("{}:9042", scylla_proxy::get_exclusive_local_address());
     let real2_uri = env::var("SCYLLA_URI2").unwrap_or_else(|_| "172.42.0.3:9042".to_string());

@@ -284,7 +284,7 @@ async fn test_insert_sends_empty_result_metadata_id() {
 
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map.clone()))
@@ -389,7 +389,7 @@ async fn test_basic_metadata_update() {
 
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, running_proxy| async move {
+        async move |proxy_uris, translation_map, running_proxy| {
             perform_test_for_proxy(&proxy_uris, &translation_map, running_proxy, |_| (), |_| ())
                 .await
         },
@@ -419,7 +419,7 @@ async fn test_mixed_cluster() {
 
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             // Disable the extension on node 0
             running_proxy.running_nodes[0].change_response_rules(Some(vec![ResponseRule(
                 ResponseOpcode(scylla_proxy::ResponseOpcode::Supported),

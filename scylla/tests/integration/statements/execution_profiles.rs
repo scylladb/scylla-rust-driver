@@ -123,7 +123,7 @@ impl<const NODE: u8> SpeculativeExecutionPolicy for BoundToPredefinedNodePolicy<
 #[tokio::test]
 async fn test_execution_profiles() {
     setup_tracing();
-    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, async move |proxy_uris, translation_map, mut running_proxy| {
 
         let (routing_tx, mut profile_rx) = mpsc::unbounded_channel();
         let (consistency_tx, mut consistency_rx) = mpsc::unbounded_channel();
