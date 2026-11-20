@@ -393,7 +393,7 @@ impl Metrics {
 
             // A single quantile was requested, so there is exactly one entry.
             Ok(Some(qr)) => match qr.entries().values().next() {
-                Some(bucket) => Ok((bucket.start() + bucket.end()) / 2),
+                Some(bucket) => Ok(bucket.start().midpoint(bucket.end())),
                 None => Err(MetricsError::Empty),
             },
         }
@@ -562,7 +562,7 @@ impl Metrics {
         let mut count = 0_u128;
 
         for bucket in h {
-            let mid = ((bucket.start() + bucket.end()) / 2) as u128;
+            let mid = bucket.start().midpoint(bucket.end()) as u128;
             weighted_sum += mid * bucket.count() as u128;
             count += bucket.count() as u128;
         }
@@ -592,7 +592,7 @@ impl Metrics {
                 .entries()
                 .values()
                 // Get the mean value from the bucket.
-                .map(|bucket| (bucket.start() + bucket.end()) / 2)
+                .map(|bucket| bucket.start().midpoint(bucket.end()))
                 // https://github.com/iopsystems/histogram/issues/23
                 // Until `into_entries` is added, we need this additional Vec.
                 // https://github.com/iopsystems/histogram/pull/24
@@ -611,7 +611,7 @@ impl Metrics {
         let mut variance_sum = 0;
         for bucket in h {
             let count = bucket.count() as u128;
-            let mid = ((bucket.start() + bucket.end()) / 2) as u128;
+            let mid = bucket.start().midpoint(bucket.end()) as u128;
 
             variance_sum += count * (mid as i128 - mean as i128).pow(2) as u128;
         }
