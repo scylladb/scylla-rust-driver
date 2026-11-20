@@ -1,3 +1,6 @@
+//! Shows how to send your own types as statement values, by implementing
+//! `SerializeValue` or deriving `SerializeRow`.
+
 use anyhow::Result;
 use futures::StreamExt;
 use scylla::client::session::Session;

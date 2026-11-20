@@ -1,3 +1,6 @@
+//! Shows how to enable speculative execution, which applies only to
+//! idempotent statements.
+
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;

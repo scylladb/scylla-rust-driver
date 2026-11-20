@@ -1,3 +1,6 @@
+//! Shows how to configure requests with execution profiles, set on sessions
+//! and on statements.
+
 use anyhow::Result;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::{Session, SessionConfig};

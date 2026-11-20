@@ -1,3 +1,5 @@
+//! A minimal interactive CQL shell, with completion of CQL keywords.
+
 use anyhow::Result;
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
