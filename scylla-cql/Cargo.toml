@@ -16,15 +16,8 @@ all-features = true
 [package.metadata.cargo-semver-checks.lints]
 workspace = true
 
-[lints.rust]
-unnameable_types = "warn"
-unreachable_pub = "warn"
-unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(scylla_unstable)',
-] }
-
-[lints.clippy]
-allow_attributes = "warn"
+[lints]
+workspace = true
 
 [[bench]]
 name = "benchmark"

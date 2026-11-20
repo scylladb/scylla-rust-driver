@@ -21,13 +21,8 @@ syn = "3.0"
 quote = "1.0"
 proc-macro2 = "1.0"
 
-[lints.rust]
-unnameable_types = "warn"
-unreachable_pub = "warn"
-missing_docs = "warn"
-
-[lints.clippy]
-allow_attributes = "warn"
+[lints]
+workspace = true
 
 [dev-dependencies]
 scylla = { path = "../scylla" }

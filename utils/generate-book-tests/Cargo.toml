@@ -7,3 +7,6 @@ license = "MIT OR Apache-2.0"
 
 [package.metadata.cargo-semver-checks.lints]
 workspace = true
+
+[lints]
+workspace = true

@@ -9,12 +9,8 @@ readme = "../README.md"
 license = "MIT OR Apache-2.0"
 publish = false
 
-[lints.rust]
-unreachable_pub = "warn"
-missing_docs = "warn"
-
-[lints.clippy]
-allow_attributes = "warn"
+[lints]
+workspace = true
 
 [features]
 default = []

@@ -17,17 +17,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 [package.metadata.cargo-semver-checks.lints]
 workspace = true
 
-[lints.rust]
-unnameable_types = "warn"
-unreachable_pub = "warn"
-missing_docs = "warn"
-unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(scylla_unstable)',
-    'cfg(cassandra_tests)',
-] }
-
-[lints.clippy]
-allow_attributes = "warn"
+[lints]
+workspace = true
 
 [[bench]]
 name = "benchmark"

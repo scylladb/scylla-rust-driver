@@ -152,3 +152,6 @@ path = "user_defined_type.rs"
 
 [package.metadata.cargo-semver-checks.lints]
 workspace = true
+
+[lints]
+workspace = true
