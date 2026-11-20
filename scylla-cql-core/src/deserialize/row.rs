@@ -165,6 +165,7 @@ make_error_replace_rust_name!(
     /// - It should be called **before** the error is cloned, as it attempts to mutably access
     ///   the inner error stored in `Arc`; if the `Arc` has already been cloned,
     ///   a new [`BuiltinTypeCheckError`] will be allocated with the updated name instead.
+    #[expect(clippy::needless_pub_self)]
     pub(self),
     _typck_error_replace_rust_name,
     TypeCheckError,
