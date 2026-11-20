@@ -145,7 +145,7 @@ impl EntryPoint {
         }
     }
 
-    fn paging_mode(self) -> PagingMode {
+    pub(crate) fn paging_mode(self) -> PagingMode {
         match self {
             EntryPoint::QueryUnpaged | EntryPoint::ExecuteUnpaged => PagingMode::Unpaged,
             EntryPoint::QueryIter | EntryPoint::ExecuteIter => PagingMode::Iter,
@@ -251,6 +251,19 @@ impl SendError {
             ),
         };
         assert_matches!(&db_error, (DbError::Invalid, message) if message.contains(substring));
+    }
+
+    /// Asserts that the session rejected the request because the session is
+    /// shut down.
+    pub(crate) fn assert_is_session_shut_down(self, entry_point: EntryPoint) {
+        match self {
+            SendError::Execution(ExecutionError::SessionShutDown(_))
+            | SendError::Pager(PagerExecutionError::SessionShutDown(_)) => {}
+            other => panic!(
+                "{} failed with an unexpected error: {other:?}",
+                entry_point.name()
+            ),
+        }
     }
 
     /// Returns the schema agreement error in this failure.
