@@ -24,7 +24,9 @@ pub const UDT_FIELDS: usize = 64;
 
 /// A Rust value together with the CQL type it is (de)serialized as.
 pub struct TypedValue<V> {
+    /// The CQL type that `value` is (de)serialized as.
     pub typ: ColumnType<'static>,
+    /// The Rust value.
     pub value: V,
 }
 
