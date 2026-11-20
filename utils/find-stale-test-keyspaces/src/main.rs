@@ -1,3 +1,6 @@
+//! Prints the schema of every keyspace left behind by the driver's tests
+//! (named `test_rust_*`), and fails if there are any.
+
 use futures::{StreamExt, stream};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
