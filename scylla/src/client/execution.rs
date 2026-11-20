@@ -461,7 +461,7 @@ impl<'a, F> Request<'a, F> {
                         iter: std::sync::Mutex::new(request_plan),
                     };
 
-                    let request_runner_generator = |is_speculative: bool| {
+                    let request_runner_generator = async |is_speculative: bool| {
                         let history_data: Option<HistoryData> =
                             history_listener_and_id.map(|(listener, request_id)| {
                                 let speculative_id: Option<history::SpeculativeId> = is_speculative
@@ -481,15 +481,10 @@ impl<'a, F> Request<'a, F> {
                             retry_session: None,
                             history_data,
                         };
-                        let request_plan = &shared_request_plan;
-                        // The returned future has to own the context, which the fiber
-                        // only borrows, so it is an `async move` block holding it.
                         // Passed to the fiber by value, the context would be stored
                         // twice in the fiber's future.
-                        async move {
-                            self.run_request_speculative_fiber(request_plan, &mut context)
-                                .await
-                        }
+                        self.run_request_speculative_fiber(&shared_request_plan, &mut context)
+                            .await
                     };
 
                     let context = speculative_execution::Context {
