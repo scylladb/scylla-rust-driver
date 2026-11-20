@@ -343,6 +343,60 @@ macro_rules! test_crate {
             #[scylla(default_when_null)]
             d: ::core::primitive::i32,
         }
+
+        #[derive(
+            _scylla::DeserializeRow,
+            _scylla::SerializeRow,
+            _scylla::DeserializeValue,
+            _scylla::SerializeValue,
+            Debug,
+            PartialEq,
+        )]
+        #[scylla(crate = _scylla)]
+        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.89
+        struct GenericStruct<'a, T: 'a>
+        {
+            a: &'a str,
+            field: T,
+        }
+
+        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.89
+        trait MyTrait {}
+
+        #[derive(
+            _scylla::DeserializeRow,
+            _scylla::SerializeRow,
+            _scylla::DeserializeValue,
+            _scylla::SerializeValue,
+            Debug,
+            PartialEq,
+        )]
+        #[scylla(crate = _scylla)]
+        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.89
+        struct GenericStructConstrained<'a, T: MyTrait + 'a>
+        {
+            a: &'a str,
+            field: T,
+        }
+
+        #[derive(
+            _scylla::DeserializeRow,
+            _scylla::SerializeRow,
+            _scylla::DeserializeValue,
+            _scylla::SerializeValue,
+            Debug,
+            PartialEq,
+        )]
+        #[scylla(crate = _scylla)]
+        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.89
+        struct GenericStructWhereConstrained<'a, T: 'a>
+        where
+            T: MyTrait + 'a,
+        {
+            a: &'a str,
+            field: T,
+        }
+
     };
 }
 
