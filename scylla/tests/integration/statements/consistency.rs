@@ -141,19 +141,13 @@ async fn batch_consistency_set_on_exec_profile(
 // (directly on statement, on per-statement exec profile, on default per-session exec profile)
 // performs a request and calls `check_consistencies()` asserting function with `rx`, which is a generic way
 // of input for assertions.
-// `check_consistencies()` does not simply use &mut Rx, because then we enter the atrocious world of higher-order lifetimes
-// whose validity the compiler can not yet prove.
-async fn check_for_all_consistencies_and_setting_options<
-    Fut1: std::future::Future<Output = Rx>,
-    Fut2: std::future::Future<Output = Rx>,
-    Rx,
->(
+async fn check_for_all_consistencies_and_setting_options<Rx>(
     session_builder: SessionBuilder,
     base_for_every_profile: ExecutionProfileBuilder,
     ks: &str,
     mut rx: Rx,
-    after_session_init: impl Fn(Rx) -> Fut1,
-    check_consistencies: impl Fn(Consistency, Option<SerialConsistency>, Rx) -> Fut2,
+    after_session_init: impl AsyncFn(&mut Rx),
+    check_consistencies: impl AsyncFn(Consistency, Option<SerialConsistency>, &mut Rx),
 ) {
     let session = session_builder
         .clone()
@@ -162,7 +156,7 @@ async fn check_for_all_consistencies_and_setting_options<
         .await
         .unwrap();
     session.use_keyspace(ks, false).await.unwrap();
-    rx = after_session_init(rx).await;
+    after_session_init(&mut rx).await;
 
     // We will be using these requests:
     let query = Statement::from(QUERY_STR);
@@ -178,16 +172,16 @@ async fn check_for_all_consistencies_and_setting_options<
 
         // Set directly
         query_consistency_set_directly(&session, &query, consistency, serial_consistency).await;
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
 
         execute_consistency_set_directly(&session, &prepared, consistency, serial_consistency)
             .await;
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
 
         batch_consistency_set_directly(&session, &batch, consistency, serial_consistency).await;
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
 
         // Set on an exec profile
         let handle = base_for_every_profile
@@ -197,15 +191,15 @@ async fn check_for_all_consistencies_and_setting_options<
             .build()
             .into_handle();
         query_consistency_set_on_exec_profile(&session, &query, handle.clone()).await;
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
 
         execute_consistency_set_on_exec_profile(&session, &prepared, handle.clone()).await;
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
 
         batch_consistency_set_on_exec_profile(&session, &batch, handle.clone()).await;
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
 
         // Set on session's default exec profile
         let session_with_consistencies = session_builder
@@ -218,35 +212,35 @@ async fn check_for_all_consistencies_and_setting_options<
             .use_keyspace(ks, true)
             .await
             .unwrap();
-        rx = after_session_init(rx).await;
+        after_session_init(&mut rx).await;
 
         session_with_consistencies
             .query_unpaged(QUERY_STR, (1,))
             .await
             .unwrap();
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
         session_with_consistencies
             .query_iter(QUERY_STR, (1,))
             .await
             .unwrap();
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
 
         session_with_consistencies
             .execute_unpaged(&prepared, (1,))
             .await
             .unwrap();
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
         session_with_consistencies
             .execute_iter(prepared.clone(), (1,))
             .await
             .unwrap();
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
 
         session_with_consistencies
             .batch(&batch, ((1,),))
             .await
             .unwrap();
-        rx = check_consistencies(consistency, serial_consistency, rx).await;
+        check_consistencies(consistency, serial_consistency, &mut rx).await;
     }
 }
 
@@ -300,27 +294,27 @@ async fn consistency_is_correctly_set_in_cql_requests() {
                 running_node.change_request_rules(Some(vec![request_rule(request_tx.clone())]));
             }
 
-            let check_consistencies =
-                async |consistency: Consistency,
-                       serial_consistency: Option<SerialConsistency>,
-                       mut request_rx: UnboundedReceiver<(RequestFrame, Option<TargetShard>)>|
-                       -> UnboundedReceiver<(RequestFrame, Option<TargetShard>)> {
-                    let (request_frame, _shard) = request_rx.recv().await.unwrap();
-                    let deserialized_request = request_frame.deserialize(&features).unwrap();
-                    assert_eq!(deserialized_request.get_consistency().unwrap(), consistency);
-                    assert_eq!(
-                        deserialized_request.get_serial_consistency().unwrap(),
-                        serial_consistency
-                    );
-                    request_rx
-                };
+            let check_consistencies = async |consistency: Consistency,
+                                             serial_consistency: Option<SerialConsistency>,
+                                             request_rx: &mut UnboundedReceiver<(
+                RequestFrame,
+                Option<TargetShard>,
+            )>| {
+                let (request_frame, _shard) = request_rx.recv().await.unwrap();
+                let deserialized_request = request_frame.deserialize(&features).unwrap();
+                assert_eq!(deserialized_request.get_consistency().unwrap(), consistency);
+                assert_eq!(
+                    deserialized_request.get_serial_consistency().unwrap(),
+                    serial_consistency
+                );
+            };
 
             check_for_all_consistencies_and_setting_options(
                 session_builder,
                 fallthrough_exec_profile_builder,
                 &ks,
                 request_rx,
-                |rx| async move { rx },
+                async |_| {},
                 check_consistencies,
             )
             .await;
@@ -440,23 +434,19 @@ async fn consistency_is_correctly_set_in_routing_info() {
         .keepalive_interval(Duration::from_secs(10000))
         .default_execution_profile_handle(exec_profile_builder.clone().build().into_handle());
 
-    async fn on_session_init(
-        mut routing_info_rx: UnboundedReceiver<OwnedRoutingInfo>,
-    ) -> UnboundedReceiver<OwnedRoutingInfo> {
+    async fn on_session_init(routing_info_rx: &mut UnboundedReceiver<OwnedRoutingInfo>) {
         // Clear RoutingInfo got from DB preparation (keyspace & table creation)
         while routing_info_rx.try_recv().is_ok() {}
-        routing_info_rx
     }
 
     async fn check_consistencies(
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-        mut routing_info_rx: UnboundedReceiver<OwnedRoutingInfo>,
-    ) -> UnboundedReceiver<OwnedRoutingInfo> {
+        routing_info_rx: &mut UnboundedReceiver<OwnedRoutingInfo>,
+    ) {
         let info = routing_info_rx.recv().await.unwrap();
         assert_eq!(info.consistency, consistency);
         assert_eq!(info.serial_consistency, serial_consistency);
-        routing_info_rx
     }
 
     let schema_session = session_builder.build().await.unwrap();
