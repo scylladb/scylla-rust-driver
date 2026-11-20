@@ -1,5 +1,4 @@
 use bytes::{Bytes, BytesMut};
-use futures::Future;
 use futures::future::try_join_all;
 use itertools::Either;
 use scylla::client::caching_session::CachingSession;

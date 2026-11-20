@@ -12,7 +12,6 @@ use scylla_cql::frame::types::read_string_multimap;
 use std::collections::HashMap;
 use std::env::VarError;
 use std::fmt::Display;
-use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};

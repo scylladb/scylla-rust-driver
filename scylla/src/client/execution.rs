@@ -23,7 +23,6 @@
 //! access to session state. An analogous side-effects-handling layer lives
 //! [`PagingExecutor`](crate::client::pager::PagingExecutor).
 
-use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;

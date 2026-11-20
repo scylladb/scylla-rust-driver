@@ -26,7 +26,6 @@ use scylla_proxy::{
 };
 
 use std::collections::HashSet;
-use std::future::Future;
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::{self, UnboundedReceiver};

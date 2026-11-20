@@ -9,7 +9,7 @@ use futures::{
 };
 #[cfg(feature = "metrics")]
 use std::sync::Arc;
-use std::{future::Future, time::Duration};
+use std::time::Duration;
 use tracing::{Instrument, trace_span};
 
 use crate::errors::{RequestAttemptError, RequestError};

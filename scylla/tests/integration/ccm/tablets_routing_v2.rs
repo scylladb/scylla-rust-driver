@@ -13,8 +13,8 @@ use std::net::SocketAddr;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
+use futures::FutureExt;
 use futures::future::try_join_all;
-use futures::{Future, FutureExt};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::metadata::{CollectionType, ColumnType, NativeType};

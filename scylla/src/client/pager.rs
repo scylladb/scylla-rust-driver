@@ -3,7 +3,6 @@
 //! which abstracts over page boundaries.
 
 use std::cell::OnceCell;
-use std::future::Future;
 use std::ops::ControlFlow;
 use std::pin::Pin;
 use std::sync::Arc;
