@@ -395,14 +395,14 @@ fn type_string_multimap() {
 }
 
 pub fn read_uuid(buf: &mut &[u8]) -> Result<Uuid, LowLevelDeserializationError> {
-    let raw = read_raw_bytes(16, buf)?;
-
-    // It's safe to unwrap here because the conversion only fails
-    // if the argument slice's length does not match, which
-    // `read_raw_bytes` prevents.
-    let raw_array: &[u8; 16] = raw.try_into().unwrap();
-
-    Ok(Uuid::from_bytes(*raw_array))
+    let Some((raw, rest)) = buf.split_first_chunk() else {
+        return Err(LowLevelDeserializationError::TooFewBytesReceived {
+            expected: 16,
+            received: buf.len(),
+        });
+    };
+    *buf = rest;
+    Ok(Uuid::from_bytes(*raw))
 }
 
 pub fn write_uuid(uuid: &Uuid, buf: &mut impl BufMut) {
