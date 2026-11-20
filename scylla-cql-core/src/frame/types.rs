@@ -192,9 +192,17 @@ pub fn read_short_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], LowLevelDese
     Ok(v)
 }
 
+/// Reads `N` bytes, advancing the buffer past them.
+fn read_array<const N: usize>(buf: &mut &[u8]) -> Result<[u8; N], std::io::Error> {
+    let (bytes, rest) = buf
+        .split_first_chunk()
+        .ok_or(std::io::ErrorKind::UnexpectedEof)?;
+    *buf = rest;
+    Ok(*bytes)
+}
+
 pub fn read_int(buf: &mut &[u8]) -> Result<i32, std::io::Error> {
-    let v = buf.read_i32::<BigEndian>()?;
-    Ok(v)
+    read_array(buf).map(i32::from_be_bytes)
 }
 
 pub fn read_int_length(buf: &mut &[u8]) -> Result<usize, LowLevelDeserializationError> {
@@ -218,8 +226,7 @@ pub fn read_bytes_opt<'a>(
 }
 
 pub fn read_short(buf: &mut &[u8]) -> Result<u16, std::io::Error> {
-    let v = buf.read_u16::<BigEndian>()?;
-    Ok(v)
+    read_array(buf).map(u16::from_be_bytes)
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
