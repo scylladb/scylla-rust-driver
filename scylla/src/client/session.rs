@@ -1450,15 +1450,11 @@ impl Session {
         // The policy the connection pools will actually use. Derived here
         // because without the unstable feature the configuration carries no
         // policy at all and a default stands in for it.
-        let reconnect_policy: Arc<dyn ReconnectPolicy> = {
-            #[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
-            {
+        let reconnect_policy: Arc<dyn ReconnectPolicy> = cfg_select! {
+            all(scylla_unstable, feature = "unstable-reconnect-policy") => {
                 Arc::clone(&config.reconnect_policy)
             }
-            #[cfg(not(all(scylla_unstable, feature = "unstable-reconnect-policy")))]
-            {
-                Arc::new(ExponentialReconnectPolicy::new())
-            }
+            _ => Arc::new(ExponentialReconnectPolicy::new()),
         };
 
         let tcp_socket_options = config.tcp_socket_options();
@@ -1527,26 +1523,14 @@ impl Session {
 
         let metrics = Arc::new(Metrics::new());
 
-        let host_listener = {
-            #[cfg(all(scylla_unstable, feature = "unstable-host-listener"))]
-            {
-                config.host_listener
-            }
-            #[cfg(not(all(scylla_unstable, feature = "unstable-host-listener")))]
-            {
-                None
-            }
+        let host_listener = cfg_select! {
+            all(scylla_unstable, feature = "unstable-host-listener") => config.host_listener,
+            _ => None,
         };
 
-        let client_routes_config: Option<ClientRoutesConfig> = {
-            #[cfg(feature = "unstable-client-routes")]
-            {
-                config.client_routes_config
-            }
-            #[cfg(not(feature = "unstable-client-routes"))]
-            {
-                None
-            }
+        let client_routes_config: Option<ClientRoutesConfig> = cfg_select! {
+            feature = "unstable-client-routes" => config.client_routes_config,
+            _ => None,
         };
 
         let schema_metadata_fetch_mode = match (
