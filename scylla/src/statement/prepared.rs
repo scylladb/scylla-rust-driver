@@ -585,8 +585,6 @@ impl PreparedStatement {
     }
 
     /// Update metadata about the result of prepared statement.
-    // Will be used when we implement support for metadata id extension.
-    #[allow(dead_code)]
     pub(crate) fn update_current_result_metadata(
         &self,
         new_metadata: Arc<ResultMetadata<'static>>,

@@ -2,7 +2,7 @@
 name = "scylla-macros"
 version = "1.10.0"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.96"
 description = "proc macros for the ScyllaDB async CQL driver"
 repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"
@@ -25,6 +25,9 @@ proc-macro2 = "1.0"
 unnameable_types = "warn"
 unreachable_pub = "warn"
 missing_docs = "warn"
+
+[lints.clippy]
+allow_attributes = "warn"
 
 [dev-dependencies]
 scylla = { path = "../scylla" }

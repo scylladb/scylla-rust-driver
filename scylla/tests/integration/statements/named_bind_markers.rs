@@ -12,12 +12,12 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use assert_matches::assert_matches;
 use scylla::client::session::Session;
 use scylla::errors::{BadQuery, ExecutionError};
 use scylla::serialize::SerializationError;
 use scylla::serialize::row::{BuiltinTypeCheckError, BuiltinTypeCheckErrorKind};
 use scylla::value::MaybeUnset;
+use std::assert_matches;
 
 use crate::entry_point::EntryPoint;
 use crate::utils::{

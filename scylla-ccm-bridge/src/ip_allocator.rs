@@ -201,9 +201,8 @@ impl IpAllocator {
 
     /// Returns the IP prefix back to the pool of local subnets (127.x.x.x/24).
     pub(super) fn free_ip_prefix(&mut self, ip_prefix: &NetPrefix) -> Result<(), Error> {
-        let ipv4 = match ip_prefix.0 {
-            IpAddr::V4(v4) => v4,
-            _ => return Err(anyhow::anyhow!("Ipv6 addresses are not yet supported!")),
+        let IpAddr::V4(ipv4) = ip_prefix.0 else {
+            return Err(anyhow::anyhow!("Ipv6 addresses are not yet supported!"));
         };
         let subnet_id: LocalSubnetIdentifier = ipv4.into();
         match self {

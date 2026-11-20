@@ -12,7 +12,6 @@ use scylla_cql::frame::types::read_string_multimap;
 use std::collections::HashMap;
 use std::env::VarError;
 use std::fmt::Display;
-use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1331,11 +1330,11 @@ impl ProxyWorker {
         std::mem::drop(self.finish_guard);
     }
 
-    async fn run_until_interrupted<F, Fut>(mut self, worker_name: &'static str, f: F)
-    where
-        F: FnOnce(SocketAddr, SocketAddr, Option<SocketAddr>) -> Fut,
-        Fut: Future<Output = Result<(), ProxyError>>,
-    {
+    async fn run_until_interrupted(
+        mut self,
+        worker_name: &'static str,
+        f: impl AsyncFnOnce(SocketAddr, SocketAddr, Option<SocketAddr>) -> Result<(), ProxyError>,
+    ) {
         let fut = f(self.driver_addr, self.proxy_addr, self.real_addr);
 
         // Biased is necessary here. We have many workers. It is possible
@@ -1370,7 +1369,7 @@ impl ProxyWorker {
         let shard = self.shard;
         self.run_until_interrupted(
             "receiver_from_driver",
-            |driver_addr, proxy_addr, _real_addr| async move {
+            async move |driver_addr, proxy_addr, _real_addr| {
                 loop {
                     let frame = frame::read_request_frame(&mut read_half, &compression)
                         .await
@@ -1408,7 +1407,7 @@ impl ProxyWorker {
         let shard = self.shard;
         self.run_until_interrupted(
             "receiver_from_cluster",
-            |driver_addr, _proxy_addr, real_addr| async move {
+            async move |driver_addr, _proxy_addr, real_addr| {
                 let real_addr = real_addr.expect("BUG: no real_addr in cluster worker");
                 loop {
                     let frame = frame::read_response_frame(&mut read_half, &compression)
@@ -1449,18 +1448,15 @@ impl ProxyWorker {
         let shard = self.shard;
         self.run_until_interrupted(
             "sender_to_driver",
-            |driver_addr, proxy_addr, _real_addr| async move {
+            async move |driver_addr, proxy_addr, _real_addr| {
                 loop {
-                    let response = match responses_rx.recv().await {
-                        Some(response) => response,
-                        None => {
-                            if terminate_notifier.try_recv().is_err()
-                                && connection_close_notifier.try_recv().is_err()
-                            {
-                                warn!("Response processor had exited");
-                            }
-                            return Ok(());
+                    let Some(response) = responses_rx.recv().await else {
+                        if terminate_notifier.try_recv().is_err()
+                            && connection_close_notifier.try_recv().is_err()
+                        {
+                            warn!("Response processor had exited");
                         }
+                        return Ok(());
                     };
 
                     debug!(
@@ -1496,19 +1492,16 @@ impl ProxyWorker {
         let shard = self.shard;
         self.run_until_interrupted(
             "sender_to_cluster",
-            |_driver_addr, proxy_addr, real_addr| async move {
+            async move |_driver_addr, proxy_addr, real_addr| {
                 let real_addr = real_addr.expect("BUG: no real_addr in cluster worker");
                 loop {
-                    let request = match requests_rx.recv().await {
-                        Some(request) => request,
-                        None => {
-                            if terminate_notifier.try_recv().is_err()
-                                && connection_close_notifier.try_recv().is_err()
-                            {
-                                warn!("Request processor had exited");
-                            }
-                            return Ok(());
+                    let Some(request) = requests_rx.recv().await else {
+                        if terminate_notifier.try_recv().is_err()
+                            && connection_close_notifier.try_recv().is_err()
+                        {
+                            warn!("Request processor had exited");
                         }
+                        return Ok(());
                     };
 
                     debug!(
@@ -1551,7 +1544,7 @@ impl ProxyWorker {
         let (driver_addr, real_addr) = (self.driver_addr, self.real_addr);
         let registered = Arc::clone(&event_registered_flag);
         let cc_senders = Arc::clone(&cc_event_sender);
-        self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
+        self.run_until_interrupted("request_processor", async move |driver_addr, _, real_addr| {
             'mainloop: loop {
                 match requests_rx.recv().await {
                     Some(request) => {
@@ -1698,7 +1691,7 @@ impl ProxyWorker {
         event_registered_flag: Arc<AtomicBool>,
     ) {
         let shard = self.shard;
-        self.run_until_interrupted("response_processor", |driver_addr, _, real_addr| async move {
+        self.run_until_interrupted("response_processor", async move |driver_addr, _, real_addr| {
             'mainloop: loop {
                 match responses_rx.recv().await {
                     Some(response) => {
@@ -1876,7 +1869,6 @@ mod tests {
     use crate::{
         Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction, setup_tracing,
     };
-    use assert_matches::assert_matches;
     use bytes::{BufMut, BytesMut};
     use futures::future::{join, join3};
     use rand::RngCore;
@@ -1884,6 +1876,7 @@ mod tests {
     use scylla_cql::frame::request::{SerializableRequest as _, Startup};
     use scylla_cql::frame::types::write_string_multimap;
     use scylla_cql::frame::{Compression, flag};
+    use std::assert_matches;
     use std::collections::HashMap;
     use std::mem;
     use std::str::FromStr;

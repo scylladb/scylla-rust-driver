@@ -2,7 +2,6 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::utils::{PerformDDL, setup_tracing, test_with_3_node_cluster, unique_keyspace_name};
-use assert_matches::assert_matches;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
@@ -15,6 +14,7 @@ use scylla::statement::Consistency;
 use scylla::statement::SerialConsistency;
 use scylla::statement::batch::{Batch, BatchStatement, BatchType};
 use scylla::statement::unprepared::Statement;
+use std::assert_matches;
 use tokio::sync::mpsc;
 
 use scylla_proxy::{
@@ -123,7 +123,7 @@ impl<const NODE: u8> SpeculativeExecutionPolicy for BoundToPredefinedNodePolicy<
 #[tokio::test]
 async fn test_execution_profiles() {
     setup_tracing();
-    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, async move |proxy_uris, translation_map, mut running_proxy| {
 
         let (routing_tx, mut profile_rx) = mpsc::unbounded_channel();
         let (consistency_tx, mut consistency_rx) = mpsc::unbounded_channel();

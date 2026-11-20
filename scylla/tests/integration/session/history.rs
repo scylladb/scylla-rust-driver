@@ -523,7 +523,7 @@ async fn pager_ignore_write_error_history() {
 
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let profile = ExecutionProfile::builder()
                 .retry_policy(Arc::new(IgnoreWriteErrorPolicy))
                 .build()

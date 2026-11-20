@@ -1,6 +1,5 @@
 //! CQL binary protocol in-wire types.
 
-use byteorder::{BigEndian, ReadBytesExt};
 use bytes::BufMut;
 
 use crate::frame::frame_errors::LowLevelDeserializationError;
@@ -192,9 +191,22 @@ pub fn read_short_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], LowLevelDese
     Ok(v)
 }
 
+/// Reads `N` bytes, advancing the buffer past them.
+fn read_array<const N: usize>(buf: &mut &[u8]) -> Result<[u8; N], std::io::Error> {
+    let (bytes, rest) = buf
+        .split_first_chunk()
+        .ok_or(std::io::ErrorKind::UnexpectedEof)?;
+    *buf = rest;
+    Ok(*bytes)
+}
+
+pub(crate) fn read_byte(buf: &mut &[u8]) -> Result<u8, std::io::Error> {
+    let [byte] = read_array(buf)?;
+    Ok(byte)
+}
+
 pub fn read_int(buf: &mut &[u8]) -> Result<i32, std::io::Error> {
-    let v = buf.read_i32::<BigEndian>()?;
-    Ok(v)
+    read_array(buf).map(i32::from_be_bytes)
 }
 
 pub fn read_int_length(buf: &mut &[u8]) -> Result<usize, LowLevelDeserializationError> {
@@ -218,8 +230,7 @@ pub fn read_bytes_opt<'a>(
 }
 
 pub fn read_short(buf: &mut &[u8]) -> Result<u16, std::io::Error> {
-    let v = buf.read_u16::<BigEndian>()?;
-    Ok(v)
+    read_array(buf).map(u16::from_be_bytes)
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -279,7 +290,7 @@ pub(crate) fn unsigned_vint_encode(v: u64, buf: &mut impl BufMut) {
 }
 
 pub(crate) fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, std::io::Error> {
-    let first_byte = buf.read_u8()?;
+    let first_byte = read_byte(buf)?;
     let extra_bytes = first_byte.leading_ones() as usize;
 
     let mut v = if extra_bytes != 8 {
@@ -289,9 +300,12 @@ pub(crate) fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, std::io::Erro
         0
     };
 
-    if extra_bytes != 0 {
-        v += buf.read_uint::<BigEndian>(extra_bytes)?;
-    }
+    let extra = buf
+        .split_off(..extra_bytes)
+        .ok_or(std::io::ErrorKind::UnexpectedEof)?;
+    let mut be_bytes = [0; 8];
+    be_bytes[8 - extra_bytes..].copy_from_slice(extra);
+    v += u64::from_be_bytes(be_bytes);
 
     Ok(v)
 }

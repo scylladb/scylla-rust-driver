@@ -3,7 +3,6 @@
 //! which abstracts over page boundaries.
 
 use std::cell::OnceCell;
-use std::future::Future;
 use std::ops::ControlFlow;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -832,7 +831,7 @@ mod slot_channel {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::task::{Context, Poll, Wake, Waker};
 
-        use assert_matches::assert_matches;
+        use std::assert_matches;
 
         use super::{ReceiverDropped, slot_channel};
 
@@ -1543,7 +1542,7 @@ where
     RowT: for<'frame, 'metadata> DeserializeRow<'frame, 'metadata>,
 {
     fn new(raw_stream: QueryPager) -> Result<Self, TypeCheckError> {
-        #[allow(deprecated)] // In TypedRowStream we take care to type check each page.
+        #[expect(deprecated)] // In TypedRowStream we take care to type check each page.
         raw_stream.type_check::<RowT>()?;
 
         Ok(Self {

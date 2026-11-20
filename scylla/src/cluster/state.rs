@@ -1042,7 +1042,7 @@ mod tests {
     use crate::policies::host_filter::HostFilter;
     use crate::routing::locator::tablets::RawTablet;
     use crate::test_utils::setup_tracing;
-    use assert_matches::assert_matches;
+    use std::assert_matches;
 
     use std::collections::{HashMap, HashSet};
     use std::net::SocketAddr;

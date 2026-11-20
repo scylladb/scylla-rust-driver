@@ -1,6 +1,5 @@
 //! CQL protocol-level error types.
 
-use byteorder::ReadBytesExt;
 use bytes::Bytes;
 use thiserror::Error;
 
@@ -77,8 +76,7 @@ impl Error {
                     .map_err(|err| make_error_field_err("READ_TIMEOUT", "RECEIVED", err))?,
                 required: types::read_int(buf)
                     .map_err(|err| make_error_field_err("READ_TIMEOUT", "REQUIRED", err))?,
-                data_present: buf
-                    .read_u8()
+                data_present: types::read_byte(buf)
                     .map_err(|err| make_error_field_err("READ_TIMEOUT", "DATA_PRESENT", err))?
                     != 0,
             },
@@ -91,8 +89,7 @@ impl Error {
                     .map_err(|err| make_error_field_err("READ_FAILURE", "REQUIRED", err))?,
                 numfailures: types::read_int(buf)
                     .map_err(|err| make_error_field_err("READ_FAILURE", "NUM_FAILURES", err))?,
-                data_present: buf
-                    .read_u8()
+                data_present: types::read_byte(buf)
                     .map_err(|err| make_error_field_err("READ_FAILURE", "DATA_PRESENT", err))?
                     != 0,
             },
@@ -141,10 +138,10 @@ impl Error {
             },
             code if Some(code) == features.rate_limit_error => {
                 DbError::RateLimitReached {
-                    op_type: OperationType::from(buf.read_u8().map_err(|err| {
+                    op_type: OperationType::from(types::read_byte(buf).map_err(|err| {
                         make_error_field_err("RATE_LIMIT_REACHED", "OP_TYPE", err)
                     })?),
-                    rejected_by_coordinator: buf.read_u8().map_err(|err| {
+                    rejected_by_coordinator: types::read_byte(buf).map_err(|err| {
                         make_error_field_err("RATE_LIMIT_REACHED", "REJECTED_BY_COORDINATOR", err)
                     })? != 0,
                 }

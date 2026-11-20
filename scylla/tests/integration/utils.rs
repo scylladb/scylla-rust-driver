@@ -1,5 +1,4 @@
 use bytes::{Bytes, BytesMut};
-use futures::Future;
 use futures::future::try_join_all;
 use itertools::Either;
 use scylla::client::caching_session::CachingSession;
@@ -164,14 +163,10 @@ pub(crate) fn unique_keyspace_name() -> String {
     name
 }
 
-pub(crate) async fn test_with_3_node_cluster<F, Fut>(
+pub(crate) async fn test_with_3_node_cluster(
     shard_awareness: ShardAwareness,
-    test: F,
-) -> Result<(), ProxyError>
-where
-    F: FnOnce([String; 3], HashMap<SocketAddr, SocketAddr>, RunningProxy) -> Fut,
-    Fut: Future<Output = RunningProxy>,
-{
+    test: impl AsyncFnOnce([String; 3], HashMap<SocketAddr, SocketAddr>, RunningProxy) -> RunningProxy,
+) -> Result<(), ProxyError> {
     let real1_uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
     let proxy1_uri = format!("{}:9042", scylla_proxy::get_exclusive_local_address());
     let real2_uri = env::var("SCYLLA_URI2").unwrap_or_else(|_| "172.42.0.3:9042".to_string());
@@ -557,14 +552,10 @@ pub(crate) fn calculate_proxy_host_ids(
     host_ids
 }
 
-async fn for_each_target_execute<T, ExecuteFn, ExecuteFut>(
+async fn for_each_target_execute<T>(
     cluster: &ClusterState,
-    execute: ExecuteFn,
-) -> Result<Vec<T>, ExecutionError>
-where
-    ExecuteFn: Fn(Arc<scylla::cluster::Node>, Option<Shard>) -> ExecuteFut,
-    ExecuteFut: Future<Output = Result<T, ExecutionError>>,
-{
+    execute: impl AsyncFn(Arc<scylla::cluster::Node>, Option<Shard>) -> Result<T, ExecutionError>,
+) -> Result<Vec<T>, ExecutionError> {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
         let maybe_shard_count: Option<u16> = node.sharder().map(|sharder| sharder.nr_shards.into());
         match maybe_shard_count {
@@ -627,7 +618,7 @@ pub(crate) async fn execute_prepared_statement_everywhere(
     statement: &PreparedStatement,
     values: &dyn SerializeRow,
 ) -> Result<Vec<QueryResult>, ExecutionError> {
-    for_each_target_execute(cluster, |node, shard| async move {
+    for_each_target_execute(cluster, async move |node, shard| {
         let mut stmt = statement.clone();
         let values_ref = &values;
         let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), shard);
@@ -644,7 +635,7 @@ pub(crate) async fn execute_batch_everywhere(
     batch: &Batch,
     values: &(impl BatchValues + ?Sized),
 ) -> Result<Vec<QueryResult>, ExecutionError> {
-    for_each_target_execute(cluster, |node, shard| async move {
+    for_each_target_execute(cluster, async move |node, shard| {
         let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), shard);
 
         let mut batch = batch.clone();
@@ -661,7 +652,7 @@ pub(crate) async fn execute_unprepared_statement_everywhere(
     statement: &Statement,
     values: &dyn SerializeRow,
 ) -> Result<Vec<QueryResult>, ExecutionError> {
-    for_each_target_execute(cluster, |node, shard| async move {
+    for_each_target_execute(cluster, async move |node, shard| {
         let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), shard);
 
         let mut statement = statement.clone();
@@ -822,17 +813,15 @@ pub(crate) async fn wait_until_all_shards_are_connected(session: &Session) {
     let wait = async {
         loop {
             let state = session.get_cluster_state();
-            let probes = for_each_target_execute(&state, |node, shard| {
+            let probes = for_each_target_execute(&state, async |node, shard| {
                 let mut statement = statement.clone();
                 statement.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
                     NodeIdentifier::Node(node.clone()),
                     shard,
                 )));
-                async move {
-                    let result = session.query_unpaged(statement, ()).await?;
-                    let coordinator = result.request_coordinator();
-                    Ok(coordinator.node().host_id == node.host_id && coordinator.shard() == shard)
-                }
+                let result = session.query_unpaged(statement, ()).await?;
+                let coordinator = result.request_coordinator();
+                Ok(coordinator.node().host_id == node.host_id && coordinator.shard() == shard)
             })
             .await;
             let all_reached = match probes {

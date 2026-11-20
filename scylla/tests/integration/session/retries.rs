@@ -2,7 +2,6 @@ use crate::utils::{
     CapturingRetryPolicy, PerformDDL, fetch_negotiated_features, setup_tracing,
     test_with_3_node_cluster, unique_keyspace_name,
 };
-use assert_matches::assert_matches;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -11,6 +10,7 @@ use scylla::policies::retry::{DowngradingConsistencyRetryPolicy, FallthroughRetr
 use scylla::policies::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::statement::Consistency;
 use scylla::statement::unprepared::Statement;
+use std::assert_matches;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ async fn speculative_execution_is_fired() {
     setup_tracing();
     const TIMEOUT_PER_REQUEST: Duration = Duration::from_millis(1000);
 
-    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, async move |proxy_uris, translation_map, mut running_proxy| {
         // DB preparation phase
         let simple_speculative_no_retry_profile = ExecutionProfile::builder().speculative_execution_policy(Some(Arc::new(SimpleSpeculativeExecutionPolicy {
             max_retry_count: 2,
@@ -109,7 +109,7 @@ async fn speculative_execution_is_fired() {
 #[tokio::test]
 async fn retries_occur() {
     setup_tracing();
-    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, async move |proxy_uris, translation_map, mut running_proxy| {
 
         // DB preparation phase
         let session: Session = SessionBuilder::new()
@@ -188,7 +188,7 @@ async fn downgrading_consistency_policy_downgrades_on_unavailable() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let profile = ExecutionProfile::builder()
                 .retry_policy(Arc::new(DowngradingConsistencyRetryPolicy::new()))
                 .consistency(Consistency::All)
@@ -392,7 +392,7 @@ async fn test_session_retry_receives_current_consistency() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))

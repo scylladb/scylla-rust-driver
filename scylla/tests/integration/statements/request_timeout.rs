@@ -1,6 +1,5 @@
 use std::{sync::Arc, time::Duration};
 
-use assert_matches::assert_matches;
 use scylla::{
     client::{execution_profile::ExecutionProfile, session_builder::SessionBuilder},
     errors::ExecutionError,
@@ -12,6 +11,7 @@ use scylla::{
 use scylla_proxy::{
     Condition, ProxyError, Reaction as _, RequestOpcode, RequestReaction, RequestRule, WorkerError,
 };
+use std::assert_matches;
 
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
 
@@ -21,7 +21,7 @@ async fn test_request_timeout() {
 
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let short_timeout = Duration::from_millis(1);
             let very_long_timeout = Duration::from_secs(10000);
             let query_str = "SELECT host_id FROM system.local WHERE key='local'";

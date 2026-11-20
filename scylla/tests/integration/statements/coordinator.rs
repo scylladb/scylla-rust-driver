@@ -2,7 +2,6 @@ use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
 
-use assert_matches::assert_matches;
 use futures::StreamExt;
 use scylla::client::pager::QueryPager;
 use scylla::client::session::Session;
@@ -20,6 +19,7 @@ use scylla_proxy::{
     Condition, Node, Proxy, ProxyError, Reaction, ResponseFrame, ResponseOpcode, ResponseReaction,
     ResponseRule, ShardAwareness, WorkerError,
 };
+use std::assert_matches;
 use uuid::Uuid;
 
 use crate::utils::{

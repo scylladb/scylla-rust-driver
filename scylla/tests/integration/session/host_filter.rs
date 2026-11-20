@@ -24,7 +24,7 @@ async fn control_connection_leaves_contact_point_rejected_by_host_filter() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::Unaware,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let mut register_rxs = Vec::new();
             for node in running_proxy.running_nodes.iter_mut() {
                 let (tx, rx) = mpsc::unbounded_channel();

@@ -45,6 +45,11 @@ pub use crate::value::MaybeEmpty;
 /// The crate also provides a derive macro which allows to automatically
 /// implement the trait for a custom type. For more details on what the macro
 /// is capable of, see its documentation.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be deserialized from a CQL value",
+    note = "derive `DeserializeValue` to deserialize a UDT into a struct",
+    note = "support for types from `chrono`, `time`, `num-bigint`, `bigdecimal` and `secrecy` is enabled by `scylla` crate features"
+)]
 pub trait DeserializeValue<'frame, 'metadata>
 where
     Self: Sized,
@@ -1019,23 +1024,19 @@ where
         typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        let elem_typ = match typ {
-            ColumnType::Collection {
-                frozen: _,
-                typ: CollectionType::List(elem_typ),
-            }
-            | ColumnType::Collection {
-                frozen: _,
-                typ: CollectionType::Set(elem_typ),
-            } => elem_typ,
-            _ => {
-                unreachable!("Typecheck should have prevented this scenario!")
-            }
+        let (ColumnType::Collection {
+            frozen: _,
+            typ: CollectionType::List(elem_typ),
+        }
+        | ColumnType::Collection {
+            frozen: _,
+            typ: CollectionType::Set(elem_typ),
+        }) = typ
+        else {
+            unreachable!("Typecheck should have prevented this scenario!")
         };
 
-        let mut v = if let Some(v) = v {
-            v
-        } else {
+        let Some(mut v) = v else {
             return Ok(Self::empty(typ, elem_typ));
         };
 
@@ -1272,14 +1273,12 @@ where
         typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        let (element_type, dimensions) = match typ {
-            ColumnType::Vector {
-                typ: element_type,
-                dimensions,
-            } => (element_type, dimensions),
-            _ => {
-                unreachable!("Typecheck should have prevented this scenario!")
-            }
+        let ColumnType::Vector {
+            typ: element_type,
+            dimensions,
+        } = typ
+        else {
+            unreachable!("Typecheck should have prevented this scenario!")
         };
 
         let v = ensure_not_null_frame_slice::<Self>(typ, v)?;
@@ -1529,19 +1528,15 @@ where
         typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        let (k_typ, v_typ) = match typ {
-            ColumnType::Collection {
-                frozen: _,
-                typ: CollectionType::Map(k_t, v_t),
-            } => (k_t, v_t),
-            _ => {
-                unreachable!("Typecheck should have prevented this scenario!")
-            }
+        let ColumnType::Collection {
+            frozen: _,
+            typ: CollectionType::Map(k_typ, v_typ),
+        } = typ
+        else {
+            unreachable!("Typecheck should have prevented this scenario!")
         };
 
-        let mut v = if let Some(v) = v {
-            v
-        } else {
+        let Some(mut v) = v else {
             return Ok(Self::empty(typ, k_typ, v_typ));
         };
 
@@ -1744,7 +1739,9 @@ macro_rules! impl_tuple {
                 let [$($idf),*] = ensure_tuple_type::<($($Ti,)*), TUPLE_LEN>(typ)
                     .expect("Type check should have prevented this!");
 
-                // Ignore the warning for the zero-sized tuple
+                // Ignore the warning for the zero-sized tuple. Not an `expect`,
+                // because other tuple sizes don't trigger it.
+                #[expect(clippy::allow_attributes)]
                 #[allow(unused)]
                 let mut v = ensure_not_null_frame_slice::<Self>(typ, v)?;
                 let ret = (
