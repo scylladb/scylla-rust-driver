@@ -1019,23 +1019,19 @@ where
         typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        let elem_typ = match typ {
-            ColumnType::Collection {
-                frozen: _,
-                typ: CollectionType::List(elem_typ),
-            }
-            | ColumnType::Collection {
-                frozen: _,
-                typ: CollectionType::Set(elem_typ),
-            } => elem_typ,
-            _ => {
-                unreachable!("Typecheck should have prevented this scenario!")
-            }
+        let (ColumnType::Collection {
+            frozen: _,
+            typ: CollectionType::List(elem_typ),
+        }
+        | ColumnType::Collection {
+            frozen: _,
+            typ: CollectionType::Set(elem_typ),
+        }) = typ
+        else {
+            unreachable!("Typecheck should have prevented this scenario!")
         };
 
-        let mut v = if let Some(v) = v {
-            v
-        } else {
+        let Some(mut v) = v else {
             return Ok(Self::empty(typ, elem_typ));
         };
 
@@ -1272,14 +1268,12 @@ where
         typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        let (element_type, dimensions) = match typ {
-            ColumnType::Vector {
-                typ: element_type,
-                dimensions,
-            } => (element_type, dimensions),
-            _ => {
-                unreachable!("Typecheck should have prevented this scenario!")
-            }
+        let ColumnType::Vector {
+            typ: element_type,
+            dimensions,
+        } = typ
+        else {
+            unreachable!("Typecheck should have prevented this scenario!")
         };
 
         let v = ensure_not_null_frame_slice::<Self>(typ, v)?;
@@ -1529,19 +1523,15 @@ where
         typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        let (k_typ, v_typ) = match typ {
-            ColumnType::Collection {
-                frozen: _,
-                typ: CollectionType::Map(k_t, v_t),
-            } => (k_t, v_t),
-            _ => {
-                unreachable!("Typecheck should have prevented this scenario!")
-            }
+        let ColumnType::Collection {
+            frozen: _,
+            typ: CollectionType::Map(k_typ, v_typ),
+        } = typ
+        else {
+            unreachable!("Typecheck should have prevented this scenario!")
         };
 
-        let mut v = if let Some(v) = v {
-            v
-        } else {
+        let Some(mut v) = v else {
             return Ok(Self::empty(typ, k_typ, v_typ));
         };
 

@@ -1450,16 +1450,13 @@ impl ProxyWorker {
             "sender_to_driver",
             |driver_addr, proxy_addr, _real_addr| async move {
                 loop {
-                    let response = match responses_rx.recv().await {
-                        Some(response) => response,
-                        None => {
-                            if terminate_notifier.try_recv().is_err()
-                                && connection_close_notifier.try_recv().is_err()
-                            {
-                                warn!("Response processor had exited");
-                            }
-                            return Ok(());
+                    let Some(response) = responses_rx.recv().await else {
+                        if terminate_notifier.try_recv().is_err()
+                            && connection_close_notifier.try_recv().is_err()
+                        {
+                            warn!("Response processor had exited");
                         }
+                        return Ok(());
                     };
 
                     debug!(
@@ -1498,16 +1495,13 @@ impl ProxyWorker {
             |_driver_addr, proxy_addr, real_addr| async move {
                 let real_addr = real_addr.expect("BUG: no real_addr in cluster worker");
                 loop {
-                    let request = match requests_rx.recv().await {
-                        Some(request) => request,
-                        None => {
-                            if terminate_notifier.try_recv().is_err()
-                                && connection_close_notifier.try_recv().is_err()
-                            {
-                                warn!("Request processor had exited");
-                            }
-                            return Ok(());
+                    let Some(request) = requests_rx.recv().await else {
+                        if terminate_notifier.try_recv().is_err()
+                            && connection_close_notifier.try_recv().is_err()
+                        {
+                            warn!("Request processor had exited");
                         }
+                        return Ok(());
                     };
 
                     debug!(

@@ -123,9 +123,8 @@ impl PrecomputedReplicas {
         let mut datacenter_replicas: HashMap<String, DatacenterPrecomputedReplicas> =
             HashMap::new();
         for (dc_name, repfactors) in dc_repfactors {
-            let dc_rep_data = match replication_data.get_datacenters().get(dc_name) {
-                Some(dc_rep_data) => dc_rep_data,
-                None => continue,
+            let Some(dc_rep_data) = replication_data.get_datacenters().get(dc_name) else {
+                continue;
             };
 
             let rack_count = dc_rep_data.get_rack_count();

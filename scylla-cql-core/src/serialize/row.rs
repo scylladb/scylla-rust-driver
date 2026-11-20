@@ -279,14 +279,13 @@ macro_rules! impl_tuple {
                 ctx: &RowSerializationContext<'_>,
                 writer: &mut RowWriter,
             ) -> Result<(), SerializationError> {
-                let ($($tidents,)*) = match ctx.columns() {
-                    [$($tidents),*] => ($($tidents,)*),
-                    _ => return Err(mk_typck_err::<Self>(
+                let [$($tidents),*] = ctx.columns() else {
+                    return Err(mk_typck_err::<Self>(
                         BuiltinTypeCheckErrorKind::WrongColumnCount {
                             rust_cols: $length,
                             cql_cols: ctx.columns().len(),
                         },
-                    )),
+                    ));
                 };
                 let ($($fidents,)*) = self;
                 $(
@@ -551,13 +550,10 @@ impl SerializedValues {
         let mut data = Vec::with_capacity(capacity);
         let mut writer = RowWriter::new(&mut data);
         let ret = f(&mut writer)?;
-        let element_count = match writer.value_count().try_into() {
-            Ok(n) => n,
-            Err(_) => {
-                return Err(SerializationError(Arc::new(mk_ser_err::<Self>(
-                    BuiltinSerializationErrorKind::TooManyValues,
-                ))));
-            }
+        let Ok(element_count) = writer.value_count().try_into() else {
+            return Err(SerializationError(Arc::new(mk_ser_err::<Self>(
+                BuiltinSerializationErrorKind::TooManyValues,
+            ))));
         };
 
         Ok((

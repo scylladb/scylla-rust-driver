@@ -2470,9 +2470,8 @@ impl Session {
                 }
             })?;
 
-        let mut tracing_info = match maybe_tracing_info {
-            None => return Ok(None),
-            Some(tracing_info) => tracing_info,
+        let Some(mut tracing_info) = maybe_tracing_info else {
+            return Ok(None);
         };
 
         if tracing_info.duration.is_none() {
