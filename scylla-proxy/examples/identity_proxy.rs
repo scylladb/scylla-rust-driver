@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::{net::SocketAddr, str::FromStr};
 
 use scylla_proxy::{Node, Proxy, ShardAwareness};

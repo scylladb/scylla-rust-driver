@@ -40,7 +40,7 @@ fn mismatched_host_id_is_reported() {
         tracing::Level::ERROR,
         test_with_3_node_cluster(
             ShardAwareness::Unaware,
-            |proxy_uris, translation_map, mut running_proxy| async move {
+            async move |proxy_uris, translation_map, mut running_proxy| {
                 // Installed before any session exists, so that the handshake's SUPPORTED frame is
                 // observed. The proxy forwards SUPPORTED unchanged, so this is the real server's
                 // advertisement.

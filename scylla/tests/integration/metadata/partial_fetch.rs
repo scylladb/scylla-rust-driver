@@ -101,7 +101,7 @@ async fn assert_event_triggers_only_a_topology_fetch(
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             // Any node but the contact point, which the control connection
             // is established to.
             let rejected_node_ip = translation_map
@@ -180,7 +180,7 @@ async fn schema_change_event_triggers_only_a_schema_fetch() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let keyspace = unique_keyspace_name();
             let session = new_schema_watching_session(&proxy_uris, &translation_map, &keyspace)
                 .build()
@@ -288,7 +288,7 @@ async fn full_metadata_mode_picks_up_schema_changes_without_events() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let keyspace = unique_keyspace_name();
             let session = new_schema_watching_session(&proxy_uris, &translation_map, &keyspace)
                 .periodic_metadata_fetch_mode(PeriodicFetchMode::FullMetadata)

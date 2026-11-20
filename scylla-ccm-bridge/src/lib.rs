@@ -11,6 +11,8 @@ mod logged_cmd;
 /// Node management types and operations.
 pub mod node;
 
+pub use ip_allocator::NetPrefix;
+
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::LazyLock;

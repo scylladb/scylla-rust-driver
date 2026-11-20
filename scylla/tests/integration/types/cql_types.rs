@@ -686,8 +686,8 @@ async fn check_cql_time(session: &Session) {
 // because it does not fit in the CQL type.
 #[cfg(feature = "chrono-04")]
 fn assert_value_overflow(err: &ExecutionError) {
-    use assert_matches::assert_matches;
     use scylla::serialize::{row, value};
+    use std::assert_matches;
 
     let ExecutionError::LastAttemptError(RequestAttemptError::SerializationError(err)) = err else {
         panic!("Expected a serialization error, got {err:?}");

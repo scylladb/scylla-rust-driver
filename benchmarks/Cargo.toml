@@ -3,7 +3,7 @@ edition = "2024"
 name = "benchmarks"
 publish = false
 version = "0.0.0"
-rust-version = "1.94"
+rust-version = "1.96"
 license = "MIT OR Apache-2.0"
 
 # `cargo bench --benches` would otherwise also run the lib target's default
@@ -34,3 +34,6 @@ harness = false
 [[bench]]
 name = "serialization"
 harness = false
+
+[lints]
+workspace = true

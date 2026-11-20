@@ -104,7 +104,6 @@ impl DeserializationError {
 // - BEFORE an error is cloned (because otherwise the Arc::get_mut fails).
 macro_rules! make_error_replace_rust_name {
     ($(#[$attr:meta])* $privacy: vis, $fn_name: ident, $outer_err: ty, $inner_err: ident) => {
-        #[allow(clippy::needless_pub_self)]
         $(#[$attr])*
         $privacy fn $fn_name<RustT>(mut err: $outer_err) -> $outer_err {
             let rust_name = std::any::type_name::<RustT>();

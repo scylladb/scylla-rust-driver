@@ -1,13 +1,12 @@
 //! CQL binary protocol in-wire types.
 
 use super::frame_errors::LowLevelDeserializationError;
-#[cfg(test)]
-use assert_matches::assert_matches;
-use byteorder::{BigEndian, ReadBytesExt};
 use bytes::BufMut;
 use bytes::Bytes;
 #[cfg(test)]
 use bytes::BytesMut;
+#[cfg(test)]
+use std::assert_matches;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
@@ -86,15 +85,20 @@ fn type_int() {
 }
 
 pub fn read_long(buf: &mut &[u8]) -> Result<i64, std::io::Error> {
-    let v = buf.read_i64::<BigEndian>()?;
-    Ok(v)
+    let (bytes, rest) = buf
+        .split_first_chunk()
+        .ok_or(std::io::ErrorKind::UnexpectedEof)?;
+    *buf = rest;
+    Ok(i64::from_be_bytes(*bytes))
 }
 
 /// Reads a single byte from the buffer, advancing it past that byte.
 /// Fails if the buffer is empty.
 pub fn read_byte(buf: &mut &[u8]) -> Result<u8, std::io::Error> {
-    let v = buf.read_u8()?;
-    Ok(v)
+    let byte = buf
+        .split_off_first()
+        .ok_or(std::io::ErrorKind::UnexpectedEof)?;
+    Ok(*byte)
 }
 
 #[test]
@@ -391,14 +395,14 @@ fn type_string_multimap() {
 }
 
 pub fn read_uuid(buf: &mut &[u8]) -> Result<Uuid, LowLevelDeserializationError> {
-    let raw = read_raw_bytes(16, buf)?;
-
-    // It's safe to unwrap here because the conversion only fails
-    // if the argument slice's length does not match, which
-    // `read_raw_bytes` prevents.
-    let raw_array: &[u8; 16] = raw.try_into().unwrap();
-
-    Ok(Uuid::from_bytes(*raw_array))
+    let Some((raw, rest)) = buf.split_first_chunk() else {
+        return Err(LowLevelDeserializationError::TooFewBytesReceived {
+            expected: 16,
+            received: buf.len(),
+        });
+    };
+    *buf = rest;
+    Ok(Uuid::from_bytes(*raw))
 }
 
 pub fn write_uuid(uuid: &Uuid, buf: &mut impl BufMut) {
@@ -442,7 +446,7 @@ fn type_consistency() {
 }
 
 pub fn read_inet(buf: &mut &[u8]) -> Result<SocketAddr, LowLevelDeserializationError> {
-    let len = buf.read_u8()?;
+    let len = read_byte(buf)?;
     let ip_addr = match len {
         4 => {
             let ip_bytes = read_raw_bytes(4, buf)?;

@@ -1,3 +1,6 @@
+//! Shows how to deserialize values into your own types, by implementing
+//! `DeserializeValue` or deriving `DeserializeRow`.
+
 use anyhow::Result;
 use scylla::DeserializeRow;
 use scylla::client::session::Session;

@@ -106,7 +106,7 @@ impl ControlConnectionEstablisher {
     /// list. Does **not** establish a control connection — use
     /// [`establish_cc_and_fetch_metadata`](Self::establish_cc_and_fetch_metadata)
     /// for that.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
         initial_known_nodes: Vec<KnownNode>,
         hostname_resolution_timeout: Option<Duration>,

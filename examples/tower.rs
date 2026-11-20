@@ -1,8 +1,9 @@
+//! Shows how to wrap a session in a `tower` `Service`.
+
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::value::Row;
 use std::env;
-use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;

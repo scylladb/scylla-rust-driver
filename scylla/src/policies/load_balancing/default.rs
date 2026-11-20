@@ -3603,9 +3603,8 @@ mod latency_awareness {
             &self,
             fallback: FallbackPlanT,
         ) -> impl Iterator<Item = (NodeRef<'a>, Option<Shard>)> + use<'a, FallbackPlanT> {
-            let min_avg_latency = match self.last_min_latency.load() {
-                Some(min_avg) => min_avg,
-                None => return Either::Left(fallback), // noop, as no latency data has been collected yet
+            let Some(min_avg_latency) = self.last_min_latency.load() else {
+                return Either::Left(fallback); // noop, as no latency data has been collected yet
             };
 
             let average_latencies = self.node_avgs.read().unwrap();
@@ -3967,12 +3966,11 @@ mod latency_awareness {
         minimum_measurements: usize,
         min_avg: Duration,
     ) -> FastEnough {
-        let avg = match average_latencies
+        let Some(avg) = average_latencies
             .get(&node)
             .and_then(|avgs| *avgs.read().unwrap())
-        {
-            Some(avg) => avg,
-            None => return FastEnough::Yes,
+        else {
+            return FastEnough::Yes;
         };
         if avg.num_measures >= minimum_measurements
             && avg.timestamp.elapsed() < retry_period

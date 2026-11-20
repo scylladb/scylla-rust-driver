@@ -1573,8 +1573,6 @@ impl Connection {
         }
 
         if let Some(tls_config) = &config.tls_config {
-            // To silence warnings when TlsContext is an empty enum (tls features are disabled).
-            #[allow(unreachable_code)]
             match tls_config.new_tls(node_address)? {
                 #[cfg(feature = "openssl-010")]
                 crate::network::tls::Tls::OpenSsl010(ssl) => {
@@ -2321,6 +2319,9 @@ fn apply_socket_options(
 
     let sf = SockRef::from(&socket);
     if let Some(linger) = options.linger {
+        // Not an `expect`, because Tokio deprecated `set_linger` in 1.49, and
+        // we support older versions.
+        #[expect(clippy::allow_attributes)]
         #[allow(deprecated)]
         socket.set_linger(Some(linger))?;
     }
@@ -2446,11 +2447,11 @@ mod tests {
     };
     use crate::frame::types;
     use crate::serialize::row::SerializedValues;
-    use assert_matches::assert_matches;
     use scylla_proxy::{
         Condition, Node, Proxy, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction,
         RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, WorkerError,
     };
+    use std::assert_matches;
 
     use bytes::Bytes;
     use tokio::select;

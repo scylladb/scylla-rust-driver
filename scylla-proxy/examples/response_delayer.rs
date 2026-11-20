@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::{io::Read as _, net::SocketAddr, str::FromStr, time::Duration};
 
 use scylla_proxy::{

@@ -37,7 +37,7 @@ async fn self_identity_is_set_properly_in_startup_message() {
 async fn test_given_self_identity(self_identity: SelfIdentity<'static>) {
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             // We set up proxy, so that it informs us (via startup_rx) about driver's Startup message contents.
 
             let (startup_tx, mut startup_rx) = mpsc::unbounded_channel();

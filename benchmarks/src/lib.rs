@@ -58,7 +58,7 @@ const TABLET_WARMUP_REQUESTS: usize = 8 * TABLET_COUNT;
 /// Interval of the driver's periodic background work (keepalives, metadata
 /// refresh) in benchmark sessions. See the session construction in
 /// `BenchContext::build` for why it is pushed this far.
-const BACKGROUND_WORK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const BACKGROUND_WORK_INTERVAL: Duration = Duration::from_hours(1);
 
 /// Returns the contact point to connect to, taken from the `SCYLLA_URI`
 /// environment variable and falling back to [`DEFAULT_NODE`].
@@ -69,7 +69,9 @@ pub fn node_address() -> String {
 /// Tunable sizes for the benchmark scenarios.
 #[derive(Clone, Copy, Debug)]
 pub struct ScenarioConfig {
+    /// Number of partitions inserted for the `SELECT` scenarios.
     pub prefilled_partitions: usize,
+    /// Number of rows inserted into each of those partitions.
     pub prefilled_rows_per_partition: usize,
     /// Number of statements packed into the `BATCH` scenario's batch.
     pub batch_size: usize,

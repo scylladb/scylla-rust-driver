@@ -3,7 +3,7 @@ edition = "2024"
 name = "examples"
 publish = false
 version = "0.0.0"
-rust-version = "1.94"
+rust-version = "1.96"
 license = "MIT OR Apache-2.0"
 
 [dev-dependencies]
@@ -151,4 +151,7 @@ name = "user_defined_type"
 path = "user_defined_type.rs"
 
 [package.metadata.cargo-semver-checks.lints]
+workspace = true
+
+[lints]
 workspace = true

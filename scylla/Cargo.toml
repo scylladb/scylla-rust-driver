@@ -2,7 +2,7 @@
 name = "scylla"
 version = "1.10.0"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.96"
 description = "Async CQL driver for Rust, optimized for ScyllaDB, fully compatible with Apache Cassandra™"
 repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"
@@ -17,14 +17,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 [package.metadata.cargo-semver-checks.lints]
 workspace = true
 
-[lints.rust]
-unnameable_types = "warn"
-unreachable_pub = "warn"
-missing_docs = "warn"
-unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(scylla_unstable)',
-    'cfg(cassandra_tests)',
-] }
+[lints]
+workspace = true
 
 [[bench]]
 name = "benchmark"
@@ -176,7 +170,6 @@ scylla-ccm-bridge = { path = "../scylla-ccm-bridge", features = ["driver", "unst
 criterion = "0.8"
 tokio = { version = "1.34", features = ["test-util", "process", "fs"] }
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
-assert_matches = "1.5.0"
 rand_chacha = "0.9.0"
 time = "0.3"
 anyhow = "1.0.98"
