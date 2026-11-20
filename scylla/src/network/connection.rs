@@ -1573,8 +1573,6 @@ impl Connection {
         }
 
         if let Some(tls_config) = &config.tls_config {
-            // To silence warnings when TlsContext is an empty enum (tls features are disabled).
-            #[allow(unreachable_code)]
             match tls_config.new_tls(node_address)? {
                 #[cfg(feature = "openssl-010")]
                 crate::network::tls::Tls::OpenSsl010(ssl) => {
