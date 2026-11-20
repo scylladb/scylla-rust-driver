@@ -113,6 +113,10 @@ impl<'frame, 'metadata> ExactSizeIterator for ColumnIterator<'frame, 'metadata> 
 /// The crate also provides a derive macro which allows to automatically
 /// implement the trait for a custom type. For more details on what the macro
 /// is capable of, see its documentation.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be deserialized from a row",
+    note = "deserialize a row into a tuple (`(value,)` for a single column) or a struct that derives `DeserializeRow`"
+)]
 pub trait DeserializeRow<'frame, 'metadata>
 where
     Self: Sized,
