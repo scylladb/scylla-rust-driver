@@ -1330,11 +1330,11 @@ impl ProxyWorker {
         std::mem::drop(self.finish_guard);
     }
 
-    async fn run_until_interrupted<F, Fut>(mut self, worker_name: &'static str, f: F)
-    where
-        F: FnOnce(SocketAddr, SocketAddr, Option<SocketAddr>) -> Fut,
-        Fut: Future<Output = Result<(), ProxyError>>,
-    {
+    async fn run_until_interrupted(
+        mut self,
+        worker_name: &'static str,
+        f: impl AsyncFnOnce(SocketAddr, SocketAddr, Option<SocketAddr>) -> Result<(), ProxyError>,
+    ) {
         let fut = f(self.driver_addr, self.proxy_addr, self.real_addr);
 
         // Biased is necessary here. We have many workers. It is possible
@@ -1369,7 +1369,7 @@ impl ProxyWorker {
         let shard = self.shard;
         self.run_until_interrupted(
             "receiver_from_driver",
-            |driver_addr, proxy_addr, _real_addr| async move {
+            async move |driver_addr, proxy_addr, _real_addr| {
                 loop {
                     let frame = frame::read_request_frame(&mut read_half, &compression)
                         .await
@@ -1407,7 +1407,7 @@ impl ProxyWorker {
         let shard = self.shard;
         self.run_until_interrupted(
             "receiver_from_cluster",
-            |driver_addr, _proxy_addr, real_addr| async move {
+            async move |driver_addr, _proxy_addr, real_addr| {
                 let real_addr = real_addr.expect("BUG: no real_addr in cluster worker");
                 loop {
                     let frame = frame::read_response_frame(&mut read_half, &compression)
@@ -1448,7 +1448,7 @@ impl ProxyWorker {
         let shard = self.shard;
         self.run_until_interrupted(
             "sender_to_driver",
-            |driver_addr, proxy_addr, _real_addr| async move {
+            async move |driver_addr, proxy_addr, _real_addr| {
                 loop {
                     let Some(response) = responses_rx.recv().await else {
                         if terminate_notifier.try_recv().is_err()
@@ -1492,7 +1492,7 @@ impl ProxyWorker {
         let shard = self.shard;
         self.run_until_interrupted(
             "sender_to_cluster",
-            |_driver_addr, proxy_addr, real_addr| async move {
+            async move |_driver_addr, proxy_addr, real_addr| {
                 let real_addr = real_addr.expect("BUG: no real_addr in cluster worker");
                 loop {
                     let Some(request) = requests_rx.recv().await else {
@@ -1544,7 +1544,7 @@ impl ProxyWorker {
         let (driver_addr, real_addr) = (self.driver_addr, self.real_addr);
         let registered = Arc::clone(&event_registered_flag);
         let cc_senders = Arc::clone(&cc_event_sender);
-        self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
+        self.run_until_interrupted("request_processor", async move |driver_addr, _, real_addr| {
             'mainloop: loop {
                 match requests_rx.recv().await {
                     Some(request) => {
@@ -1691,7 +1691,7 @@ impl ProxyWorker {
         event_registered_flag: Arc<AtomicBool>,
     ) {
         let shard = self.shard;
-        self.run_until_interrupted("response_processor", |driver_addr, _, real_addr| async move {
+        self.run_until_interrupted("response_processor", async move |driver_addr, _, real_addr| {
             'mainloop: loop {
                 match responses_rx.recv().await {
                     Some(response) => {
