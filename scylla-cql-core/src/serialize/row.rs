@@ -61,6 +61,10 @@ impl<'a> RowSerializationContext<'a> {
 /// protocol and usually does not have to be implemented directly. See the
 /// chapter on "Query Values" in the driver docs for information about how
 /// this trait is supposed to be used.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be serialized as the values of a CQL statement",
+    note = "pass the values as a tuple (`(value,)` for a single one), a slice or `Vec`, a map from bind marker names, or a struct that derives `SerializeRow`"
+)]
 pub trait SerializeRow {
     /// Serializes the row according to the information in the given context.
     ///
