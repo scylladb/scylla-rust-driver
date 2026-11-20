@@ -17,6 +17,18 @@ resolver = "3"
 [workspace.package]
 rust-version = "1.96"
 
+[workspace.lints.rust]
+unnameable_types = "warn"
+unreachable_pub = "warn"
+missing_docs = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(scylla_unstable)',
+    'cfg(cassandra_tests)',
+] }
+
+[workspace.lints.clippy]
+allow_attributes = "warn"
+
 [workspace.metadata.cargo-semver-checks.lints]
 # We don't consider it a major change, so downgrade from deny
 enum_struct_variant_field_marked_deprecated = { level = "warn" }
