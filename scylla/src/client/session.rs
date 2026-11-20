@@ -2480,8 +2480,10 @@ impl Session {
     ///
     /// If this closure fails with some errors, retry policy is used to perform retries.
     /// On success, this request's result is returned.
-    // I tried to make this closures take a reference instead of an Arc but failed
-    // maybe once async closures get stabilized this can be fixed
+    // The closure takes an `Arc`, because with `Fn` the returned future can't
+    // borrow the connection. An `AsyncFn` bound would allow it, but rustc then
+    // can't prove that the request futures are `Send` ("implementation of
+    // `Send` is not general enough"), even for closures that don't borrow.
     async fn run_request<F, QueryFut>(
         &self,
         state: &ClusterState,
