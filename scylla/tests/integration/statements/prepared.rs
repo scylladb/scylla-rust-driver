@@ -1,4 +1,3 @@
-use assert_matches::assert_matches;
 use itertools::Itertools;
 use scylla::client::caching_session::CachingSession;
 use scylla::client::execution_profile::ExecutionProfile;
@@ -23,6 +22,7 @@ use scylla_proxy::{
     ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule, RunningProxy, ShardAwareness,
     TargetShard, WorkerError,
 };
+use std::assert_matches;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;

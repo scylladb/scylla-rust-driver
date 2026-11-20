@@ -2,10 +2,10 @@ use std::net::Ipv4Addr;
 
 use crate::utils::{create_new_session_builder, find_local_ip_for_destination, setup_tracing};
 
-use assert_matches::assert_matches;
 use futures::FutureExt as _;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::errors::{ConnectionError, ConnectionPoolError, MetadataError, NewSessionError};
+use std::assert_matches;
 use tokio::net::TcpListener;
 
 #[tokio::test]

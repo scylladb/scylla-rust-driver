@@ -521,8 +521,8 @@ mod tests {
     };
     use crate::frame::response::CqlResponseKind;
     use crate::frame::types::Consistency;
-    use assert_matches::assert_matches;
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+    use std::assert_matches;
 
     // Set a single time for all timestamps within StructuredHistory.
     // HistoryCollector sets the timestamp to current time which changes with each test.

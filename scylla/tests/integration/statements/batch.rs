@@ -2,7 +2,6 @@ use crate::utils::{
     LwtRetryPolicy, PerformDDL as _, create_new_session_builder, disable_tablets_unless_supported,
     setup_tracing, unique_keyspace_name,
 };
-use assert_matches::assert_matches;
 use scylla::client::session::Session;
 use scylla::errors::{BadQuery, DbError, ExecutionError, RequestAttemptError};
 use scylla::frame::frame_errors::{BatchSerializationError, CqlRequestSerializationError};
@@ -11,6 +10,7 @@ use scylla::statement::batch::{Batch, BatchStatement, BatchType};
 use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
 use scylla::value::{Counter, CqlValue, MaybeUnset, Row};
+use std::assert_matches;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 

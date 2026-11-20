@@ -1,12 +1,12 @@
 //! CQL binary protocol in-wire types.
 
 use super::frame_errors::LowLevelDeserializationError;
-#[cfg(test)]
-use assert_matches::assert_matches;
 use bytes::BufMut;
 use bytes::Bytes;
 #[cfg(test)]
 use bytes::BytesMut;
+#[cfg(test)]
+use std::assert_matches;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;

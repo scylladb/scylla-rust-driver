@@ -1869,7 +1869,6 @@ mod tests {
     use crate::{
         Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction, setup_tracing,
     };
-    use assert_matches::assert_matches;
     use bytes::{BufMut, BytesMut};
     use futures::future::{join, join3};
     use rand::RngCore;
@@ -1877,6 +1876,7 @@ mod tests {
     use scylla_cql::frame::request::{SerializableRequest as _, Startup};
     use scylla_cql::frame::types::write_string_multimap;
     use scylla_cql::frame::{Compression, flag};
+    use std::assert_matches;
     use std::collections::HashMap;
     use std::mem;
     use std::str::FromStr;

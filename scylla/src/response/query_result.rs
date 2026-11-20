@@ -503,9 +503,9 @@ pub struct ResultNotRowsError;
 mod tests {
     use crate::frame::response::result::{ColumnType, NativeType, ResultMetadata, TableSpec};
     use crate::frame::types;
-    use assert_matches::assert_matches;
     use bytes::{Bytes, BytesMut};
     use itertools::Itertools as _;
+    use std::assert_matches;
 
     use super::*;
 

@@ -16,7 +16,6 @@
 //! [`SendError`] holds the failure of any of them. It also knows where each
 //! kind of failure is expected to occur.
 
-use assert_matches::assert_matches;
 use scylla::client::session::Session;
 use scylla::errors::{
     BadQuery, DbError, ExecutionError, NextPageError, PagerExecutionError, RequestAttemptError,
@@ -27,6 +26,7 @@ use scylla::serialize::SerializationError;
 use scylla::serialize::row::SerializeRow;
 use scylla::statement::Statement;
 use scylla::statement::prepared::PreparedStatement;
+use std::assert_matches;
 
 /// How the response to a statement is fetched: in one shot, iterated, or one
 /// page at a time.
