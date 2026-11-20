@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 mod actions;
 mod errors;
 mod frame;

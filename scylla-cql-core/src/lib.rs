@@ -4,6 +4,8 @@
 //! public API of the `scylla` driver crate. It is re-exported by both `scylla`
 //! and `scylla-cql`, ensuring type identity is preserved across versions.
 
+#![allow(missing_docs)]
+
 pub use scylla_macros::DeserializeRow;
 pub use scylla_macros::DeserializeValue;
 pub use scylla_macros::SerializeRow;
