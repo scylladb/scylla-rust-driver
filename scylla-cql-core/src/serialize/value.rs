@@ -34,6 +34,11 @@ use super::{CellValueBuilder, CellWriter, SerializationError};
 /// protocol and usually does not have to be implemented directly. See the
 /// chapter on "Query Values" in the driver docs for information about how
 /// this trait is supposed to be used.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be serialized as a CQL value",
+    note = "derive `SerializeValue` to serialize a struct as a UDT",
+    note = "support for types from external crates is enabled by `scylla` crate features"
+)]
 pub trait SerializeValue {
     /// Serializes the value to given CQL type.
     ///
