@@ -25,10 +25,13 @@ use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::response::event::SchemaChangeType;
 use crate::frame::response::event::StatusChangeEvent;
 
-use super::cc_establisher::{ControlConnectionEstablisher, FetchOnCandidate, TopologyUpdateGuard};
+use super::cc_establisher::{
+    ControlConnectionEstablisher, FetchOnCandidate, Locality, RelocationResult, TopologyUpdateGuard,
+};
 use super::merge_channel;
 
-/// How often the worker attempts to establish a control connection while it has none.
+/// How often the worker attempts to establish a control connection while it has
+/// none, or one on a node that a better-located one could replace.
 const CONTROL_CONNECTION_REPAIR_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Works in the background to keep learning about the cluster: fetches metadata
@@ -38,7 +41,7 @@ const CONTROL_CONNECTION_REPAIR_INTERVAL: Duration = Duration::from_secs(1);
 ///
 /// The worker alternates between two loops:
 /// - [`work_on_cc`](Self::work_on_cc), which serves a specific control connection
-///   until it breaks, and
+///   until it breaks, or is replaced by one on a better-located node, and
 /// - [`work_without_cc`](Self::work_without_cc), which establishes a new one.
 ///
 /// The control connection is therefore not a field, but a value owned by the
@@ -68,7 +71,8 @@ pub(in super::super) struct MetadataWorker {
     /// This is worker state rather than a local of either loop: a request may
     /// arrive on a control connection that then turns out to be defunct, in which
     /// case it must survive the switch to [`work_without_cc`](Self::work_without_cc),
-    /// which retries the refresh and ultimately answers it.
+    /// which retries the refresh and ultimately answers it. Likewise, it survives
+    /// a switch to a control connection on a better-located node.
     ///
     /// Invariant: at most one request is pending at a time - both loops take it
     /// (answering it, directly or through the cluster worker) before awaiting
@@ -91,13 +95,17 @@ pub(in super::super) struct EstablishedCc {
     /// that fetch read, so [`MetadataWorker::work_on_cc`] starts from this
     /// plan rather than from an empty one.
     plan: FetchPlan,
+    /// Where the node of `cc` is, with respect to the session's location preference.
+    locality: Locality,
 }
 
 /// Adapts [`MetadataWorker::fetch_on_candidate`] to the [`FetchOnCandidate`]
 /// trait that [`ControlConnectionEstablisher::establish_cc_and_fetch_metadata`] consumes,
 /// lending it the worker's updates channel.
 struct CandidateFetcher<'a> {
-    updates: &'a mut merge_channel::Sender<MetadataUpdate>,
+    /// Where the status hints of the candidate's server events go. Without it,
+    /// they are dropped.
+    updates: Option<&'a mut merge_channel::Sender<MetadataUpdate>>,
 }
 
 impl FetchOnCandidate for CandidateFetcher<'_> {
@@ -108,7 +116,7 @@ impl FetchOnCandidate for CandidateFetcher<'_> {
         cc: &ControlConnection,
         cc_events: &mut ControlConnectionEvents,
     ) -> Result<(TopologyUpdateGuard, FetchPlan), MetadataError> {
-        MetadataWorker::fetch_on_candidate(self.updates, cc, cc_events).await
+        MetadataWorker::fetch_on_candidate(self.updates.as_deref_mut(), cc, cc_events).await
     }
 }
 
@@ -512,6 +520,63 @@ impl Future for PendingFetches<'_> {
     }
 }
 
+/// An attempt to move the control connection to a known peer located better
+/// than its node; see [`ControlConnectionEstablisher::relocation_attempt`].
+///
+/// Boxed to give the attempt a nameable type, for the same reason as
+/// [`FullFetch`]. One allocation per attempt.
+type RelocationAttempt = Pin<Box<dyn Future<Output = RelocationResult<FetchPlan>> + Send>>;
+
+/// The attempts of [`MetadataWorker::work_on_cc`] to move the control
+/// connection to a known peer located better than its node.
+///
+/// Owns the attempt in flight, so that losing a `select!` race leaves it intact.
+enum Relocation {
+    /// No attempt is due: when last checked, no known peer was located better.
+    Idle,
+    /// An attempt is due at the given instant, if a better-located peer is
+    /// known by then.
+    Due(Instant),
+    /// An attempt is in flight.
+    InFlight(RelocationAttempt),
+}
+
+impl Relocation {
+    /// Resolves to the result of the attempt in flight, or to `None` once an
+    /// attempt is due. Pends forever when idle.
+    async fn wait(&mut self) -> Option<RelocationResult<FetchPlan>> {
+        match self {
+            Relocation::Idle => std::future::pending().await,
+            Relocation::Due(deadline) => {
+                tokio::time::sleep_until(*deadline).await;
+                None
+            }
+            Relocation::InFlight(attempt) => {
+                let result = attempt.await;
+                // So that the completed attempt is never polled again.
+                *self = Relocation::Idle;
+                Some(result)
+            }
+        }
+    }
+
+    /// An attempt due after [`CONTROL_CONNECTION_REPAIR_INTERVAL`].
+    fn due_later() -> Self {
+        Relocation::Due(deadline_after(
+            Instant::now(),
+            CONTROL_CONNECTION_REPAIR_INTERVAL,
+        ))
+    }
+
+    /// Makes an idle relocation check the known peers again: the topology
+    /// changed, so a better-located one may be known now.
+    fn note_topology_change(&mut self) {
+        if let Relocation::Idle = self {
+            *self = Relocation::Due(Instant::now());
+        }
+    }
+}
+
 impl MetadataWorker {
     pub(in super::super) fn new(
         cc_establisher: ControlConnectionEstablisher,
@@ -539,7 +604,7 @@ impl MetadataWorker {
         initial: bool,
     ) -> Result<(Option<EstablishedCc>, Metadata), MetadataError> {
         let mut fetcher = CandidateFetcher {
-            updates: &mut self.updates,
+            updates: Some(&mut self.updates),
         };
         // Boxed AND `dyn`-erased for the same reason as the `query_metadata`
         // future in [`fetch_on_candidate`](Self::fetch_on_candidate): this
@@ -555,7 +620,13 @@ impl MetadataWorker {
         Ok((
             kept.map(|(cc, events, mut plan)| {
                 Self::handle_metadata_keyspace_errors(&mut plan, &metadata);
-                EstablishedCc { cc, events, plan }
+                let locality = self.cc_establisher.locality_of_cc_node(&metadata);
+                EstablishedCc {
+                    cc,
+                    events,
+                    plan,
+                    locality,
+                }
             }),
             metadata,
         ))
@@ -575,7 +646,7 @@ impl MetadataWorker {
     /// Hence the fetch is awaited only in `select!`, with event draining as
     /// the other branch.
     async fn fetch_on_candidate(
-        updates: &mut merge_channel::Sender<MetadataUpdate>,
+        mut updates: Option<&mut merge_channel::Sender<MetadataUpdate>>,
         cc: &ControlConnection,
         cc_events: &mut ControlConnectionEvents,
     ) -> Result<(TopologyUpdateGuard, FetchPlan), MetadataError> {
@@ -607,7 +678,7 @@ impl MetadataWorker {
                         // even returning dummy metadata on initial fetch.
                         // If ClusterWorker is shutting down (which is the only case this
                         // could happen), then we will shutdown soon too, so ignoring is not a problem.
-                        let _ = Self::handle_server_event(updates, event, &mut plan);
+                        let _ = Self::handle_server_event(updates.as_deref_mut(), event, &mut plan);
                     }
                     ControlConnectionEvent::Broken(err) => {
                         return Err(MetadataError::ConnectionPoolError(
@@ -651,8 +722,9 @@ impl MetadataWorker {
 
             match self.work_on_cc(established).await {
                 ControlFlow::Break(()) => return,
-                // The control connection is defunct - establish a new one.
-                ControlFlow::Continue(()) => (),
+                // `None`: the control connection is defunct - establish a new one.
+                // `Some`: serve its replacement.
+                ControlFlow::Continue(replacement) => next_cc = replacement,
             }
         }
     }
@@ -748,14 +820,32 @@ impl MetadataWorker {
     /// while the establishment fetch was in flight may postdate its data, so
     /// the fetch work they imply is still owed.
     ///
-    /// Returns [`ControlFlow::Continue`] once the control connection is deemed
-    /// defunct and should be replaced, or [`ControlFlow::Break`] if the worker
-    /// should stop.
-    async fn work_on_cc(&mut self, established: EstablishedCc) -> ControlFlow<()> {
+    /// # Moving to a better-located node
+    ///
+    /// While a known peer is located better than the control connection's node,
+    /// with respect to the session's location preference, this loop tries to
+    /// establish a control connection to such a peer in the background, every
+    /// [`CONTROL_CONNECTION_REPAIR_INTERVAL`], starting one interval after the
+    /// loop starts. Otherwise, it checks the known peers again when the
+    /// topology changes. Once an attempt succeeds, the metadata fetched on the
+    /// new control connection is published, and the loop returns the new
+    /// connection, to be served instead. Fetches in flight and work owed by the
+    /// plan are dropped: the new connection registered for events before its
+    /// fetch, so its metadata and plan cover them.
+    ///
+    /// Returns [`ControlFlow::Continue`] once the control connection is to be
+    /// replaced: with `None` if it is deemed defunct, or with the new control
+    /// connection if one was established on a better-located node. Returns
+    /// [`ControlFlow::Break`] if the worker should stop.
+    async fn work_on_cc(
+        &mut self,
+        established: EstablishedCc,
+    ) -> ControlFlow<(), Option<EstablishedCc>> {
         let EstablishedCc {
             cc,
             events: mut cc_events,
             mut plan,
+            locality,
         } = established;
         let mut next_refresh_deadline =
             deadline_after(Instant::now(), self.cluster_metadata_refresh_interval);
@@ -765,6 +855,12 @@ impl MetadataWorker {
         // `self.cc_establisher`) while fetches are in flight.
         let mut pending_fetches = PendingFetches::empty();
 
+        // The control connection may have been established on a remote node,
+        // e.g. a contact point. The first check isn't immediate, so that the
+        // connection moves at most once per interval, even if the nodes'
+        // locations can't be told or the nodes disagree about them.
+        let mut relocation = Relocation::due_later();
+
         loop {
             pending_fetches.start_due_fetches(
                 &mut plan,
@@ -773,6 +869,19 @@ impl MetadataWorker {
                 &self.periodic_fetch_mode,
                 &cc,
             );
+
+            if let Relocation::Due(deadline) = relocation
+                && Instant::now() >= deadline
+            {
+                let fetcher = CandidateFetcher { updates: None };
+                relocation = match self.cc_establisher.relocation_attempt(locality, fetcher) {
+                    Some(attempt) => {
+                        debug!("Trying to move the control connection to a better-located node");
+                        Relocation::InFlight(Box::pin(attempt))
+                    }
+                    None => Relocation::Idle,
+                };
+            }
 
             // Computed before `select!` for the branch guards, which cannot
             // borrow `pending_fetches`: the fetch branch polls it mutably.
@@ -784,6 +893,7 @@ impl MetadataWorker {
                         FetchOutcome::Full(Ok(topology_update)) => {
                             debug!("Fetched new metadata");
                             let metadata = topology_update.apply(&mut self.cc_establisher);
+                            relocation.note_topology_change();
                             Self::handle_metadata_keyspace_errors(&mut plan, &metadata);
                             self.publish_metadata(metadata)?;
                         }
@@ -795,11 +905,12 @@ impl MetadataWorker {
                             );
                             // The control connection is considered defunct - drop it. The pending
                             // request, if any, is retried (and answered) while establishing a new one.
-                            return ControlFlow::Continue(());
+                            return ControlFlow::Continue(None);
                         }
                         FetchOutcome::Topology(Ok(topology_update)) => {
                             debug!("Fetched new topology");
                             let peers = topology_update.apply(&mut self.cc_establisher);
+                            relocation.note_topology_change();
                             if self.send_update(|slot| MetadataUpdate::merge_topology_update(slot, peers)).is_err() {
                                 return ControlFlow::Break(());
                             }
@@ -880,10 +991,10 @@ impl MetadataWorker {
                             // The in-flight fetches, if any, are abandoned: establishing
                             // a new control connection fetches full metadata, which
                             // subsumes them.
-                            return ControlFlow::Continue(());
+                            return ControlFlow::Continue(None);
                         },
                         ControlConnectionEvent::ServerEvent(event) => {
-                            Self::handle_server_event(&mut self.updates, event, &mut plan)?;
+                            Self::handle_server_event(Some(&mut self.updates), event, &mut plan)?;
                         }
                     }
                 }
@@ -896,12 +1007,67 @@ impl MetadataWorker {
                     // Nothing to do here: the starter step notices the passed
                     // deadline.
                 }
+
+                relocation_result = relocation.wait() => {
+                    // `None`: an attempt is due; the step before `select!` starts it.
+                    if let Some(result) = relocation_result {
+                        match self.cc_establisher.apply_relocation(result) {
+                            Some((cc, events, plan, metadata)) => {
+                                debug!("Moved the control connection to a better-located node");
+                                let replacement = self.take_over_cc(cc, events, plan, metadata)?;
+                                return ControlFlow::Continue(Some(replacement));
+                            }
+                            None => {
+                                // The failures of the nodes are logged already.
+                                debug!("Failed to move the control connection to a better-located node");
+                                relocation = Relocation::due_later();
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
+    /// Takes over a control connection established on a better-located node,
+    /// publishing the metadata fetched on it.
+    ///
+    /// Returns [`ControlFlow::Break`] if the worker should stop (the cluster
+    /// worker is gone).
+    fn take_over_cc(
+        &mut self,
+        cc: ControlConnection,
+        events: ControlConnectionEvents,
+        mut plan: FetchPlan,
+        metadata: Metadata,
+    ) -> ControlFlow<(), EstablishedCc> {
+        Self::handle_metadata_keyspace_errors(&mut plan, &metadata);
+        let locality = self.cc_establisher.locality_of_cc_node(&metadata);
+
+        // The pending request is owed metadata fetched after its receipt, while
+        // this metadata may have been fetched before. A full fetch on the new
+        // connection answers it.
+        if self.pending_request.is_some() {
+            plan.note_full_needed();
+        }
+        if self
+            .send_update(|slot| MetadataUpdate::merge_metadata(slot, metadata, None))
+            .is_err()
+        {
+            return ControlFlow::Break(());
+        }
+
+        ControlFlow::Continue(EstablishedCc {
+            cc,
+            events,
+            plan,
+            locality,
+        })
+    }
+
     /// Handles a single server event synchronously (status hints are published
-    /// right away) and updates the fetch plan accordingly.
+    /// right away, if there is `updates` to publish them on) and updates the
+    /// fetch plan accordingly.
     ///
     /// An associated function taking just the updates sender, so that event
     /// handling does not require exclusive access to the whole worker.
@@ -909,7 +1075,7 @@ impl MetadataWorker {
     /// Returns [`ControlFlow::Break`] if the worker should stop (the cluster
     /// worker is gone).
     fn handle_server_event(
-        updates: &mut merge_channel::Sender<MetadataUpdate>,
+        updates: Option<&mut merge_channel::Sender<MetadataUpdate>>,
         event: Event,
         plan: &mut FetchPlan,
     ) -> ControlFlow<()> {
@@ -981,10 +1147,11 @@ impl MetadataWorker {
                         // then new connections will be opened to it, and if it is not reachable,
                         // then connection attempts will fail and the node will be marked as unreachable by `PoolRefiller`,
                         // so it won't be targeted by the load balancing policy.
-                        if Self::send_update_on(updates, |slot| {
-                            MetadataUpdate::merge_up_hint(slot, addr)
-                        })
-                        .is_err()
+                        if let Some(updates) = updates
+                            && Self::send_update_on(updates, |slot| {
+                                MetadataUpdate::merge_up_hint(slot, addr)
+                            })
+                            .is_err()
                         {
                             return ControlFlow::Break(());
                         }
@@ -998,10 +1165,11 @@ impl MetadataWorker {
                         // and thus the node will not be targeted by the LoadBalancingPolicy,
                         // which is the desired behaviour. However, if the keepalive query succeeds,
                         // then the node is likely still alive (got stale event?), and we keep targeting it.
-                        if Self::send_update_on(updates, |slot| {
-                            MetadataUpdate::merge_down_hint(slot, addr)
-                        })
-                        .is_err()
+                        if let Some(updates) = updates
+                            && Self::send_update_on(updates, |slot| {
+                                MetadataUpdate::merge_down_hint(slot, addr)
+                            })
+                            .is_err()
                         {
                             return ControlFlow::Break(());
                         }
