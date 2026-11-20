@@ -45,6 +45,11 @@ pub use crate::value::MaybeEmpty;
 /// The crate also provides a derive macro which allows to automatically
 /// implement the trait for a custom type. For more details on what the macro
 /// is capable of, see its documentation.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be deserialized from a CQL value",
+    note = "derive `DeserializeValue` to deserialize a UDT into a struct",
+    note = "support for types from external crates is enabled by `scylla` crate features"
+)]
 pub trait DeserializeValue<'frame, 'metadata>
 where
     Self: Sized,
