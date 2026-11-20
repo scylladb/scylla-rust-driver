@@ -23,6 +23,9 @@ unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(scylla_unstable)',
 ] }
 
+[lints.clippy]
+allow_attributes = "warn"
+
 [[bench]]
 name = "benchmark"
 harness = false

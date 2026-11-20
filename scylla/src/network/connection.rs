@@ -2319,6 +2319,9 @@ fn apply_socket_options(
 
     let sf = SockRef::from(&socket);
     if let Some(linger) = options.linger {
+        // Not an `expect`, because Tokio deprecated `set_linger` in 1.49, and
+        // we support older versions.
+        #[expect(clippy::allow_attributes)]
         #[allow(deprecated)]
         socket.set_linger(Some(linger))?;
     }

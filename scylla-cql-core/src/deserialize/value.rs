@@ -1744,7 +1744,9 @@ macro_rules! impl_tuple {
                 let [$($idf),*] = ensure_tuple_type::<($($Ti,)*), TUPLE_LEN>(typ)
                     .expect("Type check should have prevented this!");
 
-                // Ignore the warning for the zero-sized tuple
+                // Ignore the warning for the zero-sized tuple. Not an `expect`,
+                // because other tuple sizes don't trigger it.
+                #[expect(clippy::allow_attributes)]
                 #[allow(unused)]
                 let mut v = ensure_not_null_frame_slice::<Self>(typ, v)?;
                 let ret = (

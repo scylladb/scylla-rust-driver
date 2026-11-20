@@ -42,5 +42,8 @@ tokio = { version = "1.34", features = ["signal"] }
 [lints.rust]
 unreachable_pub = "warn"
 
+[lints.clippy]
+allow_attributes = "warn"
+
 [package.metadata.cargo-semver-checks.lints]
 workspace = true

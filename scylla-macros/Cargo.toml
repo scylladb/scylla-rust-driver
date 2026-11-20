@@ -26,6 +26,9 @@ unnameable_types = "warn"
 unreachable_pub = "warn"
 missing_docs = "warn"
 
+[lints.clippy]
+allow_attributes = "warn"
+
 [dev-dependencies]
 scylla = { path = "../scylla" }
 scylla-cql = { path = "../scylla-cql" }

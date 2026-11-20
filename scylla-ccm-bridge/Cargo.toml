@@ -13,6 +13,9 @@ publish = false
 unreachable_pub = "warn"
 missing_docs = "warn"
 
+[lints.clippy]
+allow_attributes = "warn"
+
 [features]
 default = []
 # Enables facilities that require ScyllaDB Rust Driver as a dependency.

@@ -26,6 +26,9 @@ unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(cassandra_tests)',
 ] }
 
+[lints.clippy]
+allow_attributes = "warn"
+
 [[bench]]
 name = "benchmark"
 harness = false
