@@ -94,7 +94,7 @@ async fn compression_shrinks_frames_and_preserves_data() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             // Report every request the driver makes, except the ones on the
             // control connection - those are unrelated to the cases below and
             // would pollute the counts.

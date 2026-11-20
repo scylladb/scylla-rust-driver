@@ -22,7 +22,7 @@ use scylla_proxy::{ProxyError, RequestFrame, WorkerError};
 async fn test_consistent_shard_awareness() {
     setup_tracing();
 
-    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, async move |proxy_uris, translation_map, mut running_proxy| {
 
         let session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
