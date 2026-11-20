@@ -67,7 +67,7 @@ impl PagingMode {
     /// Sends an unprepared statement. The caller configures it first.
     // `ExecutionError` is a large enum. A box here makes a match on `SendError`
     // harder to read.
-    #[allow(clippy::result_large_err)]
+    #[expect(clippy::result_large_err)]
     pub(crate) async fn send_unprepared(
         self,
         session: &Session,
@@ -94,7 +94,7 @@ impl PagingMode {
     }
 
     /// Sends a prepared statement. The caller configures it first.
-    #[allow(clippy::result_large_err)]
+    #[expect(clippy::result_large_err)]
     pub(crate) async fn send_prepared(
         self,
         session: &Session,
@@ -171,7 +171,7 @@ impl EntryPoint {
     /// The prepared entry points prepare `stmt` first. The prepared statement
     /// inherits the configuration of `stmt`. Thus, the caller configures only
     /// the statement that it passes in.
-    #[allow(clippy::result_large_err)]
+    #[expect(clippy::result_large_err)]
     pub(crate) async fn send(
         self,
         session: &Session,

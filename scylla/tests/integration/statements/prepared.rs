@@ -364,7 +364,7 @@ async fn test_token_calculation() {
     session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(ks.as_str(), true).await.unwrap();
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn assert_tokens_equal(
         session: &Session,
         prepared: &PreparedStatement,

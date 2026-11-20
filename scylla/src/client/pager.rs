@@ -1542,7 +1542,7 @@ where
     RowT: for<'frame, 'metadata> DeserializeRow<'frame, 'metadata>,
 {
     fn new(raw_stream: QueryPager) -> Result<Self, TypeCheckError> {
-        #[allow(deprecated)] // In TypedRowStream we take care to type check each page.
+        #[expect(deprecated)] // In TypedRowStream we take care to type check each page.
         raw_stream.type_check::<RowT>()?;
 
         Ok(Self {
