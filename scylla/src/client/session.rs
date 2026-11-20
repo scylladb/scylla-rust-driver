@@ -1690,7 +1690,6 @@ impl Session {
             .access();
 
         let cluster_state = self.get_cluster_state();
-        let cluster_state_ref = &cluster_state;
 
         let exec_params = RequestExecutionParams::new_for_session_apis(
             &statement.config,
@@ -1711,57 +1710,47 @@ impl Session {
         };
 
         let span = RequestSpan::new_query(&statement.contents);
-        let span_ref = &span;
-        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| {
-            // Needed to avoid moving query and values into async move block
-            let values_ref = &values;
-            let paging_state_ref = &paging_state;
-            async move {
-                if values_ref.is_empty() {
-                    span_ref.record_request_size(0);
-                    connection
-                        .query_raw_with_consistency(
-                            statement,
-                            consistency,
-                            serial_consistency,
-                            page_size,
-                            paging_state_ref.clone(),
-                        )
-                        .await
-                        .and_then(QueryResponse::into_non_error_query_response)
-                } else {
-                    let prepared = connection.prepare(statement).await?;
-                    let serialized = prepared.serialize_values(values_ref)?;
-                    // We calculate the tablet hint to avoid getting unnecessary tablet feedbacks
-                    // from the server
-                    let tablet_hint = {
-                        let maybe_token = prepared
-                            .extract_partition_key_and_calculate_token(&serialized)
-                            // The error is benign: we can still execute the request, just without the hint.
-                            .unwrap_or(None)
-                            // We only care about token to calculate tablet hint.
-                            .map(|(_pk, token)| token);
-                        choose_tablet_block_hint(
-                            cluster_state_ref,
-                            prepared.get_table_spec(),
-                            maybe_token,
-                        )
-                    };
+        let run_request_once = async |connection: Arc<Connection>, consistency: Consistency| {
+            if values.is_empty() {
+                span.record_request_size(0);
+                connection
+                    .query_raw_with_consistency(
+                        statement,
+                        consistency,
+                        serial_consistency,
+                        page_size,
+                        paging_state.clone(),
+                    )
+                    .await
+                    .and_then(QueryResponse::into_non_error_query_response)
+            } else {
+                let prepared = connection.prepare(statement).await?;
+                let serialized = prepared.serialize_values(&values)?;
+                // We calculate the tablet hint to avoid getting unnecessary tablet feedbacks
+                // from the server
+                let tablet_hint = {
+                    let maybe_token = prepared
+                        .extract_partition_key_and_calculate_token(&serialized)
+                        // The error is benign: we can still execute the request, just without the hint.
+                        .unwrap_or(None)
+                        // We only care about token to calculate tablet hint.
+                        .map(|(_pk, token)| token);
+                    choose_tablet_block_hint(&cluster_state, prepared.get_table_spec(), maybe_token)
+                };
 
-                    span_ref.record_request_size(serialized.buffer_size());
-                    connection
-                        .execute_raw_with_consistency(&ExecuteArgs {
-                            prepared_statement: &prepared,
-                            values: &serialized,
-                            consistency,
-                            serial_consistency,
-                            page_size,
-                            paging_state: paging_state_ref,
-                            tablet_block_hint: tablet_hint,
-                        })
-                        .await
-                        .and_then(QueryResponse::into_non_error_query_response)
-                }
+                span.record_request_size(serialized.buffer_size());
+                connection
+                    .execute_raw_with_consistency(&ExecuteArgs {
+                        prepared_statement: &prepared,
+                        values: &serialized,
+                        consistency,
+                        serial_consistency,
+                        page_size,
+                        paging_state: &paging_state,
+                        tablet_block_hint: tablet_hint,
+                    })
+                    .await
+                    .and_then(QueryResponse::into_non_error_query_response)
             }
         };
         let request = Request {
