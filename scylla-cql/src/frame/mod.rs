@@ -301,10 +301,20 @@ pub fn compress_append(
     match compression {
         Compression::Lz4 => {
             let uncomp_len = uncomp_body.len() as u32;
-            let tmp = lz4_flex::compress(uncomp_body);
-            out.reserve_exact(std::mem::size_of::<u32>() + tmp.len());
-            out.put_u32(uncomp_len);
-            out.extend_from_slice(&tmp[..]);
+            let original_capacity = out.capacity();
+            let header_start = out.len();
+            let body_start = header_start + std::mem::size_of::<u32>();
+            out.resize(
+                body_start + lz4_flex::block::get_maximum_output_size(uncomp_body.len()),
+                0,
+            );
+            out[header_start..body_start].copy_from_slice(&uncomp_len.to_be_bytes());
+            let compressed_size =
+                lz4_flex::block::compress_into(uncomp_body, &mut out[body_start..])
+                    .expect("LZ4 output buffer is sized with get_maximum_output_size");
+            out.truncate(body_start + compressed_size);
+            // Preserve existing capacity without retaining the worst-case bound when growing.
+            out.shrink_to(original_capacity);
             Ok(())
         }
         Compression::Snappy => {
@@ -372,6 +382,25 @@ mod test {
         let result = decompress(&comp_body[..], compression).unwrap();
         assert_eq!(32, comp_body.len());
         assert_eq!(uncomp_body.as_bytes(), result);
+    }
+
+    #[test]
+    fn test_lz4_compress_append_capacity() {
+        let prefix = b"existing frame header";
+        let uncomp_body = "Hello, World!".repeat(300);
+        for capacity in [prefix.len(), 1024, 64 * 1024] {
+            let mut out = Vec::with_capacity(capacity);
+            out.extend_from_slice(prefix);
+            let original_capacity = out.capacity();
+            compress_append(uncomp_body.as_bytes(), Compression::Lz4, &mut out).unwrap();
+            assert_eq!(&out[..prefix.len()], prefix);
+            // Callers that reuse buffers keep their capacity.
+            assert!(out.capacity() >= original_capacity);
+            // A grown buffer does not keep the worst-case LZ4 bound, which is
+            // larger than the uncompressed body.
+            let uncompressed_frame = prefix.len() + std::mem::size_of::<u32>() + uncomp_body.len();
+            assert!(out.capacity() <= original_capacity.max(uncompressed_frame));
+        }
     }
 
     #[test]
