@@ -11,7 +11,7 @@ use crate::cluster::metadata::{PeriodicFetchMode, SchemaMetadataFetchMode};
 use crate::cluster::state::NodeConfig;
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
-use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
+use crate::network::{ConnectionConfig, ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::metrics::Metrics;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
@@ -65,7 +65,8 @@ impl Cluster {
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
         known_nodes: Vec<KnownNode>,
-        mut pool_config: PoolConfig,
+        mut connection_config: ConnectionConfig,
+        pool_config: PoolConfig,
         driver_config_reporter: Option<Arc<DriverConfigReporter>>,
         keyspaces_to_fetch: Vec<String>,
         schema_metadata_fetch_mode: SchemaMetadataFetchMode,
@@ -94,9 +95,9 @@ impl Cluster {
             let translator = Arc::new(ClientRoutesAddressTranslator::new(
                 config.clone(),
                 hostname_resolution_timeout,
-                pool_config.connection_config.tls_provider.is_some(),
+                connection_config.tls_provider.is_some(),
             ));
-            pool_config.connection_config.address_translator =
+            connection_config.address_translator =
                 Some(Arc::clone(&translator) as Arc<dyn AddressTranslator>);
 
             translator
@@ -108,7 +109,7 @@ impl Cluster {
         let cc_establisher = ControlConnectionEstablisher::new(
             known_nodes,
             hostname_resolution_timeout,
-            pool_config.connection_config.clone(),
+            connection_config.clone(),
             driver_config_reporter,
             Arc::clone(&node_location_preference),
             metadata_request_timeouts,
@@ -145,6 +146,7 @@ impl Cluster {
         }
 
         let node_config = NodeConfig {
+            connection_config,
             pool_config,
             used_keyspace: None,
             connectivity_events_sender,

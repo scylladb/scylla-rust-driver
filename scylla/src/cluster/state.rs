@@ -1,7 +1,9 @@
 use crate::cluster::metadata::update::{FetchedKeyspace, SchemaUpdate};
 use crate::cluster::metadata::{Peer, SingleKeyspaceMetadataError};
 use crate::errors::{ClusterStateTokenError, ConnectionPoolError};
-use crate::network::{Connection, ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
+use crate::network::{
+    Connection, ConnectionConfig, ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName,
+};
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
 use crate::routing::locator::ReplicaLocator;
@@ -27,6 +29,8 @@ use super::node::{Node, NodeRef};
 /// Helper struct to group parameters that are only needed to
 /// construct `Node` objects.
 pub(crate) struct NodeConfig {
+    // Config for the connections of all new nodes.
+    pub(crate) connection_config: ConnectionConfig,
     // Config for `NodeConnectionPool` for all new nodes.
     pub(crate) pool_config: PoolConfig,
     // Keyspace send in "USE <keyspace name>" when opening each connection.
@@ -496,6 +500,7 @@ impl ClusterState {
                 }
                 (true, _) => Arc::new(Node::new(
                     peer_endpoint,
+                    &node_config.connection_config,
                     &node_config.pool_config,
                     node_config.connectivity_events_sender.clone(),
                     node_config.used_keyspace.clone(),
@@ -1119,6 +1124,7 @@ mod tests {
     fn make_node_config() -> NodeConfig {
         let (tx, _rx) = mpsc::unbounded_channel();
         NodeConfig {
+            connection_config: Default::default(),
             pool_config: Default::default(),
             used_keyspace: None,
             connectivity_events_sender: tx,

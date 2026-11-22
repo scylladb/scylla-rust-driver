@@ -60,9 +60,11 @@ impl Default for PoolSize {
     }
 }
 
+/// What a connection pool needs, apart from the connection settings that
+/// it shares with the control connection. These come from a separate
+/// [`ConnectionConfig`].
 #[derive(Clone)]
 pub(crate) struct PoolConfig {
-    pub(crate) connection_config: ConnectionConfig,
     pub(crate) pool_size: PoolSize,
     pub(crate) can_use_shard_aware_port: bool,
     pub(crate) reconnect_policy: Arc<dyn ReconnectPolicy>,
@@ -72,7 +74,6 @@ pub(crate) struct PoolConfig {
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
-            connection_config: Default::default(),
             pool_size: Default::default(),
             can_use_shard_aware_port: true,
             reconnect_policy: Arc::new(ExponentialReconnectPolicy::new()),
@@ -83,11 +84,12 @@ impl Default for PoolConfig {
 impl PoolConfig {
     fn to_host_pool_config(
         &self,
+        connection_config: &ConnectionConfig,
         endpoint: &UntranslatedEndpoint,
     ) -> (HostPoolConfig, Box<dyn ReconnectPolicySession>) {
         let host_reconnect_policy = self.reconnect_policy.new_session();
         let host_pool_config = HostPoolConfig {
-            connection_config: self.connection_config.to_host_connection_config(endpoint),
+            connection_config: connection_config.to_host_connection_config(endpoint),
             pool_size: self.pool_size,
             can_use_shard_aware_port: self.can_use_shard_aware_port,
         };
@@ -223,6 +225,7 @@ impl RefUnwindSafe for NodeConnectionPool {}
 impl NodeConnectionPool {
     pub(crate) fn new(
         endpoint: UntranslatedEndpoint,
+        connection_config: &ConnectionConfig,
         pool_config: &PoolConfig,
         connectivity_events_sender: Option<(Uuid, mpsc::UnboundedSender<ConnectivityChangeEvent>)>,
         current_keyspace: Option<VerifiedKeyspaceName>,
@@ -233,7 +236,8 @@ impl NodeConnectionPool {
         let pool_updated_notify = Arc::new(Notify::new());
         let refill_now_notify = Arc::new(Notify::new());
 
-        let (host_pool_config, host_reconnect_policy) = pool_config.to_host_pool_config(&endpoint);
+        let (host_pool_config, host_reconnect_policy) =
+            pool_config.to_host_pool_config(connection_config, &endpoint);
 
         let arced_endpoint = Arc::new(RwLock::new(endpoint));
 
@@ -1794,18 +1798,17 @@ mod tests {
         let endpoint = UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
             address: proxy_addr,
         });
-        let pool_config = PoolConfig {
-            connection_config: ConnectionConfig {
-                // It is also the `USE KEYSPACE` timeout, which the test waits for.
-                connect_timeout: Duration::from_millis(100),
-                ..Default::default()
-            },
+        let connection_config = ConnectionConfig {
+            // It is also the `USE KEYSPACE` timeout, which the test waits for.
+            connect_timeout: Duration::from_millis(100),
             ..Default::default()
         };
+        let pool_config = PoolConfig::default();
         let (pool_empty_notifier, _pool_empty_receiver) = mpsc::channel(1);
         let new_pool = |keyspace| {
             NodeConnectionPool::new(
                 endpoint.clone(),
+                &connection_config,
                 &pool_config,
                 None,
                 keyspace,

@@ -1564,6 +1564,7 @@ mod tests {
             let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
             let metadata = mock_metadata_for_token_aware_tests();
             let node_config = NodeConfig {
+                connection_config: Default::default(),
                 pool_config: Default::default(),
                 used_keyspace: None,
                 connectivity_events_sender,
@@ -1602,6 +1603,7 @@ mod tests {
 
             let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
             let node_config = NodeConfig {
+                connection_config: Default::default(),
                 pool_config: Default::default(),
                 used_keyspace: None,
                 connectivity_events_sender,
@@ -2736,6 +2738,7 @@ mod tests {
 
         let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
         let node_config = NodeConfig {
+            connection_config: Default::default(),
             pool_config: Default::default(),
             used_keyspace: None,
             connectivity_events_sender,
@@ -3226,6 +3229,7 @@ mod tests {
 
         let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
         let node_config = NodeConfig {
+            connection_config: Default::default(),
             pool_config: Default::default(),
             used_keyspace: None,
             connectivity_events_sender,
