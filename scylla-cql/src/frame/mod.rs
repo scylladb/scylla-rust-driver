@@ -305,13 +305,12 @@ pub fn compress_append(
             let header_start = out.len();
             let body_start = header_start + std::mem::size_of::<u32>();
             out.resize(
-                body_start + lz4_flex::block::get_maximum_output_size(uncomp_body.len()),
+                body_start + lz4rip::block::get_maximum_output_size(uncomp_body.len()),
                 0,
             );
             out[header_start..body_start].copy_from_slice(&uncomp_len.to_be_bytes());
-            let compressed_size =
-                lz4_flex::block::compress_into(uncomp_body, &mut out[body_start..])
-                    .expect("LZ4 output buffer is sized with get_maximum_output_size");
+            let compressed_size = lz4rip::block::compress_into(uncomp_body, &mut out[body_start..])
+                .expect("LZ4 output buffer is sized with get_maximum_output_size");
             out.truncate(body_start + compressed_size);
             // Preserve existing capacity without retaining the worst-case bound when growing.
             out.shrink_to(original_capacity);
@@ -346,7 +345,7 @@ pub fn decompress(
                 ))
             })?;
             let uncomp_len = u32::from_be_bytes(*uncomp_len) as usize;
-            let uncomp_body = lz4_flex::decompress(comp_body, uncomp_len)
+            let uncomp_body = lz4rip::decompress(comp_body, uncomp_len)
                 .map_err(|err| FrameBodyExtensionsParseError::Lz4DecompressError(Arc::new(err)))?;
             Ok(uncomp_body)
         }
@@ -380,7 +379,7 @@ mod test {
         let compression = Compression::Lz4;
         compress_append(uncomp_body.as_bytes(), compression, &mut comp_body).unwrap();
         let result = decompress(&comp_body[..], compression).unwrap();
-        assert_eq!(32, comp_body.len());
+        assert!(comp_body.len() < uncomp_body.len());
         assert_eq!(uncomp_body.as_bytes(), result);
     }
 
@@ -400,6 +399,45 @@ mod test {
             // larger than the uncompressed body.
             let uncompressed_frame = prefix.len() + std::mem::size_of::<u32>() + uncomp_body.len();
             assert!(out.capacity() <= original_capacity.max(uncompressed_frame));
+        }
+    }
+
+    #[test]
+    fn test_lz4_interoperability() {
+        let prefix = b"existing frame header";
+        let mut out = Vec::new();
+        for size in [0, 1, 12, 13, 255, 256, 4096, 65_535, 65_536, 131_072] {
+            let repeated: Vec<u8> = b"Hello, World!"
+                .iter()
+                .copied()
+                .cycle()
+                .take(size)
+                .collect();
+            let mut state = 0x1234_5678_u32;
+            let random: Vec<u8> = (0..size)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 17;
+                    state ^= state << 5;
+                    state as u8
+                })
+                .collect();
+
+            for input in [repeated, random] {
+                // A peer using the previous implementation must decode new requests.
+                out.clear();
+                out.extend_from_slice(prefix);
+                compress_append(&input, Compression::Lz4, &mut out).unwrap();
+                assert_eq!(&out[..prefix.len()], prefix);
+                let (size_prefix, compressed) = out[prefix.len()..].split_at(4);
+                assert_eq!(size_prefix, (size as u32).to_be_bytes());
+                assert_eq!(lz4_flex::decompress(compressed, size).unwrap(), input);
+
+                // Responses from the previous implementation must still decode.
+                let mut old_frame = (size as u32).to_be_bytes().to_vec();
+                old_frame.extend_from_slice(&lz4_flex::compress(&input));
+                assert_eq!(decompress(&old_frame, Compression::Lz4).unwrap(), input);
+            }
         }
     }
 
