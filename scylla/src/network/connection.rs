@@ -96,6 +96,16 @@ pub enum WriteCoalescingDelay {
     Milliseconds(NonZeroU64),
 }
 
+/// Consistency of the statements that a [`Connection`] sends on its own,
+/// outside of the [`Session`](crate::client::session::Session) request path:
+/// `USE <keyspace>` and the metadata queries of the control connection.
+///
+/// It applies only to a statement that does not set its own consistency.
+///
+/// The value only keeps the level that earlier versions of the driver used.
+/// It is not a decision that this level is the correct one for these statements.
+const INTERNAL_STATEMENT_CONSISTENCY: Consistency = Consistency::LocalQuorum;
+
 pub(crate) struct Connection {
     _worker_handle: RemoteHandle<()>,
 
@@ -282,7 +292,6 @@ pub(crate) struct ConnectionConfig {
     pub(crate) connect_timeout: std::time::Duration,
     // should be Some only in control connections,
     pub(crate) event_sender: Option<(mpsc::Sender<Event>, Vec<EventType>)>,
-    pub(crate) default_consistency: Consistency,
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
     pub(crate) write_coalescing_delay: Option<WriteCoalescingDelay>,
@@ -333,7 +342,6 @@ impl ConnectionConfig {
             tls_config,
             connect_timeout: self.connect_timeout,
             event_sender: self.event_sender.clone(),
-            default_consistency: self.default_consistency,
             authenticator: self.authenticator.clone(),
             address_translator: self.address_translator.clone(),
             write_coalescing_delay: self.write_coalescing_delay.clone(),
@@ -363,7 +371,6 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) connect_timeout: std::time::Duration,
     // should be Some only in control connections,
     pub(crate) event_sender: Option<(mpsc::Sender<Event>, Vec<EventType>)>,
-    pub(crate) default_consistency: Consistency,
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
     pub(crate) write_coalescing_delay: Option<WriteCoalescingDelay>,
@@ -393,7 +400,6 @@ impl Default for HostConnectionConfig {
             event_sender: None,
             tls_config: None,
             connect_timeout: std::time::Duration::from_secs(5),
-            default_consistency: Default::default(),
             authenticator: None,
             address_translator: None,
             write_coalescing_delay: Some(WriteCoalescingDelay::SmallNondeterministic),
@@ -430,7 +436,6 @@ impl Default for ConnectionConfig {
             event_sender: None,
             tls_provider: None,
             connect_timeout: std::time::Duration::from_secs(5),
-            default_consistency: Default::default(),
             authenticator: None,
             address_translator: None,
             write_coalescing_delay: Some(WriteCoalescingDelay::SmallNondeterministic),
@@ -904,7 +909,7 @@ impl Connection {
             statement,
             statement
                 .config
-                .determine_consistency(self.config.default_consistency),
+                .determine_consistency(INTERNAL_STATEMENT_CONSISTENCY),
             statement.config.serial_consistency.flatten(),
             None,
             PagingState::start(),
@@ -1188,7 +1193,7 @@ impl Connection {
     ) -> Result<QueryPager, NextRowError> {
         let consistency = prepared_statement
             .config
-            .determine_consistency(self.config.default_consistency);
+            .determine_consistency(INTERNAL_STATEMENT_CONSISTENCY);
         let serial_consistency = prepared_statement.config.serial_consistency.flatten();
 
         QueryPager::new_for_connection_execute_iter(

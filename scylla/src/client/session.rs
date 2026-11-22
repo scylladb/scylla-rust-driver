@@ -1503,7 +1503,6 @@ impl Session {
             authenticator: config.authenticator,
             connect_timeout: config.connect_timeout,
             event_sender: None,
-            default_consistency: Default::default(),
             address_translator: config.address_translator,
             write_coalescing_delay: config
                 .enable_write_coalescing
