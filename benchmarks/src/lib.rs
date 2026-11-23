@@ -69,7 +69,9 @@ pub fn node_address() -> String {
 /// Tunable sizes for the benchmark scenarios.
 #[derive(Clone, Copy, Debug)]
 pub struct ScenarioConfig {
+    /// Number of partitions inserted for the `SELECT` scenarios.
     pub prefilled_partitions: usize,
+    /// Number of rows inserted into each of those partitions.
     pub prefilled_rows_per_partition: usize,
     /// Number of statements packed into the `BATCH` scenario's batch.
     pub batch_size: usize,

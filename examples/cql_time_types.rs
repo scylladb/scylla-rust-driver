@@ -1,5 +1,5 @@
-// An example showing how to use time related types in queries
-// Date, Time, Timestamp
+//! Shows how to use the time related types in statements: date, time and
+//! timestamp.
 
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};

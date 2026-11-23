@@ -1,14 +1,15 @@
-/// Generates `scylla/src/book_tests.rs` from `docs/source/SUMMARY.md`.
-///
-/// For each book chapter that contains ```rust code blocks, a module with
-/// `#![doc = include_str!("...")]` is emitted so that rustdoc compiles and
-/// tests those code blocks alongside normal doctests.
-///
-/// Fails if any chapter in `docs/source/` is missing from SUMMARY.md.
-///
-/// Usage:
-///     make regenerate-book-tests           # (re)generate the file
-///     make check-book-tests # exit 1 if file is stale
+//! Generates `scylla/src/book_tests.rs` from `docs/source/SUMMARY.md`.
+//!
+//! For each book chapter that contains ```rust code blocks, a module with
+//! `#![doc = include_str!("...")]` is emitted so that rustdoc compiles and
+//! tests those code blocks alongside normal doctests.
+//!
+//! Fails if any chapter in `docs/source/` is missing from SUMMARY.md.
+//!
+//! Usage:
+//!     make regenerate-book-tests           # (re)generate the file
+//!     make check-book-tests # exit 1 if file is stale
+
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};

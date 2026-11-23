@@ -1,3 +1,5 @@
+//! Shows how to find a column of untyped rows by its name.
+
 use anyhow::{Result, anyhow};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;

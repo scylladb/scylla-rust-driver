@@ -1,3 +1,6 @@
+//! Shows that the driver computes the same token for a partition key as the
+//! server does, and how to find the replicas that own a token.
+
 use anyhow::Result;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;

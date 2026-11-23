@@ -1,3 +1,5 @@
+//! Shows how to insert and read a user defined type as a Rust struct.
+
 use anyhow::Result;
 use futures::TryStreamExt as _;
 use scylla::client::session::Session;

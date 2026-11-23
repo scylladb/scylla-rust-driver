@@ -1,3 +1,6 @@
+//! Shows the basics: creating a schema, running unprepared and prepared
+//! statements, and reading rows as tuples, structs or untyped rows.
+
 use anyhow::Result;
 use futures::StreamExt as _;
 use futures::TryStreamExt as _;

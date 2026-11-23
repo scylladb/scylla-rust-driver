@@ -28,7 +28,7 @@ use uuid::Uuid;
 
 /// The connection ID that a cloud provider would assign to our private
 /// endpoint. It is what the driver filters `system.client_routes` by.
-pub const CONNECTION_ID: &str = "examples-client-routes";
+pub(crate) const CONNECTION_ID: &str = "examples-client-routes";
 
 /// Starts a load balancer on an OS-assigned local port, forwarding to `backend`.
 async fn start_nlb(backend: SocketAddr) -> Result<RunningNlbFrontend> {
@@ -46,7 +46,7 @@ async fn start_nlb(backend: SocketAddr) -> Result<RunningNlbFrontend> {
 ///
 /// Dropping it destroys the CCM cluster; the load balancers, being plain tokio
 /// tasks, go away with the runtime.
-pub struct ClientRoutesCluster {
+pub(crate) struct ClientRoutesCluster {
     /// Destroys the CCM cluster on drop, hence held for the whole run.
     _cluster: Cluster,
     contact_point: RunningNlbFrontend,
@@ -55,7 +55,7 @@ pub struct ClientRoutesCluster {
 }
 
 impl ClientRoutesCluster {
-    pub async fn start() -> Result<Self> {
+    pub(crate) async fn start() -> Result<Self> {
         let mut cluster = Cluster::new(ClusterOptions {
             name: "examples_client_routes".to_string(),
             version: CLUSTER_VERSION.clone(),
@@ -114,28 +114,28 @@ impl ClientRoutesCluster {
     }
 
     /// The private endpoint handed to the driver as its contact point.
-    pub fn contact_point(&self) -> SocketAddr {
+    pub(crate) fn contact_point(&self) -> SocketAddr {
         self.contact_point.listen_addr()
     }
 
     /// The endpoint registered for the node in `system.client_routes`.
-    pub fn routed_endpoint(&self) -> SocketAddr {
+    pub(crate) fn routed_endpoint(&self) -> SocketAddr {
         self.routed.listen_addr()
     }
 
     /// The address the node advertises to clients, which none of them can reach
     /// here.
-    pub fn advertised_node_address(&self) -> &str {
+    pub(crate) fn advertised_node_address(&self) -> &str {
         &self.advertised_node_address
     }
 
     /// TCP connections accepted by the contact-point endpoint.
-    pub fn contact_point_connections(&self) -> u64 {
+    pub(crate) fn contact_point_connections(&self) -> u64 {
         self.contact_point.accepted_connections()
     }
 
     /// TCP connections accepted by the routed endpoint.
-    pub fn routed_connections(&self) -> u64 {
+    pub(crate) fn routed_connections(&self) -> u64 {
         self.routed.accepted_connections()
     }
 }
