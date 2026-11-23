@@ -8,8 +8,8 @@ mod proxy_protocol;
 pub type TargetShard = u16;
 
 pub use actions::{
-    Action, Condition, Reaction, RequestReaction, RequestRule, ResponseReaction, ResponseRule,
-    example_db_errors,
+    Action, Condition, Gate, Reaction, RequestReaction, RequestRule, ResponseReaction,
+    ResponseRule, example_db_errors,
 };
 pub use errors::{DoorkeeperError, ForgedRowsError, ProxyError, WorkerError};
 pub use frame::{RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode};
