@@ -117,6 +117,9 @@ impl<'result> CustomTypeParser<'result> {
             "ByteType" => NativeType::TinyInt,
             "UUIDType" => NativeType::Uuid,
             "TimeUUIDType" => NativeType::Timeuuid,
+            // Cassandra 5 reports it as the result type of e.g. `blobastimeuuid()`.
+            // Its CQL type is `timeuuid` and it is serialized as a UUID.
+            "LegacyTimeUUIDType" => NativeType::Timeuuid,
             "SmallIntType" => NativeType::SmallInt,
             "TinyIntType" => NativeType::TinyInt,
             "TimeType" => NativeType::Time,
@@ -452,6 +455,15 @@ mod tests {
             (
                 "org.apache.cassandra.db.marshal.DurationType",
                 ColumnType::Native(NativeType::Duration),
+            ),
+            (
+                "org.apache.cassandra.db.marshal.TimeUUIDType",
+                ColumnType::Native(NativeType::Timeuuid),
+            ),
+            // Cassandra 5 uses it as the result type of `blobastimeuuid()`.
+            (
+                "org.apache.cassandra.db.marshal.LegacyTimeUUIDType",
+                ColumnType::Native(NativeType::Timeuuid),
             ),
             (
                 "org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)",
