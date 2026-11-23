@@ -251,6 +251,23 @@ If you add a new feature-pinned crate (or a new supported version of an
 existing one), update `renovate.json` accordingly: the newest alias should get
 `dependencyDashboardApproval`, and the alias it supersedes should be disabled.
 
+## Bumping MSRV
+
+The policy (see "Supported Rust Versions" in `README.md`):
+- MSRV only changes in major and minor releases, never in patch releases.
+- The new MSRV must be at least 6 months old when the driver release that includes
+  the bump is published. The bump itself can be merged earlier. Rust release dates are
+  listed in [RELEASES.md](https://github.com/rust-lang/rust/blob/main/RELEASES.md).
+
+A bump updates:
+- `rust-version` in `[workspace.package]` in the root `Cargo.toml`. Crates inherit it
+  with `rust-version.workspace = true`.
+- `rust_min` in `.github/workflows/rust.yml`, used by the CI job that checks the MSRV.
+- The badge and the "Supported Rust Versions" section in `README.md`.
+
+This list can get outdated. To catch anything it misses, search for the old version,
+e.g. `git grep -F 1.94`.
+
 ## Writing release notes
 
 PR titles are written for maintainers, but release notes entries are written for users.
