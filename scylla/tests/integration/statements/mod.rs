@@ -4,6 +4,7 @@ mod consistency;
 mod coordinator;
 mod execution_profiles;
 mod named_bind_markers;
+mod paging;
 mod positional_values;
 mod prepared;
 mod request_timeout;

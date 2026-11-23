@@ -17,12 +17,16 @@
 //! kind of failure is expected to occur.
 
 use assert_matches::assert_matches;
+use futures::TryStreamExt as _;
+use scylla::client::pager::QueryPager;
 use scylla::client::session::Session;
+use scylla::deserialize::row::DeserializeRow;
 use scylla::errors::{
-    BadQuery, DbError, ExecutionError, NextPageError, PagerExecutionError, RequestAttemptError,
-    RequestError, SchemaAgreementError,
+    BadQuery, DbError, ExecutionError, NextPageError, PagerExecutionError, PrepareError,
+    RequestAttemptError, RequestError, SchemaAgreementError,
 };
-use scylla::response::PagingState;
+use scylla::response::query_result::QueryResult;
+use scylla::response::{PagingState, PagingStateResponse};
 use scylla::serialize::SerializationError;
 use scylla::serialize::row::SerializeRow;
 use scylla::statement::Statement;
@@ -52,6 +56,70 @@ pub(crate) enum EntryPoint {
     ExecuteSinglePage,
 }
 
+/// The response to a statement, as the entry point returned it.
+///
+/// Each [`PagingMode`] returns a different type. Thus, this enum holds
+/// whichever of them the call returned.
+pub(crate) enum Response {
+    Unpaged(QueryResult),
+    Iter(QueryPager),
+    SinglePage(QueryResult, PagingStateResponse),
+}
+
+/// The rows that a caller gets from a [`Response`].
+pub(crate) struct Rows<R> {
+    /// All rows for `Unpaged` and `Iter`. Only the rows of the first page for
+    /// `SinglePage`.
+    pub(crate) rows: Vec<R>,
+    /// Whether the database has more pages after these rows. This is always
+    /// `false` for `Unpaged` and `Iter`, because they fetch all the pages.
+    pub(crate) has_more_pages: bool,
+}
+
+impl Response {
+    /// Deserializes the rows of the response. Panics on a failure, because
+    /// only a test calls this.
+    ///
+    /// An `Iter` response is drained, so this fetches all the pages.
+    pub(crate) async fn into_rows<R>(self) -> Rows<R>
+    where
+        R: for<'frame, 'metadata> DeserializeRow<'frame, 'metadata>,
+    {
+        fn rows_of<R>(result: QueryResult) -> Vec<R>
+        where
+            R: for<'frame, 'metadata> DeserializeRow<'frame, 'metadata>,
+        {
+            result
+                .into_rows_result()
+                .unwrap()
+                .rows::<R>()
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        }
+
+        match self {
+            Response::Unpaged(result) => Rows {
+                rows: rows_of(result),
+                has_more_pages: false,
+            },
+            Response::Iter(pager) => Rows {
+                rows: pager
+                    .rows_stream::<R>()
+                    .unwrap()
+                    .try_collect()
+                    .await
+                    .unwrap(),
+                has_more_pages: false,
+            },
+            Response::SinglePage(result, paging_state_response) => Rows {
+                rows: rows_of(result),
+                has_more_pages: !paging_state_response.finished(),
+            },
+        }
+    }
+}
+
 /// The error that a send failed with.
 ///
 /// The iterating entry points return a [`PagerExecutionError`]. The other entry
@@ -64,9 +132,68 @@ pub(crate) enum SendError {
 }
 
 impl PagingMode {
-    /// Sends an unprepared statement. The caller configures it first.
+    /// Sends an unprepared statement and returns the response. The caller
+    /// configures the statement first.
     // `ExecutionError` is a large enum. A box here makes a match on `SendError`
     // harder to read.
+    #[allow(clippy::result_large_err)]
+    pub(crate) async fn fetch_unprepared(
+        self,
+        session: &Session,
+        stmt: impl Into<Statement>,
+        values: impl SerializeRow,
+    ) -> Result<Response, SendError> {
+        match self {
+            PagingMode::Unpaged => session
+                .query_unpaged(stmt, values)
+                .await
+                .map(Response::Unpaged)
+                .map_err(SendError::Execution),
+            PagingMode::Iter => session
+                .query_iter(stmt, values)
+                .await
+                .map(Response::Iter)
+                .map_err(SendError::Pager),
+            PagingMode::SinglePage => session
+                .query_single_page(stmt, values, PagingState::start())
+                .await
+                .map(|(result, paging_state)| Response::SinglePage(result, paging_state))
+                .map_err(SendError::Execution),
+        }
+    }
+
+    /// Sends a prepared statement and returns the response. The caller
+    /// configures the statement first.
+    #[allow(clippy::result_large_err)]
+    pub(crate) async fn fetch_prepared(
+        self,
+        session: &Session,
+        stmt: &PreparedStatement,
+        values: impl SerializeRow,
+    ) -> Result<Response, SendError> {
+        match self {
+            PagingMode::Unpaged => session
+                .execute_unpaged(stmt, values)
+                .await
+                .map(Response::Unpaged)
+                .map_err(SendError::Execution),
+            // `execute_iter` takes the statement by value. The clone only copies
+            // a few `Arc`s.
+            PagingMode::Iter => session
+                .execute_iter(stmt.clone(), values)
+                .await
+                .map(Response::Iter)
+                .map_err(SendError::Pager),
+            PagingMode::SinglePage => session
+                .execute_single_page(stmt, values, PagingState::start())
+                .await
+                .map(|(result, paging_state)| Response::SinglePage(result, paging_state))
+                .map_err(SendError::Execution),
+        }
+    }
+
+    /// Sends an unprepared statement and discards the response. The caller
+    /// configures the statement first.
     #[allow(clippy::result_large_err)]
     pub(crate) async fn send_unprepared(
         self,
@@ -74,26 +201,13 @@ impl PagingMode {
         stmt: impl Into<Statement>,
         values: impl SerializeRow,
     ) -> Result<(), SendError> {
-        match self {
-            PagingMode::Unpaged => session
-                .query_unpaged(stmt, values)
-                .await
-                .map(|_| ())
-                .map_err(SendError::Execution),
-            PagingMode::Iter => session
-                .query_iter(stmt, values)
-                .await
-                .map(|_| ())
-                .map_err(SendError::Pager),
-            PagingMode::SinglePage => session
-                .query_single_page(stmt, values, PagingState::start())
-                .await
-                .map(|_| ())
-                .map_err(SendError::Execution),
-        }
+        self.fetch_unprepared(session, stmt, values)
+            .await
+            .map(|_| ())
     }
 
-    /// Sends a prepared statement. The caller configures it first.
+    /// Sends a prepared statement and discards the response. The caller
+    /// configures the statement first.
     #[allow(clippy::result_large_err)]
     pub(crate) async fn send_prepared(
         self,
@@ -101,25 +215,7 @@ impl PagingMode {
         stmt: &PreparedStatement,
         values: impl SerializeRow,
     ) -> Result<(), SendError> {
-        match self {
-            PagingMode::Unpaged => session
-                .execute_unpaged(stmt, values)
-                .await
-                .map(|_| ())
-                .map_err(SendError::Execution),
-            // `execute_iter` takes the statement by value. The clone only copies
-            // a few `Arc`s.
-            PagingMode::Iter => session
-                .execute_iter(stmt.clone(), values)
-                .await
-                .map(|_| ())
-                .map_err(SendError::Pager),
-            PagingMode::SinglePage => session
-                .execute_single_page(stmt, values, PagingState::start())
-                .await
-                .map(|_| ())
-                .map_err(SendError::Execution),
-        }
+        self.fetch_prepared(session, stmt, values).await.map(|_| ())
     }
 }
 
@@ -153,6 +249,12 @@ impl EntryPoint {
         }
     }
 
+    /// Whether the call returns the rows of all the pages. The single page
+    /// entry points return only the first page.
+    pub(crate) fn fetches_all_pages(self) -> bool {
+        !matches!(self.paging_mode(), PagingMode::SinglePage)
+    }
+
     /// Whether the statement is prepared before it is sent.
     ///
     /// This decides when the values are serialized. Thus, it also decides
@@ -166,18 +268,18 @@ impl EntryPoint {
         }
     }
 
-    /// Sends `stmt` with `values` and discards the response.
+    /// Sends `stmt` with `values` and returns the response.
     ///
     /// The prepared entry points prepare `stmt` first. The prepared statement
     /// inherits the configuration of `stmt`. Thus, the caller configures only
     /// the statement that it passes in.
     #[allow(clippy::result_large_err)]
-    pub(crate) async fn send(
+    pub(crate) async fn fetch(
         self,
         session: &Session,
         stmt: impl Into<Statement>,
         values: impl SerializeRow,
-    ) -> Result<(), SendError> {
+    ) -> Result<Response, SendError> {
         let stmt = stmt.into();
         if self.is_prepared() {
             let prepared = match session.prepare(stmt).await {
@@ -192,13 +294,25 @@ impl EntryPoint {
                 }
             };
             self.paging_mode()
-                .send_prepared(session, &prepared, values)
+                .fetch_prepared(session, &prepared, values)
                 .await
         } else {
             self.paging_mode()
-                .send_unprepared(session, stmt, values)
+                .fetch_unprepared(session, stmt, values)
                 .await
         }
+    }
+
+    /// Sends `stmt` with `values` and discards the response. See
+    /// [`EntryPoint::fetch`].
+    #[allow(clippy::result_large_err)]
+    pub(crate) async fn send(
+        self,
+        session: &Session,
+        stmt: impl Into<Statement>,
+        values: impl SerializeRow,
+    ) -> Result<(), SendError> {
+        self.fetch(session, stmt, values).await.map(|_| ())
     }
 }
 
@@ -225,6 +339,44 @@ impl SendError {
             SendError::Execution(ExecutionError::LastAttemptError(
                 RequestAttemptError::SerializationError(err),
             )) if !entry_point.is_prepared() => err,
+            other => panic!(
+                "{} failed with an unexpected error: {other:?}",
+                entry_point.name()
+            ),
+        }
+    }
+
+    /// Returns the error that the database sent, from wherever the entry
+    /// point reports it.
+    ///
+    /// The place depends on the entry point:
+    /// - An unprepared statement sends the request. Thus, the database error
+    ///   is the error of the last attempt.
+    /// - A prepared entry point prepares the statement first. Thus, the
+    ///   database error is the error of the first preparation attempt.
+    /// - `query_iter` with values also prepares the statement first.
+    /// - An iterating entry point wraps either error in its own
+    ///   `PagerExecutionError`.
+    pub(crate) fn into_db_error(self, entry_point: EntryPoint) -> (DbError, String) {
+        match self {
+            SendError::Execution(ExecutionError::LastAttemptError(
+                RequestAttemptError::DbError(err, message),
+            ))
+            | SendError::Execution(ExecutionError::PrepareError(
+                PrepareError::AllAttemptsFailed {
+                    first_attempt: RequestAttemptError::DbError(err, message),
+                },
+            ))
+            | SendError::Pager(PagerExecutionError::PrepareError(
+                PrepareError::AllAttemptsFailed {
+                    first_attempt: RequestAttemptError::DbError(err, message),
+                },
+            ))
+            | SendError::Pager(PagerExecutionError::NextPageError(
+                NextPageError::RequestFailure(RequestError::LastAttemptError(
+                    RequestAttemptError::DbError(err, message),
+                )),
+            )) => (err, message),
             other => panic!(
                 "{} failed with an unexpected error: {other:?}",
                 entry_point.name()

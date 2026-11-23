@@ -1,5 +1,6 @@
 //! Tests of the positional values sent with a statement. They check that:
 //! - the database rejects a value list that does not match the bind markers,
+//! - the driver rejects a value of a type that does not match the column,
 //! - the database accepts a `NULL` in the values,
 //! - an `Unset` in the values does not change the column.
 //!
@@ -12,7 +13,14 @@
 use assert_matches::assert_matches;
 use scylla::client::session::Session;
 use scylla::serialize::SerializationError;
-use scylla::serialize::row::{BuiltinTypeCheckError, BuiltinTypeCheckErrorKind};
+use scylla::serialize::row::{
+    BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
+    BuiltinTypeCheckErrorKind,
+};
+use scylla::serialize::value::{
+    BuiltinTypeCheckError as ValueTypeCheckError,
+    BuiltinTypeCheckErrorKind as ValueTypeCheckErrorKind,
+};
 use scylla::value::MaybeUnset;
 
 use crate::entry_point::EntryPoint;
@@ -37,6 +45,7 @@ async fn test_positional_values() {
 
     too_many_values_are_rejected(&session).await;
     too_few_values_are_rejected(&session).await;
+    value_of_wrong_type_is_rejected(&session).await;
     nulls_are_accepted_among_values(&session).await;
     unset_values_leave_the_column_unchanged(&session).await;
 
@@ -82,6 +91,41 @@ async fn too_few_values_are_rejected(session: &Session) {
         } else {
             err.assert_is_invalid_db_error(entry_point, "Invalid amount of bind variables");
         }
+    }
+}
+
+/// A value of the wrong type: serialization fails on each entry point. The
+/// error names the column and the type that the column needs.
+///
+/// An unprepared statement learns the column types from the response to its
+/// request. Thus, the failure occurs later, but it is the same error.
+async fn value_of_wrong_type_is_rejected(session: &Session) {
+    const STMT: &str = "SELECT v FROM t WHERE k = ?";
+
+    for entry_point in EntryPoint::ALL {
+        // The column `k` is `text`. An `i32` cannot serialize as `text`.
+        let err = entry_point
+            .send(session, STMT, (1_i32,))
+            .await
+            .unwrap_err()
+            .into_serialization_error(entry_point);
+
+        let row_err = err.downcast_ref::<BuiltinSerializationError>().unwrap();
+        let BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err } = &row_err.kind
+        else {
+            panic!(
+                "{} failed with an unexpected error: {row_err:?}",
+                entry_point.name()
+            );
+        };
+        assert_eq!(name, "k", "{}", entry_point.name());
+        let value_err = err.downcast_ref::<ValueTypeCheckError>().unwrap();
+        assert_matches!(
+            value_err.kind,
+            ValueTypeCheckErrorKind::MismatchedType { .. },
+            "{}",
+            entry_point.name()
+        );
     }
 }
 
