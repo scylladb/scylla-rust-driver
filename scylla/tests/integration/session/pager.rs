@@ -7,7 +7,6 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-use assert_matches::assert_matches;
 use futures::{StreamExt as _, TryStreamExt as _};
 use scylla::statement::Consistency;
 use scylla::{
@@ -30,6 +29,7 @@ use scylla_proxy::{
     Condition, ProxyError, Reaction as _, RequestFrame, RequestOpcode, RequestReaction,
     RequestRule, ResponseFrame, WorkerError, example_db_errors,
 };
+use std::assert_matches;
 use tracing::info;
 
 use crate::utils::{
@@ -372,7 +372,7 @@ async fn test_pager_timeouts() {
 
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             /* Prepare phase */
             let ks = unique_keyspace_name();
 
@@ -609,7 +609,7 @@ async fn test_pager_retry_receives_current_consistency() {
 
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
@@ -774,7 +774,7 @@ async fn test_pager_consistency_reset_between_pages() {
 
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
@@ -1074,7 +1074,7 @@ async fn test_pager_per_page_plan_prevents_exhaustion() {
 
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
@@ -1164,7 +1164,7 @@ async fn test_pager_coordinator_stability() {
 
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
@@ -1260,7 +1260,7 @@ async fn test_pager_coordinator_switches_on_error() {
 
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))

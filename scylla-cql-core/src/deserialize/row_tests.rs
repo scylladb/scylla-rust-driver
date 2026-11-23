@@ -1,5 +1,5 @@
-use assert_matches::assert_matches;
 use bytes::Bytes;
+use std::assert_matches;
 
 use crate::deserialize::row::BuiltinDeserializationErrorKind;
 use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};

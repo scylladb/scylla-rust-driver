@@ -2,7 +2,7 @@
 name = "scylla-ccm-bridge"
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.94"
+rust-version.workspace = true
 description = "CCM (Cassandra Cluster Manager) bridge for testing ScyllaDB Drivers"
 repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"
@@ -12,6 +12,9 @@ publish = false
 [lints.rust]
 unreachable_pub = "warn"
 missing_docs = "warn"
+
+[lints.clippy]
+allow_attributes = "warn"
 
 [features]
 default = []

@@ -26,7 +26,6 @@ use scylla_proxy::{
 };
 
 use std::collections::HashSet;
-use std::future::Future;
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::{self, UnboundedReceiver};
@@ -1011,16 +1010,15 @@ fn install_feedback_channels(
 /// runs `test_body` with the session and the feedback receivers. The proxy
 /// bookkeeping (including tolerating the expected disconnect at shutdown) is
 /// handled here so each subtest can focus on its own schema and assertions.
-async fn with_tablet_session<F, Fut>(fetch_full_schema: bool, test_body: F)
-where
-    F: FnOnce(Session, Vec<UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>>) -> Fut,
-    Fut: Future<Output = ()>,
-{
+async fn with_tablet_session(
+    fetch_full_schema: bool,
+    test_body: impl AsyncFnOnce(Session, Vec<UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>>),
+) {
     setup_tracing();
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let session = scylla::client::session_builder::SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
@@ -1068,7 +1066,7 @@ where
 async fn test_tablets() {
     const TABLET_COUNT: usize = 16;
 
-    with_tablet_session(false, |session, mut feedback_rxs| async move {
+    with_tablet_session(false, async move |session, mut feedback_rxs| {
         let ks = unique_keyspace_name();
 
         /* Prepare schema */
@@ -1192,7 +1190,7 @@ async fn test_tablets() {
 /// keyspace must use RF=1).
 #[tokio::test]
 async fn test_tablets_materialized_view() {
-    with_tablet_session(true, |session, mut feedback_rxs| async move {
+    with_tablet_session(true, async move |session, mut feedback_rxs| {
         // Gated on the server supporting materialized views on tablet tables.
         if !supports_feature(&session, "VIEWS_WITH_TABLETS").await {
             tracing::warn!(
@@ -1212,7 +1210,7 @@ async fn test_tablets_materialized_view() {
 /// [`verify_cdc_log_tablet_routing`] for details).
 #[tokio::test]
 async fn test_tablets_cdc_log() {
-    with_tablet_session(true, |session, mut feedback_rxs| async move {
+    with_tablet_session(true, async move |session, mut feedback_rxs| {
         // Gated on the server supporting CDC on tablet tables.
         if !supports_feature(&session, "CDC_WITH_TABLETS").await {
             tracing::warn!(

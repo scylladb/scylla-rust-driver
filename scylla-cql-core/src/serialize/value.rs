@@ -34,6 +34,11 @@ use super::{CellValueBuilder, CellWriter, SerializationError};
 /// protocol and usually does not have to be implemented directly. See the
 /// chapter on "Query Values" in the driver docs for information about how
 /// this trait is supposed to be used.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be serialized as a CQL value",
+    note = "derive `SerializeValue` to serialize a struct as a UDT",
+    note = "support for types from external crates is enabled by `scylla` crate features"
+)]
 pub trait SerializeValue {
     /// Serializes the value to given CQL type.
     ///
@@ -985,22 +990,20 @@ fn serialize_sequence<'t, 'b, T: SerializeValue + 't>(
     typ: &ColumnType,
     writer: CellWriter<'b>,
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
-    let elt = match typ {
-        ColumnType::Collection {
-            frozen: _,
-            typ: CollectionType::List(elt),
-        }
-        | ColumnType::Collection {
-            frozen: _,
-            typ: CollectionType::Set(elt),
-        } => elt,
-        _ => {
-            return Err(mk_typck_err_named(
-                rust_name,
-                typ,
-                SetOrListTypeCheckErrorKind::NotSetOrList,
-            ));
-        }
+    let (ColumnType::Collection {
+        frozen: _,
+        typ: CollectionType::List(elt),
+    }
+    | ColumnType::Collection {
+        frozen: _,
+        typ: CollectionType::Set(elt),
+    }) = typ
+    else {
+        return Err(mk_typck_err_named(
+            rust_name,
+            typ,
+            SetOrListTypeCheckErrorKind::NotSetOrList,
+        ));
     };
 
     let mut builder = writer.into_value_builder();
@@ -1151,18 +1154,16 @@ fn serialize_mapping<'t, 'b, K: SerializeValue + 't, V: SerializeValue + 't>(
     typ: &ColumnType,
     writer: CellWriter<'b>,
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
-    let (ktyp, vtyp) = match typ {
-        ColumnType::Collection {
-            frozen: _,
-            typ: CollectionType::Map(k, v),
-        } => (k, v),
-        _ => {
-            return Err(mk_typck_err_named(
-                rust_name,
-                typ,
-                MapTypeCheckErrorKind::NotMap,
-            ));
-        }
+    let ColumnType::Collection {
+        frozen: _,
+        typ: CollectionType::Map(ktyp, vtyp),
+    } = typ
+    else {
+        return Err(mk_typck_err_named(
+            rust_name,
+            typ,
+            MapTypeCheckErrorKind::NotMap,
+        ));
     };
 
     let mut builder = writer.into_value_builder();

@@ -13,8 +13,8 @@ use std::net::SocketAddr;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
+use futures::FutureExt;
 use futures::future::try_join_all;
-use futures::{Future, FutureExt};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::metadata::{CollectionType, ColumnType, NativeType};
@@ -85,11 +85,15 @@ async fn enable_strongly_consistent_tables(mut cluster: Cluster) -> Cluster {
 ///
 /// When `skip_if_v2_unsupported` is set and the server did not negotiate
 /// `TABLETS_ROUTING_V2_EXPERIMENTAL_V2`, the test is skipped.
-async fn test_with_3_node_ccm_cluster<F, Fut>(skip_if_v2_unsupported: bool, test: F)
-where
-    F: FnOnce([String; 3], HashMap<SocketAddr, SocketAddr>, RunningProxy, ProtocolFeatures) -> Fut,
-    Fut: Future<Output = RunningProxy>,
-{
+async fn test_with_3_node_ccm_cluster(
+    skip_if_v2_unsupported: bool,
+    test: impl AsyncFnOnce(
+        [String; 3],
+        HashMap<SocketAddr, SocketAddr>,
+        RunningProxy,
+        ProtocolFeatures,
+    ) -> RunningProxy,
+) {
     let mut cluster = Cluster::new(cluster_3_nodes())
         .await
         .expect("Failed to create cluster");
@@ -130,11 +134,16 @@ where
     }
 }
 
-async fn run_proxied_test<F, Fut>(cluster: &mut Cluster, skip_if_v2_unsupported: bool, test: F)
-where
-    F: FnOnce([String; 3], HashMap<SocketAddr, SocketAddr>, RunningProxy, ProtocolFeatures) -> Fut,
-    Fut: Future<Output = RunningProxy>,
-{
+async fn run_proxied_test(
+    cluster: &mut Cluster,
+    skip_if_v2_unsupported: bool,
+    test: impl AsyncFnOnce(
+        [String; 3],
+        HashMap<SocketAddr, SocketAddr>,
+        RunningProxy,
+        ProtocolFeatures,
+    ) -> RunningProxy,
+) {
     let real_addrs: [SocketAddr; 3] = cluster
         .nodes()
         .iter()
@@ -493,7 +502,7 @@ async fn test_tablets_routing_v2_execute_carries_block_and_converges() {
 
     test_with_3_node_ccm_cluster(
         true,
-        |proxy_uris, translation_map, mut running_proxy, features| async move {
+        async move |proxy_uris, translation_map, mut running_proxy, features| {
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
@@ -657,7 +666,7 @@ async fn test_tablets_routing_v2_mixed_feature_connections() {
 
     test_with_3_node_ccm_cluster(
         true,
-        |proxy_uris, translation_map, mut running_proxy, features| async move {
+        async move |proxy_uris, translation_map, mut running_proxy, features| {
             // The non-V2 node keeps every other negotiated feature (e.g. the metadata id), so its
             // EXECUTE frames must be decoded with V2 turned off but the rest left on.
             let mut non_v2_features = features;
@@ -818,7 +827,7 @@ async fn test_tablets_routing_v2_batch_carries_routing_hint_and_converges() {
 
     test_with_3_node_ccm_cluster(
         true,
-        |proxy_uris, translation_map, mut running_proxy, features| async move {
+        async move |proxy_uris, translation_map, mut running_proxy, features| {
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
@@ -973,7 +982,7 @@ async fn test_leader_aware_routing_targets_the_raft_leader() {
 
     test_with_3_node_ccm_cluster(
         true,
-        |proxy_uris, translation_map, mut running_proxy, _features| async move {
+        async move |proxy_uris, translation_map, mut running_proxy, _features| {
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
@@ -1126,7 +1135,7 @@ async fn test_tablets_routing_v2_prepared_strongly_consistent_batch_converges() 
 
     test_with_3_node_ccm_cluster(
         true,
-        |proxy_uris, translation_map, mut running_proxy, _features| async move {
+        async move |proxy_uris, translation_map, mut running_proxy, _features| {
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
@@ -1241,7 +1250,7 @@ async fn test_tablets_routing_v1_used_when_v2_unavailable() {
     // point, since V1 is not going away when V2 ships.
     test_with_3_node_ccm_cluster(
         false,
-        |proxy_uris, translation_map, mut running_proxy, features| async move {
+        async move |proxy_uris, translation_map, mut running_proxy, features| {
             // With V2 hidden the driver negotiates V1, so its EXECUTE frames must be decoded with
             // V2 turned off but every other negotiated feature left on.
             let mut v1_features = features;

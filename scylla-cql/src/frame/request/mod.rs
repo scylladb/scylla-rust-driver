@@ -195,7 +195,7 @@ impl Request<'_> {
 mod tests {
     use std::{borrow::Cow, ops::Deref};
 
-    use assert_matches::assert_matches;
+    use std::assert_matches;
 
     use super::query::PagingState;
     use super::{Request, RequestDeserializationError, RequestOpcode};

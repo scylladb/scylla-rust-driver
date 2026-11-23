@@ -60,7 +60,6 @@ use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Itertools;
 use std::borrow::Borrow;
-use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
@@ -1451,15 +1450,11 @@ impl Session {
         // The policy the connection pools will actually use. Derived here
         // because without the unstable feature the configuration carries no
         // policy at all and a default stands in for it.
-        let reconnect_policy: Arc<dyn ReconnectPolicy> = {
-            #[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
-            {
+        let reconnect_policy: Arc<dyn ReconnectPolicy> = cfg_select! {
+            all(scylla_unstable, feature = "unstable-reconnect-policy") => {
                 Arc::clone(&config.reconnect_policy)
             }
-            #[cfg(not(all(scylla_unstable, feature = "unstable-reconnect-policy")))]
-            {
-                Arc::new(ExponentialReconnectPolicy::new())
-            }
+            _ => Arc::new(ExponentialReconnectPolicy::new()),
         };
 
         let tcp_socket_options = config.tcp_socket_options();
@@ -1527,26 +1522,14 @@ impl Session {
 
         let metrics = Arc::new(Metrics::new());
 
-        let host_listener = {
-            #[cfg(all(scylla_unstable, feature = "unstable-host-listener"))]
-            {
-                config.host_listener
-            }
-            #[cfg(not(all(scylla_unstable, feature = "unstable-host-listener")))]
-            {
-                None
-            }
+        let host_listener = cfg_select! {
+            all(scylla_unstable, feature = "unstable-host-listener") => config.host_listener,
+            _ => None,
         };
 
-        let client_routes_config: Option<ClientRoutesConfig> = {
-            #[cfg(feature = "unstable-client-routes")]
-            {
-                config.client_routes_config
-            }
-            #[cfg(not(feature = "unstable-client-routes"))]
-            {
-                None
-            }
+        let client_routes_config: Option<ClientRoutesConfig> = cfg_select! {
+            feature = "unstable-client-routes" => config.client_routes_config,
+            _ => None,
         };
 
         let schema_metadata_fetch_mode = match (
@@ -1706,7 +1689,6 @@ impl Session {
             .access();
 
         let cluster_state = self.get_cluster_state();
-        let cluster_state_ref = &cluster_state;
 
         let exec_params = RequestExecutionParams::new_for_session_apis(
             &statement.config,
@@ -1727,57 +1709,47 @@ impl Session {
         };
 
         let span = RequestSpan::new_query(&statement.contents);
-        let span_ref = &span;
-        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| {
-            // Needed to avoid moving query and values into async move block
-            let values_ref = &values;
-            let paging_state_ref = &paging_state;
-            async move {
-                if values_ref.is_empty() {
-                    span_ref.record_request_size(0);
-                    connection
-                        .query_raw_with_consistency(
-                            statement,
-                            consistency,
-                            serial_consistency,
-                            page_size,
-                            paging_state_ref.clone(),
-                        )
-                        .await
-                        .and_then(QueryResponse::into_non_error_query_response)
-                } else {
-                    let prepared = connection.prepare(statement).await?;
-                    let serialized = prepared.serialize_values(values_ref)?;
-                    // We calculate the tablet hint to avoid getting unnecessary tablet feedbacks
-                    // from the server
-                    let tablet_hint = {
-                        let maybe_token = prepared
-                            .extract_partition_key_and_calculate_token(&serialized)
-                            // The error is benign: we can still execute the request, just without the hint.
-                            .unwrap_or(None)
-                            // We only care about token to calculate tablet hint.
-                            .map(|(_pk, token)| token);
-                        choose_tablet_block_hint(
-                            cluster_state_ref,
-                            prepared.get_table_spec(),
-                            maybe_token,
-                        )
-                    };
+        let run_request_once = async |connection: Arc<Connection>, consistency: Consistency| {
+            if values.is_empty() {
+                span.record_request_size(0);
+                connection
+                    .query_raw_with_consistency(
+                        statement,
+                        consistency,
+                        serial_consistency,
+                        page_size,
+                        paging_state.clone(),
+                    )
+                    .await
+                    .and_then(QueryResponse::into_non_error_query_response)
+            } else {
+                let prepared = connection.prepare(statement).await?;
+                let serialized = prepared.serialize_values(&values)?;
+                // We calculate the tablet hint to avoid getting unnecessary tablet feedbacks
+                // from the server
+                let tablet_hint = {
+                    let maybe_token = prepared
+                        .extract_partition_key_and_calculate_token(&serialized)
+                        // The error is benign: we can still execute the request, just without the hint.
+                        .unwrap_or(None)
+                        // We only care about token to calculate tablet hint.
+                        .map(|(_pk, token)| token);
+                    choose_tablet_block_hint(&cluster_state, prepared.get_table_spec(), maybe_token)
+                };
 
-                    span_ref.record_request_size(serialized.buffer_size());
-                    connection
-                        .execute_raw_with_consistency(&ExecuteArgs {
-                            prepared_statement: &prepared,
-                            values: &serialized,
-                            consistency,
-                            serial_consistency,
-                            page_size,
-                            paging_state: paging_state_ref,
-                            tablet_block_hint: tablet_hint,
-                        })
-                        .await
-                        .and_then(QueryResponse::into_non_error_query_response)
-                }
+                span.record_request_size(serialized.buffer_size());
+                connection
+                    .execute_raw_with_consistency(&ExecuteArgs {
+                        prepared_statement: &prepared,
+                        values: &serialized,
+                        consistency,
+                        serial_consistency,
+                        page_size,
+                        paging_state: &paging_state,
+                        tablet_block_hint: tablet_hint,
+                    })
+                    .await
+                    .and_then(QueryResponse::into_non_error_query_response)
             }
         };
         let request = Request {
@@ -2470,9 +2442,8 @@ impl Session {
                 }
             })?;
 
-        let mut tracing_info = match maybe_tracing_info {
-            None => return Ok(None),
-            Some(tracing_info) => tracing_info,
+        let Some(mut tracing_info) = maybe_tracing_info else {
+            return Ok(None);
         };
 
         if tracing_info.duration.is_none() {
@@ -2508,8 +2479,10 @@ impl Session {
     ///
     /// If this closure fails with some errors, retry policy is used to perform retries.
     /// On success, this request's result is returned.
-    // I tried to make this closures take a reference instead of an Arc but failed
-    // maybe once async closures get stabilized this can be fixed
+    // The closure takes an `Arc`, because with `Fn` the returned future can't
+    // borrow the connection. An `AsyncFn` bound would allow it, but rustc then
+    // can't prove that the request futures are `Send` ("implementation of
+    // `Send` is not general enough"), even for closures that don't borrow.
     async fn run_request<F, QueryFut>(
         &self,
         state: &ClusterState,

@@ -304,7 +304,6 @@ pub(crate) mod batch_values {
     /// then the first row was already checked by the function. It is assumed
     /// that `first_prepared` is the first statement of the batch, and that
     /// it will be used later to serialize the values.
-    #[allow(clippy::result_large_err)]
     pub(crate) fn peek_first_token<'bv, ValuesT: BatchValues + 'bv>(
         values: ValuesT,
         first_prepared: Option<&PreparedStatement>,

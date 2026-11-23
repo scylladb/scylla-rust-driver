@@ -38,7 +38,7 @@ impl RunOptions {
         self
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn allow_failure(mut self, allow: bool) -> Self {
         self.allow_failure = allow;
         self

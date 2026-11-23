@@ -396,18 +396,15 @@ impl ControlConnection {
             tokens,
         } = row;
 
-        let host_id = match host_id {
-            Some(host_id) => host_id,
-            None => {
-                warn!(
-                    "{} (untranslated ip: {}, dc: {:?}, rack: {:?}) has Host ID set to null; skipping node.",
-                    source.describe(),
-                    untranslated_ip_addr,
-                    datacenter,
-                    rack
-                );
-                return None;
-            }
+        let Some(host_id) = host_id else {
+            warn!(
+                "{} (untranslated ip: {}, dc: {:?}, rack: {:?}) has Host ID set to null; skipping node.",
+                source.describe(),
+                untranslated_ip_addr,
+                datacenter,
+                rack
+            );
+            return None;
         };
 
         let connect_port = local_address.port();
@@ -1005,9 +1002,8 @@ impl ControlConnection {
                 .or_insert_with(|| Ok(HashMap::new()));
 
             // If there was previously an error in this keyspace then it makes no sense to process this UDT.
-            let keyspace_udts = match keyspace_udts_result {
-                Ok(udts) => udts,
-                Err(_) => continue,
+            let Ok(keyspace_udts) = keyspace_udts_result else {
+                continue;
             };
 
             let mut fields = Vec::with_capacity(field_names.len());

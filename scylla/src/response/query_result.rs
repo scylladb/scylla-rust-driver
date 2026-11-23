@@ -218,8 +218,8 @@ impl QueryResult {
     /// Ok(())
     /// # }
     /// ```
-    // `allow(clippy::result_large_err)` is fine. `QueryRowsResult` is larger than `IntoRowsResultError`.
-    #[allow(clippy::result_large_err)]
+    // `expect(clippy::result_large_err)` is fine. `QueryRowsResult` is larger than `IntoRowsResultError`.
+    #[expect(clippy::result_large_err)]
     pub fn into_rows_result(self) -> Result<QueryRowsResult, IntoRowsResultError> {
         let Some(raw_rows_with_metadata) = self.deserialized_metadata_and_rows else {
             return Err(IntoRowsResultError::ResultNotRows(self));
@@ -503,9 +503,9 @@ pub struct ResultNotRowsError;
 mod tests {
     use crate::frame::response::result::{ColumnType, NativeType, ResultMetadata, TableSpec};
     use crate::frame::types;
-    use assert_matches::assert_matches;
     use bytes::{Bytes, BytesMut};
     use itertools::Itertools as _;
+    use std::assert_matches;
 
     use super::*;
 

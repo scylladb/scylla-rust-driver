@@ -14,6 +14,9 @@ members = [
 ]
 resolver = "3"
 
+[workspace.package]
+rust-version = "1.96"
+
 [workspace.metadata.cargo-semver-checks.lints]
 # We don't consider it a major change, so downgrade from deny
 enum_struct_variant_field_marked_deprecated = { level = "warn" }

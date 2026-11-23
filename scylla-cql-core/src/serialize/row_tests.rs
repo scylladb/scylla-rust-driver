@@ -11,7 +11,7 @@ use crate::serialize::writers::WrittenCellProof;
 use crate::serialize::{CellWriter, RowWriter, SerializationError};
 use crate::value::MaybeUnset;
 
-use assert_matches::assert_matches;
+use std::assert_matches;
 
 pub(crate) fn do_serialize<T: SerializeRow>(t: T, columns: &[ColumnSpec]) -> Vec<u8> {
     let ctx = RowSerializationContext::from_specs(columns);

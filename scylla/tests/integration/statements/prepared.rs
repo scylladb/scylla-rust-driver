@@ -1,4 +1,3 @@
-use assert_matches::assert_matches;
 use itertools::Itertools;
 use scylla::client::caching_session::CachingSession;
 use scylla::client::execution_profile::ExecutionProfile;
@@ -23,6 +22,7 @@ use scylla_proxy::{
     ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule, RunningProxy, ShardAwareness,
     TargetShard, WorkerError,
 };
+use std::assert_matches;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -364,7 +364,7 @@ async fn test_token_calculation() {
     session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(ks.as_str(), true).await.unwrap();
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn assert_tokens_equal(
         session: &Session,
         prepared: &PreparedStatement,
@@ -579,7 +579,7 @@ async fn test_skip_result_metadata() {
 
     const NO_METADATA_FLAG: i32 = 0x0004;
 
-    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, async move |proxy_uris, translation_map, mut running_proxy| {
         let features = fetch_negotiated_features(Some(proxy_uris[0].clone())).await;
         // DB preparation phase
         let session: Session = SessionBuilder::new()
@@ -805,7 +805,7 @@ async fn test_preparation_logic() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let session = scylla::client::session_builder::SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))

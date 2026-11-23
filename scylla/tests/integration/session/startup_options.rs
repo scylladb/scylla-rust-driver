@@ -113,7 +113,7 @@ async fn session_id_is_sent_on_every_connection() {
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             // The proxy informs us (via startup_rx) about every STARTUP frame the driver
             // sends. The rule is installed on all three nodes, so that both the control
             // connection and the per-shard pool connections are observed.
@@ -157,7 +157,7 @@ async fn driver_config_is_sent_only_on_the_control_connection_and_can_be_disable
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let (startup_tx, mut startup_rx) = mpsc::unbounded_channel();
             for node in running_proxy.running_nodes.iter_mut() {
                 node.change_request_rules(Some(vec![RequestRule(

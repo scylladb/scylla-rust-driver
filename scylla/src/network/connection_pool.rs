@@ -1616,13 +1616,13 @@ mod tests {
     use crate::test_utils::{
         CapturedLogs, capturing_errors, dry_mode_handshake_rules, setup_tracing,
     };
-    use assert_matches::assert_matches;
     use bytes::Bytes;
     use futures::{FutureExt, StreamExt};
     use scylla_proxy::{
         Condition, Node, Proxy, ProxyError, Reaction as _, RequestFrame, RequestOpcode,
         RequestReaction, RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, WorkerError,
     };
+    use std::assert_matches;
     use std::collections::HashMap;
     use std::net::SocketAddr;
     use std::sync::{Arc, RwLock};

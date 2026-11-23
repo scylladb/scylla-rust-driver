@@ -32,7 +32,7 @@ async fn test_caching_session_metadata_cache() {
     let has_metadata_extension = features.scylla_metadata_id_supported;
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             let (feedback_tx, mut feedback_rx) = mpsc::unbounded_channel();
             let prepared_request_feedback_rule = RequestRule(
                 Condition::and(
@@ -282,7 +282,7 @@ async fn test_caching_session_statement_cache() {
     setup_tracing();
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
+        async move |proxy_uris, translation_map, mut running_proxy| {
             const CLUSTER_SIZE: usize = 3;
 
             let session = SessionBuilder::new()

@@ -1,4 +1,4 @@
-use assert_matches::assert_matches;
+use std::assert_matches;
 
 use scylla::client::session::Session;
 use scylla::value::{CqlDuration, CqlValue};

@@ -344,9 +344,8 @@ mod tests {
         fn spawn_echo(listener: TcpListener, tag: u8) {
             tokio::spawn(async move {
                 loop {
-                    let (mut stream, _) = match listener.accept().await {
-                        Ok(s) => s,
-                        Err(_) => break,
+                    let Ok((mut stream, _)) = listener.accept().await else {
+                        break;
                     };
                     let tag = tag;
                     tokio::spawn(async move {

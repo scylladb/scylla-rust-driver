@@ -468,7 +468,7 @@ mod tests {
     use crate::cluster::metadata::{ClientRoute, ClientRoutes};
     use crate::frame::response::event::ClientRoutesChangeEvent;
     use crate::utils::test_utils::setup_tracing;
-    use assert_matches::assert_matches;
+    use std::assert_matches;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use uuid::Uuid;
 

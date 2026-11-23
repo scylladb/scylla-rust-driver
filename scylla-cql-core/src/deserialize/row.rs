@@ -113,6 +113,10 @@ impl<'frame, 'metadata> ExactSizeIterator for ColumnIterator<'frame, 'metadata> 
 /// The crate also provides a derive macro which allows to automatically
 /// implement the trait for a custom type. For more details on what the macro
 /// is capable of, see its documentation.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be deserialized from a row",
+    note = "deserialize a row into a tuple (`(value,)` for a single column) or a struct that derives `DeserializeRow`"
+)]
 pub trait DeserializeRow<'frame, 'metadata>
 where
     Self: Sized,
@@ -165,6 +169,7 @@ make_error_replace_rust_name!(
     /// - It should be called **before** the error is cloned, as it attempts to mutably access
     ///   the inner error stored in `Arc`; if the `Arc` has already been cloned,
     ///   a new [`BuiltinTypeCheckError`] will be allocated with the updated name instead.
+    #[expect(clippy::needless_pub_self)]
     pub(self),
     _typck_error_replace_rust_name,
     TypeCheckError,
