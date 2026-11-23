@@ -133,6 +133,9 @@ impl ControlConnectionEstablisher {
         Ok(ControlConnectionEstablisher {
             control_connection_config: ConnectionConfig {
                 driver_config_reporter,
+                // Tablets are a concern of the pools only: the control connection
+                // must not feed the tablet updater.
+                tablet_sender: None,
                 ..connection_config
             },
             cc_config: ControlConnectionConfig {
