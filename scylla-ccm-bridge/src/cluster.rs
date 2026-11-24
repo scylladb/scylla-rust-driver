@@ -207,7 +207,8 @@ impl Cluster {
         };
 
         for (datacenter_idx, dc_nodes_count) in opts.nodes_per_dc.iter().enumerate() {
-            // Named after their position in `nodes_per_dc`, starting from 1.
+            // Named after their position in `nodes_per_dc`, starting from 1, with all their nodes
+            // in a single rack.
             let datacenter = format!("dc{}", datacenter_idx + 1);
             for _ in 0..*dc_nodes_count {
                 let node_options = NodeOptions::from_cluster_opts(
@@ -217,6 +218,7 @@ impl Cluster {
                         .get_free_node_id()
                         .expect("No available node id"),
                     datacenter.clone(),
+                    "rack1".to_owned(),
                 );
                 cluster.append_node(node_options);
             }
@@ -253,6 +255,7 @@ impl Cluster {
             self.ccm_cmd
                 .cluster_add_node(self.opts.db_type, node.name())
                 .dc(node.datacenter().to_owned())
+                .rack(node.rack().to_owned())
                 .address(node.broadcast_rpc_address().to_string())
                 // Like `ccm create --nodes`, which makes every node a seed.
                 .seed()
@@ -351,14 +354,16 @@ impl Cluster {
         self.nodes.0.last_mut().unwrap()
     }
 
-    /// Add a new node to the cluster in the given datacenter.
+    /// Add a new node to the cluster in the given datacenter and rack.
     ///
-    /// `datacenter_id` is 1-based, like the names given to the datacenters of
-    /// [`ClusterOptions::nodes_per_dc`]: `1` →  `dc1`, `2` →  `dc2`, etc. `None` means `dc1`.
-    pub async fn add_node(&mut self, datacenter_id: Option<u16>) -> Result<&mut Node, Error> {
+    /// Either may be new to the cluster, in which case adding the node creates it.
+    pub async fn add_node(&mut self, datacenter: &str, rack: &str) -> Result<&mut Node, Error> {
+        anyhow::ensure!(!datacenter.is_empty(), "the datacenter name is empty");
+        anyhow::ensure!(!rack.is_empty(), "the rack name is empty");
+
         let id = self.nodes.get_free_node_id().expect("No available node id");
-        let datacenter = format!("dc{}", datacenter_id.unwrap_or(1));
-        let node_options = NodeOptions::from_cluster_opts(&self.opts, id, datacenter.clone());
+        let node_options =
+            NodeOptions::from_cluster_opts(&self.opts, id, datacenter.to_owned(), rack.to_owned());
         // Pass the node's IP explicitly via `-i`. Without it, CCM
         // auto-assigns based on `len(nodelist) + 1`, which diverges from
         // our `get_free_node_id()` when there are gaps (e.g., after a
@@ -366,7 +371,8 @@ impl Cluster {
         let node_ip = self.opts.ip_prefix.to_ipaddress(id).to_string();
         self.ccm_cmd
             .cluster_add_node(self.opts.db_type, node_options.name())
-            .dc(datacenter)
+            .dc(datacenter.to_owned())
+            .rack(rack.to_owned())
             .address(node_ip)
             .run()
             .await?;

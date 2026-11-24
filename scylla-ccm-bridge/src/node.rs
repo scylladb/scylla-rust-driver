@@ -23,6 +23,8 @@ pub struct NodeOptions {
     pub version: String,
     /// Name of the datacenter the node is placed in.
     pub datacenter: String,
+    /// Name of the rack the node is placed in.
+    pub rack: String,
     /// CCM allocates node ip addresses based on this prefix:
     /// if ip_prefix = `127.0.1.`, then `node1` address is `127.0.1.1`, `node2` address is `127.0.1.2`
     pub ip_prefix: NetPrefix,
@@ -42,10 +44,12 @@ impl NodeOptions {
         value: &ClusterOptions,
         id: NodeId,
         datacenter: String,
+        rack: String,
     ) -> Self {
         NodeOptions {
             id,
             datacenter,
+            rack,
             db_type: value.db_type,
             version: value.version.clone(),
             ip_prefix: value.ip_prefix,
@@ -125,6 +129,11 @@ impl Node {
     /// Returns the name of the datacenter this node is placed in.
     pub fn datacenter(&self) -> &str {
         &self.opts.datacenter
+    }
+
+    /// Returns the name of the rack this node is placed in.
+    pub fn rack(&self) -> &str {
+        &self.opts.rack
     }
 
     /// Executes `ccm updateconf` and applies it for this node.

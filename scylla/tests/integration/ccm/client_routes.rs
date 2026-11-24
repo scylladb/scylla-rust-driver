@@ -202,9 +202,11 @@ async fn multi_dc_topology_change(plc: &mut ClientRoutesCluster) {
     assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 
     // --- Add new node to DC2 ---
-    // Cluster::add_node() uses 1-based CCM DC naming: 2 = dc2.
     info!("Adding new node to DC2...");
-    let new_node_id = plc.add_node(Some(2)).await.expect("Failed to add new node");
+    let new_node_id = plc
+        .add_node("dc2", "rack1")
+        .await
+        .expect("Failed to add new node");
     info!("New node added: {}", new_node_id);
     // Wait for the driver to discover the new node and open a connection
     // through the new proxy chain.
@@ -440,7 +442,7 @@ async fn scale_out(plc: &mut ClientRoutesCluster) {
     for i in 1..=3 {
         info!("Adding node {} of 3...", i);
         let new_id = plc
-            .add_node(None)
+            .add_node("dc1", "rack1")
             .await
             .unwrap_or_else(|e| panic!("Failed to add node {} of 3: {}", i, e));
         info!("Added node {}", new_id);

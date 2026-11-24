@@ -337,16 +337,6 @@ async fn forcibly_remove(cluster: &mut Cluster, id: u16) {
     do_with_node(cluster, id, async |node| node.delete().await).await
 }
 
-/// Adds a node to the given DC.
-async fn add(cluster: &mut Cluster, dc_id: Option<u16>) -> u16 {
-    cluster
-        .add_node(dc_id)
-        .await
-        .map(|node| node.id())
-        .inspect_err(|_| cluster.mark_as_failed())
-        .expect("failed to add node")
-}
-
 #[tokio::test]
 async fn test_host_listener_with_status_changes() {
     setup_tracing();
@@ -496,7 +486,12 @@ async fn test_host_listener_with_topology_changes() {
 
             // 7. Add a new node and see if the listener logged the ADDED and UP event.
             info!("7. Adding node4");
-            let node4_id = add(cluster, None).await;
+            let node4_id = cluster
+                .add_node("dc1", "rack1")
+                .await
+                .map(|node| node.id())
+                .inspect_err(|_| cluster.mark_as_failed())
+                .expect("failed to add node");
             info!("Starting node4");
             start(cluster, node4_id).await;
 
@@ -578,7 +573,12 @@ async fn test_host_listener_with_host_filter() {
             start(cluster, 3).await;
 
             info!("5. Adding node4");
-            let node_4 = add(cluster, Some(2)).await;
+            let node_4 = cluster
+                .add_node("dc2", "rack1")
+                .await
+                .map(|node| node.id())
+                .inspect_err(|_| cluster.mark_as_failed())
+                .expect("failed to add node");
             info!("Starting node4");
             start(cluster, node_4).await;
 

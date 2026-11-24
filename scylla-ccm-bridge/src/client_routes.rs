@@ -684,9 +684,9 @@ impl ClientRoutesCluster {
         Ok(())
     }
 
-    /// Add a new node to a DC and start its proxy chain.
+    /// Add a new node to a rack of a DC and start its proxy chain.
     ///
-    /// `dc_id` uses **1-based** CCM DC naming: `Some(2)` →  DC2, `None` →  DC1.
+    /// The DC must be one the cluster was created with; the rack may be new.
     ///
     /// Steps:
     /// 1. CCM add + start the node (needed to discover its host_id)
@@ -700,10 +700,16 @@ impl ClientRoutesCluster {
     /// the DC contact-point NLB.
     ///
     /// Returns the new node's ID.
-    pub async fn add_node(&mut self, dc_id: Option<u16>) -> Result<NodeId, Error> {
+    pub async fn add_node(&mut self, datacenter: &str, rack: &str) -> Result<NodeId, Error> {
+        // Proxy chains and the contact-point NLB are set up per DC when the cluster is built.
+        anyhow::ensure!(
+            self.dc_configs.contains_key(datacenter),
+            "DC {datacenter} is not one the cluster was created with"
+        );
+
         // Step 1: CCM add + start.
         let new_node_id = {
-            let add_result = self.cluster.add_node(dc_id).await;
+            let add_result = self.cluster.add_node(datacenter, rack).await;
             let node = match add_result {
                 Ok(node) => node,
                 Err(e) => {
@@ -731,14 +737,12 @@ impl ClientRoutesCluster {
         let real_ip = node_ref.broadcast_rpc_address();
         let real_addr = SocketAddr::new(real_ip, node_ref.native_transport_port());
         let chain_addr = self.node_port.address_of(node_ref);
-        let actual_dc = node_ref.datacenter().to_owned();
-
         let host_id = discover_single_host_id(real_addr)
             .await
             .with_context(|| format!("Failed to discover host_id for new node {}", new_node_id))?;
         info!(
             "New node {} host_id={}, DC={}",
-            new_node_id, host_id, actual_dc
+            new_node_id, host_id, datacenter
         );
         self.host_ids.insert(new_node_id, host_id);
 
@@ -748,8 +752,8 @@ impl ClientRoutesCluster {
             .with_context(|| format!("Failed to start chain for new node {}", new_node_id))?;
 
         self.dc_configs
-            .get_mut(&actual_dc)
-            .with_context(|| format!("DC {} not found in dc_configs", actual_dc))?
+            .get_mut(datacenter)
+            .with_context(|| format!("DC {} not found in dc_configs", datacenter))?
             .per_node_chains
             .insert(new_node_id, chain);
 
@@ -759,7 +763,7 @@ impl ClientRoutesCluster {
             .context("Failed to post updated routes after adding node")?;
 
         // Update the per-DC contact-point NLB to include the new node.
-        if let Some(dc_cfg) = self.dc_configs.get(&actual_dc) {
+        if let Some(dc_cfg) = self.dc_configs.get(datacenter) {
             dc_cfg.refresh_contact_point_backends();
         }
 
