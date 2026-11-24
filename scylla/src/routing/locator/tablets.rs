@@ -592,17 +592,16 @@ impl Tablet {
     fn update_stale_nodes(&mut self, recreated_nodes: &HashMap<Uuid, Arc<Node>>) {
         // The replica list is shared with the previous `ClusterState`, so it is
         // only copied (by `make_mut`) if there is something to replace in it.
-        let any_stale = self
-            .replicas
-            .all
-            .iter()
-            .any(|(node, _)| recreated_nodes.contains_key(&node.host_id));
+        let any_stale = self.replicas.all.iter().any(|(node, _)| {
+            recreated_nodes
+                .get(&node.host_id)
+                .is_some_and(|new_node| !Arc::ptr_eq(new_node, node))
+        });
         if !any_stale {
             return;
         }
         for (node, _) in Arc::make_mut(&mut self.replicas.all).iter_mut() {
             if let Some(new_node) = recreated_nodes.get(&node.host_id) {
-                assert!(!Arc::ptr_eq(new_node, node));
                 *node = Arc::clone(new_node);
             }
         }
@@ -2142,7 +2141,6 @@ mod tests {
     // objects, and in the same refresh another of its replicas is recreated.
     // Both replicas are then already up to date.
     #[test]
-    #[should_panic(expected = "assertion failed: !Arc::ptr_eq(new_node, node)")]
     fn maintenance_resolved_and_recreated_replica_test() {
         setup_tracing();
 
