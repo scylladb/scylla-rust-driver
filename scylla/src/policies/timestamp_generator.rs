@@ -107,7 +107,10 @@ impl MonotonicTimestampGenerator {
                 return u_cur;
             } else if let Some(cfg) = self.config.as_ref() {
                 // We have detected clock skew, we will increment the last timestamp, and check if we should warn the user
-                if last - u_cur > cfg.warning_threshold.as_micros() as i64 {
+                // Saturate: a huge threshold must not wrap around to a negative i64.
+                let threshold =
+                    i64::try_from(cfg.warning_threshold.as_micros()).unwrap_or(i64::MAX);
+                if last - u_cur > threshold {
                     // We have detected a clock skew bigger than the threshold, we check if we warned the user recently
                     let mut last_warn = self.last_warning.lock().unwrap();
                     let now = Instant::now();
