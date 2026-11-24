@@ -698,4 +698,34 @@ mod tests {
             ))
         );
     }
+
+    // Regression test: these inputs used to make the parser loop forever.
+    #[test]
+    fn test_malformed_collection_types_return_errors() {
+        for name in ["ListType", "SetType", "MapType", "FrozenType"] {
+            let prefix = format!("org.apache.cassandra.db.marshal.{name}");
+            let int = "org.apache.cassandra.db.marshal.Int32Type";
+
+            // Missing closing paren.
+            assert_eq!(
+                CustomTypeParser::parse(&format!("{prefix}({int}")),
+                Err(CustomTypeParseError::UnexpectedEndOfInput),
+                "{name}: missing paren",
+            );
+            // Nothing after the opening paren.
+            assert_eq!(
+                CustomTypeParser::parse(&format!("{prefix}(")),
+                Err(CustomTypeParseError::UnexpectedEndOfInput),
+                "{name}: only opening paren",
+            );
+            // Parameter that is not a valid identifier.
+            assert_eq!(
+                CustomTypeParser::parse(&format!("{prefix}(#)")),
+                Err(CustomTypeParseError::UnknownComplexCustomTypeName(
+                    "#)".into()
+                )),
+                "{name}: bad character",
+            );
+        }
+    }
 }
