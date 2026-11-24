@@ -49,7 +49,7 @@ use tokio::sync::mpsc;
 
 use scylla_ccm_bridge::CLUSTER_VERSION;
 use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
-use scylla_ccm_bridge::topology::Topology;
+use scylla_ccm_bridge::topology::{Datacenter, Rack, Topology};
 
 use crate::utils::{
     PerformDDL, execute_batch_everywhere, execute_prepared_statement_everywhere,
@@ -65,7 +65,12 @@ fn cluster_3_nodes() -> ClusterOptions {
     ClusterOptions {
         name: "cluster_tablets_routing_v2".to_string(),
         version: CLUSTER_VERSION.clone(),
-        topology: Topology::simple([3]),
+        // The keyspaces use RF=2. ScyllaDB versions without rack lists only accept that as
+        // RF-rack-valid with exactly two racks.
+        topology: Topology::new([Datacenter::new(
+            "dc1",
+            [Rack::new("rack1", 2), Rack::new("rack2", 1)],
+        )]),
         ..ClusterOptions::default()
     }
 }
