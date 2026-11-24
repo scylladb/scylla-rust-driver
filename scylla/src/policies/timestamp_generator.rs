@@ -56,7 +56,8 @@ struct MonotonicTimestampGeneratorWarningsCfg {
 #[derive(Debug)]
 pub struct MonotonicTimestampGenerator {
     last: AtomicI64,
-    last_warning: Mutex<Instant>,
+    /// `None` until the first warning is issued.
+    last_warning: Mutex<Option<Instant>>,
     config: Option<MonotonicTimestampGeneratorWarningsCfg>,
 }
 
@@ -65,7 +66,7 @@ impl MonotonicTimestampGenerator {
     pub fn new() -> Self {
         MonotonicTimestampGenerator {
             last: AtomicI64::new(0),
-            last_warning: Mutex::new(Instant::now()),
+            last_warning: Mutex::new(None),
             config: Some(MonotonicTimestampGeneratorWarningsCfg {
                 warning_threshold: Duration::from_secs(1),
                 warning_interval: Duration::from_secs(1),
@@ -100,19 +101,32 @@ impl MonotonicTimestampGenerator {
         let current = SystemTime::now().duration_since(UNIX_EPOCH);
         if let Ok(cur_time) = current {
             // We have generated a valid timestamp
-            let u_cur = cur_time.as_micros() as i64;
+            // Microseconds since epoch overflow i64 only after ~292,000 years,
+            // so this can't realistically panic.
+            let u_cur: i64 = cur_time.as_micros().try_into().unwrap();
             if u_cur > last {
                 // We have generated a valid, monotonic timestamp
                 return u_cur;
             } else if let Some(cfg) = self.config.as_ref() {
                 // We have detected clock skew, we will increment the last timestamp, and check if we should warn the user
-                if last - u_cur > cfg.warning_threshold.as_micros() as i64 {
+                // Saturate: a huge threshold must not wrap around to a negative i64.
+                let threshold =
+                    i64::try_from(cfg.warning_threshold.as_micros()).unwrap_or(i64::MAX);
+                if last - u_cur > threshold {
                     // We have detected a clock skew bigger than the threshold, we check if we warned the user recently
                     let mut last_warn = self.last_warning.lock().unwrap();
                     let now = Instant::now();
-                    if now >= last_warn.checked_add(cfg.warning_interval).unwrap() {
+                    // If the next allowed warning time is not representable as an `Instant`
+                    // (e.g. `warning_interval` is `Duration::MAX`), never warn again.
+                    let should_warn = match *last_warn {
+                        None => true,
+                        Some(prev) => prev
+                            .checked_add(cfg.warning_interval)
+                            .is_some_and(|next_allowed| now >= next_allowed),
+                    };
+                    if should_warn {
                         // We have not warned the user recently, we will warn the user
-                        *last_warn = now;
+                        *last_warn = Some(now);
                         drop(last_warn);
                         warn!(
                             "Clock skew detected. The current time ({}) was {} \
@@ -208,4 +222,20 @@ fn monotonic_timestamp_generator_is_monotonic_with_concurrency() {
         NUMBER_OF_ITERATIONS * NUMBER_OF_THREADS,
         "Colliding values between threads"
     );
+}
+
+#[test]
+fn monotonic_timestamp_generator_huge_warning_interval_does_not_panic() {
+    let generator = MonotonicTimestampGenerator::new()
+        .with_warning_times(Duration::from_millis(1), Duration::MAX);
+    // Simulate a clock far behind the last generated timestamp.
+    let far_future = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as i64
+        + 10_000_000;
+    generator.last.store(far_future, Ordering::SeqCst);
+    for _ in 0..3 {
+        generator.next_timestamp();
+    }
 }
