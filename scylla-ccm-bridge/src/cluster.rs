@@ -206,16 +206,18 @@ impl Cluster {
             allocated_prefix,
         };
 
-        for (datacenter_id, dc_nodes_count) in opts.nodes_per_dc.iter().enumerate() {
+        for (datacenter_idx, dc_nodes_count) in opts.nodes_per_dc.iter().enumerate() {
+            // Named after their position in `nodes_per_dc`, starting from 1.
+            let datacenter = format!("dc{}", datacenter_idx + 1);
             for _ in 0..*dc_nodes_count {
-                let node_options = NodeOptions {
-                    id: cluster
+                let node_options = NodeOptions::from_cluster_opts(
+                    &cluster.opts,
+                    cluster
                         .nodes
                         .get_free_node_id()
                         .expect("No available node id"),
-                    datacenter_id: datacenter_id.try_into().expect("Too many datacenters"),
-                    ..NodeOptions::from_cluster_opts(&cluster.opts)
-                };
+                    datacenter.clone(),
+                );
                 cluster.append_node(node_options);
             }
         }
@@ -248,11 +250,9 @@ impl Cluster {
         self.updateconf([("endpoint_snitch", snitch)]).await?;
 
         for node in self.nodes.iter() {
-            // CCM uses 1-based DC names: dc1, dc2, …
-            let datacenter_name = format!("dc{}", node.datacenter_id() + 1);
             self.ccm_cmd
                 .cluster_add_node(self.opts.db_type, node.name())
-                .dc(datacenter_name)
+                .dc(node.datacenter().to_owned())
                 .address(node.broadcast_rpc_address().to_string())
                 // Like `ccm create --nodes`, which makes every node a seed.
                 .seed()
@@ -353,20 +353,12 @@ impl Cluster {
 
     /// Add a new node to the cluster in the given datacenter.
     ///
-    /// `datacenter_id` uses **1-based** CCM naming: `1` →  `dc1`, `2` →  `dc2`, etc.
-    /// The value stored in [`NodeOptions::datacenter_id`] is **0-based** (matching
-    /// the convention used by [`Cluster::new`]).
+    /// `datacenter_id` is 1-based, like the names given to the datacenters of
+    /// [`ClusterOptions::nodes_per_dc`]: `1` →  `dc1`, `2` →  `dc2`, etc. `None` means `dc1`.
     pub async fn add_node(&mut self, datacenter_id: Option<u16>) -> Result<&mut Node, Error> {
         let id = self.nodes.get_free_node_id().expect("No available node id");
-        // CCM uses 1-based DC names: dc1, dc2, …
-        let ccm_dc_id = datacenter_id.unwrap_or(1);
-        let node_options = NodeOptions {
-            id,
-            // Store as 0-based to match the convention from Cluster::new().
-            datacenter_id: ccm_dc_id - 1,
-            ..NodeOptions::from_cluster_opts(&self.opts)
-        };
-        let datacenter_name = format!("dc{ccm_dc_id}");
+        let datacenter = format!("dc{}", datacenter_id.unwrap_or(1));
+        let node_options = NodeOptions::from_cluster_opts(&self.opts, id, datacenter.clone());
         // Pass the node's IP explicitly via `-i`. Without it, CCM
         // auto-assigns based on `len(nodelist) + 1`, which diverges from
         // our `get_free_node_id()` when there are gaps (e.g., after a
@@ -374,7 +366,7 @@ impl Cluster {
         let node_ip = self.opts.ip_prefix.to_ipaddress(id).to_string();
         self.ccm_cmd
             .cluster_add_node(self.opts.db_type, node_options.name())
-            .dc(datacenter_name)
+            .dc(datacenter)
             .address(node_ip)
             .run()
             .await?;

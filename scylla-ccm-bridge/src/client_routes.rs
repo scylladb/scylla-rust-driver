@@ -71,7 +71,7 @@ pub type FeedbackItem = (
     Option<scylla_proxy::TargetShard>,
 );
 
-/// Base name for test connection IDs. Each DC gets `"{BASE}-dc{dc_id}"`.
+/// Base name for test connection IDs. Each DC gets `"{BASE}-{dc}"`.
 const CONNECTION_ID_BASE: &str = "rust-driver-test";
 
 /// The port of a node that its proxy chain leads to.
@@ -205,7 +205,7 @@ impl NodeChain {
 
 /// Per-datacenter NLB and route configuration.
 struct DcConfig {
-    /// Connection ID for this DC (e.g. `"rust-driver-test-dc0"`).
+    /// Connection ID for this DC (e.g. `"rust-driver-test-dc1"`).
     connection_id: String,
     /// Per-node chains for nodes in this DC, keyed by CCM node ID.
     per_node_chains: HashMap<NodeId, NodeChain>,
@@ -260,8 +260,8 @@ impl DcConfig {
 pub struct ClientRoutesCluster {
     /// The underlying CCM cluster.
     cluster: Cluster,
-    /// Per-DC configuration, keyed by datacenter_id (0-based).
-    dc_configs: BTreeMap<u16, DcConfig>,
+    /// Per-DC configuration, keyed by datacenter name.
+    dc_configs: BTreeMap<String, DcConfig>,
     /// Mapping from CCM node ID to its Scylla host_id UUID.
     host_ids: HashMap<NodeId, Uuid>,
     /// The port of the nodes that the proxy chains lead to.
@@ -323,10 +323,10 @@ impl ClientRoutesCluster {
             .inspect_err(|_| cluster.mark_as_failed())
             .context("Failed to build DC configs / start proxy chains")?;
 
-        for (dc_id, dc_cfg) in &dc_configs {
+        for (dc, dc_cfg) in &dc_configs {
             info!(
                 "DC {}: connection_id={}, contact={}, {} per-node chains",
-                dc_id,
+                dc,
                 dc_cfg.connection_id,
                 dc_cfg.contact_point_addr(),
                 dc_cfg.per_node_chains.len(),
@@ -506,15 +506,15 @@ impl ClientRoutesCluster {
     /// translated address for in-flight reconnection attempts.
     pub async fn decommission_node(&mut self, node_id: NodeId) -> Result<(), Error> {
         // Find which DC this node belongs to.
-        let dc_id = self
+        let dc = self
             .cluster
             .nodes()
             .get_by_id(node_id)
-            .map(|n| n.datacenter_id())
+            .map(|n| n.datacenter().to_owned())
             .with_context(|| format!("Node {} not found in cluster", node_id))?;
 
         // Step 1: remove from contact-point NLB so no new connections target it.
-        if let Some(dc_cfg) = self.dc_configs.get(&dc_id) {
+        if let Some(dc_cfg) = self.dc_configs.get(&dc) {
             // Temporarily rebuild the backend list without this node.
             let backends: Vec<SocketAddr> = dc_cfg
                 .per_node_chains
@@ -553,9 +553,9 @@ impl ClientRoutesCluster {
         self.host_ids.remove(&node_id);
         let chain = self
             .dc_configs
-            .get_mut(&dc_id)
+            .get_mut(&dc)
             .and_then(|dc| dc.per_node_chains.remove(&node_id))
-            .with_context(|| format!("Node {} chain not found in DC {}", node_id, dc_id))?;
+            .with_context(|| format!("Node {} chain not found in DC {}", node_id, dc))?;
 
         self.post_client_routes_to_cluster()
             .await
@@ -583,16 +583,16 @@ impl ClientRoutesCluster {
     /// The host_id mapping is preserved so `restart_node_chain()` can
     /// re-establish everything later.
     pub async fn stop_node_chain(&mut self, node_id: NodeId) -> Result<(), Error> {
-        let dc_id = self
+        let dc = self
             .cluster
             .nodes()
             .get_by_id(node_id)
-            .map(|n| n.datacenter_id())
+            .map(|n| n.datacenter().to_owned())
             .with_context(|| format!("Node {} not found in cluster", node_id))?;
 
         if let Some(old_chain) = self
             .dc_configs
-            .get_mut(&dc_id)
+            .get_mut(&dc)
             .and_then(|dc| dc.per_node_chains.remove(&node_id))
         {
             old_chain.shutdown().await;
@@ -604,7 +604,7 @@ impl ClientRoutesCluster {
             .context("Failed to re-post routes after stopping node chain")?;
 
         // Update the per-DC contact-point NLB to exclude the stopped node.
-        if let Some(dc_cfg) = self.dc_configs.get(&dc_id) {
+        if let Some(dc_cfg) = self.dc_configs.get(&dc) {
             dc_cfg.refresh_contact_point_backends();
         }
 
@@ -622,11 +622,11 @@ impl ClientRoutesCluster {
     /// 3. Re-posts routes with the new NLB address
     pub async fn restart_node_chain(&mut self, node_id: NodeId) -> Result<(), Error> {
         // Find which DC this node belongs to.
-        let dc_id = self
+        let dc = self
             .cluster
             .nodes()
             .get_by_id(node_id)
-            .map(|n| n.datacenter_id())
+            .map(|n| n.datacenter().to_owned())
             .with_context(|| format!("Node {} not found in cluster", node_id))?;
 
         let real_addr = self
@@ -637,7 +637,7 @@ impl ClientRoutesCluster {
         // been removed by stop_node_chain).
         if let Some(old_chain) = self
             .dc_configs
-            .get_mut(&dc_id)
+            .get_mut(&dc)
             .and_then(|dc| dc.per_node_chains.remove(&node_id))
         {
             old_chain.shutdown().await;
@@ -654,7 +654,7 @@ impl ClientRoutesCluster {
         );
 
         self.dc_configs
-            .get_mut(&dc_id)
+            .get_mut(&dc)
             .expect("DC must exist")
             .per_node_chains
             .insert(node_id, new_chain);
@@ -665,7 +665,7 @@ impl ClientRoutesCluster {
             .context("Failed to re-post routes after chain restart")?;
 
         // Update the per-DC contact-point NLB to include the restarted node.
-        if let Some(dc_cfg) = self.dc_configs.get(&dc_id) {
+        if let Some(dc_cfg) = self.dc_configs.get(&dc) {
             dc_cfg.refresh_contact_point_backends();
         }
 
@@ -731,14 +731,14 @@ impl ClientRoutesCluster {
         let real_ip = node_ref.broadcast_rpc_address();
         let real_addr = SocketAddr::new(real_ip, node_ref.native_transport_port());
         let chain_addr = self.node_port.address_of(node_ref);
-        let actual_dc_id = node_ref.datacenter_id();
+        let actual_dc = node_ref.datacenter().to_owned();
 
         let host_id = discover_single_host_id(real_addr)
             .await
             .with_context(|| format!("Failed to discover host_id for new node {}", new_node_id))?;
         info!(
             "New node {} host_id={}, DC={}",
-            new_node_id, host_id, actual_dc_id
+            new_node_id, host_id, actual_dc
         );
         self.host_ids.insert(new_node_id, host_id);
 
@@ -748,8 +748,8 @@ impl ClientRoutesCluster {
             .with_context(|| format!("Failed to start chain for new node {}", new_node_id))?;
 
         self.dc_configs
-            .get_mut(&actual_dc_id)
-            .with_context(|| format!("DC {} not found in dc_configs", actual_dc_id))?
+            .get_mut(&actual_dc)
+            .with_context(|| format!("DC {} not found in dc_configs", actual_dc))?
             .per_node_chains
             .insert(new_node_id, chain);
 
@@ -759,7 +759,7 @@ impl ClientRoutesCluster {
             .context("Failed to post updated routes after adding node")?;
 
         // Update the per-DC contact-point NLB to include the new node.
-        if let Some(dc_cfg) = self.dc_configs.get(&actual_dc_id) {
+        if let Some(dc_cfg) = self.dc_configs.get(&actual_dc) {
             dc_cfg.refresh_contact_point_backends();
         }
 
@@ -998,7 +998,7 @@ impl ClientRoutesCluster {
     fn build_routes(&self) -> Vec<ClientRoute> {
         let mut entries = Vec::new();
 
-        for (dc_id, dc_cfg) in &self.dc_configs {
+        for (dc, dc_cfg) in &self.dc_configs {
             for (&node_id, chain) in &dc_cfg.per_node_chains {
                 if let Some(&host_id) = self.host_ids.get(&node_id) {
                     entries.push(ClientRoute {
@@ -1009,7 +1009,7 @@ impl ClientRoutesCluster {
                 } else {
                     debug!(
                         "Skipping route for node {} in DC {} — no host_id",
-                        node_id, dc_id
+                        node_id, dc
                     );
                 }
             }
@@ -1020,8 +1020,8 @@ impl ClientRoutesCluster {
 
     /// Shut down all proxy chains and per-DC contact-point NLBs.
     async fn shutdown_all(self) {
-        for (dc_id, dc_cfg) in self.dc_configs {
-            debug!("Shutting down DC {}", dc_id);
+        for (dc, dc_cfg) in self.dc_configs {
+            debug!("Shutting down DC {}", dc);
             dc_cfg.shutdown().await;
         }
         info!("All proxy chains and NLBs shut down");
@@ -1038,7 +1038,7 @@ impl ClientRoutesCluster {
 /// For each DC:
 /// - One proxy chain per node
 /// - One per-DC round-robin NLB (used as contact point)
-/// - A connection ID of the form `"rust-driver-test-dc{dc_id}"`
+/// - A connection ID of the form `"rust-driver-test-{dc}"`
 ///
 /// ```text
 /// Driver →  Per-DC NLB →  Proxy →  ScyllaDB (`node_port`)
@@ -1046,14 +1046,14 @@ impl ClientRoutesCluster {
 async fn build_dc_configs(
     cluster: &Cluster,
     node_port: NodePort,
-) -> Result<BTreeMap<u16, DcConfig>, Error> {
-    // Group nodes by DC: DcId -> {(NodeId, address that the chain leads to)}.
-    let dc_nodes: BTreeMap<u16, Vec<(NodeId, SocketAddr)>> =
+) -> Result<BTreeMap<String, DcConfig>, Error> {
+    // Group nodes by DC: DC name -> {(NodeId, address that the chain leads to)}.
+    let dc_nodes: BTreeMap<&str, Vec<(NodeId, SocketAddr)>> =
         cluster
             .nodes()
             .iter()
             .fold(BTreeMap::new(), |mut acc, node| {
-                acc.entry(node.datacenter_id())
+                acc.entry(node.datacenter())
                     .or_default()
                     .push((node.id(), node_port.address_of(node)));
                 acc
@@ -1062,7 +1062,7 @@ async fn build_dc_configs(
     // Start all per-node proxy chains concurrently (across all DCs).
     let chain_futs: Vec<_> = dc_nodes
         .iter()
-        .flat_map(|(&dc_id, nodes)| {
+        .flat_map(|(&dc, nodes)| {
             nodes
                 .iter()
                 .copied()
@@ -1070,9 +1070,9 @@ async fn build_dc_configs(
                     let chain = NodeChain::start(real_addr, node_id)
                         .await
                         .with_context(|| {
-                            format!("Failed to start chain for DC {} node {}", dc_id, node_id)
+                            format!("Failed to start chain for DC {} node {}", dc, node_id)
                         })?;
-                    Ok::<_, Error>((dc_id, node_id, chain))
+                    Ok::<_, Error>((dc, node_id, chain))
                 })
         })
         .collect();
@@ -1084,7 +1084,7 @@ async fn build_dc_configs(
         let mut first_err = None;
         for result in chain_results {
             match result {
-                Ok((_dc_id, _node_id, chain)) => chain.shutdown().await,
+                Ok((_dc, _node_id, chain)) => chain.shutdown().await,
                 Err(e) if first_err.is_none() => first_err = Some(e),
                 Err(_) => {}
             }
@@ -1093,17 +1093,17 @@ async fn build_dc_configs(
     }
 
     // All chains started successfully — group by DC.
-    let mut dc_chains: BTreeMap<u16, HashMap<NodeId, NodeChain>> = BTreeMap::new();
+    let mut dc_chains: BTreeMap<&str, HashMap<NodeId, NodeChain>> = BTreeMap::new();
     for result in chain_results {
-        let (dc_id, node_id, chain) = result.unwrap();
-        dc_chains.entry(dc_id).or_default().insert(node_id, chain);
+        let (dc, node_id, chain) = result.unwrap();
+        dc_chains.entry(dc).or_default().insert(node_id, chain);
     }
 
     // Start per-DC contact-point NLBs concurrently.
     let nlb_futs: Vec<_> = dc_chains
         .into_iter()
-        .map(|(dc_id, per_node_chains)| async move {
-            let connection_id = format!("{}-dc{}", CONNECTION_ID_BASE, dc_id);
+        .map(|(dc, per_node_chains)| async move {
+            let connection_id = format!("{}-{}", CONNECTION_ID_BASE, dc);
 
             let backends: Vec<SocketAddr> = per_node_chains
                 .values()
@@ -1117,9 +1117,7 @@ async fn build_dc_configs(
                 .build()
                 .run()
                 .await
-                .with_context(|| {
-                    format!("Failed to start per-DC contact-point NLB for DC {}", dc_id)
-                });
+                .with_context(|| format!("Failed to start per-DC contact-point NLB for DC {}", dc));
 
             let contact_point_nlb = match nlb_result {
                 Ok(nlb) => nlb,
@@ -1135,13 +1133,13 @@ async fn build_dc_configs(
 
             info!(
                 "DC {} contact-point NLB: {} →  {:?}",
-                dc_id,
+                dc,
                 contact_point_nlb.listen_addr(),
                 backends,
             );
 
             Ok::<_, Error>((
-                dc_id,
+                dc.to_owned(),
                 DcConfig {
                     connection_id,
                     per_node_chains,
@@ -1159,7 +1157,7 @@ async fn build_dc_configs(
         let mut first_err = None;
         for result in nlb_results {
             match result {
-                Ok((_dc_id, dc_config)) => dc_config.shutdown().await,
+                Ok((_dc, dc_config)) => dc_config.shutdown().await,
                 Err(e) if first_err.is_none() => first_err = Some(e),
                 Err(_) => {}
             }

@@ -21,8 +21,8 @@ pub struct NodeOptions {
     /// Scylla or Cassandra version string that goes to CCM.
     /// Examples: `release:6.2.2`, `unstable:master/2021-05-24T17:16:53Z`
     pub version: String,
-    /// Datacenter ID (0-based index matching position in `ClusterOptions::nodes_per_dc`).
-    pub datacenter_id: u16,
+    /// Name of the datacenter the node is placed in.
+    pub datacenter: String,
     /// CCM allocates node ip addresses based on this prefix:
     /// if ip_prefix = `127.0.1.`, then `node1` address is `127.0.1.1`, `node2` address is `127.0.1.2`
     pub ip_prefix: NetPrefix,
@@ -38,10 +38,14 @@ impl NodeOptions {
         format!("node{}", self.id)
     }
 
-    pub(super) fn from_cluster_opts(value: &ClusterOptions) -> Self {
+    pub(super) fn from_cluster_opts(
+        value: &ClusterOptions,
+        id: NodeId,
+        datacenter: String,
+    ) -> Self {
         NodeOptions {
-            id: 0,
-            datacenter_id: 1,
+            id,
+            datacenter,
             db_type: value.db_type,
             version: value.version.clone(),
             ip_prefix: value.ip_prefix,
@@ -118,12 +122,9 @@ impl Node {
         SocketAddr::new(self.broadcast_rpc_address(), 19042)
     }
 
-    /// Returns the 0-based datacenter index for this node.
-    ///
-    /// Corresponds to the position in [`ClusterOptions::nodes_per_dc`].
-    /// CCM names these `dc1`, `dc2`, … (1-based), so CCM DC name = `dc{datacenter_id + 1}`.
-    pub fn datacenter_id(&self) -> u16 {
-        self.opts.datacenter_id
+    /// Returns the name of the datacenter this node is placed in.
+    pub fn datacenter(&self) -> &str {
+        &self.opts.datacenter
     }
 
     /// Executes `ccm updateconf` and applies it for this node.
