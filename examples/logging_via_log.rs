@@ -8,7 +8,7 @@ use tracing::info;
 
 // To run this example, and view logged messages, RUST_LOG env var needs to be set
 // This can be done using shell command presented below
-// RUST_LOG=info cargo run --example logging_log
+// RUST_LOG=info cargo run --example logging_via_log
 #[tokio::main]
 async fn main() -> Result<()> {
     // Driver uses `tracing` for logging purposes, but it's possible to use `log`

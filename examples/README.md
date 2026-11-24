@@ -47,8 +47,8 @@ cargo run -p examples --example basic
 | `enforce_coordinator` | Forcing a request onto a chosen node, and inspecting the coordinator that executed it. |
 | `execution_profile` | Bundling consistency, timeout, retry, load balancing and speculative execution settings into profiles, and attaching them to sessions and statements. |
 | `get_by_name` | Locating columns in a result by name rather than by position. |
-| `logging_log` | Routing the driver's `tracing` messages into the `log` ecosystem (`env_logger`), controlled by `RUST_LOG`. |
-| `logging_tracing` | Viewing the driver's log messages with a `tracing_subscriber`, controlled by `RUST_LOG`. |
+| `logging_via_log` | Routing the driver's `tracing` messages into the `log` ecosystem (`env_logger`), controlled by `RUST_LOG`. |
+| `logging_via_tracing` | Viewing the driver's log messages with a `tracing_subscriber`, controlled by `RUST_LOG`. |
 | `metrics` | Reading the metrics the driver keeps about its own work: request and error counters, latency percentiles, throughput rates and connection statistics. |
 | `parallel` | Saturating the driver with bounded concurrent requests, using a prepared statement so every request is routed straight to a replica. |
 | `query_history` | Collecting the history of a request's execution: its attempts, retries and speculative executions. |
