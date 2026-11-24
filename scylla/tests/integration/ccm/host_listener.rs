@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::utils::{check_session_works_and_fully_connected, setup_tracing};
 use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
 use scylla_ccm_bridge::node::{Node, NodeStartOptions};
+use scylla_ccm_bridge::topology::Topology;
 use scylla_ccm_bridge::{CLUSTER_VERSION, run_ccm_test_with_configuration};
 
 /* LoggingListener HostListener implementation */
@@ -262,7 +263,7 @@ fn cluster_3_nodes() -> ClusterOptions {
     ClusterOptions {
         name: "cluster_3_node".to_string(),
         version: CLUSTER_VERSION.clone(),
-        nodes_per_dc: vec![2, 1],
+        topology: Topology::simple([2, 1]),
         ..ClusterOptions::default()
     }
 }

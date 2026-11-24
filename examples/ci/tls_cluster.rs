@@ -20,6 +20,7 @@ use rcgen::{
 use scylla::client::session_builder::SessionBuilder;
 use scylla_ccm_bridge::CLUSTER_VERSION;
 use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
+use scylla_ccm_bridge::topology::Topology;
 use std::path::Path;
 
 /// A running TLS-enabled cluster, together with the certificate authority that
@@ -56,7 +57,7 @@ pub(crate) async fn start(cluster_name: &str) -> Result<CiTlsCluster> {
     let mut cluster = Cluster::new(ClusterOptions {
         name: cluster_name.to_string(),
         version: CLUSTER_VERSION.clone(),
-        nodes_per_dc: vec![1],
+        topology: Topology::simple([1]),
         ..Default::default()
     })
     .await?;

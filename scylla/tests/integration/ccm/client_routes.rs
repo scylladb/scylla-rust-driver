@@ -28,6 +28,7 @@ use scylla_ccm_bridge::client_routes::{
 };
 use scylla_ccm_bridge::cluster::ClusterOptions;
 use scylla_ccm_bridge::node::NodeId;
+use scylla_ccm_bridge::topology::Topology;
 
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
@@ -50,7 +51,7 @@ fn cluster_3_nodes() -> ClusterOptions {
     ClusterOptions {
         name: "client_routes_3_nodes".to_string(),
         version: CLUSTER_VERSION.clone(),
-        nodes_per_dc: vec![3],
+        topology: Topology::simple([3]),
         ..ClusterOptions::default()
     }
 }
@@ -59,7 +60,7 @@ fn cluster_2dc_2_2() -> ClusterOptions {
     ClusterOptions {
         name: "client_routes_2dc".to_string(),
         version: CLUSTER_VERSION.clone(),
-        nodes_per_dc: vec![2, 2],
+        topology: Topology::simple([2, 2]),
         ..ClusterOptions::default()
     }
 }
@@ -68,7 +69,7 @@ fn cluster_1_node_4_shards() -> ClusterOptions {
     ClusterOptions {
         name: "client_routes_4_shards".to_string(),
         version: CLUSTER_VERSION.clone(),
-        nodes_per_dc: vec![1],
+        topology: Topology::simple([1]),
         smp: 4,
         memory: 2048,
         ..ClusterOptions::default()

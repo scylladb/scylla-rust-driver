@@ -1,5 +1,6 @@
 use crate::utils::setup_tracing;
 use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
+use scylla_ccm_bridge::topology::Topology;
 use scylla_ccm_bridge::{CLUSTER_VERSION, run_ccm_test};
 
 use tracing::debug;
@@ -8,7 +9,7 @@ fn cluster_1_node() -> ClusterOptions {
     ClusterOptions {
         name: "cluster_1_node".to_string(),
         version: CLUSTER_VERSION.clone(),
-        nodes_per_dc: vec![1],
+        topology: Topology::simple([1]),
         ..ClusterOptions::default()
     }
 }

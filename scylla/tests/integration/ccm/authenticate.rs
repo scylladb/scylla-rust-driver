@@ -7,13 +7,14 @@ use scylla::errors::AuthError;
 
 use crate::utils::{PerformDDL, setup_tracing, unique_keyspace_name};
 use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
+use scylla_ccm_bridge::topology::Topology;
 use scylla_ccm_bridge::{CLUSTER_VERSION, run_ccm_test_with_configuration};
 
 fn cluster_1_node() -> ClusterOptions {
     ClusterOptions {
         name: "cluster_auth_1_node".to_string(),
         version: CLUSTER_VERSION.clone(),
-        nodes_per_dc: vec![1],
+        topology: Topology::simple([1]),
         ..ClusterOptions::default()
     }
 }

@@ -10,6 +10,7 @@ mod ip_allocator;
 mod logged_cmd;
 /// Node management types and operations.
 pub mod node;
+pub mod topology;
 
 pub use ip_allocator::NetPrefix;
 
@@ -137,11 +138,12 @@ static ROOT_CCM_DIR: LazyLock<String> = LazyLock::new(|| {
 /// # Example
 /// ```
 /// use scylla_ccm_bridge::{run_ccm_test, cluster::ClusterOptions};
+/// use scylla_ccm_bridge::topology::Topology;
 ///
 /// fn cluster_options() -> ClusterOptions {
 ///     ClusterOptions {
 ///         name: "test_cluster".to_string(),
-///         nodes_per_dc: vec![1],
+///         topology: Topology::simple([1]),
 ///         ..Default::default()
 ///     }
 /// }

@@ -19,13 +19,14 @@ use tokio::io::AsyncWriteExt;
 use crate::utils::{check_session_works_and_fully_connected, setup_tracing};
 use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
 use scylla_ccm_bridge::node::Node;
+use scylla_ccm_bridge::topology::Topology;
 use scylla_ccm_bridge::{CLUSTER_VERSION, run_ccm_test_with_configuration};
 
 fn cluster_3_nodes() -> ClusterOptions {
     ClusterOptions {
         name: "cluster_tls_3_node".to_string(),
         version: CLUSTER_VERSION.clone(),
-        nodes_per_dc: vec![3],
+        topology: Topology::simple([3]),
         ..ClusterOptions::default()
     }
 }
