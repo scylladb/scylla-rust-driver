@@ -145,9 +145,16 @@ impl<'result> CustomTypeParser<'result> {
         self.accept_in_place("(")
             .map_err(|_| CustomTypeParseError::UnexpectedCharacter(self.get_first_char(), '('))?;
 
-        Ok(Either::Right(std::iter::from_fn(|| {
+        // Stop after the first error: the parser state doesn't advance on failure,
+        // so continuing would yield the same error forever.
+        let mut failed = false;
+        Ok(Either::Right(std::iter::from_fn(move || {
+            if failed {
+                return None;
+            }
             self.skip_blank_and_comma();
             if self.parser.is_at_eof() {
+                failed = true;
                 return Some(Err(CustomTypeParseError::UnexpectedEndOfInput));
             }
             let result = self.parser.accept(")");
@@ -156,7 +163,11 @@ impl<'result> CustomTypeParser<'result> {
                     self.parser = parser;
                     None
                 }
-                Err(_) => Some(self.do_parse()),
+                Err(_) => {
+                    let parsed = self.do_parse();
+                    failed = parsed.is_err();
+                    Some(parsed)
+                }
             }
         })))
     }
