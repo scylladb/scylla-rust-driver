@@ -101,7 +101,9 @@ impl MonotonicTimestampGenerator {
         let current = SystemTime::now().duration_since(UNIX_EPOCH);
         if let Ok(cur_time) = current {
             // We have generated a valid timestamp
-            let u_cur = cur_time.as_micros() as i64;
+            // Microseconds since epoch overflow i64 only after ~292,000 years,
+            // so this can't realistically panic.
+            let u_cur: i64 = cur_time.as_micros().try_into().unwrap();
             if u_cur > last {
                 // We have generated a valid, monotonic timestamp
                 return u_cur;
