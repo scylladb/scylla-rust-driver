@@ -605,34 +605,31 @@ impl ClusterWorker {
         host_listener: Option<&dyn HostListener>,
         node_status: &mut HashMap<Uuid, NodeConnectivityStatus>,
     ) {
-        // Nodes that were previously in the cluster but are not present anymore.
-        let removed_nodes =
-            hash_map_difference(known_nodes, new_known_nodes).filter(|(_host_id, node)| {
-                // If a host filter is configured, we only consider nodes that passed the filter
-                // as removed. Nodes that were filtered out are not considered part of the cluster,
-                // so their removal is not signaled.
-                node.is_enabled()
-            });
+        // A node is part of the cluster, from the listener's point of view, only if it is
+        // present and enabled. Nodes filtered out by the host filter are not considered part
+        // of the cluster, so their addition, removal and address changes are not signaled.
+        // A node that switches between enabled and disabled while keeping its host_id
+        // is handled like a removal or an addition, respectively.
+        let is_member = |nodes: &HashMap<Uuid, Arc<Node>>, host_id: &Uuid| {
+            nodes.get(host_id).is_some_and(|node| node.is_enabled())
+        };
+
+        // Nodes that were previously in the cluster but are not anymore.
+        let removed_nodes = known_nodes
+            .iter()
+            .filter(|(host_id, node)| node.is_enabled() && !is_member(new_known_nodes, host_id));
         // Nodes that weren't previously in the cluster but are present now.
-        let added_nodes =
-            hash_map_difference(new_known_nodes, known_nodes).filter(|(_host_id, node)| {
-                // If a host filter is configured, we only consider nodes that passed the filter
-                // as added. Nodes that were filtered out are not considered part of the cluster,
-                // so their addition is not signaled.
-                node.is_enabled()
-            });
-        // Nodes that were present in both old and new cluster state, but have changed address.
+        let added_nodes = new_known_nodes
+            .iter()
+            .filter(|(host_id, node)| node.is_enabled() && !is_member(known_nodes, host_id));
+        // Nodes that were members both before and after, but have changed address.
         let nodes_with_changed_address = known_nodes
             .iter()
-            .filter(|(_host_id, old_node)| {
-                // If a host filter is configured, we only consider nodes that passed the filter
-                // as candidates for address change notification. Nodes that were filtered out
-                // are not considered part of the cluster, so their address changes are not signaled.
-                old_node.is_enabled()
-            })
+            .filter(|(_host_id, old_node)| old_node.is_enabled())
             .filter_map(|(host_id, old_node)| {
                 new_known_nodes
                     .get(host_id)
+                    .filter(|new_node| new_node.is_enabled())
                     // We only consider nodes with changed SocketAddr. If only NodeAddr variant changed
                     // (which happens mainly when control connection moves from one node to another),
                     // we don't notify the host listener about that, as it operates on SocketAddr only.
@@ -883,19 +880,6 @@ pub(crate) fn use_keyspace_result(
     Err(broken_conn_error.unwrap())
 }
 
-/// Computes the difference between two hash maps, analogous to set difference.
-fn hash_map_difference<'present, 'absent, K, V>(
-    present_here: &'present HashMap<K, V>,
-    absent_here: &'absent HashMap<K, V>,
-) -> impl Iterator<Item = (&'present K, &'present V)> + use<'present, 'absent, K, V>
-where
-    K: std::hash::Hash + Eq,
-{
-    present_here
-        .iter()
-        .filter(|(k, _v)| !absent_here.contains_key(k))
-}
-
 #[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
@@ -944,10 +928,10 @@ mod tests {
     }
 
     // A node keeping its host_id while switching between enabled and disabled
-    // is not reported to the listener, and node_status is not updated (#2106).
-    // This test asserts the current, wrong behavior.
+    // is reported to the listener like a removal or an addition, and node_status
+    // is updated accordingly.
     #[tokio::test]
-    async fn enabled_state_switch_is_not_reported_to_listener() {
+    async fn enabled_state_switch_is_reported_to_listener() {
         let host_id = Uuid::new_v4();
         let addr1: SocketAddr = "127.0.0.1:1".parse().unwrap();
         let addr2: SocketAddr = "127.0.0.2:1".parse().unwrap();
@@ -972,27 +956,20 @@ mod tests {
             )
         };
 
-        // Disabled -> enabled: should be Added and Up, and tracked.
+        // Disabled -> enabled.
         let (events, tracked) = run(disabled(host_id, addr1), enabled(host_id, addr1), false);
-        assert!(events.is_empty());
+        assert_eq!(events, ["127.0.0.1:1 Added", "127.0.0.1:1 Up"]);
+        assert!(tracked);
+
+        // Enabled -> disabled.
+        let (events, tracked) = run(enabled(host_id, addr1), disabled(host_id, addr1), true);
+        assert_eq!(events, ["127.0.0.1:1 Down", "127.0.0.1:1 Removed"]);
         assert!(!tracked);
 
-        // Enabled -> disabled: should be Down and Removed, and not tracked.
-        let (events, tracked) = run(enabled(host_id, addr1), disabled(host_id, addr1), true);
-        assert!(events.is_empty());
-        assert!(tracked);
-
-        // Enabled -> disabled with a changed address: should be Down and Removed.
+        // Enabled -> disabled with a changed address.
         let (events, tracked) = run(enabled(host_id, addr1), disabled(host_id, addr2), true);
-        assert_eq!(
-            events,
-            [
-                "127.0.0.1:1 Down",
-                "127.0.0.2:1 AddressChanged { old_address: 127.0.0.1:1, new_address: 127.0.0.2:1 }",
-                "127.0.0.2:1 Up"
-            ]
-        );
-        assert!(tracked);
+        assert_eq!(events, ["127.0.0.1:1 Down", "127.0.0.1:1 Removed"]);
+        assert!(!tracked);
 
         // Disabled -> disabled with a changed address: nothing to report.
         let (events, tracked) = run(disabled(host_id, addr1), disabled(host_id, addr2), false);
