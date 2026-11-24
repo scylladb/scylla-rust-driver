@@ -225,16 +225,42 @@ impl Cluster {
 
     /// Initializes the cluster by creating it via CCM.
     pub async fn init(&mut self) -> Result<(), Error> {
+        // `ccm create --nodes` would populate the cluster too, but it only takes node counts, so
+        // create an empty cluster and add the nodes one by one, each with its own placement.
         self.ccm_cmd
             .cluster_create(
                 self.opts.name.clone(),
                 self.opts.version.clone(),
                 self.opts.db_type,
             )
-            .populate(&self.opts.nodes_per_dc, Some(self.opts.ip_prefix))
             .run()
-            .await
-            .map(|_| ())
+            .await?;
+
+        // CCM writes each node's datacenter and rack to the topology file read by the snitch of
+        // the cluster's type, but `ccm add` doesn't configure that snitch. Set it for the whole
+        // cluster, so that every node added to it uses the snitch.
+        let snitch = match self.opts.db_type {
+            // Reads `cassandra-rackdc.properties`.
+            DBType::Scylla => "org.apache.cassandra.locator.GossipingPropertyFileSnitch",
+            // Reads `cassandra-topology.properties`.
+            DBType::Cassandra => "org.apache.cassandra.locator.PropertyFileSnitch",
+        };
+        self.updateconf([("endpoint_snitch", snitch)]).await?;
+
+        for node in self.nodes.iter() {
+            // CCM uses 1-based DC names: dc1, dc2, …
+            let datacenter_name = format!("dc{}", node.datacenter_id() + 1);
+            self.ccm_cmd
+                .cluster_add_node(self.opts.db_type, node.name())
+                .dc(datacenter_name)
+                .address(node.broadcast_rpc_address().to_string())
+                // Like `ccm create --nodes`, which makes every node a seed.
+                .seed()
+                .run()
+                .await?;
+        }
+
+        Ok(())
     }
 
     /// Executes `ccm updateconf` and applies it for all nodes in the cluster.

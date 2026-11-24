@@ -2,9 +2,6 @@ use std::path::Path;
 use std::process::ExitStatus;
 use std::sync::Arc;
 
-use itertools::Itertools;
-
-use crate::ip_allocator::NetPrefix;
 use crate::logged_cmd::{LoggedCmd, RunOptions};
 
 use super::node::NodeCcm;
@@ -40,8 +37,6 @@ pub(crate) struct ClusterCreate<'ccm> {
     name: String,
     version: String,
     db_type: DBType,
-    ip_prefix: Option<String>,
-    nodes: Option<String>,
 }
 
 impl Ccm {
@@ -56,20 +51,11 @@ impl Ccm {
             name,
             version,
             db_type,
-            ip_prefix: None,
-            nodes: None,
         }
     }
 }
 
 impl ClusterCreate<'_> {
-    pub(crate) fn populate(mut self, nodes: &[u8], ipprefix: Option<NetPrefix>) -> Self {
-        let nodes_string = nodes.iter().map(|node| node.to_string()).join(":");
-        self.nodes = Some(nodes_string);
-        self.ip_prefix = ipprefix.map(|p| p.to_string());
-        self
-    }
-
     pub(crate) async fn run(self) -> Result<ExitStatus, anyhow::Error> {
         let mut args: Vec<&str> = vec![
             "create",
@@ -79,14 +65,6 @@ impl ClusterCreate<'_> {
             "--config-dir",
             self.ccm.config_dir.as_str(),
         ];
-        if let Some(nodes) = self.nodes.as_ref() {
-            args.push("--nodes");
-            args.push(nodes.as_str())
-        }
-        if let Some(ipprefix) = self.ip_prefix.as_ref() {
-            args.push("--ipprefix");
-            args.push(ipprefix.as_str());
-        }
         if self.db_type == DBType::Scylla {
             args.push("--scylla");
         }
@@ -279,6 +257,7 @@ pub(crate) struct ClusterAddNode<'ccm> {
     db_type: DBType,
     dc: Option<String>,
     address: Option<String>,
+    seed: bool,
 }
 
 impl Ccm {
@@ -289,6 +268,7 @@ impl Ccm {
             name,
             dc: None,
             address: None,
+            seed: false,
         }
     }
 }
@@ -301,6 +281,12 @@ impl ClusterAddNode<'_> {
 
     pub(crate) fn address(mut self, addr: String) -> Self {
         self.address = Some(addr);
+        self
+    }
+
+    /// Makes the node a seed node.
+    pub(crate) fn seed(mut self) -> Self {
+        self.seed = true;
         self
     }
 
@@ -320,6 +306,10 @@ impl ClusterAddNode<'_> {
         if let Some(addr) = self.address.as_ref() {
             args.push("-i");
             args.push(addr.as_str());
+        }
+
+        if self.seed {
+            args.push("--seeds");
         }
 
         match self.db_type {
