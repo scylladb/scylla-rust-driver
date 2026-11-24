@@ -56,7 +56,8 @@ struct MonotonicTimestampGeneratorWarningsCfg {
 #[derive(Debug)]
 pub struct MonotonicTimestampGenerator {
     last: AtomicI64,
-    last_warning: Mutex<Instant>,
+    /// `None` until the first warning is issued.
+    last_warning: Mutex<Option<Instant>>,
     config: Option<MonotonicTimestampGeneratorWarningsCfg>,
 }
 
@@ -65,7 +66,7 @@ impl MonotonicTimestampGenerator {
     pub fn new() -> Self {
         MonotonicTimestampGenerator {
             last: AtomicI64::new(0),
-            last_warning: Mutex::new(Instant::now()),
+            last_warning: Mutex::new(None),
             config: Some(MonotonicTimestampGeneratorWarningsCfg {
                 warning_threshold: Duration::from_secs(1),
                 warning_interval: Duration::from_secs(1),
@@ -110,9 +111,17 @@ impl MonotonicTimestampGenerator {
                     // We have detected a clock skew bigger than the threshold, we check if we warned the user recently
                     let mut last_warn = self.last_warning.lock().unwrap();
                     let now = Instant::now();
-                    if now >= last_warn.checked_add(cfg.warning_interval).unwrap() {
+                    // If the next allowed warning time is not representable as an `Instant`
+                    // (e.g. `warning_interval` is `Duration::MAX`), never warn again.
+                    let should_warn = match *last_warn {
+                        None => true,
+                        Some(prev) => prev
+                            .checked_add(cfg.warning_interval)
+                            .is_some_and(|next_allowed| now >= next_allowed),
+                    };
+                    if should_warn {
                         // We have not warned the user recently, we will warn the user
-                        *last_warn = now;
+                        *last_warn = Some(now);
                         drop(last_warn);
                         warn!(
                             "Clock skew detected. The current time ({}) was {} \
@@ -211,7 +220,6 @@ fn monotonic_timestamp_generator_is_monotonic_with_concurrency() {
 }
 
 #[test]
-#[should_panic]
 fn monotonic_timestamp_generator_huge_warning_interval_does_not_panic() {
     let generator = MonotonicTimestampGenerator::new()
         .with_warning_times(Duration::from_millis(1), Duration::MAX);
