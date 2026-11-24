@@ -209,3 +209,20 @@ fn monotonic_timestamp_generator_is_monotonic_with_concurrency() {
         "Colliding values between threads"
     );
 }
+
+#[test]
+#[should_panic]
+fn monotonic_timestamp_generator_huge_warning_interval_does_not_panic() {
+    let generator = MonotonicTimestampGenerator::new()
+        .with_warning_times(Duration::from_millis(1), Duration::MAX);
+    // Simulate a clock far behind the last generated timestamp.
+    let far_future = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as i64
+        + 10_000_000;
+    generator.last.store(far_future, Ordering::SeqCst);
+    for _ in 0..3 {
+        generator.next_timestamp();
+    }
+}
