@@ -255,42 +255,34 @@ pub(crate) struct ClusterAddNode<'ccm> {
     ccm: &'ccm mut Ccm,
     name: String,
     db_type: DBType,
-    dc: Option<String>,
-    rack: Option<String>,
-    address: Option<String>,
+    dc: String,
+    rack: String,
+    address: String,
     seed: bool,
 }
 
 impl Ccm {
-    pub(crate) fn cluster_add_node(&mut self, db_type: DBType, name: String) -> ClusterAddNode<'_> {
+    pub(crate) fn cluster_add_node(
+        &mut self,
+        db_type: DBType,
+        name: String,
+        dc: String,
+        rack: String,
+        address: String,
+    ) -> ClusterAddNode<'_> {
         ClusterAddNode {
             ccm: self,
             db_type,
             name,
-            dc: None,
-            rack: None,
-            address: None,
+            dc,
+            rack,
+            address,
             seed: false,
         }
     }
 }
 
 impl ClusterAddNode<'_> {
-    pub(crate) fn dc(mut self, dc: String) -> Self {
-        self.dc = Some(dc);
-        self
-    }
-
-    pub(crate) fn rack(mut self, rack: String) -> Self {
-        self.rack = Some(rack);
-        self
-    }
-
-    pub(crate) fn address(mut self, addr: String) -> Self {
-        self.address = Some(addr);
-        self
-    }
-
     /// Makes the node a seed node.
     pub(crate) fn seed(mut self) -> Self {
         self.seed = true;
@@ -303,22 +295,13 @@ impl ClusterAddNode<'_> {
             "--config-dir",
             self.ccm.config_dir.as_str(),
             self.name.as_str(),
+            "--data-center",
+            self.dc.as_str(),
+            "--rack",
+            self.rack.as_str(),
+            "-i",
+            self.address.as_str(),
         ];
-
-        if let Some(dc) = self.dc.as_ref() {
-            args.push("--data-center");
-            args.push(dc.as_str())
-        }
-
-        if let Some(rack) = self.rack.as_ref() {
-            args.push("--rack");
-            args.push(rack.as_str())
-        }
-
-        if let Some(addr) = self.address.as_ref() {
-            args.push("-i");
-            args.push(addr.as_str());
-        }
 
         if self.seed {
             args.push("--seeds");

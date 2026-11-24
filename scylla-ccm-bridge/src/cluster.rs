@@ -255,10 +255,13 @@ impl Cluster {
 
         for node in self.nodes.iter() {
             self.ccm_cmd
-                .cluster_add_node(self.opts.db_type, node.name())
-                .dc(node.datacenter().to_owned())
-                .rack(node.rack().to_owned())
-                .address(node.broadcast_rpc_address().to_string())
+                .cluster_add_node(
+                    self.opts.db_type,
+                    node.name(),
+                    node.datacenter().to_owned(),
+                    node.rack().to_owned(),
+                    node.broadcast_rpc_address().to_string(),
+                )
                 // Like `ccm create --nodes`, which makes every node a seed.
                 .seed()
                 .run()
@@ -372,10 +375,13 @@ impl Cluster {
         // decommission reuses a lower ID).
         let node_ip = self.opts.ip_prefix.to_ipaddress(id).to_string();
         self.ccm_cmd
-            .cluster_add_node(self.opts.db_type, node_options.name())
-            .dc(datacenter.to_owned())
-            .rack(rack.to_owned())
-            .address(node_ip)
+            .cluster_add_node(
+                self.opts.db_type,
+                node_options.name(),
+                datacenter.to_owned(),
+                rack.to_owned(),
+                node_ip,
+            )
             .run()
             .await?;
         Ok(self.append_node(node_options))
