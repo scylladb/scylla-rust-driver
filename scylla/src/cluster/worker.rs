@@ -895,3 +895,108 @@ where
         .iter()
         .filter(|(k, _v)| !absent_here.contains_key(k))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::cluster::NodeAddr;
+    use crate::cluster::metadata::PeerEndpoint;
+    use crate::network::ConnectionConfig;
+
+    #[derive(Default)]
+    struct RecordingListener(Mutex<Vec<String>>);
+
+    impl HostListener for RecordingListener {
+        fn on_event(&self, ctx: &HostEventContext, event: &HostEvent) {
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("{} {event:?}", ctx.addr()));
+        }
+    }
+
+    fn endpoint(host_id: Uuid, addr: SocketAddr) -> PeerEndpoint {
+        PeerEndpoint {
+            host_id,
+            address: NodeAddr::Translatable(addr),
+            datacenter: None,
+            rack: None,
+        }
+    }
+
+    fn enabled(host_id: Uuid, addr: SocketAddr) -> Arc<Node> {
+        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        Arc::new(Node::new(
+            endpoint(host_id, addr),
+            &ConnectionConfig::default(),
+            &PoolConfig::default(),
+            sender,
+            None,
+            Metrics::new(),
+        ))
+    }
+
+    fn disabled(host_id: Uuid, addr: SocketAddr) -> Arc<Node> {
+        Arc::new(Node::new_disabled(endpoint(host_id, addr)))
+    }
+
+    // A node keeping its host_id while switching between enabled and disabled
+    // is not reported to the listener, and node_status is not updated (#2106).
+    // This test asserts the current, wrong behavior.
+    #[tokio::test]
+    async fn enabled_state_switch_is_not_reported_to_listener() {
+        let host_id = Uuid::new_v4();
+        let addr1: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let addr2: SocketAddr = "127.0.0.2:1".parse().unwrap();
+
+        // Runs handle_topology_changes for a single node, with the given
+        // initial node_status entry. Returns listener events and final node_status.
+        let run = |old: Arc<Node>, new: Arc<Node>, tracked: bool| {
+            let listener = RecordingListener::default();
+            let mut status = HashMap::new();
+            if tracked {
+                status.insert(host_id, NodeConnectivityStatus::Connected);
+            }
+            ClusterWorker::handle_topology_changes(
+                &HashMap::from([(host_id, old)]),
+                &HashMap::from([(host_id, new)]),
+                Some(&listener),
+                &mut status,
+            );
+            (
+                listener.0.into_inner().unwrap(),
+                status.contains_key(&host_id),
+            )
+        };
+
+        // Disabled -> enabled: should be Added and Up, and tracked.
+        let (events, tracked) = run(disabled(host_id, addr1), enabled(host_id, addr1), false);
+        assert!(events.is_empty());
+        assert!(!tracked);
+
+        // Enabled -> disabled: should be Down and Removed, and not tracked.
+        let (events, tracked) = run(enabled(host_id, addr1), disabled(host_id, addr1), true);
+        assert!(events.is_empty());
+        assert!(tracked);
+
+        // Enabled -> disabled with a changed address: should be Down and Removed.
+        let (events, tracked) = run(enabled(host_id, addr1), disabled(host_id, addr2), true);
+        assert_eq!(
+            events,
+            [
+                "127.0.0.1:1 Down",
+                "127.0.0.2:1 AddressChanged { old_address: 127.0.0.1:1, new_address: 127.0.0.2:1 }",
+                "127.0.0.2:1 Up"
+            ]
+        );
+        assert!(tracked);
+
+        // Disabled -> disabled with a changed address: nothing to report.
+        let (events, tracked) = run(disabled(host_id, addr1), disabled(host_id, addr2), false);
+        assert!(events.is_empty());
+        assert!(!tracked);
+    }
+}
