@@ -145,9 +145,16 @@ impl<'result> CustomTypeParser<'result> {
         self.accept_in_place("(")
             .map_err(|_| CustomTypeParseError::UnexpectedCharacter(self.get_first_char(), '('))?;
 
-        Ok(Either::Right(std::iter::from_fn(|| {
+        // Stop after the first error: the parser state doesn't advance on failure,
+        // so continuing would yield the same error forever.
+        let mut failed = false;
+        Ok(Either::Right(std::iter::from_fn(move || {
+            if failed {
+                return None;
+            }
             self.skip_blank_and_comma();
             if self.parser.is_at_eof() {
+                failed = true;
                 return Some(Err(CustomTypeParseError::UnexpectedEndOfInput));
             }
             let result = self.parser.accept(")");
@@ -156,7 +163,11 @@ impl<'result> CustomTypeParser<'result> {
                     self.parser = parser;
                     None
                 }
-                Err(_) => Some(self.do_parse()),
+                Err(_) => {
+                    let parsed = self.do_parse();
+                    failed = parsed.is_err();
+                    Some(parsed)
+                }
             }
         })))
     }
@@ -252,24 +263,36 @@ impl<'result> CustomTypeParser<'result> {
         }
     }
 
+    /// Parses N type parameters and return an array with them.
+    /// This function tries to parse ALL type parameters, however many there are.
+    /// If any fails to parse, this error is returned.
+    /// `InvalidParameterCount` is returned if all parameters parsed successfully,
+    /// but there is a wrong number of them.
     fn get_n_type_parameters<const N: usize>(
         &mut self,
-    ) -> Result<[Result<ColumnType<'result>, CustomTypeParseError>; N], CustomTypeParseError> {
+    ) -> Result<[ColumnType<'result>; N], CustomTypeParseError> {
         let mut backup = Self {
             parser: self.parser,
             frozen_context: self.frozen_context,
         };
 
-        // FIXME: Rewrite using std::iter::FromIterator::collect_array after it is stabilized.
-        // See rust-lang/rust#149266
-        itertools::Itertools::collect_array::<N>(self.get_type_parameters()?).ok_or_else(|| {
+        // First parse error is returned by process_results; otherwise the closure
+        // sees only the Ok values.
+        let collected = itertools::process_results(self.get_type_parameters()?, |params| {
+            itertools::Itertools::collect_array::<N>(params)
+        })?;
+
+        collected.ok_or_else(|| {
+            // Wrong count. Re-parse to count (error path only).
             // unwrap(): get_type_parameters() already worked above, so it will work here as well.
-
-            let actual_parameter_count = backup.get_type_parameters().unwrap().count();
-
-            CustomTypeParseError::InvalidParameterCount {
-                actual: actual_parameter_count,
-                expected: N,
+            let actual_result =
+                itertools::process_results(backup.get_type_parameters().unwrap(), |p| p.count());
+            match actual_result {
+                Err(e) => e,
+                Ok(actual) => CustomTypeParseError::InvalidParameterCount {
+                    actual,
+                    expected: N,
+                },
             }
         })
     }
@@ -284,25 +307,21 @@ impl<'result> CustomTypeParser<'result> {
 
         match name {
             "ListType" => {
-                let [element_type_result] = self.get_n_type_parameters::<1>()?;
-                let element_type = element_type_result?;
+                let [element_type] = self.get_n_type_parameters::<1>()?;
                 Ok(ColumnType::Collection {
                     frozen: self.frozen_context,
                     typ: CollectionType::List(Box::new(element_type)),
                 })
             }
             "SetType" => {
-                let [element_type_result] = self.get_n_type_parameters::<1>()?;
-                let element_type = element_type_result?;
+                let [element_type] = self.get_n_type_parameters::<1>()?;
                 Ok(ColumnType::Collection {
                     frozen: self.frozen_context,
                     typ: CollectionType::Set(Box::new(element_type)),
                 })
             }
             "MapType" => {
-                let [key_type_result, value_type_result] = self.get_n_type_parameters::<2>()?;
-                let key_type = key_type_result?;
-                let value_type = value_type_result?;
+                let [key_type, value_type] = self.get_n_type_parameters::<2>()?;
                 Ok(ColumnType::Collection {
                     frozen: self.frozen_context,
                     typ: CollectionType::Map(Box::new(key_type), Box::new(value_type)),
@@ -353,10 +372,11 @@ impl<'result> CustomTypeParser<'result> {
                 let previous_frozen_context = self.frozen_context;
                 self.frozen_context = true;
 
-                let [result] = self.get_n_type_parameters::<1>()?;
+                let result = self.get_n_type_parameters::<1>();
 
                 self.frozen_context = previous_frozen_context;
-                result
+                let [inner] = result?;
+                Ok(inner)
             }
             name => Err(CustomTypeParseError::UnknownComplexCustomTypeName(
                 name.into(),
@@ -677,5 +697,35 @@ mod tests {
                 " \t\n".to_string()
             ))
         );
+    }
+
+    // Regression test: these inputs used to make the parser loop forever.
+    #[test]
+    fn test_malformed_collection_types_return_errors() {
+        for name in ["ListType", "SetType", "MapType", "FrozenType"] {
+            let prefix = format!("org.apache.cassandra.db.marshal.{name}");
+            let int = "org.apache.cassandra.db.marshal.Int32Type";
+
+            // Missing closing paren.
+            assert_eq!(
+                CustomTypeParser::parse(&format!("{prefix}({int}")),
+                Err(CustomTypeParseError::UnexpectedEndOfInput),
+                "{name}: missing paren",
+            );
+            // Nothing after the opening paren.
+            assert_eq!(
+                CustomTypeParser::parse(&format!("{prefix}(")),
+                Err(CustomTypeParseError::UnexpectedEndOfInput),
+                "{name}: only opening paren",
+            );
+            // Parameter that is not a valid identifier.
+            assert_eq!(
+                CustomTypeParser::parse(&format!("{prefix}(#)")),
+                Err(CustomTypeParseError::UnknownComplexCustomTypeName(
+                    "#)".into()
+                )),
+                "{name}: bad character",
+            );
+        }
     }
 }
