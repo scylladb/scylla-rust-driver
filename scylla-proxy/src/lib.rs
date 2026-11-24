@@ -4,6 +4,7 @@ mod actions;
 mod errors;
 mod frame;
 pub mod nlb;
+mod prepared_statements;
 mod proxy;
 mod proxy_protocol;
 
