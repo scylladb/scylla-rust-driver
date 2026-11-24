@@ -55,6 +55,6 @@ tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 [package.metadata.cargo-semver-checks.lints]
 workspace = true
 
-[package.metadata."docs.rs"]
+[package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
