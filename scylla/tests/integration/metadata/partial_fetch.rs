@@ -246,10 +246,9 @@ async fn failed_peers_query_does_not_shrink_the_topology() {
                         .iter()
                         .any(|old| Arc::ptr_eq(old, node))
                 });
-            // FIXME: currently the failed fetch does shrink the topology.
             assert!(
-                !all_nodes_kept,
-                "the failed `system.peers` query was expected to shrink the topology"
+                all_nodes_kept,
+                "the failed `system.peers` query shrank the topology"
             );
 
             running_proxy
