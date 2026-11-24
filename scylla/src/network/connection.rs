@@ -276,11 +276,15 @@ impl Default for TcpSocketOptions {
     }
 }
 
+/// Sends the tablet info that responses carry to the tablet updater.
+pub(crate) type TabletSender = mpsc::Sender<(Arc<TableSpec<'static>>, RawTablet)>;
+
 /// Configuration used for new connections.
 ///
 /// Before being used for a particular connection, should be customized
-/// for a specific endpoint by converting to [HostConnectionConfig]
-/// using [ConnectionConfig::to_host_connection_config].
+/// for a specific endpoint and kind of connection, by converting to
+/// [HostConnectionConfig] using [ConnectionConfig::for_regular_connection_host]
+/// or [ConnectionConfig::for_control_connection_host].
 #[derive(Clone)]
 pub(crate) struct ConnectionConfig {
     pub(crate) local_ip_address: Option<IpAddr>,
@@ -290,15 +294,12 @@ pub(crate) struct ConnectionConfig {
     pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
     pub(crate) tls_provider: Option<TlsProvider>,
     pub(crate) connect_timeout: std::time::Duration,
-    // should be Some only in control connections,
-    pub(crate) event_sender: Option<(mpsc::Sender<Event>, Vec<EventType>)>,
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
     pub(crate) write_coalescing_delay: Option<WriteCoalescingDelay>,
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
-    pub(crate) tablet_sender: Option<mpsc::Sender<(Arc<TableSpec<'static>>, RawTablet)>>,
 
     pub(crate) identity: SelfIdentity<'static>,
 
@@ -308,25 +309,52 @@ pub(crate) struct ConnectionConfig {
     /// Reported to the cluster in `STARTUP`, so that the `system.clients` rows
     /// of all connections belonging to one session can be correlated.
     pub(crate) session_id: Uuid,
-
-    /// Builds the configuration report sent in `STARTUP`. `None` disables
-    /// reporting.
-    ///
-    /// Should be `Some` only in control connections: the report's value is the
-    /// same for every connection of a session, so sending it on all of them
-    /// would only bloat their `STARTUP` frames. It is put on the control
-    /// connection's config in [`ControlConnectionEstablisher::new`].
-    ///
-    /// [`ControlConnectionEstablisher::new`]:
-    ///     crate::cluster::metadata::cc_establisher::ControlConnectionEstablisher::new
-    pub(crate) driver_config_reporter: Option<Arc<DriverConfigReporter>>,
 }
 
 impl ConnectionConfig {
-    /// Customizes the config for a specific endpoint.
-    pub(crate) fn to_host_connection_config(
+    /// Customizes the config for a pool connection to a specific endpoint.
+    ///
+    /// A pool connection feeds the tablet updater. It does not receive server
+    /// events, and it does not report the driver configuration.
+    pub(crate) fn for_regular_connection_host(
         &self,
         endpoint: &UntranslatedEndpoint,
+        tablet_sender: TabletSender,
+    ) -> HostConnectionConfig {
+        self.to_host_connection_config(endpoint, Some(tablet_sender), None, None)
+    }
+
+    /// Customizes the config for a control connection to a specific endpoint.
+    ///
+    /// A control connection passes the server events of `event_types` on
+    /// through `event_sender`, and it reports the driver configuration if
+    /// `driver_config_reporter` is set. It does not feed the tablet updater.
+    pub(crate) fn for_control_connection_host(
+        &self,
+        endpoint: &UntranslatedEndpoint,
+        event_sender: mpsc::Sender<Event>,
+        event_types: Vec<EventType>,
+        driver_config_reporter: Option<Arc<DriverConfigReporter>>,
+    ) -> HostConnectionConfig {
+        self.to_host_connection_config(
+            endpoint,
+            None,
+            Some((event_sender, event_types)),
+            driver_config_reporter,
+        )
+    }
+
+    /// Customizes the config for a specific endpoint.
+    ///
+    /// The arguments are the values that depend on the kind of the connection.
+    /// Only the constructors above call it, so that each kind gets its own
+    /// combination of them.
+    fn to_host_connection_config(
+        &self,
+        endpoint: &UntranslatedEndpoint,
+        tablet_sender: Option<TabletSender>,
+        event_sender: Option<(mpsc::Sender<Event>, Vec<EventType>)>,
+        driver_config_reporter: Option<Arc<DriverConfigReporter>>,
     ) -> HostConnectionConfig {
         let tls_config = self
             .tls_provider
@@ -341,16 +369,16 @@ impl ConnectionConfig {
             timestamp_generator: self.timestamp_generator.clone(),
             tls_config,
             connect_timeout: self.connect_timeout,
-            event_sender: self.event_sender.clone(),
+            event_sender,
             authenticator: self.authenticator.clone(),
             address_translator: self.address_translator.clone(),
             write_coalescing_delay: self.write_coalescing_delay.clone(),
             keepalive_interval: self.keepalive_interval,
             keepalive_timeout: self.keepalive_timeout,
-            tablet_sender: self.tablet_sender.clone(),
+            tablet_sender,
             identity: self.identity.clone(),
             session_id: self.session_id,
-            driver_config_reporter: self.driver_config_reporter.clone(),
+            driver_config_reporter,
             #[cfg(test)]
             transport_factory: None,
         }
@@ -433,7 +461,6 @@ impl Default for ConnectionConfig {
             compression: None,
             tcp_socket_options: TcpSocketOptions::default(),
             timestamp_generator: None,
-            event_sender: None,
             tls_provider: None,
             connect_timeout: std::time::Duration::from_secs(5),
             authenticator: None,
@@ -444,15 +471,10 @@ impl Default for ConnectionConfig {
             keepalive_interval: None,
             keepalive_timeout: None,
 
-            tablet_sender: None,
-
             identity: SelfIdentity::default(),
 
             // Test connections do not correlate anything in `system.clients`.
             session_id: Uuid::nil(),
-
-            // Test connections do not report their configuration.
-            driver_config_reporter: None,
         }
     }
 }
@@ -2206,7 +2228,7 @@ pub(crate) async fn open_connection(
     // The configuration report, sent only by the control connection: its value is
     // the same for every connection of a session, so sending it on all of them
     // would only bloat their STARTUP frames. Only the control connection's config
-    // carries a reporter - see `ConnectionConfig::driver_config_reporter`.
+    // carries a reporter - see `ConnectionConfig::for_control_connection_host`.
     if let Some(reporter) = config.driver_config_reporter.as_deref()
         && let Some(report) = reporter.report(connection.is_to_scylladb())
     {

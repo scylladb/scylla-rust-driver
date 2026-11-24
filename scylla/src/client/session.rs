@@ -1497,23 +1497,18 @@ impl Session {
             tls_provider,
             authenticator: config.authenticator,
             connect_timeout: config.connect_timeout,
-            event_sender: None,
             address_translator: config.address_translator,
             write_coalescing_delay: config
                 .enable_write_coalescing
                 .then_some(config.write_coalescing_delay),
             keepalive_interval: config.keepalive_interval,
             keepalive_timeout: config.keepalive_timeout,
-            tablet_sender: Some(tablet_sender),
             identity: config.identity,
             session_id,
-            // Pool connections do not report the configuration: only the control
-            // connection's config gets the reporter, in
-            // `ControlConnectionEstablisher::new`.
-            driver_config_reporter: None,
         };
 
         let pool_config = PoolConfig {
+            tablet_sender,
             pool_size: config.connection_pool_size,
             can_use_shard_aware_port: !config.disallow_shard_aware_port,
             reconnect_policy,
