@@ -112,7 +112,7 @@ impl GenericSessionBuilder<ClientRoutesMode> {
     /// Creates new [`ClientRoutesSessionBuilder`] with given config.
     ///
     /// This SessionBuilder kind is used to create sessions connected to ClientRoutes clusters.
-    /// It requires [`ClientRoutesConfig`], which contains at least contact points and connection ids,
+    /// It requires [`ClientRoutesConfig`](super::client_routes::ClientRoutesConfig), which contains at least contact points and connection ids,
     /// which are both used to establish the connection to the cluster.
     ///
     /// **Note:** Mixed clusters (with both nodes reachable only through ClientRoutes and nodes
