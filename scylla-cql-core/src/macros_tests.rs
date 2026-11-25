@@ -138,6 +138,54 @@ mod derive_macros_integration {
             }
         }
 
+        // Regression test: an `allow_missing` field declared before a required one
+        // used to break the check for missing required fields.
+        #[test]
+        fn serialize_value_missing_required_field_after_allow_missing() {
+            use std::assert_matches;
+
+            use crate::serialize::value::{
+                BuiltinTypeCheckError, BuiltinTypeCheckErrorKind, UdtTypeCheckErrorKind,
+            };
+
+            #[derive(scylla_macros::SerializeValue)]
+            #[scylla(crate = "crate")]
+            struct Udt {
+                #[scylla(allow_missing)]
+                a: i32,
+                b: i32,
+            }
+
+            #[derive(scylla_macros::SerializeValue)]
+            #[scylla(crate = "crate")]
+            struct Udt2 {
+                #[scylla(allow_missing)]
+                a: i32,
+                b: i32,
+                c: i32,
+            }
+
+            // Required `b` is missing from the UDT.
+            let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+            // BUG: should be an error about missing `b`.
+            do_serialize_result(Udt { a: 1, b: 2 }, &typ).unwrap();
+
+            // Required `c` is missing from the UDT.
+            let typ = udt_def_with_fields([
+                ("a", ColumnType::Native(NativeType::Int)),
+                ("b", ColumnType::Native(NativeType::Int)),
+            ]);
+            let err = do_serialize_result(Udt2 { a: 1, b: 2, c: 3 }, &typ).unwrap_err();
+            let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+            // BUG: should name `c`.
+            assert_matches!(
+                &err.kind,
+                BuiltinTypeCheckErrorKind::UdtError(
+                    UdtTypeCheckErrorKind::ValueMissingForUdtField { field_name }
+                ) if field_name == "b"
+            );
+        }
+
         #[test]
         fn derive_serialize_and_deserialize_value_strict_ordering() {
             #[derive(
