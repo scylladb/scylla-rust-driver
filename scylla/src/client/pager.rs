@@ -299,6 +299,24 @@ impl PagingExecutor {
         }
     }
 
+    /// Parameters of a single page request.
+    fn exec_params(&self) -> RequestExecutionParams<'_> {
+        RequestExecutionParams {
+            is_idempotent: self.is_idempotent,
+            consistency: self.consistency,
+            serial_consistency: self.serial_consistency,
+            retry_policy: self.retry_policy.as_ref(),
+            load_balancing_policy: self.load_balancing_policy.as_ref(),
+            metrics_and_speculative_policy: Some((
+                &self.metrics,
+                self.speculative_policy.as_deref(),
+            )),
+            request_timeout: self.request_timeout,
+            history_listener: self.history_listener.as_deref(),
+            request_kind: RequestPaging::Automatic,
+        }
+    }
+
     /// Fetches exactly one page by delegating to [`run_request_no_side_effects`].
     ///
     /// `self.paging_state` is injected into each attempt.
@@ -314,20 +332,7 @@ impl PagingExecutor {
         PageQuery: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
-        let exec_params = RequestExecutionParams {
-            is_idempotent: self.is_idempotent,
-            consistency: self.consistency,
-            serial_consistency: self.serial_consistency,
-            retry_policy: self.retry_policy.as_ref(),
-            load_balancing_policy: self.load_balancing_policy.as_ref(),
-            metrics_and_speculative_policy: Some((
-                &self.metrics,
-                self.speculative_policy.as_deref(),
-            )),
-            request_timeout: self.request_timeout,
-            history_listener: self.history_listener.as_deref(),
-            request_kind: RequestPaging::Automatic,
-        };
+        let exec_params = self.exec_params();
 
         // Adapt the paging-aware `page_query` to the two-argument closure
         // expected by the execution core, injecting the current paging state
@@ -543,6 +548,21 @@ struct SingleConnectionPagingExecutor {
 }
 
 impl SingleConnectionPagingExecutor {
+    /// Parameters of a single page request.
+    fn exec_params<'a>(&self, retry_policy: &'a dyn RetryPolicy) -> RequestExecutionParams<'a> {
+        RequestExecutionParams {
+            is_idempotent: self.prepared.get_is_idempotent(),
+            consistency: self.consistency,
+            serial_consistency: self.serial_consistency,
+            retry_policy,
+            load_balancing_policy: &NoopLBP,
+            metrics_and_speculative_policy: None,
+            request_timeout: self.request_timeout,
+            history_listener: None,
+            request_kind: RequestPaging::Automatic,
+        }
+    }
+
     /// Fetches exactly one page from the fixed connection by delegating to
     /// [`run_request_no_side_effects`] with a single-connection plan.
     async fn fetch_one_page(
@@ -553,17 +573,7 @@ impl SingleConnectionPagingExecutor {
         // The control-connection-style path never retries: a fallthrough retry
         // policy makes every attempt terminal.
         let retry_policy = FallthroughRetryPolicy::new();
-        let exec_params = RequestExecutionParams {
-            is_idempotent: self.prepared.get_is_idempotent(),
-            consistency: self.consistency,
-            serial_consistency: self.serial_consistency,
-            retry_policy: &retry_policy,
-            load_balancing_policy: &NoopLBP,
-            metrics_and_speculative_policy: None,
-            request_timeout: self.request_timeout,
-            history_listener: None,
-            request_kind: RequestPaging::Automatic,
-        };
+        let exec_params = self.exec_params(&retry_policy);
 
         let routing_info = RoutingInfo {
             consistency: self.consistency,
