@@ -12,7 +12,11 @@ use std::sync::atomic::Ordering;
 use tokio::time::{Duration, Instant};
 use tracing::warn;
 
-/// Trait used to represent a timestamp generator
+/// Trait used to represent a timestamp generator.
+///
+/// The driver calls it once per request, not once per attempt: retries and speculative
+/// executions of a request reuse its timestamp, so a request that is idempotent only
+/// thanks to last-write-wins stays so. Each page of a paged query is a separate request.
 pub trait TimestampGenerator: Send + Sync {
     /// This generates a new timestamp
     fn next_timestamp(&self) -> i64;

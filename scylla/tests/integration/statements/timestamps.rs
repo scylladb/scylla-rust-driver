@@ -1,10 +1,14 @@
 use std::{
     collections::HashSet,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use rand::random;
 use scylla::{
+    client::session_builder::SessionBuilder,
     policies::timestamp_generator::TimestampGenerator,
     statement::{
         Statement,
@@ -12,9 +16,14 @@ use scylla::{
     },
 };
 
-use crate::entry_point::PagingMode;
+use scylla_proxy::{
+    Condition, ProxyError, RequestOpcode, RequestReaction, RequestRule, ShardAwareness, WorkerError,
+};
+
+use crate::entry_point::{EntryPoint, PagingMode};
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, setup_tracing, unique_keyspace_name,
+    PerformDDL as _, create_new_session_builder, setup_tracing, test_with_3_node_cluster,
+    unique_keyspace_name,
 };
 
 #[tokio::test]
@@ -224,4 +233,83 @@ async fn test_timestamp_generator() {
     }
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+/// The timestamp generator must be called once per request, not once per attempt:
+/// a retried request has to carry the same timestamp on every attempt.
+#[tokio::test]
+async fn test_timestamp_generator_called_once_per_request() {
+    setup_tracing();
+
+    struct CountingGenerator(Arc<AtomicUsize>);
+
+    impl TimestampGenerator for CountingGenerator {
+        fn next_timestamp(&self) -> i64 {
+            self.0.fetch_add(1, Ordering::Relaxed) as i64 + 1
+        }
+    }
+
+    // Every node fails every request, so each request is attempted on all 3 nodes.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let res = test_with_3_node_cluster(
+        ShardAwareness::QueryNode,
+        async |proxy_uris, translation_map, mut running_proxy| {
+            let session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map))
+                .timestamp_generator(Arc::new(CountingGenerator(calls.clone())))
+                .build()
+                .await
+                .unwrap();
+            let ks = unique_keyspace_name();
+            session.ddl(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
+            session
+                .ddl(format!("CREATE TABLE {ks}.t (a int primary key, b int)"))
+                .await
+                .unwrap();
+
+            let insert = format!("INSERT INTO {ks}.t (a, b) VALUES (1, 1)");
+            // Idempotent, so that the default retry policy tries every node.
+            let mut stmt = Statement::new(insert.as_str());
+            stmt.set_is_idempotent(true);
+            let mut batch = Batch::new(BatchType::Unlogged);
+            batch.append_statement(session.prepare(insert.as_str()).await.unwrap());
+            batch.set_is_idempotent(true);
+
+            let fail_requests = Condition::not(Condition::ConnectionRegisteredAnyEvent).and(
+                Condition::RequestOpcode(RequestOpcode::Execute)
+                    .or(Condition::RequestOpcode(RequestOpcode::Batch))
+                    .or(Condition::RequestOpcode(RequestOpcode::Query)
+                        .and(Condition::BodyContainsCaseSensitive(Box::new(*b"INTO")))),
+            );
+            for node in running_proxy.running_nodes.iter_mut() {
+                node.change_request_rules(Some(vec![RequestRule(
+                    fail_requests.clone(),
+                    RequestReaction::forge().server_error(),
+                )]));
+            }
+
+            for entry_point in EntryPoint::ALL {
+                let before = calls.load(Ordering::Relaxed);
+                entry_point.send(&session, stmt.clone(), ()).await.unwrap_err();
+                let count = calls.load(Ordering::Relaxed) - before;
+                assert_eq!(count, 1, "{}", entry_point.name());
+            }
+
+            let before = calls.load(Ordering::Relaxed);
+            session.batch(&batch, ((),)).await.unwrap_err();
+            assert_eq!(calls.load(Ordering::Relaxed) - before, 1, "batch");
+
+            running_proxy.turn_off_rules();
+            session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{err}"),
+    }
 }

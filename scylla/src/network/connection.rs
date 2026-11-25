@@ -29,7 +29,6 @@ use crate::frame::{
     server_event_type::EventType,
 };
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
-use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::QueryResult;
 use crate::response::{NonErrorAuthResponse, NonErrorStartupResponse, PagingState, QueryResponse};
 use crate::routing::locator::tablets::RawTablet;
@@ -287,7 +286,6 @@ pub(crate) struct ConnectionConfig {
     pub(crate) shard_aware_local_port_range: ShardAwarePortRange,
     pub(crate) compression: Option<Compression>,
     pub(crate) tcp_socket_options: TcpSocketOptions,
-    pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
     pub(crate) tls_provider: Option<TlsProvider>,
     pub(crate) connect_timeout: std::time::Duration,
     // should be Some only in control connections,
@@ -338,7 +336,6 @@ impl ConnectionConfig {
             shard_aware_local_port_range: self.shard_aware_local_port_range.clone(),
             compression: self.compression,
             tcp_socket_options: self.tcp_socket_options.clone(),
-            timestamp_generator: self.timestamp_generator.clone(),
             tls_config,
             connect_timeout: self.connect_timeout,
             event_sender: self.event_sender.clone(),
@@ -366,7 +363,6 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) shard_aware_local_port_range: ShardAwarePortRange,
     pub(crate) compression: Option<Compression>,
     pub(crate) tcp_socket_options: TcpSocketOptions,
-    pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
     pub(crate) tls_config: Option<TlsConfig>,
     pub(crate) connect_timeout: std::time::Duration,
     // should be Some only in control connections,
@@ -396,7 +392,6 @@ impl Default for HostConnectionConfig {
             shard_aware_local_port_range: ShardAwarePortRange::EPHEMERAL_PORT_RANGE,
             compression: None,
             tcp_socket_options: TcpSocketOptions::default(),
-            timestamp_generator: None,
             event_sender: None,
             tls_config: None,
             connect_timeout: std::time::Duration::from_secs(5),
@@ -432,7 +427,6 @@ impl Default for ConnectionConfig {
             shard_aware_local_port_range: ShardAwarePortRange::EPHEMERAL_PORT_RANGE,
             compression: None,
             tcp_socket_options: TcpSocketOptions::default(),
-            timestamp_generator: None,
             event_sender: None,
             tls_provider: None,
             connect_timeout: std::time::Duration::from_secs(5),
@@ -477,6 +471,7 @@ pub(crate) struct ExecuteArgs<'a> {
     pub(crate) page_size: Option<PageSize>,
     pub(crate) paging_state: &'a PagingState,
     pub(crate) tablet_block_hint: u8,
+    pub(crate) timestamp: Option<i64>,
 }
 
 struct CachedMetadataParameters<'statement> {
@@ -913,6 +908,7 @@ impl Connection {
             statement.config.serial_consistency.flatten(),
             None,
             PagingState::start(),
+            statement.get_timestamp(),
         )
         .await
     }
@@ -924,15 +920,8 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
+        timestamp: Option<i64>,
     ) -> Result<QueryResponse, RequestAttemptError> {
-        let get_timestamp_from_gen = || {
-            self.config
-                .timestamp_generator
-                .as_ref()
-                .map(|generator| generator.next_timestamp())
-        };
-        let timestamp = statement.get_timestamp().or_else(get_timestamp_from_gen);
-
         let query_frame = query::Query {
             contents: Cow::Borrowed(&statement.contents),
             parameters: query::QueryParameters {
@@ -1063,16 +1052,6 @@ impl Connection {
         args: &ExecuteArgs<'_>,
     ) -> Result<QueryResponse, RequestAttemptError> {
         let prepared_statement = args.prepared_statement;
-        let get_timestamp_from_gen = || {
-            self.config
-                .timestamp_generator
-                .as_ref()
-                .map(|generator| generator.next_timestamp())
-        };
-        let timestamp = prepared_statement
-            .get_timestamp()
-            .or_else(get_timestamp_from_gen);
-
         // On a connection that negotiated TABLETS_ROUTING_V2 the server reads exactly one
         // tablet-version block byte after the query parameters for every EXECUTE. Enforce
         // that invariant here, at the single chokepoint through which all EXECUTE frames
@@ -1118,7 +1097,7 @@ impl Connection {
                             serial_consistency: args.serial_consistency,
                             values: Cow::Borrowed(args.values),
                             page_size: args.page_size.map(Into::into),
-                            timestamp,
+                            timestamp: args.timestamp,
                             skip_metadata,
                             paging_state: args.paging_state.clone(),
                         },
@@ -1214,6 +1193,7 @@ impl Connection {
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
         routing_hint: batch::BatchRoutingHint,
+        timestamp: Option<i64>,
     ) -> Result<QueryResponse, RequestAttemptError> {
         // Set only if some statements had to be prepared. Boxed, as a `Cow` would
         // take a whole `Batch` in this future's state even when borrowing.
@@ -1241,14 +1221,6 @@ impl Connection {
         });
 
         let values = RawBatchValuesAdapter::new(values, contexts);
-
-        let get_timestamp_from_gen = || {
-            self.config
-                .timestamp_generator
-                .as_ref()
-                .map(|generator| generator.next_timestamp())
-        };
-        let timestamp = batch.get_timestamp().or_else(get_timestamp_from_gen);
 
         // On a connection that negotiated TABLETS_ROUTING_V2, the server
         // requires a routing hint on every BATCH.

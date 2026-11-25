@@ -43,6 +43,7 @@ use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::policies::speculative_execution::{self, SpeculativeExecutionPolicy};
+use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::{Coordinator, NonErrorQueryResponse};
 use crate::routing::Shard;
 use crate::routing::Token;
@@ -142,15 +143,32 @@ pub(crate) struct RequestExecutionParams<'a> {
     pub(crate) history_listener: Option<&'a dyn HistoryListener>,
     /// Paged vs non-paged, for metrics.
     pub(crate) request_kind: RequestPaging,
+    /// Timestamp to send with the request. Taken from the statement, or else from
+    /// the timestamp generator.
+    ///
+    /// Resolved once per request, so that all attempts, including speculative ones,
+    /// send the same timestamp. A request that is idempotent only thanks to
+    /// last-write-wins relies on it.
+    pub(crate) timestamp: Option<i64>,
 }
 
 /// Constructor(s) for [`RequestExecutionParams`].
 impl<'a> RequestExecutionParams<'a> {
+    /// The timestamp to send: the statement's own, or else a generated one.
+    #[inline]
+    pub(crate) fn resolve_timestamp(
+        explicit: Option<i64>,
+        generator: Option<&dyn TimestampGenerator>,
+    ) -> Option<i64> {
+        explicit.or_else(|| generator.map(TimestampGenerator::next_timestamp))
+    }
+
     pub(crate) fn new_for_session_apis(
         statement_config: &'a StatementConfig,
         execution_profile: &'a ExecutionProfileInner,
         metrics: &'a Arc<Metrics>,
         request_kind: RequestPaging,
+        timestamp_generator: Option<&'a dyn TimestampGenerator>,
     ) -> Self {
         let is_idempotent = statement_config.is_idempotent;
         let consistency = statement_config
@@ -183,6 +201,7 @@ impl<'a> RequestExecutionParams<'a> {
             request_timeout,
             history_listener,
             request_kind,
+            timestamp: Self::resolve_timestamp(statement_config.timestamp, timestamp_generator),
         }
     }
 }

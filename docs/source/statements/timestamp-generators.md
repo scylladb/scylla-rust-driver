@@ -3,7 +3,10 @@
 If you want to generate timestamps on the client side you can provide
 a TimestampGenerator to a SessionBuilder when creating a Session. Then
 every executed statement will have attached a new timestamp generated
-by the provided TimestampGenerator.
+by the provided TimestampGenerator. The timestamp is generated once per request
+and reused by its retries and speculative executions, so that a retried request
+always writes with the same timestamp. For paged queries, each page is a separate request.
+
 Timestamps are set according to precendence:
 
 1. ```USING TIMESTAMP``` in the statement string itself
