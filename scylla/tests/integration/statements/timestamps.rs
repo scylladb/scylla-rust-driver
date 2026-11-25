@@ -293,12 +293,12 @@ async fn test_timestamp_generator_called_once_per_request() {
                 let before = calls.load(Ordering::Relaxed);
                 entry_point.send(&session, stmt.clone(), ()).await.unwrap_err();
                 let count = calls.load(Ordering::Relaxed) - before;
-                assert_eq!(count, 3, "{}", entry_point.name());
+                assert_eq!(count, 1, "{}", entry_point.name());
             }
 
             let before = calls.load(Ordering::Relaxed);
             session.batch(&batch, ((),)).await.unwrap_err();
-            assert_eq!(calls.load(Ordering::Relaxed) - before, 3, "batch");
+            assert_eq!(calls.load(Ordering::Relaxed) - before, 1, "batch");
 
             running_proxy.turn_off_rules();
             session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();

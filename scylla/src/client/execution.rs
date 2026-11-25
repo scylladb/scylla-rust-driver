@@ -470,6 +470,11 @@ impl<'a, F> Request<'a, F> {
             .history_listener
             .map(|hl| (hl, hl.log_request_start()));
 
+        // Resolved once, so that all attempts, including speculative ones, send the
+        // same timestamp. A request that is idempotent only thanks to last-write-wins
+        // relies on it.
+        let timestamp = self.params.resolve_timestamp();
+
         let runner = async {
             match self.params.metrics_and_speculative_policy {
                 #[cfg_attr(not(feature = "metrics"), expect(unused_variables))]
@@ -500,8 +505,12 @@ impl<'a, F> Request<'a, F> {
                         };
                         // Passed to the fiber by value, the context would be stored
                         // twice in the fiber's future.
-                        self.run_request_speculative_fiber(&shared_request_plan, &mut context)
-                            .await
+                        self.run_request_speculative_fiber(
+                            &shared_request_plan,
+                            &mut context,
+                            timestamp,
+                        )
+                        .await
                     };
 
                     let context = speculative_execution::Context {
@@ -523,7 +532,7 @@ impl<'a, F> Request<'a, F> {
                         retry_session: None,
                         history_data,
                     };
-                    self.run_request_speculative_fiber(request_plan, &mut context)
+                    self.run_request_speculative_fiber(request_plan, &mut context, timestamp)
                         .await
                         .unwrap_or(Err(RequestError::EmptyPlan))
                 }
@@ -571,6 +580,7 @@ impl<'a, F> Request<'a, F> {
         // Taken by reference: an async fn keeps arguments taken by value twice in
         // its state.
         context: &mut ExecuteRequestContext<'a>,
+        timestamp: Option<i64>,
     ) -> Option<Result<RequestExecutionOutcome<Target::Coordinator>, RequestError>>
     where
         Target: AttemptTarget,
@@ -618,7 +628,6 @@ impl<'a, F> Request<'a, F> {
 
                 let coordinator = target.coordinator(&connection);
 
-                let timestamp = self.params.resolve_timestamp();
                 let request_result: Result<NonErrorQueryResponse, RequestAttemptError> = await_in_span!(
                     (self.run_once)(connection, current_consistency, timestamp),
                     &span
