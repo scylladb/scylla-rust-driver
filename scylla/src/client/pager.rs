@@ -319,8 +319,10 @@ impl PagingExecutor {
             request_timeout: self.request_timeout,
             history_listener: self.history_listener.as_deref(),
             request_kind: RequestPaging::Automatic,
-            explicit_timestamp: self.explicit_timestamp,
-            timestamp_generator: self.timestamp_generator.as_deref(),
+            timestamp: RequestExecutionParams::resolve_timestamp(
+                self.explicit_timestamp,
+                self.timestamp_generator.as_deref(),
+            ),
         }
     }
 
@@ -340,13 +342,12 @@ impl PagingExecutor {
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
         let exec_params = self.exec_params();
+        let timestamp = exec_params.timestamp;
 
         // Adapt the paging-aware `page_query` to the two-argument closure
         // expected by the execution core, injecting the current paging state
-        // and normalizing error responses.
-        let run_request_once = move |connection: Arc<Connection>,
-                                     consistency: Consistency,
-                                     timestamp: Option<i64>| async move {
+        // and the page's timestamp, and normalizing error responses.
+        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| async move {
             page_query(
                 connection,
                 consistency,
@@ -574,8 +575,7 @@ impl SingleConnectionPagingExecutor {
             request_timeout: self.request_timeout,
             history_listener: None,
             request_kind: RequestPaging::Automatic,
-            explicit_timestamp: self.prepared.get_timestamp(),
-            timestamp_generator: None,
+            timestamp: self.prepared.get_timestamp(),
         }
     }
 
@@ -600,27 +600,27 @@ impl SingleConnectionPagingExecutor {
             node_location_preference: &NodeLocationPreference::Any,
         };
 
-        let run_request_once =
-            |connection: Arc<Connection>, consistency: Consistency, timestamp: Option<i64>| {
-                let args = ExecuteArgs {
-                    prepared_statement: &self.prepared,
-                    values: &self.values,
-                    consistency,
-                    serial_consistency: self.serial_consistency,
-                    page_size: Some(self.page_size),
-                    paging_state,
-                    // This API executes on one given connection and has no `ClusterState`
-                    // to consult, so there is no cached tablet version to probe.
-                    tablet_block_hint: 0,
-                    timestamp,
-                };
-                async move {
-                    connection
-                        .execute_raw_with_consistency(&args)
-                        .await
-                        .and_then(QueryResponse::into_non_error_query_response)
-                }
+        let timestamp = exec_params.timestamp;
+        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| {
+            let args = ExecuteArgs {
+                prepared_statement: &self.prepared,
+                values: &self.values,
+                consistency,
+                serial_consistency: self.serial_consistency,
+                page_size: Some(self.page_size),
+                paging_state,
+                // This API executes on one given connection and has no `ClusterState`
+                // to consult, so there is no cached tablet version to probe.
+                tablet_block_hint: 0,
+                timestamp,
             };
+            async move {
+                connection
+                    .execute_raw_with_consistency(&args)
+                    .await
+                    .and_then(QueryResponse::into_non_error_query_response)
+            }
+        };
 
         let mut plan = std::iter::once(SingleConnectionTarget::new(Arc::clone(&self.connection)));
 

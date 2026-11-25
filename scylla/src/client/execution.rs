@@ -143,14 +143,26 @@ pub(crate) struct RequestExecutionParams<'a> {
     pub(crate) history_listener: Option<&'a dyn HistoryListener>,
     /// Paged vs non-paged, for metrics.
     pub(crate) request_kind: RequestPaging,
-    /// Timestamp set on the statement. Takes precedence over the generator.
-    pub(crate) explicit_timestamp: Option<i64>,
-    /// Generates the timestamp when the statement has none.
-    pub(crate) timestamp_generator: Option<&'a dyn TimestampGenerator>,
+    /// Timestamp to send with the request. Taken from the statement, or else from
+    /// the timestamp generator.
+    ///
+    /// Resolved once per request, so that all attempts, including speculative ones,
+    /// send the same timestamp. A request that is idempotent only thanks to
+    /// last-write-wins relies on it.
+    pub(crate) timestamp: Option<i64>,
 }
 
 /// Constructor(s) for [`RequestExecutionParams`].
 impl<'a> RequestExecutionParams<'a> {
+    /// The timestamp to send: the statement's own, or else a generated one.
+    #[inline]
+    pub(crate) fn resolve_timestamp(
+        explicit: Option<i64>,
+        generator: Option<&dyn TimestampGenerator>,
+    ) -> Option<i64> {
+        explicit.or_else(|| generator.map(TimestampGenerator::next_timestamp))
+    }
+
     pub(crate) fn new_for_session_apis(
         statement_config: &'a StatementConfig,
         execution_profile: &'a ExecutionProfileInner,
@@ -189,8 +201,7 @@ impl<'a> RequestExecutionParams<'a> {
             request_timeout,
             history_listener,
             request_kind,
-            explicit_timestamp: statement_config.timestamp,
-            timestamp_generator,
+            timestamp: Self::resolve_timestamp(statement_config.timestamp, timestamp_generator),
         }
     }
 }
@@ -203,7 +214,7 @@ pub(crate) struct Request<'a, F> {
     pub(crate) params: RequestExecutionParams<'a>,
     pub(crate) routing_info: RoutingInfo<'a>,
     /// Performs a single attempt, on the given connection and with the given
-    /// consistency and timestamp.
+    /// consistency.
     pub(crate) run_once: F,
     pub(crate) span: &'a RequestSpan,
 }
@@ -395,15 +406,6 @@ impl ExecuteRequestContext<'_> {
 }
 
 impl RequestExecutionParams<'_> {
-    /// The timestamp to send: the statement's own, or else a generated one.
-    #[inline]
-    fn resolve_timestamp(&self) -> Option<i64> {
-        self.explicit_timestamp.or_else(|| {
-            self.timestamp_generator
-                .map(TimestampGenerator::next_timestamp)
-        })
-    }
-
     fn inc_total_queries(&self) {
         let Some((metrics, _)) = self.metrics_and_speculative_policy else {
             return;
@@ -462,18 +464,13 @@ impl<'a, F> Request<'a, F> {
     ) -> Result<RequestExecutionOutcome<Target::Coordinator>, RequestError>
     where
         Target: AttemptTarget,
-        F: Fn(Arc<Connection>, Consistency, Option<i64>) -> QueryFut,
+        F: Fn(Arc<Connection>, Consistency) -> QueryFut,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
         let history_listener_and_id: Option<(&dyn HistoryListener, history::RequestId)> = self
             .params
             .history_listener
             .map(|hl| (hl, hl.log_request_start()));
-
-        // Resolved once, so that all attempts, including speculative ones, send the
-        // same timestamp. A request that is idempotent only thanks to last-write-wins
-        // relies on it.
-        let timestamp = self.params.resolve_timestamp();
 
         let runner = async {
             match self.params.metrics_and_speculative_policy {
@@ -505,12 +502,8 @@ impl<'a, F> Request<'a, F> {
                         };
                         // Passed to the fiber by value, the context would be stored
                         // twice in the fiber's future.
-                        self.run_request_speculative_fiber(
-                            &shared_request_plan,
-                            &mut context,
-                            timestamp,
-                        )
-                        .await
+                        self.run_request_speculative_fiber(&shared_request_plan, &mut context)
+                            .await
                     };
 
                     let context = speculative_execution::Context {
@@ -532,7 +525,7 @@ impl<'a, F> Request<'a, F> {
                         retry_session: None,
                         history_data,
                     };
-                    self.run_request_speculative_fiber(request_plan, &mut context, timestamp)
+                    self.run_request_speculative_fiber(request_plan, &mut context)
                         .await
                         .unwrap_or(Err(RequestError::EmptyPlan))
                 }
@@ -580,11 +573,10 @@ impl<'a, F> Request<'a, F> {
         // Taken by reference: an async fn keeps arguments taken by value twice in
         // its state.
         context: &mut ExecuteRequestContext<'a>,
-        timestamp: Option<i64>,
     ) -> Option<Result<RequestExecutionOutcome<Target::Coordinator>, RequestError>>
     where
         Target: AttemptTarget,
-        F: Fn(Arc<Connection>, Consistency, Option<i64>) -> QueryFut,
+        F: Fn(Arc<Connection>, Consistency) -> QueryFut,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
         // Boxed, as it is set only after a failed attempt: inline, its size and
@@ -628,10 +620,8 @@ impl<'a, F> Request<'a, F> {
 
                 let coordinator = target.coordinator(&connection);
 
-                let request_result: Result<NonErrorQueryResponse, RequestAttemptError> = await_in_span!(
-                    (self.run_once)(connection, current_consistency, timestamp),
-                    &span
-                );
+                let request_result: Result<NonErrorQueryResponse, RequestAttemptError> =
+                    await_in_span!((self.run_once)(connection, current_consistency), &span);
 
                 let elapsed = request_start.elapsed();
                 let request_error: RequestAttemptError = match request_result {

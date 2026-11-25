@@ -1387,9 +1387,8 @@ impl Session {
 
         let span = RequestSpan::new_batch();
 
-        let run_request_once = move |connection: Arc<Connection>,
-                                     consistency: Consistency,
-                                     timestamp: Option<i64>| async move {
+        let timestamp = exec_params.timestamp;
+        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| async move {
             connection
                 .batch_with_consistency(
                     batch,
@@ -1715,9 +1714,8 @@ impl Session {
         };
 
         let span = RequestSpan::new_query(&statement.contents);
-        let run_request_once = async |connection: Arc<Connection>,
-                                      consistency: Consistency,
-                                      timestamp: Option<i64>| {
+        let timestamp = exec_params.timestamp;
+        let run_request_once = async |connection: Arc<Connection>, consistency: Consistency| {
             if values.is_empty() {
                 span.record_request_size(0);
                 connection
@@ -2162,27 +2160,27 @@ impl Session {
             span.record_replicas(replicas)
         }
 
-        let run_request_once =
-            move |connection: Arc<Connection>, consistency: Consistency, timestamp: Option<i64>| {
-                // Built outside of the attempt's future, which then keeps only the
-                // arguments, not also the values they are built from.
-                let args = ExecuteArgs {
-                    prepared_statement: prepared,
-                    values: serialized_values,
-                    consistency,
-                    serial_consistency,
-                    page_size,
-                    paging_state,
-                    tablet_block_hint,
-                    timestamp,
-                };
-                async move {
-                    connection
-                        .execute_raw_with_consistency(&args)
-                        .await
-                        .and_then(QueryResponse::into_non_error_query_response)
-                }
+        let timestamp = exec_params.timestamp;
+        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| {
+            // Built outside of the attempt's future, which then keeps only the
+            // arguments, not also the values they are built from.
+            let args = ExecuteArgs {
+                prepared_statement: prepared,
+                values: serialized_values,
+                consistency,
+                serial_consistency,
+                page_size,
+                paging_state,
+                tablet_block_hint,
+                timestamp,
             };
+            async move {
+                connection
+                    .execute_raw_with_consistency(&args)
+                    .await
+                    .and_then(QueryResponse::into_non_error_query_response)
+            }
+        };
         let request = Request {
             params: exec_params,
             routing_info,
@@ -2504,7 +2502,7 @@ impl Session {
         request: &Request<'_, F>,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), ExecutionError>
     where
-        F: Fn(Arc<Connection>, Consistency, Option<i64>) -> QueryFut,
+        F: Fn(Arc<Connection>, Consistency) -> QueryFut,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
         let mut request_plan = load_balancing::Plan::new(
