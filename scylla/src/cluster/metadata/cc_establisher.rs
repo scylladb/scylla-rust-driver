@@ -506,7 +506,7 @@ impl TopologyUpdateGuard<Vec<Peer>> {
 fn order_peers_for_cc(peers: &mut [UntranslatedEndpoint], preference: &NodeLocationPreference) {
     peers.shuffle(&mut rng());
     // The sort is stable, so it keeps the shuffled order within each locality.
-    peers.sort_by_key(|peer| Locality::of(peer, preference));
+    peers.sort_by_key(|peer| Locality::of_endpoint(peer, preference));
 }
 
 /// Where a peer is with respect to a [`NodeLocationPreference`],
@@ -522,7 +522,7 @@ enum Locality {
 }
 
 impl Locality {
-    fn of(peer: &UntranslatedEndpoint, preference: &NodeLocationPreference) -> Self {
+    fn of_endpoint(peer: &UntranslatedEndpoint, preference: &NodeLocationPreference) -> Self {
         let (datacenter, rack) = match peer {
             UntranslatedEndpoint::Peer(PeerEndpoint {
                 datacenter, rack, ..
