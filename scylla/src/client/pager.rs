@@ -42,6 +42,7 @@ use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{FallthroughRetryPolicy, RetryPolicy};
 use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
+use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
 use crate::routing::{NodeLocationPreference, Shard, Token};
@@ -143,6 +144,8 @@ struct PagingExecutor {
     history_listener: Option<Arc<dyn HistoryListener>>,
     paging_state: PagingState,
     stable_coordinator: Option<Coordinator>,
+    explicit_timestamp: Option<i64>,
+    timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
 }
 
 impl PagingExecutor {
@@ -186,6 +189,8 @@ impl PagingExecutor {
             history_listener: statement.history_listener.as_ref().map(Arc::clone),
             paging_state: PagingState::start(),
             stable_coordinator: None,
+            explicit_timestamp: statement.timestamp,
+            timestamp_generator: session.get_timestamp_generator().cloned(),
         }
     }
 
@@ -205,7 +210,7 @@ impl PagingExecutor {
         routing_info: RoutingInfo<'_>,
         span_creator: SpanCreator,
     ) where
-        QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
+        QueryFunc: Fn(Arc<Connection>, Consistency, PagingState, Option<i64>) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
         SpanCreator: Fn(&ClusterState) -> RequestSpan,
     {
@@ -265,7 +270,7 @@ impl PagingExecutor {
         page_query: &QueryFunc,
     ) -> Result<(FirstReceivedPage, ShouldFetchMorePages), RequestError>
     where
-        QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
+        QueryFunc: Fn(Arc<Connection>, Consistency, PagingState, Option<i64>) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
         let fetch_result = await_in_span!(
@@ -314,6 +319,8 @@ impl PagingExecutor {
             request_timeout: self.request_timeout,
             history_listener: self.history_listener.as_deref(),
             request_kind: RequestPaging::Automatic,
+            explicit_timestamp: self.explicit_timestamp,
+            timestamp_generator: self.timestamp_generator.as_deref(),
         }
     }
 
@@ -329,7 +336,7 @@ impl PagingExecutor {
         page_query: &PageQuery,
     ) -> Result<RequestExecutionOutcome<Coordinator>, RequestError>
     where
-        PageQuery: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
+        PageQuery: Fn(Arc<Connection>, Consistency, PagingState, Option<i64>) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
         let exec_params = self.exec_params();
@@ -337,10 +344,17 @@ impl PagingExecutor {
         // Adapt the paging-aware `page_query` to the two-argument closure
         // expected by the execution core, injecting the current paging state
         // and normalizing error responses.
-        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| async move {
-            page_query(connection, consistency, self.paging_state.clone())
-                .await
-                .and_then(QueryResponse::into_non_error_query_response)
+        let run_request_once = move |connection: Arc<Connection>,
+                                     consistency: Consistency,
+                                     timestamp: Option<i64>| async move {
+            page_query(
+                connection,
+                consistency,
+                self.paging_state.clone(),
+                timestamp,
+            )
+            .await
+            .and_then(QueryResponse::into_non_error_query_response)
         };
 
         let load_balancing_policy = self.load_balancing_policy.as_ref();
@@ -560,6 +574,8 @@ impl SingleConnectionPagingExecutor {
             request_timeout: self.request_timeout,
             history_listener: None,
             request_kind: RequestPaging::Automatic,
+            explicit_timestamp: self.prepared.get_timestamp(),
+            timestamp_generator: None,
         }
     }
 
@@ -584,25 +600,27 @@ impl SingleConnectionPagingExecutor {
             node_location_preference: &NodeLocationPreference::Any,
         };
 
-        let run_request_once = |connection: Arc<Connection>, consistency: Consistency| {
-            let args = ExecuteArgs {
-                prepared_statement: &self.prepared,
-                values: &self.values,
-                consistency,
-                serial_consistency: self.serial_consistency,
-                page_size: Some(self.page_size),
-                paging_state,
-                // This API executes on one given connection and has no `ClusterState`
-                // to consult, so there is no cached tablet version to probe.
-                tablet_block_hint: 0,
+        let run_request_once =
+            |connection: Arc<Connection>, consistency: Consistency, timestamp: Option<i64>| {
+                let args = ExecuteArgs {
+                    prepared_statement: &self.prepared,
+                    values: &self.values,
+                    consistency,
+                    serial_consistency: self.serial_consistency,
+                    page_size: Some(self.page_size),
+                    paging_state,
+                    // This API executes on one given connection and has no `ClusterState`
+                    // to consult, so there is no cached tablet version to probe.
+                    tablet_block_hint: 0,
+                    timestamp,
+                };
+                async move {
+                    connection
+                        .execute_raw_with_consistency(&args)
+                        .await
+                        .and_then(QueryResponse::into_non_error_query_response)
+                }
             };
-            async move {
-                connection
-                    .execute_raw_with_consistency(&args)
-                    .await
-                    .and_then(QueryResponse::into_non_error_query_response)
-            }
-        };
 
         let mut plan = std::iter::once(SingleConnectionTarget::new(Arc::clone(&self.connection)));
 
@@ -1088,7 +1106,8 @@ If you are using this API, you are probably doing something wrong."
         let statement_ref = &statement;
         let page_query = |connection: Arc<Connection>,
                           consistency: Consistency,
-                          paging_state: PagingState| {
+                          paging_state: PagingState,
+                          timestamp: Option<i64>| {
             async move {
                 connection
                     .query_raw_with_consistency(
@@ -1097,6 +1116,7 @@ If you are using this API, you are probably doing something wrong."
                         serial_consistency,
                         Some(page_size),
                         paging_state,
+                        timestamp,
                     )
                     .await
             }
@@ -1140,20 +1160,21 @@ If you are using this API, you are probably doing something wrong."
                     };
 
                     let statement_ref = &statement;
-                    let page_query =
-                        |connection: Arc<Connection>,
-                         consistency: Consistency,
-                         paging_state: PagingState| async move {
-                            connection
-                                .query_raw_with_consistency(
-                                    statement_ref,
-                                    consistency,
-                                    serial_consistency,
-                                    Some(page_size),
-                                    paging_state,
-                                )
-                                .await
-                        };
+                    let page_query = |connection: Arc<Connection>,
+                                      consistency: Consistency,
+                                      paging_state: PagingState,
+                                      timestamp: Option<i64>| async move {
+                        connection
+                            .query_raw_with_consistency(
+                                statement_ref,
+                                consistency,
+                                serial_consistency,
+                                Some(page_size),
+                                paging_state,
+                                timestamp,
+                            )
+                            .await
+                    };
 
                     let span_creator = move |_: &ClusterState| create_span(&statement_ref.contents);
 
@@ -1271,7 +1292,8 @@ If you are using this API, you are probably doing something wrong."
             choose_tablet_block_hint(&executor.cluster_state, table_spec, token);
         let page_query = move |connection: Arc<Connection>,
                                consistency: Consistency,
-                               paging_state: PagingState| async move {
+                               paging_state: PagingState,
+                               timestamp: Option<i64>| async move {
             connection
                 .execute_raw_with_consistency(&ExecuteArgs {
                     prepared_statement: prepared_ref,
@@ -1281,6 +1303,7 @@ If you are using this API, you are probably doing something wrong."
                     page_size: Some(page_size),
                     paging_state: &paging_state,
                     tablet_block_hint,
+                    timestamp,
                 })
                 .await
         };
@@ -1331,7 +1354,8 @@ If you are using this API, you are probably doing something wrong."
                     let page_query =
                         move |connection: Arc<Connection>,
                               consistency: Consistency,
-                              paging_state: PagingState| async move {
+                              paging_state: PagingState,
+                              timestamp: Option<i64>| async move {
                             connection
                                 .execute_raw_with_consistency(&ExecuteArgs {
                                     prepared_statement: prepared,
@@ -1341,6 +1365,7 @@ If you are using this API, you are probably doing something wrong."
                                     page_size: Some(page_size),
                                     paging_state: &paging_state,
                                     tablet_block_hint,
+                                    timestamp,
                                 })
                                 .await
                         };

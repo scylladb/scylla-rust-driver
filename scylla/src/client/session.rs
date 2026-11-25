@@ -109,6 +109,7 @@ pub struct Session {
     node_location_preference: Arc<NodeLocationPreference>,
     internal_statements: InternalStatements,
     session_id: Uuid,
+    timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
 }
 
 /// This implementation deliberately omits some details from Cluster in order
@@ -1343,6 +1344,7 @@ impl Session {
             &self.metrics,
             // Batch statements are always unpaged, because they can't contain SELECTs.
             RequestPaging::Unpaged,
+            self.timestamp_generator.as_deref(),
         );
 
         let serial_consistency = exec_params.serial_consistency;
@@ -1385,7 +1387,9 @@ impl Session {
 
         let span = RequestSpan::new_batch();
 
-        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| async move {
+        let run_request_once = move |connection: Arc<Connection>,
+                                     consistency: Consistency,
+                                     timestamp: Option<i64>| async move {
             connection
                 .batch_with_consistency(
                     batch,
@@ -1393,6 +1397,7 @@ impl Session {
                     consistency,
                     serial_consistency,
                     routing_hint,
+                    timestamp,
                 )
                 .await
                 .and_then(QueryResponse::into_non_error_query_response)
@@ -1493,7 +1498,6 @@ impl Session {
             shard_aware_local_port_range: config.shard_aware_local_port_range,
             compression: config.compression,
             tcp_socket_options,
-            timestamp_generator: config.timestamp_generator,
             tls_provider,
             authenticator: config.authenticator,
             connect_timeout: config.connect_timeout,
@@ -1578,6 +1582,7 @@ impl Session {
             node_location_preference,
             internal_statements: InternalStatements::default(),
             session_id,
+            timestamp_generator: config.timestamp_generator,
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -1695,6 +1700,7 @@ impl Session {
             &execution_profile,
             &self.metrics,
             request_paging,
+            self.timestamp_generator.as_deref(),
         );
 
         let serial_consistency = exec_params.serial_consistency;
@@ -1709,7 +1715,9 @@ impl Session {
         };
 
         let span = RequestSpan::new_query(&statement.contents);
-        let run_request_once = async |connection: Arc<Connection>, consistency: Consistency| {
+        let run_request_once = async |connection: Arc<Connection>,
+                                      consistency: Consistency,
+                                      timestamp: Option<i64>| {
             if values.is_empty() {
                 span.record_request_size(0);
                 connection
@@ -1719,6 +1727,7 @@ impl Session {
                         serial_consistency,
                         page_size,
                         paging_state.clone(),
+                        timestamp,
                     )
                     .await
                     .and_then(QueryResponse::into_non_error_query_response)
@@ -1747,6 +1756,7 @@ impl Session {
                         page_size,
                         paging_state: &paging_state,
                         tablet_block_hint: tablet_hint,
+                        timestamp,
                     })
                     .await
                     .and_then(QueryResponse::into_non_error_query_response)
@@ -2126,6 +2136,7 @@ impl Session {
             &execution_profile,
             &self.metrics,
             request_paging,
+            self.timestamp_generator.as_deref(),
         );
 
         let serial_consistency = exec_params.serial_consistency;
@@ -2151,25 +2162,27 @@ impl Session {
             span.record_replicas(replicas)
         }
 
-        let run_request_once = move |connection: Arc<Connection>, consistency: Consistency| {
-            // Built outside of the attempt's future, which then keeps only the
-            // arguments, not also the values they are built from.
-            let args = ExecuteArgs {
-                prepared_statement: prepared,
-                values: serialized_values,
-                consistency,
-                serial_consistency,
-                page_size,
-                paging_state,
-                tablet_block_hint,
+        let run_request_once =
+            move |connection: Arc<Connection>, consistency: Consistency, timestamp: Option<i64>| {
+                // Built outside of the attempt's future, which then keeps only the
+                // arguments, not also the values they are built from.
+                let args = ExecuteArgs {
+                    prepared_statement: prepared,
+                    values: serialized_values,
+                    consistency,
+                    serial_consistency,
+                    page_size,
+                    paging_state,
+                    tablet_block_hint,
+                    timestamp,
+                };
+                async move {
+                    connection
+                        .execute_raw_with_consistency(&args)
+                        .await
+                        .and_then(QueryResponse::into_non_error_query_response)
+                }
             };
-            async move {
-                connection
-                    .execute_raw_with_consistency(&args)
-                    .await
-                    .and_then(QueryResponse::into_non_error_query_response)
-            }
-        };
         let request = Request {
             params: exec_params,
             routing_info,
@@ -2491,7 +2504,7 @@ impl Session {
         request: &Request<'_, F>,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), ExecutionError>
     where
-        F: Fn(Arc<Connection>, Consistency) -> QueryFut,
+        F: Fn(Arc<Connection>, Consistency, Option<i64>) -> QueryFut,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
         let mut request_plan = load_balancing::Plan::new(
@@ -2847,6 +2860,10 @@ impl Session {
     /// by default, i.e. when the used LBP does not define its own preference.
     pub(crate) fn get_node_location_preference(&self) -> &Arc<NodeLocationPreference> {
         &self.node_location_preference
+    }
+
+    pub(crate) fn get_timestamp_generator(&self) -> Option<&Arc<dyn TimestampGenerator>> {
+        self.timestamp_generator.as_ref()
     }
 }
 

@@ -43,6 +43,7 @@ use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::policies::speculative_execution::{self, SpeculativeExecutionPolicy};
+use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::{Coordinator, NonErrorQueryResponse};
 use crate::routing::Shard;
 use crate::routing::Token;
@@ -142,6 +143,10 @@ pub(crate) struct RequestExecutionParams<'a> {
     pub(crate) history_listener: Option<&'a dyn HistoryListener>,
     /// Paged vs non-paged, for metrics.
     pub(crate) request_kind: RequestPaging,
+    /// Timestamp set on the statement. Takes precedence over the generator.
+    pub(crate) explicit_timestamp: Option<i64>,
+    /// Generates the timestamp when the statement has none.
+    pub(crate) timestamp_generator: Option<&'a dyn TimestampGenerator>,
 }
 
 /// Constructor(s) for [`RequestExecutionParams`].
@@ -151,6 +156,7 @@ impl<'a> RequestExecutionParams<'a> {
         execution_profile: &'a ExecutionProfileInner,
         metrics: &'a Arc<Metrics>,
         request_kind: RequestPaging,
+        timestamp_generator: Option<&'a dyn TimestampGenerator>,
     ) -> Self {
         let is_idempotent = statement_config.is_idempotent;
         let consistency = statement_config
@@ -183,6 +189,8 @@ impl<'a> RequestExecutionParams<'a> {
             request_timeout,
             history_listener,
             request_kind,
+            explicit_timestamp: statement_config.timestamp,
+            timestamp_generator,
         }
     }
 }
@@ -195,7 +203,7 @@ pub(crate) struct Request<'a, F> {
     pub(crate) params: RequestExecutionParams<'a>,
     pub(crate) routing_info: RoutingInfo<'a>,
     /// Performs a single attempt, on the given connection and with the given
-    /// consistency.
+    /// consistency and timestamp.
     pub(crate) run_once: F,
     pub(crate) span: &'a RequestSpan,
 }
@@ -387,6 +395,15 @@ impl ExecuteRequestContext<'_> {
 }
 
 impl RequestExecutionParams<'_> {
+    /// The timestamp to send: the statement's own, or else a generated one.
+    #[inline]
+    fn resolve_timestamp(&self) -> Option<i64> {
+        self.explicit_timestamp.or_else(|| {
+            self.timestamp_generator
+                .map(TimestampGenerator::next_timestamp)
+        })
+    }
+
     fn inc_total_queries(&self) {
         let Some((metrics, _)) = self.metrics_and_speculative_policy else {
             return;
@@ -445,7 +462,7 @@ impl<'a, F> Request<'a, F> {
     ) -> Result<RequestExecutionOutcome<Target::Coordinator>, RequestError>
     where
         Target: AttemptTarget,
-        F: Fn(Arc<Connection>, Consistency) -> QueryFut,
+        F: Fn(Arc<Connection>, Consistency, Option<i64>) -> QueryFut,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
         let history_listener_and_id: Option<(&dyn HistoryListener, history::RequestId)> = self
@@ -557,7 +574,7 @@ impl<'a, F> Request<'a, F> {
     ) -> Option<Result<RequestExecutionOutcome<Target::Coordinator>, RequestError>>
     where
         Target: AttemptTarget,
-        F: Fn(Arc<Connection>, Consistency) -> QueryFut,
+        F: Fn(Arc<Connection>, Consistency, Option<i64>) -> QueryFut,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
         // Boxed, as it is set only after a failed attempt: inline, its size and
@@ -601,8 +618,11 @@ impl<'a, F> Request<'a, F> {
 
                 let coordinator = target.coordinator(&connection);
 
-                let request_result: Result<NonErrorQueryResponse, RequestAttemptError> =
-                    await_in_span!((self.run_once)(connection, current_consistency), &span);
+                let timestamp = self.params.resolve_timestamp();
+                let request_result: Result<NonErrorQueryResponse, RequestAttemptError> = await_in_span!(
+                    (self.run_once)(connection, current_consistency, timestamp),
+                    &span
+                );
 
                 let elapsed = request_start.elapsed();
                 let request_error: RequestAttemptError = match request_result {
