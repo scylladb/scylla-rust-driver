@@ -206,7 +206,7 @@ up:
 
 .PHONY: down
 down:
-	$(COMPOSE) down --remove-orphans
+	$(COMPOSE) down --remove-orphans --volumes
 
 .PHONY: stop
 stop:
