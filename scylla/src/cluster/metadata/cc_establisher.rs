@@ -47,11 +47,13 @@ pub(crate) struct ControlConnectionEstablisher {
     // =======================================================================================
     // Configuration values - they will stay the same during whole lifetime of ControlConnectionEstablisher.
     // =======================================================================================
-    /// The configuration of every control connection this establisher creates.
-    /// It is the only connection config carrying a
-    /// [`DriverConfigReporter`](crate::client::driver_config::DriverConfigReporter),
-    /// because only control connections report their configuration.
-    control_connection_config: ConnectionConfig,
+    /// The configuration that every control connection this establisher creates
+    /// shares with the pool connections.
+    connection_config: ConnectionConfig,
+    /// Builds the configuration report sent in `STARTUP`. Only control
+    /// connections get it, because the report is the same for every connection
+    /// of a session. `None` disables reporting.
+    driver_config_reporter: Option<Arc<DriverConfigReporter>>,
     /// Configuration stamped onto every control connection this establisher creates;
     /// governs what the control connection's metadata queries fetch.
     cc_config: ControlConnectionConfig,
@@ -131,13 +133,8 @@ impl ControlConnectionEstablisher {
         let cc_cache = Arc::new(ControlConnectionCache::new());
 
         Ok(ControlConnectionEstablisher {
-            control_connection_config: ConnectionConfig {
-                driver_config_reporter,
-                // Tablets are a concern of the pools only: the control connection
-                // must not feed the tablet updater.
-                tablet_sender: None,
-                ..connection_config
-            },
+            connection_config,
+            driver_config_reporter,
             cc_config: ControlConnectionConfig {
                 keyspaces_to_fetch,
                 schema_metadata_fetch_mode,
@@ -290,7 +287,8 @@ impl ControlConnectionEstablisher {
 
             let (cc, mut cc_events) = match Self::make_control_connection(
                 peer,
-                self.control_connection_config.clone(),
+                &self.connection_config,
+                self.driver_config_reporter.clone(),
                 self.cc_config.clone(),
                 Arc::clone(&self.cc_cache),
             )
@@ -418,14 +416,15 @@ impl ControlConnectionEstablisher {
 
     async fn make_control_connection(
         endpoint: UntranslatedEndpoint,
-        mut config: ConnectionConfig,
+        config: &ConnectionConfig,
+        driver_config_reporter: Option<Arc<DriverConfigReporter>>,
         cc_config: ControlConnectionConfig,
         cache: Arc<ControlConnectionCache>,
     ) -> Result<(ControlConnection, ControlConnectionEvents), MetadataError> {
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
-        // setting event_sender field in connection config will cause control connection to
-        // - send REGISTER message to receive server events
-        // - send received events via server_event_sender
+        // The event sender makes the control connection:
+        // - send a REGISTER message to receive server events,
+        // - pass the received events on through `sender`.
         let mut events_to_register_for = vec![
             EventType::TopologyChange,
             EventType::StatusChange,
@@ -435,13 +434,13 @@ impl ControlConnectionEstablisher {
             events_to_register_for.push(EventType::ClientRoutesChange);
         }
 
-        config.event_sender = Some((sender, events_to_register_for));
-        let open_result = open_connection(
+        let host_config = config.for_control_connection_host(
             &endpoint,
-            None,
-            &config.to_host_connection_config(&endpoint),
-        )
-        .await;
+            sender,
+            events_to_register_for,
+            driver_config_reporter,
+        );
+        let open_result = open_connection(&endpoint, None, &host_config).await;
 
         match open_result {
             Ok((con, recv)) => Ok(ControlConnection::new(

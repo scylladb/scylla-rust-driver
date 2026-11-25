@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::errors::{ConnectionPoolError, DnsLookupError, UseKeyspaceError};
 use crate::network::VerifiedKeyspaceName;
 use crate::network::{Connection, ConnectivityChangeEvent};
-use crate::network::{NodeConnectionPool, PoolConfig};
+use crate::network::{ConnectionConfig, NodeConnectionPool, PoolConfig};
 use crate::observability::metrics::Metrics;
 /// Node represents a cluster node along with it's data and connections
 use crate::routing::{Shard, Sharder};
@@ -115,6 +115,7 @@ impl Node {
     /// Creates a new node which starts connecting in the background.
     pub(crate) fn new(
         peer: PeerEndpoint,
+        connection_config: &ConnectionConfig,
         pool_config: &PoolConfig,
         connectivity_events_sender: tokio::sync::mpsc::UnboundedSender<ConnectivityChangeEvent>,
         keyspace_name: Option<VerifiedKeyspaceName>,
@@ -129,6 +130,7 @@ impl Node {
         let (pool_empty_notifier, _) = tokio::sync::mpsc::channel(1);
         let pool = NodeConnectionPool::new(
             UntranslatedEndpoint::Peer(peer),
+            connection_config,
             pool_config,
             Some((host_id, connectivity_events_sender)),
             keyspace_name,

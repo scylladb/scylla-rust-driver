@@ -8,7 +8,7 @@ use super::{ReplicaLocator, ReplicaSet};
 use crate::cluster::Node;
 use crate::cluster::metadata::{ConsistencyMode, Keyspace, Metadata, Peer, Strategy};
 use crate::cluster::{NodeAddr, NodeRef};
-use crate::network::PoolConfig;
+use crate::network::{ConnectionConfig, PoolConfig};
 use crate::routing::Token;
 use crate::test_utils::setup_tracing;
 
@@ -190,6 +190,7 @@ fn assert_replica_set_equal_to(nodes: ReplicaSet<'_>, ids: &[u16]) {
 }
 
 pub(crate) fn create_ring(metadata: &Metadata) -> impl Iterator<Item = (Token, Arc<Node>)> + use<> {
+    let connection_config: ConnectionConfig = Default::default();
     let pool_config: PoolConfig = Default::default();
     let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
 
@@ -197,6 +198,7 @@ pub(crate) fn create_ring(metadata: &Metadata) -> impl Iterator<Item = (Token, A
     for peer in &metadata.peers {
         let node = Arc::new(Node::new(
             peer.to_peer_endpoint(),
+            &connection_config,
             &pool_config,
             connectivity_events_sender.clone(),
             None,
