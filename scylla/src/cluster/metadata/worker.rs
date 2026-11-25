@@ -538,24 +538,32 @@ enum Relocation {
     /// known by then.
     Due(Instant),
     /// An attempt is in flight.
-    InFlight(RelocationAttempt),
+    InFlight {
+        attempt: RelocationAttempt,
+        /// Whether a fetch on the current control connection completed since
+        /// the attempt started. It may have published data read after the
+        /// attempt read the same data.
+        outdated: bool,
+    },
 }
 
 impl Relocation {
-    /// Resolves to the result of the attempt in flight, or to `None` once an
-    /// attempt is due. Pends forever when idle.
-    async fn wait(&mut self) -> Option<RelocationResult<FetchPlan>> {
+    /// Resolves to the result of the attempt in flight, together with whether
+    /// it is outdated, or to `None` once an attempt is due. Pends forever when
+    /// idle.
+    async fn wait(&mut self) -> Option<(RelocationResult<FetchPlan>, bool)> {
         match self {
             Relocation::Idle => std::future::pending().await,
             Relocation::Due(deadline) => {
                 tokio::time::sleep_until(*deadline).await;
                 None
             }
-            Relocation::InFlight(attempt) => {
+            Relocation::InFlight { attempt, outdated } => {
                 let result = attempt.await;
+                let outdated = *outdated;
                 // So that the completed attempt is never polled again.
                 *self = Relocation::Idle;
-                Some(result)
+                Some((result, outdated))
             }
         }
     }
@@ -573,6 +581,19 @@ impl Relocation {
     fn note_topology_change(&mut self) {
         if let Relocation::Idle = self {
             *self = Relocation::Due(Instant::now());
+        }
+    }
+
+    /// Marks the attempt in flight, if any, as outdated: a fetch on the current
+    /// control connection completed.
+    ///
+    /// Marked on completion rather than start: only a completed fetch can have
+    /// published anything, and one that started before the attempt may still
+    /// have read data after the attempt did. A fetch still running when the
+    /// attempt completes is dropped together with the current connection.
+    fn note_fetch_completed(&mut self) {
+        if let Relocation::InFlight { outdated, .. } = self {
+            *outdated = true;
         }
     }
 }
@@ -831,7 +852,10 @@ impl MetadataWorker {
     /// new control connection is published, and the loop returns the new
     /// connection, to be served instead. Fetches in flight and work owed by the
     /// plan are dropped: the new connection registered for events before its
-    /// fetch, so its metadata and plan cover them.
+    /// fetch, so its metadata and plan cover them. If a fetch on the current
+    /// connection completed while the attempt was in flight, the attempt's
+    /// metadata may be older than what that fetch published, so it is not
+    /// published; a full fetch on the new connection is owed instead.
     ///
     /// Returns [`ControlFlow::Continue`] once the control connection is to be
     /// replaced: with `None` if it is deemed defunct, or with the new control
@@ -881,7 +905,10 @@ impl MetadataWorker {
                             control_connection_locality = ?locality,
                             "Trying to move the control connection to a better-located node"
                         );
-                        Relocation::InFlight(Box::pin(attempt))
+                        Relocation::InFlight {
+                            attempt: Box::pin(attempt),
+                            outdated: false,
+                        }
                     }
                     None => Relocation::Idle,
                 };
@@ -893,6 +920,7 @@ impl MetadataWorker {
 
             tokio::select! {
                 fetch_outcome = &mut pending_fetches => {
+                    relocation.note_fetch_completed();
                     match fetch_outcome {
                         FetchOutcome::Full(Ok(topology_update)) => {
                             debug!("Fetched new metadata");
@@ -1014,7 +1042,7 @@ impl MetadataWorker {
 
                 relocation_result = relocation.wait() => {
                     // `None`: an attempt is due; the step before `select!` starts it.
-                    if let Some(result) = relocation_result {
+                    if let Some((result, outdated)) = relocation_result {
                         match self.cc_establisher.apply_relocation(result) {
                             Some((new_cc, events, plan, metadata)) => {
                                 debug!(
@@ -1022,7 +1050,8 @@ impl MetadataWorker {
                                     to_address = %new_cc.endpoint().address(),
                                     "Moved the control connection to a better-located node"
                                 );
-                                let replacement = self.take_over_cc(new_cc, events, plan, metadata)?;
+                                let replacement =
+                                    self.take_over_cc(new_cc, events, plan, metadata, outdated)?;
                                 return ControlFlow::Continue(Some(replacement));
                             }
                             None => {
@@ -1038,7 +1067,7 @@ impl MetadataWorker {
     }
 
     /// Takes over a control connection established on a better-located node,
-    /// publishing the metadata fetched on it.
+    /// publishing the metadata fetched on it, unless it is `outdated`.
     ///
     /// Returns [`ControlFlow::Break`] if the worker should stop (the cluster
     /// worker is gone).
@@ -1048,21 +1077,30 @@ impl MetadataWorker {
         events: ControlConnectionEvents,
         mut plan: FetchPlan,
         metadata: Metadata,
+        outdated: bool,
     ) -> ControlFlow<(), EstablishedCc> {
-        Self::handle_metadata_keyspace_errors(&mut plan, &metadata);
         let locality = self.cc_establisher.locality_of_cc_node(&metadata);
 
-        // The pending request is owed metadata fetched after its receipt, while
-        // this metadata may have been fetched before. A full fetch on the new
-        // connection answers it.
-        if self.pending_request.is_some() {
+        if outdated {
+            // The metadata published since the attempt started may be newer
+            // than this metadata. Publishing this one could move the published
+            // state backwards, and answer a refresh request, attached to the
+            // newer metadata, with data fetched before the request.
             plan.note_full_needed();
-        }
-        if self
-            .send_update(|slot| MetadataUpdate::merge_metadata(slot, metadata, None))
-            .is_err()
-        {
-            return ControlFlow::Break(());
+        } else {
+            Self::handle_metadata_keyspace_errors(&mut plan, &metadata);
+            // The pending request is owed metadata fetched after its receipt, while
+            // this metadata may have been fetched before. A full fetch on the new
+            // connection answers it.
+            if self.pending_request.is_some() {
+                plan.note_full_needed();
+            }
+            if self
+                .send_update(|slot| MetadataUpdate::merge_metadata(slot, metadata, None))
+                .is_err()
+            {
+                return ControlFlow::Break(());
+            }
         }
 
         ControlFlow::Continue(EstablishedCc {
