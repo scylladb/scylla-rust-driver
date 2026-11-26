@@ -4,6 +4,9 @@ mod derive_macros_integration {
     use crate::deserialize::value::DeserializeValue;
     use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
     use crate::frame::response::result::ColumnType;
+    use crate::serialize::SerializationError;
+    use crate::serialize::value::SerializeValue;
+    use crate::serialize::writers::{CellWriter, WrittenCellProof};
 
     /// An `i32` whose trait impls don't require anything from `T`.
     ///
@@ -26,6 +29,16 @@ mod derive_macros_integration {
         }
     }
 
+    impl<T> SerializeValue for AlwaysInt<T> {
+        fn serialize<'b>(
+            &self,
+            typ: &ColumnType,
+            writer: CellWriter<'b>,
+        ) -> Result<WrittenCellProof<'b>, SerializationError> {
+            self.0.serialize(typ, writer)
+        }
+    }
+
     /// An `i32` whose trait impls exist only for `N = 1`.
     ///
     /// A generic struct with an `IntIfOne<N>` field must require the field type
@@ -43,6 +56,16 @@ mod derive_macros_integration {
             v: Option<FrameSlice<'frame>>,
         ) -> Result<Self, DeserializationError> {
             <i32 as DeserializeValue>::deserialize(typ, v).map(IntIfOne)
+        }
+    }
+
+    impl SerializeValue for IntIfOne<1> {
+        fn serialize<'b>(
+            &self,
+            typ: &ColumnType,
+            writer: CellWriter<'b>,
+        ) -> Result<WrittenCellProof<'b>, SerializationError> {
+            self.0.serialize(typ, writer)
         }
     }
 
@@ -1276,6 +1299,156 @@ mod derive_macros_integration {
                 let udt = do_serialize(value, &typ);
 
                 assert_eq!(reference, udt);
+            }
+
+            #[test]
+            fn test_udt_serialization_generic_struct_without_bounds() {
+                // Fields that don't mention a type parameter must not be bounded:
+                // `&'a str: SerializeValue` and `&'b str: SerializeValue` would
+                // be ambiguous.
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Udt<'a, 'b, T, U> {
+                    a: &'a str,
+                    b: &'b str,
+                    c: T,
+                    d: U,
+                }
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct UdtWithEnforcedOrder<'a, 'b, T, U> {
+                    a: &'a str,
+                    b: &'b str,
+                    c: T,
+                    d: U,
+                }
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Reference {
+                    a: &'static str,
+                    b: &'static str,
+                    c: i32,
+                    d: i64,
+                }
+
+                let typ = super::udt_def_with_fields([
+                    ("a", ColumnType::Native(NativeType::Text)),
+                    ("b", ColumnType::Native(NativeType::Text)),
+                    ("c", ColumnType::Native(NativeType::Int)),
+                    ("d", ColumnType::Native(NativeType::BigInt)),
+                ]);
+                let reference = do_serialize(
+                    Reference {
+                        a: "Ala",
+                        b: "kota",
+                        c: 1,
+                        d: 2,
+                    },
+                    &typ,
+                );
+                let udt = Udt {
+                    a: "Ala",
+                    b: "kota",
+                    c: 1_i32,
+                    d: 2_i64,
+                };
+                assert_eq!(do_serialize(udt, &typ), reference);
+                let udt = UdtWithEnforcedOrder {
+                    a: "Ala",
+                    b: "kota",
+                    c: 1_i32,
+                    d: 2_i64,
+                };
+                assert_eq!(do_serialize(udt, &typ), reference);
+            }
+
+            #[test]
+            fn test_udt_serialization_generic_wrapper_field() {
+                // `AlwaysInt<T>` implements `SerializeValue` for every `T`, so
+                // `Udt<T>` must not require `T: SerializeValue`.
+                use super::super::AlwaysInt;
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Udt<T> {
+                    a: AlwaysInt<T>,
+                }
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Reference {
+                    a: i32,
+                }
+
+                struct NotSerializable;
+
+                let typ = super::udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let udt = Udt::<NotSerializable> {
+                    a: AlwaysInt(42, std::marker::PhantomData),
+                };
+                assert_eq!(
+                    do_serialize(udt, &typ),
+                    do_serialize(Reference { a: 42 }, &typ)
+                );
+            }
+
+            #[test]
+            fn test_udt_serialization_generic_const_param() {
+                // `IntIfOne<N>` implements `SerializeValue` only for some `N`,
+                // so `Udt<N>` must require it.
+                use super::super::IntIfOne;
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Udt<const N: usize> {
+                    a: IntIfOne<N>,
+                }
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Reference {
+                    a: i32,
+                }
+
+                let typ = super::udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let udt = Udt::<1> { a: IntIfOne(42) };
+                assert_eq!(
+                    do_serialize(udt, &typ),
+                    do_serialize(Reference { a: 42 }, &typ)
+                );
+            }
+
+            #[test]
+            fn test_udt_serialization_generic_skipped_field() {
+                // Skipped fields are not serialized, so `Udt<T>` must not
+                // require `T: SerializeValue`.
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Udt<T> {
+                    a: i32,
+                    #[scylla(skip)]
+                    _b: T,
+                }
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Reference {
+                    a: i32,
+                }
+
+                struct NotSerializable;
+
+                let typ = super::udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let udt = Udt {
+                    a: 42,
+                    _b: NotSerializable,
+                };
+                assert_eq!(
+                    do_serialize(udt, &typ),
+                    do_serialize(Reference { a: 42 }, &typ)
+                );
             }
         }
 

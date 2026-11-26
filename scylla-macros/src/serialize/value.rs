@@ -97,7 +97,6 @@ pub(crate) fn derive_serialize_value(
     let input: syn::DeriveInput = syn::parse(tokens_input)?;
     let struct_name = input.ident.clone();
     let named_fields = crate::parser::parse_named_fields(&input, "SerializeValue")?;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let attributes = Attributes::from_attributes(&input.attrs)?;
 
     let crate_path = attributes.crate_path();
@@ -126,6 +125,17 @@ pub(crate) fn derive_serialize_value(
     };
 
     let serialize_item = generator.generate_serialize();
+
+    let mut generics = input.generics.clone();
+    generics
+        .make_where_clause()
+        .predicates
+        .extend(crate::generics::field_bounds(
+            &input.generics,
+            ctx.fields.iter().map(|f| &f.typ),
+            implemented_trait.clone(),
+        ));
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let res = parse_quote! {
         #[automatically_derived]
