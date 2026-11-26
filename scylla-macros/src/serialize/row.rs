@@ -111,6 +111,15 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
         fields.iter().filter(|f| !f.attrs.flatten).map(|f| &f.typ),
         parse_quote!(#crate_path::SerializeValue),
     ));
+    let flattened_trait: syn::Path = match attributes.flavor {
+        Flavor::MatchByName => parse_quote!(#crate_path::SerializeRowByName),
+        Flavor::EnforceOrder => parse_quote!(#crate_path::SerializeRowInOrder),
+    };
+    predicates.extend(crate::generics::field_bounds(
+        &input.generics,
+        fields.iter().filter(|f| f.attrs.flatten).map(|f| &f.typ),
+        flattened_trait,
+    ));
 
     let ctx = Context {
         attributes,
@@ -249,6 +258,10 @@ impl Generator for ColumnSortingGenerator<'_> {
                 .for_each(|lt| {
                     lt.bounds.push(partial_lt.clone());
                 });
+            partial_generics.type_params_mut().for_each(|t| {
+                t.bounds
+                    .push(syn::TypeParamBound::Lifetime(partial_lt.clone()));
+            });
 
             // now add the partial struct lifetime
             partial_generics

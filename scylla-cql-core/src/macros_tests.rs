@@ -3697,6 +3697,53 @@ mod derive_macros_integration {
                 };
                 assert_eq!(do_serialize(row, &spec), reference);
             }
+
+            #[test]
+            fn test_row_serialization_generic_flattened_field() {
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct Inner<T> {
+                    b: T,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct MyRow<T> {
+                    a: i32,
+                    #[scylla(flatten)]
+                    inner: T,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct InnerWithEnforcedOrder<T> {
+                    b: T,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct MyRowWithEnforcedOrder<T> {
+                    a: i32,
+                    #[scylla(flatten)]
+                    inner: T,
+                }
+
+                let spec = [
+                    spec("a", ColumnType::Native(NativeType::Int)),
+                    spec("b", ColumnType::Native(NativeType::BigInt)),
+                ];
+                let reference = do_serialize((1_i32, 2_i64), &spec);
+                let row = MyRow {
+                    a: 1,
+                    inner: Inner { b: 2_i64 },
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+                let row = MyRowWithEnforcedOrder {
+                    a: 1,
+                    inner: InnerWithEnforcedOrder { b: 2_i64 },
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+            }
         }
 
         mod deserialize {
