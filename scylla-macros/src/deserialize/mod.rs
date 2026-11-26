@@ -122,7 +122,7 @@ where
             frame_lifetime,
             metadata_lifetime,
         )
-        .chain(generate_default_constraints(&self.fields));
+        .chain(generate_default_constraints(&self.generics, &self.fields));
         let trait_: syn::Path = parse_quote!(#macro_internal::#trait_);
         let items = items.into_iter();
 
@@ -139,13 +139,18 @@ where
 }
 
 /// Generates T: Default constraints for those fields that need it.
-fn generate_default_constraints<Field: DeserializeCommonFieldAttrs>(
-    fields: &[Field],
-) -> impl Iterator<Item = syn::WherePredicate> + use<'_, Field> {
-    fields.iter().filter(|f| f.needs_default()).map(|f| {
-        let t = f.deserialize_target();
-        parse_quote!(#t: ::std::default::Default)
-    })
+fn generate_default_constraints<'a, Field: DeserializeCommonFieldAttrs>(
+    generics: &'a syn::Generics,
+    fields: &'a [Field],
+) -> impl Iterator<Item = syn::WherePredicate> + use<'a, Field> {
+    crate::generics::field_bounds(
+        generics,
+        fields
+            .iter()
+            .filter(|f| f.needs_default())
+            .map(|f| f.deserialize_target()),
+        parse_quote!(::std::default::Default),
+    )
 }
 
 /// Helps introduce constraints to an `impl` definition that constrains
