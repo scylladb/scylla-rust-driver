@@ -83,13 +83,12 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
     let input: syn::DeriveInput = syn::parse(tokens_input)?;
     let struct_name = input.ident.clone();
     let named_fields = crate::parser::parse_named_fields(&input, "SerializeRow")?;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let attributes = Attributes::from_attributes(&input.attrs)?;
 
     let crate_path = attributes.crate_path();
     let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeRow);
 
-    let fields = named_fields
+    let fields: Vec<Field> = named_fields
         .named
         .iter()
         .map(|f| {
@@ -103,11 +102,21 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
         // as it's less error prone - we just filter in one place instead of N places.
         .filter(|f| f.as_ref().map(|f| !f.attrs.skip).unwrap_or(true))
         .collect::<Result<_, _>>()?;
+
+    let mut generics = input.generics.clone();
+    let predicates = &mut generics.make_where_clause().predicates;
+    predicates.extend(crate::generics::field_bounds(
+        &input.generics,
+        // Flattened fields are not serialized with SerializeValue.
+        fields.iter().filter(|f| !f.attrs.flatten).map(|f| &f.typ),
+        parse_quote!(#crate_path::SerializeValue),
+    ));
+
     let ctx = Context {
         attributes,
         fields,
         struct_name: struct_name.clone(),
-        generics: input.generics.clone(),
+        generics,
     };
     ctx.validate(&input.ident)?;
 
@@ -119,6 +128,7 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
     let serialize_item = generator.generate_serialize();
     let is_empty_item = generator.generate_is_empty();
 
+    let (impl_generics, ty_generics, where_clause) = ctx.generics.split_for_impl();
     let res = parse_quote! {
         #[automatically_derived]
         impl #impl_generics #implemented_trait for #struct_name #ty_generics #where_clause {

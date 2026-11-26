@@ -3510,6 +3510,193 @@ mod derive_macros_integration {
 
                 assert_eq!(reference, row);
             }
+
+            #[test]
+            fn test_row_serialization_generic_struct_without_bounds() {
+                // Fields that don't mention a type parameter must not be bounded:
+                // `&'a str: SerializeValue` and `&'b str: SerializeValue` would
+                // be ambiguous.
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct MyRow<'a, 'b, T, U> {
+                    a: &'a str,
+                    b: &'b str,
+                    c: T,
+                    d: U,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct MyRowWithEnforcedOrder<'a, 'b, T, U> {
+                    a: &'a str,
+                    b: &'b str,
+                    c: T,
+                    d: U,
+                }
+
+                let spec = [
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Text)),
+                    spec("c", ColumnType::Native(NativeType::Int)),
+                    spec("d", ColumnType::Native(NativeType::BigInt)),
+                ];
+                let reference = do_serialize(("Ala", "kota", 1_i32, 2_i64), &spec);
+                let row = MyRow {
+                    a: "Ala",
+                    b: "kota",
+                    c: 1_i32,
+                    d: 2_i64,
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+                let row = MyRowWithEnforcedOrder {
+                    a: "Ala",
+                    b: "kota",
+                    c: 1_i32,
+                    d: 2_i64,
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+            }
+
+            #[test]
+            fn test_row_serialization_generic_wrapper_field() {
+                // `AlwaysInt<T>` implements `SerializeValue` for every `T`, so
+                // `MyRow<T>` must not require `T: SerializeValue`.
+                use super::super::AlwaysInt;
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct MyRow<T> {
+                    a: AlwaysInt<T>,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct MyRowWithEnforcedOrder<T> {
+                    a: AlwaysInt<T>,
+                }
+
+                struct NotSerializable;
+
+                let spec = [spec("a", ColumnType::Native(NativeType::Int))];
+                let reference = do_serialize((42_i32,), &spec);
+                let row = MyRow::<NotSerializable> {
+                    a: AlwaysInt(42, std::marker::PhantomData),
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+                let row = MyRowWithEnforcedOrder::<NotSerializable> {
+                    a: AlwaysInt(42, std::marker::PhantomData),
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+            }
+
+            #[test]
+            fn test_row_serialization_generic_const_param() {
+                // `IntIfOne<N>` implements `SerializeValue` only for some `N`,
+                // so `MyRow<N>` must require it.
+                use super::super::IntIfOne;
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct MyRow<const N: usize> {
+                    a: IntIfOne<N>,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct MyRowWithEnforcedOrder<const N: usize> {
+                    a: IntIfOne<N>,
+                }
+
+                let spec = [spec("a", ColumnType::Native(NativeType::Int))];
+                let reference = do_serialize((42_i32,), &spec);
+                let row = MyRow::<1> { a: IntIfOne(42) };
+                assert_eq!(do_serialize(row, &spec), reference);
+                let row = MyRowWithEnforcedOrder::<1> { a: IntIfOne(42) };
+                assert_eq!(do_serialize(row, &spec), reference);
+            }
+
+            #[test]
+            fn test_row_serialization_generic_skipped_field() {
+                // Skipped fields are not serialized, so `MyRow<T>` must not
+                // require `T: SerializeValue`.
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct MyRow<T> {
+                    a: i32,
+                    #[scylla(skip)]
+                    _b: T,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct MyRowWithEnforcedOrder<T> {
+                    a: i32,
+                    #[scylla(skip)]
+                    _b: T,
+                }
+
+                struct NotSerializable;
+
+                let spec = [spec("a", ColumnType::Native(NativeType::Int))];
+                let reference = do_serialize((42_i32,), &spec);
+                let row = MyRow {
+                    a: 42,
+                    _b: NotSerializable,
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+                let row = MyRowWithEnforcedOrder {
+                    a: 42,
+                    _b: NotSerializable,
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+            }
+
+            #[test]
+            fn test_row_serialization_generic_struct_with_flattened_field() {
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct Inner {
+                    b: i32,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct MyRow<T> {
+                    a: T,
+                    #[scylla(flatten)]
+                    inner: Inner,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct InnerWithEnforcedOrder {
+                    b: i32,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct MyRowWithEnforcedOrder<T> {
+                    a: T,
+                    #[scylla(flatten)]
+                    inner: InnerWithEnforcedOrder,
+                }
+
+                let spec = [
+                    spec("a", ColumnType::Native(NativeType::Int)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                ];
+                let reference = do_serialize((1_i32, 2_i32), &spec);
+                let row = MyRow {
+                    a: 1_i32,
+                    inner: Inner { b: 2 },
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+                let row = MyRowWithEnforcedOrder {
+                    a: 1_i32,
+                    inner: InnerWithEnforcedOrder { b: 2 },
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+            }
         }
 
         mod deserialize {
