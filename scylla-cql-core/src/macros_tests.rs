@@ -2491,6 +2491,30 @@ mod derive_macros_integration {
                     }
                 );
             }
+
+            #[test]
+            fn test_udt_deserialization_generic_default_when_null() {
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct Udt<T> {
+                    #[scylla(default_when_null)]
+                    a: T,
+                }
+
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct UdtWithEnforcedOrder<T> {
+                    #[scylla(default_when_null)]
+                    a: T,
+                }
+
+                let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let bytes = UdtSerializer::new().null_field().finalize();
+                let udt = deserialize::<Udt<i32>>(&typ, &bytes).unwrap();
+                assert_eq!(udt, Udt { a: 0 });
+                let udt = deserialize::<UdtWithEnforcedOrder<i32>>(&typ, &bytes).unwrap();
+                assert_eq!(udt, UdtWithEnforcedOrder { a: 0 });
+            }
         }
     }
 
