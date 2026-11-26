@@ -2365,6 +2365,15 @@ mod derive_macros_integration {
             #[expect(dead_code)]
             struct TestRowWithNoColumns {}
 
+            // Checks that the struct's fields don't clash with the fields
+            // of the struct generated for the `match_by_name` flavor.
+            #[derive(SerializeRow)]
+            #[scylla(crate = crate)]
+            #[expect(dead_code)]
+            struct TestRowWithFieldNamedRemainingCount {
+                remaining_count: i32,
+            }
+
             #[derive(SerializeRow, Debug, PartialEq, Eq, Default)]
             #[scylla(crate = crate)]
             struct TestRowWithColumnSorting {

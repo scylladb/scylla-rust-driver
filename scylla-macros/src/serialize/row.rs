@@ -278,7 +278,7 @@ impl Generator for ColumnSortingGenerator<'_> {
                 #(#flattened_fields: <#flattened_types as #crate_path::SerializeRowByName>::Partial<#partial_lt>,)*
                 #(#flattened_visited_flag_names: bool,)*
                 #(#nonflattened_visited_flag_names: bool,)*
-                remaining_count: usize,
+                __scylla_remaining_count: usize,
             }
         };
 
@@ -299,7 +299,7 @@ impl Generator for ColumnSortingGenerator<'_> {
                         )?;
                         if !self.#nonflattened_visited_flag_names {
                             self.#nonflattened_visited_flag_names = true;
-                            self.remaining_count -= 1;
+                            self.__scylla_remaining_count -= 1;
                         }
                     })*
                     // if not, then check if any flattened field has a column for it
@@ -310,7 +310,7 @@ impl Generator for ColumnSortingGenerator<'_> {
                                 #crate_path::ser::row::FieldStatus::Done => {
                                     if !self.#flattened_visited_flag_names {
                                         self.#flattened_visited_flag_names = true;
-                                        self.remaining_count -= 1;
+                                        self.__scylla_remaining_count -= 1;
                                     }
                                     break 'flatten_try;
                                 }
@@ -332,7 +332,7 @@ impl Generator for ColumnSortingGenerator<'_> {
 
                 // report if we are done; so that any parent struct knows if this field is done in
                 // case this field is flattened
-                ::std::result::Result::Ok(if self.remaining_count == 0 {
+                ::std::result::Result::Ok(if self.__scylla_remaining_count == 0 {
                     #crate_path::ser::row::FieldStatus::Done
                 } else {
                     #crate_path::ser::row::FieldStatus::NotDone
@@ -353,7 +353,7 @@ impl Generator for ColumnSortingGenerator<'_> {
                 }
 
                 fn check_missing(self) -> ::std::result::Result<(), #crate_path::SerializationError> {
-                    if self.remaining_count == 0 {
+                    if self.__scylla_remaining_count == 0 {
                         return ::std::result::Result::Ok(());
                     }
 
@@ -387,7 +387,7 @@ impl Generator for ColumnSortingGenerator<'_> {
                         #(#flattened_fields: <_ as #crate_path::SerializeRowByName>::partial(&self.#flattened_fields),)*
                         #(#nonflattened_visited_flag_names: false,)*
                         #(#flattened_visited_flag_names: false,)*
-                        remaining_count: #num_fields,
+                        __scylla_remaining_count: #num_fields,
                     }
                 }
             }
