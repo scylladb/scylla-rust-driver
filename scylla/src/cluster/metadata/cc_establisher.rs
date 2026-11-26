@@ -10,6 +10,8 @@
 //! - Connection establishment to contact points or known peers
 //! - Iterating over known peers and initial contact points on connection failure
 //! - Host filtering to ensure the control connection is established to an accepted node
+//! - Preparing attempts to move the control connection to a node that better matches
+//!   the session's location preference
 //!
 //! Ownership of the established control connection lives outside the establisher (in the
 //! metadata worker); the establisher only knows how to create one. The metadata queries
@@ -40,26 +42,21 @@ use crate::policies::host_filter::HostFilter;
 use crate::routing::NodeLocationPreference;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
-/// Maintains the persistent state needed to create control connections and
-/// fetch cluster metadata. The established control connection itself is owned by
-/// the caller (the metadata worker), not by the establisher.
+/// Decides which nodes to establish control connections to, and in what order.
+/// It keeps the known peers, updated from each fetched topology, and the
+/// initial contact points to fall back to. Opening a connection to a chosen node
+/// is left to the [`ControlConnectionOpener`]. The established control
+/// connection itself is owned by the caller (the metadata worker), not by the
+/// establisher.
 pub(crate) struct ControlConnectionEstablisher {
     // =======================================================================================
     // Configuration values - they will stay the same during whole lifetime of ControlConnectionEstablisher.
     // =======================================================================================
-    /// The configuration that every control connection this establisher creates
-    /// shares with the pool connections.
-    connection_config: ConnectionConfig,
-    /// Builds the configuration report sent in `STARTUP`. Only control
-    /// connections get it, because the report is the same for every connection
-    /// of a session. `None` disables reporting.
-    driver_config_reporter: Option<Arc<DriverConfigReporter>>,
-    /// Configuration stamped onto every control connection this establisher creates;
-    /// governs what the control connection's metadata queries fetch.
-    cc_config: ControlConnectionConfig,
+    /// Shared with relocation attempts, which run while the establisher is in use.
+    opener: Arc<ControlConnectionOpener>,
     hostname_resolution_timeout: Option<Duration>,
-    host_filter: Option<Arc<dyn HostFilter>>,
-    /// The session-level location preference; known peers matching it are tried first.
+    /// The session-level location preference; known peers matching it are tried
+    /// first, and the control connection is moved to them.
     node_location_preference: Arc<NodeLocationPreference>,
     // When no known peer is reachable, initial known nodes are resolved once again as a fallback
     // and establishing control connection to them is attempted.
@@ -70,6 +67,29 @@ pub(crate) struct ControlConnectionEstablisher {
     // ====================================================================
     // when a control connection fails, ControlConnectionEstablisher tries to connect to one of known_peers
     known_peers: Vec<UntranslatedEndpoint>,
+}
+
+/// Opens a control connection to a given node and fetches metadata on it, for
+/// the [`ControlConnectionEstablisher`], which chooses the nodes.
+///
+/// The two are split by what changes. The opener holds only what stays the
+/// same for the session's lifetime: configuration, and the cache of the
+/// control connections' prepared statements. So it can be shared through an
+/// `Arc`, while the establisher's known peers change with the topology. The
+/// host filter is here because the opener drops a connection whose node the
+/// filter rejects; the establisher reads it from here to filter the known peers.
+struct ControlConnectionOpener {
+    /// The configuration that every control connection this opener creates
+    /// shares with the pool connections.
+    connection_config: ConnectionConfig,
+    /// Builds the configuration report sent in `STARTUP`. Only control
+    /// connections get it, because the report is the same for every connection
+    /// of a session. `None` disables reporting.
+    driver_config_reporter: Option<Arc<DriverConfigReporter>>,
+    /// Configuration stamped onto every control connection this opener creates;
+    /// governs what the control connection's metadata queries fetch.
+    cc_config: ControlConnectionConfig,
+    host_filter: Option<Arc<dyn HostFilter>>,
     cc_cache: Arc<ControlConnectionCache>,
 }
 
@@ -100,6 +120,33 @@ pub(super) trait FetchOnCandidate {
         cc_events: &mut ControlConnectionEvents,
     ) -> Result<(TopologyUpdateGuard, Self::Payload), MetadataError>;
 }
+
+/// What [`ControlConnectionOpener::try_establish_on_nodes`] obtained. The
+/// fetched topology is yet to be applied to the establisher.
+// Built once per establishment and consumed right away, so the size of `Kept`
+// costs nothing worth an allocation.
+#[expect(clippy::large_enum_variant)]
+enum EstablishOutcome<P> {
+    /// A working, host-filter-accepted control connection, with the topology
+    /// and the payload the fetcher produced on it.
+    Kept {
+        cc: ControlConnection,
+        events: ControlConnectionEvents,
+        payload: P,
+        topology_update: TopologyUpdateGuard,
+    },
+    /// Metadata was fetched only on nodes rejected by the host filter. It is
+    /// valid cluster-wide, but none of the connections may be kept.
+    Rejected(TopologyUpdateGuard),
+    /// `initial` was set, and a connection was established, but its metadata
+    /// fetch failed. Dummy metadata is to be used, so the session can still start.
+    InitialFetchFailed(MetadataError),
+}
+
+/// The result of a [relocation attempt](ControlConnectionEstablisher::relocation_attempt),
+/// to be handed back to [`ControlConnectionEstablisher::apply_relocation`].
+#[must_use = "the fetched topology must be applied to the ControlConnectionEstablisher"]
+pub(super) struct RelocationResult<P>(Result<EstablishOutcome<P>, Option<MetadataError>>);
 
 impl ControlConnectionEstablisher {
     /// Creates a new ControlConnectionEstablisher.
@@ -133,23 +180,25 @@ impl ControlConnectionEstablisher {
         let cc_cache = Arc::new(ControlConnectionCache::new());
 
         Ok(ControlConnectionEstablisher {
-            connection_config,
-            driver_config_reporter,
-            cc_config: ControlConnectionConfig {
-                keyspaces_to_fetch,
-                schema_metadata_fetch_mode,
-                client_routes_subscriber,
-                request_timeouts,
-            },
+            opener: Arc::new(ControlConnectionOpener {
+                connection_config,
+                driver_config_reporter,
+                cc_config: ControlConnectionConfig {
+                    keyspaces_to_fetch,
+                    schema_metadata_fetch_mode,
+                    client_routes_subscriber,
+                    request_timeouts,
+                },
+                host_filter: host_filter.clone(),
+                cc_cache,
+            }),
             hostname_resolution_timeout,
             known_peers: initial_peers
                 .into_iter()
                 .map(UntranslatedEndpoint::ContactPoint)
                 .collect(),
-            host_filter: host_filter.clone(),
             node_location_preference,
             initial_known_nodes,
-            cc_cache,
         })
     }
 
@@ -200,10 +249,11 @@ impl ControlConnectionEstablisher {
         // failed to resolve). We carry the most recent error across attempts and only
         // synthesize a fallback error if no connection was ever attempted.
         let known_peers_err = match self
+            .opener
             .try_establish_on_nodes(initial, self.known_peers.clone().into_iter(), fetcher)
             .await
         {
-            Ok(result) => return Ok(result),
+            Ok(outcome) => return Ok(self.apply_outcome(outcome)),
             Err(err) => err,
         };
 
@@ -226,6 +276,7 @@ impl ControlConnectionEstablisher {
             resolve_contact_points(&self.initial_known_nodes, self.hostname_resolution_timeout)
                 .await;
         match self
+            .opener
             .try_establish_on_nodes(
                 initial,
                 initial_peers
@@ -235,7 +286,7 @@ impl ControlConnectionEstablisher {
             )
             .await
         {
-            Ok(result) => Ok(result),
+            Ok(outcome) => Ok(self.apply_outcome(outcome)),
             Err(fallback_err) => {
                 let err = fallback_err
                     .or(known_peers_err)
@@ -249,37 +300,150 @@ impl ControlConnectionEstablisher {
         }
     }
 
+    /// Updates `known_peers` from the topology fetched by
+    /// [`try_establish_on_nodes`](ControlConnectionOpener::try_establish_on_nodes), and returns what
+    /// [`establish_cc_and_fetch_metadata`](Self::establish_cc_and_fetch_metadata) does.
+    fn apply_outcome<P>(
+        &mut self,
+        outcome: EstablishOutcome<P>,
+    ) -> (
+        Option<(ControlConnection, ControlConnectionEvents, P)>,
+        Metadata,
+    ) {
+        match outcome {
+            EstablishOutcome::Kept {
+                cc,
+                events,
+                payload,
+                topology_update,
+            } => (Some((cc, events, payload)), topology_update.apply(self)),
+            EstablishOutcome::Rejected(topology_update) => (None, topology_update.apply(self)),
+            EstablishOutcome::InitialFetchFailed(err) => {
+                warn!(
+                    error = ?err,
+                    "Initial metadata read failed, proceeding with metadata \
+                    consisting only of the initial peer list and dummy tokens. \
+                    This might result in suboptimal performance and schema \
+                    information not being available."
+                );
+                (None, Metadata::new_dummy(&self.known_peers))
+            }
+        }
+    }
+
+    fn update_known_peers(&mut self, peers: &[Peer]) {
+        let host_filter = self.opener.host_filter.as_ref();
+        self.known_peers = peers
+            .iter()
+            .filter(|peer| host_filter.is_none_or(|f| f.accept(peer)))
+            .map(|peer| UntranslatedEndpoint::Peer(peer.to_peer_endpoint()))
+            .collect();
+
+        // Check if the host filter isn't accidentally too restrictive,
+        // and print an error message about this fact
+        if !peers.is_empty() && self.known_peers.is_empty() {
+            error!(
+                node_ips = tracing::field::display(
+                    peers.iter().map(|peer| peer.address).safe_format(", ")
+                ),
+                "The host filter rejected all nodes in the cluster, \
+                no connections that can serve user queries have been \
+                established. The session cannot serve any queries!"
+            )
+        }
+    }
+
+    /// The locality of the node `metadata` was fetched from, i.e. of the
+    /// control connection it was fetched on. A node of unknown location is
+    /// remote.
+    pub(super) fn locality_of_cc_node(&self, metadata: &Metadata) -> Locality {
+        let node = metadata.fetched_from_peer();
+        Locality::of_location(
+            node.and_then(|node| node.datacenter.as_deref()),
+            node.and_then(|node| node.rack.as_deref()),
+            &self.node_location_preference,
+        )
+    }
+
+    /// Prepares an attempt to move the control connection, whose node is of
+    /// `current` locality, to a known peer of better locality. Returns `None`
+    /// if there is no such peer.
+    ///
+    /// The attempt borrows nothing, so it can run while the establisher is in
+    /// use. Its result is to be [applied](Self::apply_relocation) to the
+    /// establisher.
+    pub(super) fn relocation_attempt<F: FetchOnCandidate + 'static>(
+        &self,
+        current: Locality,
+        mut fetcher: F,
+    ) -> Option<impl Future<Output = RelocationResult<F::Payload>> + use<F>> {
+        let mut candidates: Vec<_> = self
+            .known_peers
+            .iter()
+            .filter(|peer| Locality::of_endpoint(peer, &self.node_location_preference) < current)
+            .cloned()
+            .collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        order_peers_for_cc(&mut candidates, &self.node_location_preference);
+
+        let opener = Arc::clone(&self.opener);
+        Some(async move {
+            RelocationResult(
+                opener
+                    .try_establish_on_nodes(false, candidates.into_iter(), &mut fetcher)
+                    .await,
+            )
+        })
+    }
+
+    /// Updates `known_peers` from the topology that a
+    /// [relocation attempt](Self::relocation_attempt) fetched. Returns the
+    /// control connection it established, with the payload and the metadata
+    /// fetched on it, or `None` if the attempt failed.
+    ///
+    /// The topology fetched on nodes rejected by the host filter is applied as
+    /// well: the host filter rejected them by what they report about
+    /// themselves, so their own view of the topology drops them from the known
+    /// peers. They are tried again only once the current control connection
+    /// fetches a topology that lists them as accepted by the host filter. That
+    /// takes nodes that disagree about the rejected ones, an extremely weird
+    /// misconfiguration, so one retry per such topology fetch is fine.
+    pub(super) fn apply_relocation<P>(
+        &mut self,
+        result: RelocationResult<P>,
+    ) -> Option<(ControlConnection, ControlConnectionEvents, P, Metadata)> {
+        let Ok(outcome) = result.0 else {
+            return None;
+        };
+        // The attempt is not initial, so the metadata is never dummy.
+        let (kept, metadata) = self.apply_outcome(outcome);
+        kept.map(|(cc, events, payload)| (cc, events, payload, metadata))
+    }
+}
+
+impl ControlConnectionOpener {
     /// Tries to establish a control connection and fetch metadata (through the
     /// caller-provided `fetch`) on each node from the given iterator.
     ///
-    /// Returns the first working, host-filter-accepted control connection
-    /// together with its metadata and the payload `fetch` produced on it. Two
-    /// situations yield metadata but no control connection (`Ok((None, metadata))`):
-    /// - every node that could be queried is rejected by the host filter — the
-    ///   metadata is valid cluster-wide, but none of the connections may be kept;
-    /// - `initial` is true and a connection was established but its metadata fetch
-    ///   failed — dummy metadata is returned so the session can still start.
+    /// The fetched topology is returned for the caller to apply to the
+    /// establisher.
     ///
     /// Returns `Err(None)` if the iterator was empty (no connection was ever
     /// attempted), or `Err(Some(err))` with the most recent error otherwise.
     #[expect(clippy::result_large_err)] // The `Option` in Err variant causes the ignore in `clippy.toml` to not work here.
     async fn try_establish_on_nodes<F: FetchOnCandidate>(
-        &mut self,
+        &self,
         initial: bool,
         nodes: impl Iterator<Item = UntranslatedEndpoint>,
         fetcher: &mut F,
-    ) -> Result<
-        (
-            Option<(ControlConnection, ControlConnectionEvents, F::Payload)>,
-            Metadata,
-        ),
-        Option<MetadataError>,
-    > {
+    ) -> Result<EstablishOutcome<F::Payload>, Option<MetadataError>> {
         let mut last_err: Option<MetadataError> = None;
         // Metadata fetched from a host-filter-rejected node. It is valid cluster-wide,
         // so it is kept as a fallback in case no accepted node can be reached, while we
         // keep looking for an accepted node to host the control connection on.
-        let mut rejected_metadata: Option<Metadata> = None;
+        let mut rejected_metadata: Option<TopologyUpdateGuard> = None;
 
         for peer in nodes {
             let peer_address = peer.address();
@@ -312,20 +476,14 @@ impl ControlConnectionEstablisher {
                     if initial {
                         // The control connection was established, but the initial
                         // metadata fetch failed. Prefer any valid metadata already
-                        // obtained from a rejected node; otherwise fall back to dummy
-                        // metadata so the session can still start. Either way, drop the
-                        // control connection so it is re-established at the repair cadence.
-                        let metadata = rejected_metadata.take().unwrap_or_else(|| {
-                            warn!(
-                                error = ?err,
-                                "Initial metadata read failed, proceeding with metadata \
-                                consisting only of the initial peer list and dummy tokens. \
-                                This might result in suboptimal performance and schema \
-                                information not being available."
-                            );
-                            Metadata::new_dummy(&self.known_peers)
+                        // obtained from a rejected node; otherwise the caller falls back
+                        // to dummy metadata so the session can still start. Either way,
+                        // drop the control connection so it is re-established at the
+                        // repair cadence.
+                        return Ok(match rejected_metadata {
+                            Some(topology_update) => EstablishOutcome::Rejected(topology_update),
+                            None => EstablishOutcome::InitialFetchFailed(err),
                         });
-                        return Ok((None, metadata));
                     }
                     warn!(
                         control_connection_address = %peer_address,
@@ -338,45 +496,27 @@ impl ControlConnectionEstablisher {
                 }
             };
 
-            let metadata = topology_update.apply(self);
             debug!("Fetched new metadata");
 
-            if self.is_cc_endpoint_rejected(cc.endpoint(), &metadata) {
+            if self.is_cc_endpoint_rejected(cc.endpoint(), topology_update.peek()) {
                 // The node hosting this control connection is rejected by the host
                 // filter. The metadata is valid cluster-wide, so remember it, but drop
                 // the connection and keep looking for a host-filter-accepted node.
-                rejected_metadata = Some(metadata);
+                rejected_metadata = Some(topology_update);
                 continue;
             }
 
-            return Ok((Some((cc, cc_events, payload)), metadata));
+            return Ok(EstablishOutcome::Kept {
+                cc,
+                events: cc_events,
+                payload,
+                topology_update,
+            });
         }
 
         match rejected_metadata {
-            Some(metadata) => Ok((None, metadata)),
+            Some(topology_update) => Ok(EstablishOutcome::Rejected(topology_update)),
             None => Err(last_err),
-        }
-    }
-
-    fn update_known_peers(&mut self, peers: &[Peer]) {
-        let host_filter = self.host_filter.as_ref();
-        self.known_peers = peers
-            .iter()
-            .filter(|peer| host_filter.is_none_or(|f| f.accept(peer)))
-            .map(|peer| UntranslatedEndpoint::Peer(peer.to_peer_endpoint()))
-            .collect();
-
-        // Check if the host filter isn't accidentally too restrictive,
-        // and print an error message about this fact
-        if !peers.is_empty() && self.known_peers.is_empty() {
-            error!(
-                node_ips = tracing::field::display(
-                    peers.iter().map(|peer| peer.address).safe_format(", ")
-                ),
-                "The host filter rejected all nodes in the cluster, \
-                no connections that can serve user queries have been \
-                established. The session cannot serve any queries!"
-            )
         }
     }
 
@@ -467,7 +607,7 @@ impl ControlConnectionEstablisher {
 /// guard, so that what was fetched cannot be used without the establisher
 /// updating its known peers from it first: the only way to extract the payload
 /// (full [`Metadata`], or just the peer list of a partial topology fetch) is
-/// [`apply`](Self::apply).
+/// [`apply`](Self::apply). It can only be inspected before that.
 #[must_use = "the fetched topology must be applied to the ControlConnectionEstablisher"]
 pub(super) struct TopologyUpdateGuard<T = Metadata> {
     inner: T,
@@ -476,6 +616,11 @@ pub(super) struct TopologyUpdateGuard<T = Metadata> {
 impl<T> TopologyUpdateGuard<T> {
     pub(super) fn new(inner: T) -> Self {
         Self { inner }
+    }
+
+    /// The fetched topology, to inspect before it is applied.
+    pub(super) fn peek(&self) -> &T {
+        &self.inner
     }
 }
 
@@ -506,13 +651,13 @@ impl TopologyUpdateGuard<Vec<Peer>> {
 fn order_peers_for_cc(peers: &mut [UntranslatedEndpoint], preference: &NodeLocationPreference) {
     peers.shuffle(&mut rng());
     // The sort is stable, so it keeps the shuffled order within each locality.
-    peers.sort_by_key(|peer| Locality::of(peer, preference));
+    peers.sort_by_key(|peer| Locality::of_endpoint(peer, preference));
 }
 
 /// Where a peer is with respect to a [`NodeLocationPreference`],
 /// from the most to the least preferred.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Locality {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Locality {
     /// Matches the preference fully.
     Local,
     /// In the preferred datacenter, but not in the preferred rack.
@@ -522,7 +667,7 @@ enum Locality {
 }
 
 impl Locality {
-    fn of(peer: &UntranslatedEndpoint, preference: &NodeLocationPreference) -> Self {
+    fn of_endpoint(peer: &UntranslatedEndpoint, preference: &NodeLocationPreference) -> Self {
         let (datacenter, rack) = match peer {
             UntranslatedEndpoint::Peer(PeerEndpoint {
                 datacenter, rack, ..
@@ -530,6 +675,14 @@ impl Locality {
             // Contact points are of unknown location until metadata is fetched.
             UntranslatedEndpoint::ContactPoint(_) => (None, None),
         };
+        Self::of_location(datacenter, rack, preference)
+    }
+
+    fn of_location(
+        datacenter: Option<&str>,
+        rack: Option<&str>,
+        preference: &NodeLocationPreference,
+    ) -> Self {
         let Some(preferred_datacenter) = preference.datacenter() else {
             // No preference: all nodes are local.
             return Self::Local;

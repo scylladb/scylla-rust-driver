@@ -552,7 +552,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// Nodes in the given datacenter will be treated as "local" and preferred
     /// by load balancing policies that do not override this preference.
-    /// They are also tried first when re-establishing the control connection.
+    /// The control connection, which fetches cluster metadata, is kept on one
+    /// of them too, whenever one is reachable.
     pub fn prefer_datacenter(mut self, datacenter_name: String) -> Self {
         self.config.node_location_preference = NodeLocationPreference::Datacenter(datacenter_name);
         self
@@ -562,8 +563,10 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// Nodes in the given rack of the given datacenter are tried first,
     /// followed by other nodes in the same datacenter, and then remote nodes.
-    /// This preference is used by load balancing policies that do not override it,
-    /// and when re-establishing the control connection.
+    /// This preference is used by load balancing policies that do not override it.
+    /// The control connection, which fetches cluster metadata, follows it too: it
+    /// is kept on a node in the given rack whenever one is reachable, or else on a
+    /// node in the given datacenter whenever one is reachable.
     pub fn prefer_datacenter_and_rack(
         mut self,
         datacenter_name: String,
