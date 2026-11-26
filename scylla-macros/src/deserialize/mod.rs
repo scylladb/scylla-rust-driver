@@ -147,10 +147,11 @@ fn generate_default_constraints<Field: DeserializeCommonFieldAttrs>(
 /// other lifetimes and types.
 ///
 /// The original use case is DeserializeValue and DeserializeRow. Both of those traits
-/// are parametrized with a lifetime. If T: DeserializeValue<'a> then this means
-/// that you can deserialize T as some CQL value from bytes that have
-/// lifetime 'a, similarly for DeserializeRow. In impls for those traits,
-/// an additional lifetime must be introduced and properly constrained.
+/// are parametrized with two lifetimes. If T: DeserializeValue<'frame, 'metadata> then
+/// this means that you can deserialize T as some CQL value from a frame that has
+/// lifetime 'frame, using metadata that has lifetime 'metadata, similarly for
+/// DeserializeRow. In impls for those traits, two additional lifetimes must be
+/// introduced, and the frame lifetime must be properly constrained.
 fn generate_lifetime_constraints_for_impl<'a>(
     generics: &'a syn::Generics,
     trait_full_name: syn::Path,
