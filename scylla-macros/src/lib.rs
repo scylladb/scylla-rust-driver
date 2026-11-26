@@ -23,6 +23,7 @@
 use darling::{FromMeta, ToTokens};
 use proc_macro::TokenStream;
 
+mod generics;
 mod parser;
 
 // Flavor of serialization/deserialization macros ({De,S}erialize{Value,Row}).

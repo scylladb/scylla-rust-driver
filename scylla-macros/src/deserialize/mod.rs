@@ -23,6 +23,10 @@ trait DeserializeCommonStructAttrs {
 /// Provides access to attributes that are common to DeserializeValue
 /// and DeserializeRow traits.
 trait DeserializeCommonFieldAttrs {
+    /// Does this field need to implement relevant deserialization trait?
+    /// Generally only false for skipped fields.
+    fn needs_deserialization_impl(&self) -> bool;
+
     /// Does the type of this field need Default to be implemented?
     fn needs_default(&self) -> bool;
 
@@ -113,6 +117,7 @@ where
         let struct_name = &self.name;
         let predicates = generate_constraints_for_impl(
             &self.generics,
+            &self.fields,
             self.constraint_trait.clone(),
             frame_lifetime,
             metadata_lifetime,
@@ -155,12 +160,13 @@ fn generate_default_constraints<Field: DeserializeCommonFieldAttrs>(
 ///
 /// The other use case is generics: if struct has type parameter T, then without any
 /// additional constraints Rust won't be able to verify the impl.
-fn generate_constraints_for_impl<'a>(
+fn generate_constraints_for_impl<'a, Field: DeserializeCommonFieldAttrs>(
     generics: &'a syn::Generics,
+    fields: &'a [Field],
     trait_full_name: syn::Path,
     frame_lifetime: &'a syn::Lifetime,
     metadata_lifetime: &'a syn::Lifetime,
-) -> impl Iterator<Item = syn::WherePredicate> + use<'a> {
+) -> impl Iterator<Item = syn::WherePredicate> + use<'a, Field> {
     // Constrain the new lifetime with the existing lifetime parameters
     //     'frame_lifetime: 'a + 'b + 'c ...
     let mut lifetimes = generics.lifetimes().map(|l| &l.lifetime).peekable();
@@ -172,12 +178,16 @@ fn generate_constraints_for_impl<'a>(
             .then::<syn::WherePredicate, _>(|| parse_quote!(#frame_lifetime: #(#lifetimes)+*))
     });
 
-    // For each type parameter T, constrain it like this:
-    //     T: DeserializeValue<'frame_lifetime, 'metadata_lifetime>,
-    let type_constraints = generics.type_params().map(move |t| {
-        let t_ident = &t.ident;
-        parse_quote!(#t_ident: #trait_full_name<#frame_lifetime, #metadata_lifetime>)
-    });
+    // Constrain the fields that need it like this:
+    //     FieldType: DeserializeValue<'frame_lifetime, 'metadata_lifetime>,
+    let type_constraints = crate::generics::field_bounds(
+        generics,
+        fields
+            .iter()
+            .filter(|f| f.needs_deserialization_impl())
+            .map(|f| f.deserialize_target()),
+        parse_quote!(#trait_full_name<#frame_lifetime, #metadata_lifetime>),
+    );
 
     // The struct may already have some `where` constraints
     // on its definition. We should copy them to the impl.
