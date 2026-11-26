@@ -2397,7 +2397,6 @@ impl Session {
 
     /// Like [`Session::get_keyspace`], but borrows instead of cloning the `Arc`.
     /// Unlike it, also tells whether the name is case sensitive.
-    #[expect(dead_code)]
     pub(crate) fn load_keyspace(&self) -> arc_swap::Guard<Option<Arc<VerifiedKeyspaceName>>> {
         self.keyspace_name.load()
     }

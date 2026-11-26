@@ -467,8 +467,7 @@ async fn test_caching_session_statement_cache() {
     }
 }
 
-/// Cached prepared statements are currently reused after the session's keyspace changes.
-/// Assertions marked `BUG` document the wrong behavior.
+/// Cached prepared statements must not be reused after the session's keyspace changes.
 #[tokio::test]
 async fn test_caching_session_keyspace_change() {
     setup_tracing();
@@ -525,8 +524,7 @@ async fn test_caching_session_keyspace_change() {
         .use_keyspace(&ks_b, false)
         .await
         .unwrap();
-    // BUG: the statement cached for keyspace A is reused, so this should be 2.
-    assert_eq!(select_v(unqualified).await, 1);
+    assert_eq!(select_v(unqualified).await, 2);
 
     // Switch back.
     session
@@ -542,8 +540,7 @@ async fn test_caching_session_keyspace_change() {
         .query_unpaged(format!("USE {ks_b}"), ())
         .await
         .unwrap();
-    // BUG: same as above, this should be 2.
-    assert_eq!(select_v(unqualified).await, 1);
+    assert_eq!(select_v(unqualified).await, 2);
 
     // Switch between keyspaces whose names differ only in case.
     session
@@ -557,8 +554,7 @@ async fn test_caching_session_keyspace_change() {
         .use_keyspace(&ks_c, true)
         .await
         .unwrap();
-    // BUG: the statement cached for the case insensitive keyspace is reused, this should be 3.
-    assert_eq!(select_v(unqualified).await, 1);
+    assert_eq!(select_v(unqualified).await, 3);
 
     // Statement with an explicit keyspace. The value returned is the same either way, so check
     // that it gets prepared again after a switch by comparing statement ids (ScyllaDB only).
@@ -589,8 +585,7 @@ async fn test_caching_session_keyspace_change() {
     // Since CASSANDRA-15252 Cassandra leaves the session keyspace out of the id of a statement
     // with an explicit keyspace, so the ids are equal there.
     if !cfg!(cassandra_tests) {
-        // BUG: the statement cached for keyspace A is reused, so the ids should differ.
-        assert_eq!(id_in_b, id_in_a);
+        assert_ne!(id_in_b, id_in_a);
     }
     session
         .get_session()
@@ -609,8 +604,7 @@ async fn test_caching_session_keyspace_change() {
         .await
         .unwrap();
     session.batch(&batch, ((),)).await.unwrap();
-    // BUG: the cached batch is reused, so it writes to A again and B gets no row (should be 1).
-    for (ks, expected) in [(&ks_a, 1), (&ks_b, 0)] {
+    for (ks, expected) in [(&ks_a, 1), (&ks_b, 1)] {
         let rows = session
             .get_session()
             .query_unpaged(format!("SELECT v FROM {ks}.t WHERE k = 1"), ())
