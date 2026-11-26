@@ -343,6 +343,65 @@ macro_rules! test_crate {
             #[scylla(default_when_null)]
             d: ::core::primitive::i32,
         }
+
+        // Test generic structs
+        trait MyTrait {}
+
+        #[derive(
+            _scylla::DeserializeRow,
+            _scylla::SerializeRow,
+            _scylla::DeserializeValue,
+            _scylla::SerializeValue,
+            Debug,
+            PartialEq,
+        )]
+        #[scylla(crate = _scylla)]
+        #[expect(dead_code)]
+        struct GenericStruct<'a, 'b, T, U>
+        where
+            'b: 'a,
+            T: MyTrait,
+        {
+            a: &'a ::core::primitive::str,
+            b: &'b ::core::primitive::str,
+            c: T,
+            #[scylla(skip)]
+            d: U,
+        }
+
+        #[derive(
+            _scylla::DeserializeRow,
+            _scylla::SerializeRow,
+            _scylla::DeserializeValue,
+            _scylla::SerializeValue,
+            Debug,
+            PartialEq,
+        )]
+        #[scylla(crate = _scylla, flavor = "enforce_order")]
+        #[expect(dead_code)]
+        struct GenericStructOrdered<'a, 'b: 'a, T: MyTrait, U> {
+            a: &'a ::core::primitive::str,
+            b: &'b ::core::primitive::str,
+            c: T,
+            #[scylla(skip)]
+            d: U,
+        }
+
+        #[derive(_scylla::SerializeRow)]
+        #[scylla(crate = _scylla)]
+        #[expect(dead_code)]
+        struct GenericFlattenByName<T> {
+            #[scylla(flatten)]
+            inner: T,
+        }
+
+        #[derive(_scylla::SerializeRow)]
+        #[scylla(crate = _scylla, flavor = "enforce_order")]
+        #[expect(dead_code)]
+        struct GenericFlattenOrdered<T> {
+            #[scylla(flatten)]
+            inner: T,
+        }
     };
 }
 
