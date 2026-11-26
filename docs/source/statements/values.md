@@ -9,7 +9,8 @@ Each `?` in statement text will be filled with the matching value.
 Each list of values to send must implement the trait `SerializeRow`.
 
 By default this can be a slice `&[]`, a tuple `()` (max 16 elements) of values to send,
-or a custom struct which derives from `SerializeRow`.
+or a custom struct which derives from `SerializeRow`. The struct can also be generic,
+see the `SerializeRow` macro documentation for the requirements on its fields.
 
 A few examples:
 ```rust
