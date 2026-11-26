@@ -2386,6 +2386,17 @@ mod derive_macros_integration {
                 a: std::borrow::Cow<'a, T>,
             }
 
+            // Checks that the struct generated for the `match_by_name` flavor
+            // uses the generic parameters that only skipped fields use.
+            #[derive(SerializeRow)]
+            #[scylla(crate = crate)]
+            #[expect(dead_code)]
+            struct TestRowWithParamsUsedOnlyBySkippedField<'a, T> {
+                a: i32,
+                #[scylla(skip)]
+                b: &'a T,
+            }
+
             #[derive(SerializeRow, Debug, PartialEq, Eq, Default)]
             #[scylla(crate = crate)]
             struct TestRowWithColumnSorting {

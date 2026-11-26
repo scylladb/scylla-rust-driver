@@ -272,6 +272,7 @@ impl Generator for ColumnSortingGenerator<'_> {
             .collect();
         let nonflattened_types: Vec<_> = nonflattened.iter().map(|f| &f.typ).collect();
 
+        let (impl_generics, ty_generics, where_clause) = self.ctx.generics.split_for_impl();
         let partial_where_clause = &partial_generics.where_clause;
         let partial_struct: syn::ItemStruct = parse_quote! {
             pub struct #partial_struct_name #partial_generics #partial_where_clause {
@@ -280,12 +281,13 @@ impl Generator for ColumnSortingGenerator<'_> {
                 #(#flattened_visited_flag_names: bool,)*
                 #(#nonflattened_visited_flag_names: bool,)*
                 __scylla_remaining_count: usize,
+                // Uses all generic parameters, even those used only by skipped fields.
+                __scylla_phantom: ::std::marker::PhantomData<fn() -> #struct_name #ty_generics>,
             }
         };
 
         // 2. Implement serialization for the partial struct
         let nonflattened_columns: Vec<_> = nonflattened.iter().map(|f| f.column_name()).collect();
-        let (impl_generics, ty_generics, where_clause) = self.ctx.generics.split_for_impl();
         let serialize_field_block: syn::Block = if self.ctx.fields.is_empty() {
             parse_quote! {{
                 ::std::result::Result::Ok(#crate_path::ser::row::FieldStatus::NotUsed)
@@ -388,6 +390,7 @@ impl Generator for ColumnSortingGenerator<'_> {
                         #(#nonflattened_visited_flag_names: false,)*
                         #(#flattened_visited_flag_names: false,)*
                         __scylla_remaining_count: #num_fields,
+                        __scylla_phantom: ::std::marker::PhantomData,
                     }
                 }
             }
