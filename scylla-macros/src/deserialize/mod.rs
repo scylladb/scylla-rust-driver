@@ -99,8 +99,12 @@ where
         items: impl IntoIterator<Item = syn::ImplItem>,
     ) -> syn::ItemImpl {
         let (frame_lifetime, metadata_lifetime) = self.constraint_lifetimes();
+        let mut generics = self.generics.clone();
+        generics.params.insert(0, parse_quote!(#frame_lifetime));
+        generics.params.insert(1, parse_quote!(#metadata_lifetime));
+        // `split_for_impl` drops parameter defaults, which impls must not have.
+        let (impl_generics, _, _) = generics.split_for_impl();
         let (_, ty_generics, _) = self.generics.split_for_impl();
-        let impl_generics = &self.generics.params;
 
         let macro_internal = self.attrs.macro_internal_path();
         let struct_name = &self.name;
@@ -115,7 +119,7 @@ where
 
         parse_quote! {
             #[automatically_derived]
-            impl<#frame_lifetime, #metadata_lifetime, #impl_generics>
+            impl #impl_generics
                 #trait_<#frame_lifetime, #metadata_lifetime> for #struct_name #ty_generics
             where #(#predicates),*
             {

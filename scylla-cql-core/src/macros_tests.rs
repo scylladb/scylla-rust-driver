@@ -2203,6 +2203,21 @@ mod derive_macros_integration {
                     deserialize::<Udt>(&udt_typ, &bytes)
                 };
             }
+
+            #[test]
+            fn test_udt_with_generic_param_default() {
+                // Parameter defaults must not be copied to the impl.
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct Udt<const N: usize = 3> {
+                    a: i32,
+                }
+
+                let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let bytes = UdtSerializer::new().field(&42_i32.to_be_bytes()).finalize();
+                let udt = deserialize::<Udt>(&typ, &bytes).unwrap();
+                assert_eq!(udt, Udt { a: 42 });
+            }
         }
     }
 
@@ -3882,6 +3897,21 @@ mod derive_macros_integration {
 
                     deserialize::<MyRow>(row_typ, &bytes)
                 };
+            }
+
+            #[test]
+            fn test_row_with_generic_param_default() {
+                // Parameter defaults must not be copied to the impl.
+                #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct MyRow<const N: usize = 3> {
+                    a: i32,
+                }
+
+                let specs = &[spec("a", ColumnType::Native(NativeType::Int))];
+                let bytes = serialize_cells([val_int(42)]);
+                let row = deserialize::<MyRow>(specs, &bytes).unwrap();
+                assert_eq!(row, MyRow { a: 42 });
             }
         }
     }
