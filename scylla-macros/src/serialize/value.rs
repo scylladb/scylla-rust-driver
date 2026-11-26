@@ -425,11 +425,11 @@ impl Generator for FieldSortingGenerator<'_> {
         });
 
         parse_quote! {
-            fn serialize<'b>(
+            fn serialize<'_scylla_ser_value_writer_buffer>(
                 &self,
                 typ: &#crate_path::ColumnType,
-                writer: #crate_path::CellWriter<'b>,
-            ) -> ::std::result::Result<#crate_path::WrittenCellProof<'b>, #crate_path::SerializationError> {
+                writer: #crate_path::CellWriter<'_scylla_ser_value_writer_buffer>,
+            ) -> ::std::result::Result<#crate_path::WrittenCellProof<'_scylla_ser_value_writer_buffer>, #crate_path::SerializationError> {
                 #(#statements)*
                 let proof = #crate_path::CellValueBuilder::finish(builder)
                     .map_err(|_| #crate_path::SerializationError::new(
@@ -545,11 +545,11 @@ impl Generator for FieldOrderedGenerator<'_> {
         }
 
         parse_quote! {
-            fn serialize<'b>(
+            fn serialize<'_scylla_ser_value_writer_buffer>(
                 &self,
                 typ: &#crate_path::ColumnType,
-                writer: #crate_path::CellWriter<'b>,
-            ) -> ::std::result::Result<#crate_path::WrittenCellProof<'b>, #crate_path::SerializationError> {
+                writer: #crate_path::CellWriter<'_scylla_ser_value_writer_buffer>,
+            ) -> ::std::result::Result<#crate_path::WrittenCellProof<'_scylla_ser_value_writer_buffer>, #crate_path::SerializationError> {
                 #(#statements)*
                 let proof = #crate_path::CellValueBuilder::finish(builder)
                     .map_err(|_| #crate_path::SerializationError::new(

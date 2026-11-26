@@ -281,6 +281,22 @@ mod derive_macros_integration {
             #[scylla(crate = crate)]
             struct TestUdtWithNoFields {}
 
+            // Checks that the lifetime of the generated `serialize` method
+            // doesn't clash with the struct's lifetime.
+            #[expect(unused)]
+            #[derive(SerializeValue)]
+            #[scylla(crate = crate)]
+            struct TestUdtWithLifetimeNamedB<'b> {
+                a: &'b str,
+            }
+
+            #[expect(unused)]
+            #[derive(SerializeValue)]
+            #[scylla(crate = crate, flavor = "enforce_order")]
+            struct TestUdtWithLifetimeNamedBEnforcedOrder<'b> {
+                a: &'b str,
+            }
+
             #[derive(SerializeValue, Debug, PartialEq, Eq, Default)]
             #[scylla(crate = crate)]
             struct TestUdtWithFieldSorting {
