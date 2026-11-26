@@ -2312,13 +2312,13 @@ impl Session {
         case_sensitive: bool,
     ) -> Result<(), UseKeyspaceError> {
         let keyspace_name = keyspace_name.into();
-        self.keyspace_name
-            .store(Some(Arc::new(keyspace_name.clone())));
 
         // Trying to pass keyspace as bound value in "USE ?" doesn't work
         // So we have to create a string for query: "USE " + new_keyspace
         // To avoid any possible CQL injections it's good to verify that the name is valid
-        let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name, case_sensitive)?;
+        let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name.clone(), case_sensitive)?;
+
+        self.keyspace_name.store(Some(Arc::new(keyspace_name)));
 
         self.cluster.use_keyspace(verified_ks_name).await
     }

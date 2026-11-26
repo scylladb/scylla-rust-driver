@@ -83,6 +83,9 @@ async fn test_use_keyspace() {
         ))
     ));
 
+    // Rejected keyspaces must not change the current keyspace.
+    assert_eq!(session.get_keyspace().as_deref(), Some(&ks));
+
     // Make sure that use_keyspace on SessionBuiler works
     let session2: Session = create_new_session_builder()
         .use_keyspace(ks.clone(), false)
