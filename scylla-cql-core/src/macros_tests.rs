@@ -2374,6 +2374,18 @@ mod derive_macros_integration {
                 remaining_count: i32,
             }
 
+            // Checks that the `where` clause is copied to the struct generated
+            // for the `match_by_name` flavor: `Cow<T>` requires `T: ToOwned`.
+            #[derive(SerializeRow)]
+            #[scylla(crate = crate)]
+            #[expect(dead_code)]
+            struct TestRowWithWhereClause<'a, T>
+            where
+                T: SerializeValue + ToOwned,
+            {
+                a: std::borrow::Cow<'a, T>,
+            }
+
             #[derive(SerializeRow, Debug, PartialEq, Eq, Default)]
             #[scylla(crate = crate)]
             struct TestRowWithColumnSorting {
