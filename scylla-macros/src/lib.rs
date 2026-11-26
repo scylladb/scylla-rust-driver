@@ -155,6 +155,20 @@ mod serialize;
 ///
 /// Don't use the field during serialization.
 ///
+/// # Generic structs
+///
+/// Generic structs are supported. The generated impl requires each field type that
+/// mentions a type or const parameter to implement `SerializeValue`, e.g. a field
+/// `a: T` requires `T: SerializeValue`.
+///
+/// Field types are required to implement the trait instead of type parameters, so that
+/// a field like `Wrapper<T>` works even if `T` doesn't implement it. Skipped fields
+/// don't need to implement it.
+///
+/// Because of limitations of the Rust trait solver, this doesn't work for recursive
+/// structs, e.g. with a field of type `Option<Box<MyUdt<T>>>`, or for two fields
+/// whose types mention a type or const parameter and differ only in lifetimes,
+/// e.g. `&'a T` and `&'b T`.
 #[proc_macro_derive(SerializeValue, attributes(scylla))]
 pub fn serialize_value_derive(tokens_input: TokenStream) -> TokenStream {
     match serialize::value::derive_serialize_value(tokens_input) {
@@ -267,6 +281,22 @@ pub fn serialize_value_derive(tokens_input: TokenStream) -> TokenStream {
 ///
 /// Note that the name of this field is ignored and hence the `rename` attribute does not make sense
 /// here and will cause a compilation error.
+///
+/// # Generic structs
+///
+/// Generic structs are supported. The generated impl requires each field type that
+/// mentions a type or const parameter to implement `SerializeValue`, e.g. a field
+/// `a: T` requires `T: SerializeValue`.
+/// If such a field is flattened, its type must instead derive `SerializeRow` with
+/// the same flavor.
+///
+/// Field types are required to implement the trait instead of type parameters, so that
+/// a field like `Wrapper<T>` works even if `T` doesn't implement it. Skipped fields
+/// don't need to implement it.
+///
+/// Because of limitations of the Rust trait solver, this doesn't work for two fields
+/// whose types mention a type or const parameter and differ only in lifetimes,
+/// e.g. `&'a T` and `&'b T`.
 #[proc_macro_derive(SerializeRow, attributes(scylla))]
 pub fn serialize_row_derive(tokens_input: TokenStream) -> TokenStream {
     match serialize::row::derive_serialize_row(tokens_input) {
@@ -396,6 +426,20 @@ mod deserialize;
 /// By default, the generated implementation will try to match the Rust field
 /// to a column with the same name. This attribute allows to match to a column
 /// with provided name.
+///
+/// # Generic structs
+///
+/// Generic structs are supported. The generated impl requires each field type that
+/// mentions a type or const parameter to implement `DeserializeValue`, e.g. a field
+/// `a: T` requires `T: DeserializeValue`.
+///
+/// Field types are required to implement the trait instead of type parameters, so that
+/// a field like `Wrapper<T>` works even if `T` doesn't implement it. Skipped fields
+/// don't need to implement it.
+///
+/// Because of limitations of the Rust trait solver, this doesn't work for two fields
+/// whose types mention a type or const parameter and differ only in lifetimes,
+/// e.g. `&'a T` and `&'b T`.
 #[proc_macro_derive(DeserializeRow, attributes(scylla))]
 pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
     match deserialize::row::deserialize_row_derive(tokens_input) {
@@ -524,6 +568,21 @@ pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
 /// By default, the generated implementation will try to match the Rust field
 /// to a UDT field with the same name. This attribute instead allows to match
 /// to a UDT field with provided name.
+///
+/// # Generic structs
+///
+/// Generic structs are supported. The generated impl requires each field type that
+/// mentions a type or const parameter to implement `DeserializeValue`, e.g. a field
+/// `a: T` requires `T: DeserializeValue`.
+///
+/// Field types are required to implement the trait instead of type parameters, so that
+/// a field like `Wrapper<T>` works even if `T` doesn't implement it. Skipped fields
+/// don't need to implement it.
+///
+/// Because of limitations of the Rust trait solver, this doesn't work for recursive
+/// structs, e.g. with a field of type `Option<Box<MyUdt<T>>>`, or for two fields
+/// whose types mention a type or const parameter and differ only in lifetimes,
+/// e.g. `&'a T` and `&'b T`.
 #[proc_macro_derive(DeserializeValue, attributes(scylla))]
 pub fn deserialize_value_derive(tokens_input: TokenStream) -> TokenStream {
     match deserialize::value::deserialize_value_derive(tokens_input) {
