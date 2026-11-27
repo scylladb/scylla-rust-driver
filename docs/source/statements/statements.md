@@ -127,6 +127,7 @@ There is a special functionality to enable [USE keyspace](usekeyspace.md).
    result
    prepared
    bound
+   caching-session
    batch
    paged
    usekeyspace
