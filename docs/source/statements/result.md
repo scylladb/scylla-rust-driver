@@ -94,6 +94,8 @@ The struct must:
 * derive `DeserializeRow`
 
 Field names don't need to match column names.
+The struct can also be generic, see the `DeserializeRow` macro documentation
+for the requirements on its fields.
 ```rust
 # extern crate scylla;
 # use scylla::client::session::Session;

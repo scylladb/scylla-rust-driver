@@ -97,7 +97,6 @@ pub(crate) fn derive_serialize_value(
     let input: syn::DeriveInput = syn::parse(tokens_input)?;
     let struct_name = input.ident.clone();
     let named_fields = crate::parser::parse_named_fields(&input, "SerializeValue")?;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let attributes = Attributes::from_attributes(&input.attrs)?;
 
     let crate_path = attributes.crate_path();
@@ -126,6 +125,17 @@ pub(crate) fn derive_serialize_value(
     };
 
     let serialize_item = generator.generate_serialize();
+
+    let mut generics = input.generics.clone();
+    generics
+        .make_where_clause()
+        .predicates
+        .extend(crate::generics::field_bounds(
+            &input.generics,
+            ctx.fields.iter().map(|f| &f.typ),
+            implemented_trait.clone(),
+        ));
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let res = parse_quote! {
         #[automatically_derived]
@@ -425,11 +435,11 @@ impl Generator for FieldSortingGenerator<'_> {
         });
 
         parse_quote! {
-            fn serialize<'b>(
+            fn serialize<'_scylla_ser_value_writer_buffer>(
                 &self,
                 typ: &#crate_path::ColumnType,
-                writer: #crate_path::CellWriter<'b>,
-            ) -> ::std::result::Result<#crate_path::WrittenCellProof<'b>, #crate_path::SerializationError> {
+                writer: #crate_path::CellWriter<'_scylla_ser_value_writer_buffer>,
+            ) -> ::std::result::Result<#crate_path::WrittenCellProof<'_scylla_ser_value_writer_buffer>, #crate_path::SerializationError> {
                 #(#statements)*
                 let proof = #crate_path::CellValueBuilder::finish(builder)
                     .map_err(|_| #crate_path::SerializationError::new(
@@ -545,11 +555,11 @@ impl Generator for FieldOrderedGenerator<'_> {
         }
 
         parse_quote! {
-            fn serialize<'b>(
+            fn serialize<'_scylla_ser_value_writer_buffer>(
                 &self,
                 typ: &#crate_path::ColumnType,
-                writer: #crate_path::CellWriter<'b>,
-            ) -> ::std::result::Result<#crate_path::WrittenCellProof<'b>, #crate_path::SerializationError> {
+                writer: #crate_path::CellWriter<'_scylla_ser_value_writer_buffer>,
+            ) -> ::std::result::Result<#crate_path::WrittenCellProof<'_scylla_ser_value_writer_buffer>, #crate_path::SerializationError> {
                 #(#statements)*
                 let proof = #crate_path::CellValueBuilder::finish(builder)
                     .map_err(|_| #crate_path::SerializationError::new(

@@ -1,4 +1,74 @@
 mod derive_macros_integration {
+    use std::marker::PhantomData;
+
+    use crate::deserialize::value::DeserializeValue;
+    use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+    use crate::frame::response::result::ColumnType;
+    use crate::serialize::SerializationError;
+    use crate::serialize::value::SerializeValue;
+    use crate::serialize::writers::{CellWriter, WrittenCellProof};
+
+    /// An `i32` whose trait impls don't require anything from `T`.
+    ///
+    /// A generic struct with an `AlwaysInt<T>` field must not require `T` to
+    /// implement the traits.
+    #[derive(PartialEq, Eq, Debug)]
+    struct AlwaysInt<T>(i32, PhantomData<T>);
+
+    impl<'frame, 'metadata, T> DeserializeValue<'frame, 'metadata> for AlwaysInt<T> {
+        fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+            <i32 as DeserializeValue>::type_check(typ)
+        }
+
+        fn deserialize(
+            typ: &'metadata ColumnType<'metadata>,
+            v: Option<FrameSlice<'frame>>,
+        ) -> Result<Self, DeserializationError> {
+            let value = <i32 as DeserializeValue>::deserialize(typ, v)?;
+            Ok(AlwaysInt(value, PhantomData))
+        }
+    }
+
+    impl<T> SerializeValue for AlwaysInt<T> {
+        fn serialize<'b>(
+            &self,
+            typ: &ColumnType,
+            writer: CellWriter<'b>,
+        ) -> Result<WrittenCellProof<'b>, SerializationError> {
+            self.0.serialize(typ, writer)
+        }
+    }
+
+    /// An `i32` whose trait impls exist only for `N = 1`.
+    ///
+    /// A generic struct with an `IntIfOne<N>` field must require the field type
+    /// to implement the traits.
+    #[derive(PartialEq, Eq, Debug)]
+    struct IntIfOne<const N: usize>(i32);
+
+    impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for IntIfOne<1> {
+        fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+            <i32 as DeserializeValue>::type_check(typ)
+        }
+
+        fn deserialize(
+            typ: &'metadata ColumnType<'metadata>,
+            v: Option<FrameSlice<'frame>>,
+        ) -> Result<Self, DeserializationError> {
+            <i32 as DeserializeValue>::deserialize(typ, v).map(IntIfOne)
+        }
+    }
+
+    impl SerializeValue for IntIfOne<1> {
+        fn serialize<'b>(
+            &self,
+            typ: &ColumnType,
+            writer: CellWriter<'b>,
+        ) -> Result<WrittenCellProof<'b>, SerializationError> {
+            self.0.serialize(typ, writer)
+        }
+    }
+
     mod value {
 
         use std::borrow::Cow;
@@ -280,6 +350,22 @@ mod derive_macros_integration {
             #[derive(SerializeValue)]
             #[scylla(crate = crate)]
             struct TestUdtWithNoFields {}
+
+            // Checks that the lifetime of the generated `serialize` method
+            // doesn't clash with the struct's lifetime.
+            #[expect(unused)]
+            #[derive(SerializeValue)]
+            #[scylla(crate = crate)]
+            struct TestUdtWithLifetimeNamedB<'b> {
+                a: &'b str,
+            }
+
+            #[expect(unused)]
+            #[derive(SerializeValue)]
+            #[scylla(crate = crate, flavor = "enforce_order")]
+            struct TestUdtWithLifetimeNamedBEnforcedOrder<'b> {
+                a: &'b str,
+            }
 
             #[derive(SerializeValue, Debug, PartialEq, Eq, Default)]
             #[scylla(crate = crate)]
@@ -1213,6 +1299,156 @@ mod derive_macros_integration {
                 let udt = do_serialize(value, &typ);
 
                 assert_eq!(reference, udt);
+            }
+
+            #[test]
+            fn test_udt_serialization_generic_struct_without_bounds() {
+                // Fields that don't mention a type parameter must not be bounded:
+                // `&'a str: SerializeValue` and `&'b str: SerializeValue` would
+                // be ambiguous.
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Udt<'a, 'b, T, U> {
+                    a: &'a str,
+                    b: &'b str,
+                    c: T,
+                    d: U,
+                }
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct UdtWithEnforcedOrder<'a, 'b, T, U> {
+                    a: &'a str,
+                    b: &'b str,
+                    c: T,
+                    d: U,
+                }
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Reference {
+                    a: &'static str,
+                    b: &'static str,
+                    c: i32,
+                    d: i64,
+                }
+
+                let typ = super::udt_def_with_fields([
+                    ("a", ColumnType::Native(NativeType::Text)),
+                    ("b", ColumnType::Native(NativeType::Text)),
+                    ("c", ColumnType::Native(NativeType::Int)),
+                    ("d", ColumnType::Native(NativeType::BigInt)),
+                ]);
+                let reference = do_serialize(
+                    Reference {
+                        a: "Ala",
+                        b: "kota",
+                        c: 1,
+                        d: 2,
+                    },
+                    &typ,
+                );
+                let udt = Udt {
+                    a: "Ala",
+                    b: "kota",
+                    c: 1_i32,
+                    d: 2_i64,
+                };
+                assert_eq!(do_serialize(udt, &typ), reference);
+                let udt = UdtWithEnforcedOrder {
+                    a: "Ala",
+                    b: "kota",
+                    c: 1_i32,
+                    d: 2_i64,
+                };
+                assert_eq!(do_serialize(udt, &typ), reference);
+            }
+
+            #[test]
+            fn test_udt_serialization_generic_wrapper_field() {
+                // `AlwaysInt<T>` implements `SerializeValue` for every `T`, so
+                // `Udt<T>` must not require `T: SerializeValue`.
+                use super::super::AlwaysInt;
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Udt<T> {
+                    a: AlwaysInt<T>,
+                }
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Reference {
+                    a: i32,
+                }
+
+                struct NotSerializable;
+
+                let typ = super::udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let udt = Udt::<NotSerializable> {
+                    a: AlwaysInt(42, std::marker::PhantomData),
+                };
+                assert_eq!(
+                    do_serialize(udt, &typ),
+                    do_serialize(Reference { a: 42 }, &typ)
+                );
+            }
+
+            #[test]
+            fn test_udt_serialization_generic_const_param() {
+                // `IntIfOne<N>` implements `SerializeValue` only for some `N`,
+                // so `Udt<N>` must require it.
+                use super::super::IntIfOne;
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Udt<const N: usize> {
+                    a: IntIfOne<N>,
+                }
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Reference {
+                    a: i32,
+                }
+
+                let typ = super::udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let udt = Udt::<1> { a: IntIfOne(42) };
+                assert_eq!(
+                    do_serialize(udt, &typ),
+                    do_serialize(Reference { a: 42 }, &typ)
+                );
+            }
+
+            #[test]
+            fn test_udt_serialization_generic_skipped_field() {
+                // Skipped fields are not serialized, so `Udt<T>` must not
+                // require `T: SerializeValue`.
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Udt<T> {
+                    a: i32,
+                    #[scylla(skip)]
+                    _b: T,
+                }
+
+                #[derive(SerializeValue)]
+                #[scylla(crate = crate)]
+                struct Reference {
+                    a: i32,
+                }
+
+                struct NotSerializable;
+
+                let typ = super::udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let udt = Udt {
+                    a: 42,
+                    _b: NotSerializable,
+                };
+                assert_eq!(
+                    do_serialize(udt, &typ),
+                    do_serialize(Reference { a: 42 }, &typ)
+                );
             }
         }
 
@@ -2187,6 +2423,271 @@ mod derive_macros_integration {
                     deserialize::<Udt>(&udt_typ, &bytes)
                 };
             }
+
+            #[test]
+            fn test_udt_with_generic_param_default() {
+                // Parameter defaults must not be copied to the impl.
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct Udt<const N: usize = 3> {
+                    a: i32,
+                }
+
+                let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let bytes = UdtSerializer::new().field(&42_i32.to_be_bytes()).finalize();
+                let udt = deserialize::<Udt>(&typ, &bytes).unwrap();
+                assert_eq!(udt, Udt { a: 42 });
+            }
+
+            #[test]
+            fn test_udt_deserialization_with_generics() {
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct Udt<'a, T, U> {
+                    a: &'a str,
+                    b: T,
+                    c: U,
+                }
+
+                let typ = udt_def_with_fields([
+                    ("a", ColumnType::Native(NativeType::Text)),
+                    ("b", ColumnType::Native(NativeType::Int)),
+                    ("c", ColumnType::Native(NativeType::BigInt)),
+                ]);
+                let bytes = UdtSerializer::new()
+                    .field("Ala ma kota".as_bytes())
+                    .field(&123_i32.to_be_bytes())
+                    .field(&456_i64.to_be_bytes())
+                    .finalize();
+                let udt = deserialize::<Udt<i32, i64>>(&typ, &bytes).unwrap();
+                assert_eq!(
+                    udt,
+                    Udt {
+                        a: "Ala ma kota",
+                        b: 123,
+                        c: 456,
+                    }
+                );
+            }
+
+            #[test]
+            fn test_udt_deserialization_with_where_clause() {
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct Udt<T>
+                where
+                    T: Copy,
+                {
+                    a: T,
+                }
+
+                let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let bytes = UdtSerializer::new().field(&42_i32.to_be_bytes()).finalize();
+                let udt = deserialize::<Udt<i32>>(&typ, &bytes).unwrap();
+                assert_eq!(udt, Udt { a: 42 });
+            }
+
+            #[test]
+            fn test_udt_deserialization_generic_wrapper_field() {
+                // `AlwaysInt<T>` implements `DeserializeValue` for every `T`, so
+                // `Udt<T>` must not require `T: DeserializeValue`.
+                use super::super::AlwaysInt;
+
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct Udt<T> {
+                    a: AlwaysInt<T>,
+                }
+
+                #[derive(PartialEq, Eq, Debug)]
+                struct NotDeserializable;
+
+                let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let bytes = UdtSerializer::new().field(&42_i32.to_be_bytes()).finalize();
+                let udt = deserialize::<Udt<NotDeserializable>>(&typ, &bytes).unwrap();
+                assert_eq!(
+                    udt,
+                    Udt {
+                        a: AlwaysInt(42, std::marker::PhantomData),
+                    }
+                );
+            }
+
+            #[test]
+            fn test_udt_deserialization_generic_const_param() {
+                // `IntIfOne<N>: DeserializeValue` and `[u8; N]: Default` hold
+                // only for some `N`, so `Udt<N>` must require them.
+                use super::super::IntIfOne;
+
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct Udt<const N: usize> {
+                    a: IntIfOne<N>,
+                    #[scylla(skip)]
+                    b: [u8; N],
+                }
+
+                let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let bytes = UdtSerializer::new().field(&42_i32.to_be_bytes()).finalize();
+                let udt = deserialize::<Udt<1>>(&typ, &bytes).unwrap();
+                assert_eq!(
+                    udt,
+                    Udt {
+                        a: IntIfOne(42),
+                        b: [0],
+                    }
+                );
+            }
+
+            #[test]
+            fn test_udt_deserialization_generic_skipped_field() {
+                // Skipped fields are not deserialized, so `Udt<T>` must only
+                // require `T: Default`.
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct Udt<T> {
+                    a: i32,
+                    #[scylla(skip)]
+                    b: T,
+                }
+
+                #[derive(Default, PartialEq, Eq, Debug)]
+                struct NotDeserializable;
+
+                let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let bytes = UdtSerializer::new().field(&42_i32.to_be_bytes()).finalize();
+                let udt = deserialize::<Udt<NotDeserializable>>(&typ, &bytes).unwrap();
+                assert_eq!(
+                    udt,
+                    Udt {
+                        a: 42,
+                        b: NotDeserializable,
+                    }
+                );
+            }
+
+            #[test]
+            fn test_udt_deserialization_generic_struct_with_lifetimes() {
+                // Fields that don't mention a type parameter must not be bounded:
+                // `&'a str: DeserializeValue` and `&'b str: DeserializeValue`
+                // would be ambiguous.
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct Udt<'a, 'b, T> {
+                    a: &'a str,
+                    b: &'b str,
+                    c: T,
+                }
+
+                let typ = udt_def_with_fields([
+                    ("a", ColumnType::Native(NativeType::Text)),
+                    ("b", ColumnType::Native(NativeType::Text)),
+                    ("c", ColumnType::Native(NativeType::Int)),
+                ]);
+                let bytes = UdtSerializer::new()
+                    .field("Ala".as_bytes())
+                    .field("kota".as_bytes())
+                    .field(&42_i32.to_be_bytes())
+                    .finalize();
+                let udt = deserialize::<Udt<i32>>(&typ, &bytes).unwrap();
+                assert_eq!(
+                    udt,
+                    Udt {
+                        a: "Ala",
+                        b: "kota",
+                        c: 42,
+                    }
+                );
+            }
+
+            #[test]
+            fn test_udt_deserialization_generic_param_name_in_path() {
+                // `inner::T` doesn't mention the type parameter `T`, so it must
+                // not be bounded: `&'a str: DeserializeValue` and
+                // `&'b str: DeserializeValue` would be ambiguous.
+                mod inner {
+                    pub(crate) type T = str;
+                }
+
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct Udt<'a, 'b, T> {
+                    a: &'a inner::T,
+                    b: &'b inner::T,
+                    c: T,
+                }
+
+                let typ = udt_def_with_fields([
+                    ("a", ColumnType::Native(NativeType::Text)),
+                    ("b", ColumnType::Native(NativeType::Text)),
+                    ("c", ColumnType::Native(NativeType::Int)),
+                ]);
+                let bytes = UdtSerializer::new()
+                    .field("Ala".as_bytes())
+                    .field("kota".as_bytes())
+                    .field(&42_i32.to_be_bytes())
+                    .finalize();
+                let udt = deserialize::<Udt<i32>>(&typ, &bytes).unwrap();
+                assert_eq!(
+                    udt,
+                    Udt {
+                        a: "Ala",
+                        b: "kota",
+                        c: 42,
+                    }
+                );
+            }
+
+            #[test]
+            fn test_udt_deserialization_skipped_fields_with_lifetimes() {
+                // Fields that don't mention a type parameter must not be bounded:
+                // `&'a str: Default` and `&'b str: Default` would be ambiguous.
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct Udt<'a, 'b> {
+                    a: i32,
+                    #[scylla(skip)]
+                    b: &'a str,
+                    #[scylla(skip)]
+                    c: &'b str,
+                }
+
+                let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let bytes = UdtSerializer::new().field(&42_i32.to_be_bytes()).finalize();
+                let udt = deserialize::<Udt>(&typ, &bytes).unwrap();
+                assert_eq!(
+                    udt,
+                    Udt {
+                        a: 42,
+                        b: "",
+                        c: ""
+                    }
+                );
+            }
+
+            #[test]
+            fn test_udt_deserialization_generic_default_when_null() {
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct Udt<T> {
+                    #[scylla(default_when_null)]
+                    a: T,
+                }
+
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct UdtWithEnforcedOrder<T> {
+                    #[scylla(default_when_null)]
+                    a: T,
+                }
+
+                let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Int))]);
+                let bytes = UdtSerializer::new().null_field().finalize();
+                let udt = deserialize::<Udt<i32>>(&typ, &bytes).unwrap();
+                assert_eq!(udt, Udt { a: 0 });
+                let udt = deserialize::<UdtWithEnforcedOrder<i32>>(&typ, &bytes).unwrap();
+                assert_eq!(udt, UdtWithEnforcedOrder { a: 0 });
+            }
         }
     }
 
@@ -2348,6 +2849,61 @@ mod derive_macros_integration {
             #[scylla(crate = crate)]
             #[expect(dead_code)]
             struct TestRowWithNoColumns {}
+
+            // Checks that the struct's fields don't clash with the fields
+            // of the struct generated for the `match_by_name` flavor.
+            #[derive(SerializeRow)]
+            #[scylla(crate = crate)]
+            #[expect(dead_code)]
+            struct TestRowWithFieldNamedRemainingCount {
+                remaining_count: i32,
+            }
+
+            // Checks that the `where` clause is copied to the struct generated
+            // for the `match_by_name` flavor: `Cow<T>` requires `T: ToOwned`.
+            #[derive(SerializeRow)]
+            #[scylla(crate = crate)]
+            #[expect(dead_code)]
+            struct TestRowWithWhereClause<'a, T>
+            where
+                T: SerializeValue + ToOwned,
+            {
+                a: std::borrow::Cow<'a, T>,
+            }
+
+            // Checks that the struct generated for the `match_by_name` flavor
+            // uses the generic parameters that only skipped fields use.
+            #[derive(SerializeRow)]
+            #[scylla(crate = crate)]
+            #[expect(dead_code)]
+            struct TestRowWithParamsUsedOnlyBySkippedField<'a, T> {
+                a: i32,
+                #[scylla(skip)]
+                b: &'a T,
+            }
+
+            trait TestMarker {}
+            impl TestMarker for TestRowWithSelf {}
+
+            trait TestProject {
+                type Value;
+            }
+            impl TestProject for TestRowWithSelf {
+                type Value = i32;
+            }
+
+            // Checks that `Self` in field types and the `where` clause refers to
+            // the derived struct, not to the struct generated for the
+            // `match_by_name` flavor.
+            #[derive(SerializeRow)]
+            #[scylla(crate = crate)]
+            #[expect(dead_code)]
+            struct TestRowWithSelf
+            where
+                Self: TestMarker,
+            {
+                a: <Self as TestProject>::Value,
+            }
 
             #[derive(SerializeRow, Debug, PartialEq, Eq, Default)]
             #[scylla(crate = crate)]
@@ -2953,6 +3509,240 @@ mod derive_macros_integration {
                 let row = do_serialize(value, &spec);
 
                 assert_eq!(reference, row);
+            }
+
+            #[test]
+            fn test_row_serialization_generic_struct_without_bounds() {
+                // Fields that don't mention a type parameter must not be bounded:
+                // `&'a str: SerializeValue` and `&'b str: SerializeValue` would
+                // be ambiguous.
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct MyRow<'a, 'b, T, U> {
+                    a: &'a str,
+                    b: &'b str,
+                    c: T,
+                    d: U,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct MyRowWithEnforcedOrder<'a, 'b, T, U> {
+                    a: &'a str,
+                    b: &'b str,
+                    c: T,
+                    d: U,
+                }
+
+                let spec = [
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Text)),
+                    spec("c", ColumnType::Native(NativeType::Int)),
+                    spec("d", ColumnType::Native(NativeType::BigInt)),
+                ];
+                let reference = do_serialize(("Ala", "kota", 1_i32, 2_i64), &spec);
+                let row = MyRow {
+                    a: "Ala",
+                    b: "kota",
+                    c: 1_i32,
+                    d: 2_i64,
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+                let row = MyRowWithEnforcedOrder {
+                    a: "Ala",
+                    b: "kota",
+                    c: 1_i32,
+                    d: 2_i64,
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+            }
+
+            #[test]
+            fn test_row_serialization_generic_wrapper_field() {
+                // `AlwaysInt<T>` implements `SerializeValue` for every `T`, so
+                // `MyRow<T>` must not require `T: SerializeValue`.
+                use super::super::AlwaysInt;
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct MyRow<T> {
+                    a: AlwaysInt<T>,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct MyRowWithEnforcedOrder<T> {
+                    a: AlwaysInt<T>,
+                }
+
+                struct NotSerializable;
+
+                let spec = [spec("a", ColumnType::Native(NativeType::Int))];
+                let reference = do_serialize((42_i32,), &spec);
+                let row = MyRow::<NotSerializable> {
+                    a: AlwaysInt(42, std::marker::PhantomData),
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+                let row = MyRowWithEnforcedOrder::<NotSerializable> {
+                    a: AlwaysInt(42, std::marker::PhantomData),
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+            }
+
+            #[test]
+            fn test_row_serialization_generic_const_param() {
+                // `IntIfOne<N>` implements `SerializeValue` only for some `N`,
+                // so `MyRow<N>` must require it.
+                use super::super::IntIfOne;
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct MyRow<const N: usize> {
+                    a: IntIfOne<N>,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct MyRowWithEnforcedOrder<const N: usize> {
+                    a: IntIfOne<N>,
+                }
+
+                let spec = [spec("a", ColumnType::Native(NativeType::Int))];
+                let reference = do_serialize((42_i32,), &spec);
+                let row = MyRow::<1> { a: IntIfOne(42) };
+                assert_eq!(do_serialize(row, &spec), reference);
+                let row = MyRowWithEnforcedOrder::<1> { a: IntIfOne(42) };
+                assert_eq!(do_serialize(row, &spec), reference);
+            }
+
+            #[test]
+            fn test_row_serialization_generic_skipped_field() {
+                // Skipped fields are not serialized, so `MyRow<T>` must not
+                // require `T: SerializeValue`.
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct MyRow<T> {
+                    a: i32,
+                    #[scylla(skip)]
+                    _b: T,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct MyRowWithEnforcedOrder<T> {
+                    a: i32,
+                    #[scylla(skip)]
+                    _b: T,
+                }
+
+                struct NotSerializable;
+
+                let spec = [spec("a", ColumnType::Native(NativeType::Int))];
+                let reference = do_serialize((42_i32,), &spec);
+                let row = MyRow {
+                    a: 42,
+                    _b: NotSerializable,
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+                let row = MyRowWithEnforcedOrder {
+                    a: 42,
+                    _b: NotSerializable,
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+            }
+
+            #[test]
+            fn test_row_serialization_generic_struct_with_flattened_field() {
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct Inner {
+                    b: i32,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct MyRow<T> {
+                    a: T,
+                    #[scylla(flatten)]
+                    inner: Inner,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct InnerWithEnforcedOrder {
+                    b: i32,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct MyRowWithEnforcedOrder<T> {
+                    a: T,
+                    #[scylla(flatten)]
+                    inner: InnerWithEnforcedOrder,
+                }
+
+                let spec = [
+                    spec("a", ColumnType::Native(NativeType::Int)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                ];
+                let reference = do_serialize((1_i32, 2_i32), &spec);
+                let row = MyRow {
+                    a: 1_i32,
+                    inner: Inner { b: 2 },
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+                let row = MyRowWithEnforcedOrder {
+                    a: 1_i32,
+                    inner: InnerWithEnforcedOrder { b: 2 },
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+            }
+
+            #[test]
+            fn test_row_serialization_generic_flattened_field() {
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct Inner<T> {
+                    b: T,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate)]
+                struct MyRow<T> {
+                    a: i32,
+                    #[scylla(flatten)]
+                    inner: T,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct InnerWithEnforcedOrder<T> {
+                    b: T,
+                }
+
+                #[derive(SerializeRow)]
+                #[scylla(crate = crate, flavor = "enforce_order")]
+                struct MyRowWithEnforcedOrder<T> {
+                    a: i32,
+                    #[scylla(flatten)]
+                    inner: T,
+                }
+
+                let spec = [
+                    spec("a", ColumnType::Native(NativeType::Int)),
+                    spec("b", ColumnType::Native(NativeType::BigInt)),
+                ];
+                let reference = do_serialize((1_i32, 2_i64), &spec);
+                let row = MyRow {
+                    a: 1,
+                    inner: Inner { b: 2_i64 },
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
+                let row = MyRowWithEnforcedOrder {
+                    a: 1,
+                    inner: InnerWithEnforcedOrder { b: 2_i64 },
+                };
+                assert_eq!(do_serialize(row, &spec), reference);
             }
         }
 
@@ -3811,6 +4601,205 @@ mod derive_macros_integration {
 
                     deserialize::<MyRow>(row_typ, &bytes)
                 };
+            }
+
+            #[test]
+            fn test_row_with_generic_param_default() {
+                // Parameter defaults must not be copied to the impl.
+                #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct MyRow<const N: usize = 3> {
+                    a: i32,
+                }
+
+                let specs = &[spec("a", ColumnType::Native(NativeType::Int))];
+                let bytes = serialize_cells([val_int(42)]);
+                let row = deserialize::<MyRow>(specs, &bytes).unwrap();
+                assert_eq!(row, MyRow { a: 42 });
+            }
+
+            #[test]
+            fn test_row_deserialization_with_generics() {
+                #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct MyRow<'a, T, U> {
+                    a: &'a str,
+                    b: T,
+                    c: U,
+                }
+
+                let specs = &[
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("c", ColumnType::Native(NativeType::BigInt)),
+                ];
+                let bytes = serialize_cells([
+                    val_str("Ala ma kota"),
+                    val_int(123),
+                    Some(456_i64.to_be_bytes().to_vec()),
+                ]);
+                let row = deserialize::<MyRow<i32, i64>>(specs, &bytes).unwrap();
+                assert_eq!(
+                    row,
+                    MyRow {
+                        a: "Ala ma kota",
+                        b: 123,
+                        c: 456,
+                    }
+                );
+            }
+
+            #[test]
+            fn test_row_deserialization_with_where_clause() {
+                #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct MyRow<T>
+                where
+                    T: Copy,
+                {
+                    a: T,
+                }
+
+                let specs = &[spec("a", ColumnType::Native(NativeType::Int))];
+                let bytes = serialize_cells([val_int(42)]);
+                let row = deserialize::<MyRow<i32>>(specs, &bytes).unwrap();
+                assert_eq!(row, MyRow { a: 42 });
+            }
+
+            #[test]
+            fn test_row_deserialization_generic_wrapper_field() {
+                // `AlwaysInt<T>` implements `DeserializeValue` for every `T`, so
+                // `MyRow<T>` must not require `T: DeserializeValue`.
+                use super::super::AlwaysInt;
+
+                #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct MyRow<T> {
+                    a: AlwaysInt<T>,
+                }
+
+                #[derive(PartialEq, Eq, Debug)]
+                struct NotDeserializable;
+
+                let specs = &[spec("a", ColumnType::Native(NativeType::Int))];
+                let bytes = serialize_cells([val_int(42)]);
+                let row = deserialize::<MyRow<NotDeserializable>>(specs, &bytes).unwrap();
+                assert_eq!(
+                    row,
+                    MyRow {
+                        a: AlwaysInt(42, std::marker::PhantomData),
+                    }
+                );
+            }
+
+            #[test]
+            fn test_row_deserialization_generic_const_param() {
+                // `IntIfOne<N>: DeserializeValue` and `[u8; N]: Default` hold
+                // only for some `N`, so `MyRow<N>` must require them.
+                use super::super::IntIfOne;
+
+                #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct MyRow<const N: usize> {
+                    a: IntIfOne<N>,
+                    #[scylla(skip)]
+                    b: [u8; N],
+                }
+
+                let specs = &[spec("a", ColumnType::Native(NativeType::Int))];
+                let bytes = serialize_cells([val_int(42)]);
+                let row = deserialize::<MyRow<1>>(specs, &bytes).unwrap();
+                assert_eq!(
+                    row,
+                    MyRow {
+                        a: IntIfOne(42),
+                        b: [0],
+                    }
+                );
+            }
+
+            #[test]
+            fn test_row_deserialization_generic_skipped_field() {
+                // Skipped fields are not deserialized, so `MyRow<T>` must only
+                // require `T: Default`.
+                #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct MyRow<T> {
+                    a: i32,
+                    #[scylla(skip)]
+                    b: T,
+                }
+
+                #[derive(Default, PartialEq, Eq, Debug)]
+                struct NotDeserializable;
+
+                let specs = &[spec("a", ColumnType::Native(NativeType::Int))];
+                let bytes = serialize_cells([val_int(42)]);
+                let row = deserialize::<MyRow<NotDeserializable>>(specs, &bytes).unwrap();
+                assert_eq!(
+                    row,
+                    MyRow {
+                        a: 42,
+                        b: NotDeserializable,
+                    }
+                );
+            }
+
+            #[test]
+            fn test_row_deserialization_generic_struct_with_lifetimes() {
+                // Fields that don't mention a type parameter must not be bounded:
+                // `&'a str: DeserializeValue` and `&'b str: DeserializeValue`
+                // would be ambiguous.
+                #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct MyRow<'a, 'b, T> {
+                    a: &'a str,
+                    b: &'b str,
+                    c: T,
+                }
+
+                let specs = &[
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Text)),
+                    spec("c", ColumnType::Native(NativeType::Int)),
+                ];
+                let bytes = serialize_cells([val_str("Ala"), val_str("kota"), val_int(42)]);
+                let row = deserialize::<MyRow<i32>>(specs, &bytes).unwrap();
+                assert_eq!(
+                    row,
+                    MyRow {
+                        a: "Ala",
+                        b: "kota",
+                        c: 42,
+                    }
+                );
+            }
+
+            #[test]
+            fn test_row_deserialization_skipped_fields_with_lifetimes() {
+                // Fields that don't mention a type parameter must not be bounded:
+                // `&'a str: Default` and `&'b str: Default` would be ambiguous.
+                #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct MyRow<'a, 'b> {
+                    a: i32,
+                    #[scylla(skip)]
+                    b: &'a str,
+                    #[scylla(skip)]
+                    c: &'b str,
+                }
+
+                let specs = &[spec("a", ColumnType::Native(NativeType::Int))];
+                let bytes = serialize_cells([val_int(42)]);
+                let row = deserialize::<MyRow>(specs, &bytes).unwrap();
+                assert_eq!(
+                    row,
+                    MyRow {
+                        a: 42,
+                        b: "",
+                        c: ""
+                    }
+                );
             }
         }
     }

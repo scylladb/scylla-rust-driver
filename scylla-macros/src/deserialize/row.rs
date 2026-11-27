@@ -56,6 +56,10 @@ struct Field {
 }
 
 impl DeserializeCommonFieldAttrs for Field {
+    fn needs_deserialization_impl(&self) -> bool {
+        !self.skip
+    }
+
     fn needs_default(&self) -> bool {
         self.skip || self.default_when_null
     }

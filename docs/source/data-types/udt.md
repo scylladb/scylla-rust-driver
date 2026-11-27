@@ -19,6 +19,9 @@ of the fields is not required to be the same.
 Note: you can use different name using `rename` attribute - see `SerializeValue`
 and `DeserializeValue` macros documentation.
 
+The struct can also be generic, e.g. `struct MyType<T> { int_val: i32, text_val: T }`.
+See the macros documentation for the requirements on its fields.
+
 ```rust
 # extern crate scylla;
 # async fn check_only_compiles() {

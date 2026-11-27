@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use darling::FromAttributes;
 use proc_macro::TokenStream;
-use quote::format_ident;
+use quote::{ToTokens, format_ident, quote};
 use syn::parse_quote;
 
 use crate::Flavor;
@@ -83,13 +83,12 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
     let input: syn::DeriveInput = syn::parse(tokens_input)?;
     let struct_name = input.ident.clone();
     let named_fields = crate::parser::parse_named_fields(&input, "SerializeRow")?;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let attributes = Attributes::from_attributes(&input.attrs)?;
 
     let crate_path = attributes.crate_path();
     let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeRow);
 
-    let fields = named_fields
+    let fields: Vec<Field> = named_fields
         .named
         .iter()
         .map(|f| {
@@ -103,11 +102,30 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
         // as it's less error prone - we just filter in one place instead of N places.
         .filter(|f| f.as_ref().map(|f| !f.attrs.skip).unwrap_or(true))
         .collect::<Result<_, _>>()?;
+
+    let mut generics = input.generics.clone();
+    let predicates = &mut generics.make_where_clause().predicates;
+    predicates.extend(crate::generics::field_bounds(
+        &input.generics,
+        // Flattened fields are not serialized with SerializeValue.
+        fields.iter().filter(|f| !f.attrs.flatten).map(|f| &f.typ),
+        parse_quote!(#crate_path::SerializeValue),
+    ));
+    let flattened_trait: syn::Path = match attributes.flavor {
+        Flavor::MatchByName => parse_quote!(#crate_path::SerializeRowByName),
+        Flavor::EnforceOrder => parse_quote!(#crate_path::SerializeRowInOrder),
+    };
+    predicates.extend(crate::generics::field_bounds(
+        &input.generics,
+        fields.iter().filter(|f| f.attrs.flatten).map(|f| &f.typ),
+        flattened_trait,
+    ));
+
     let ctx = Context {
         attributes,
         fields,
         struct_name: struct_name.clone(),
-        generics: input.generics.clone(),
+        generics,
     };
     ctx.validate(&input.ident)?;
 
@@ -119,6 +137,7 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
     let serialize_item = generator.generate_serialize();
     let is_empty_item = generator.generate_is_empty();
 
+    let (impl_generics, ty_generics, where_clause) = ctx.generics.split_for_impl();
     let res = parse_quote! {
         #[automatically_derived]
         impl #impl_generics #implemented_trait for #struct_name #ty_generics #where_clause {
@@ -239,6 +258,10 @@ impl Generator for ColumnSortingGenerator<'_> {
                 .for_each(|lt| {
                     lt.bounds.push(partial_lt.clone());
                 });
+            partial_generics.type_params_mut().for_each(|t| {
+                t.bounds
+                    .push(syn::TypeParamBound::Lifetime(partial_lt.clone()));
+            });
 
             // now add the partial struct lifetime
             partial_generics
@@ -272,19 +295,22 @@ impl Generator for ColumnSortingGenerator<'_> {
             .collect();
         let nonflattened_types: Vec<_> = nonflattened.iter().map(|f| &f.typ).collect();
 
+        let (impl_generics, ty_generics, where_clause) = self.ctx.generics.split_for_impl();
+        let partial_where_clause = &partial_generics.where_clause;
         let partial_struct: syn::ItemStruct = parse_quote! {
-            pub struct #partial_struct_name #partial_generics {
+            pub struct #partial_struct_name #partial_generics #partial_where_clause {
                 #(#nonflattened_fields: &#partial_lt #nonflattened_types,)*
                 #(#flattened_fields: <#flattened_types as #crate_path::SerializeRowByName>::Partial<#partial_lt>,)*
                 #(#flattened_visited_flag_names: bool,)*
                 #(#nonflattened_visited_flag_names: bool,)*
-                remaining_count: usize,
+                __scylla_remaining_count: usize,
+                // Uses all generic parameters, even those used only by skipped fields.
+                __scylla_phantom: ::std::marker::PhantomData<fn() -> #struct_name #ty_generics>,
             }
         };
 
         // 2. Implement serialization for the partial struct
         let nonflattened_columns: Vec<_> = nonflattened.iter().map(|f| f.column_name()).collect();
-        let (impl_generics, ty_generics, where_clause) = self.ctx.generics.split_for_impl();
         let serialize_field_block: syn::Block = if self.ctx.fields.is_empty() {
             parse_quote! {{
                 ::std::result::Result::Ok(#crate_path::ser::row::FieldStatus::NotUsed)
@@ -299,7 +325,7 @@ impl Generator for ColumnSortingGenerator<'_> {
                         )?;
                         if !self.#nonflattened_visited_flag_names {
                             self.#nonflattened_visited_flag_names = true;
-                            self.remaining_count -= 1;
+                            self.__scylla_remaining_count -= 1;
                         }
                     })*
                     // if not, then check if any flattened field has a column for it
@@ -310,7 +336,7 @@ impl Generator for ColumnSortingGenerator<'_> {
                                 #crate_path::ser::row::FieldStatus::Done => {
                                     if !self.#flattened_visited_flag_names {
                                         self.#flattened_visited_flag_names = true;
-                                        self.remaining_count -= 1;
+                                        self.__scylla_remaining_count -= 1;
                                     }
                                     break 'flatten_try;
                                 }
@@ -332,7 +358,7 @@ impl Generator for ColumnSortingGenerator<'_> {
 
                 // report if we are done; so that any parent struct knows if this field is done in
                 // case this field is flattened
-                ::std::result::Result::Ok(if self.remaining_count == 0 {
+                ::std::result::Result::Ok(if self.__scylla_remaining_count == 0 {
                     #crate_path::ser::row::FieldStatus::Done
                 } else {
                     #crate_path::ser::row::FieldStatus::NotDone
@@ -340,8 +366,7 @@ impl Generator for ColumnSortingGenerator<'_> {
             }}
         };
 
-        let (partial_impl_generics, partial_ty_generics, partial_where_clause) =
-            partial_generics.split_for_impl();
+        let (partial_impl_generics, partial_ty_generics, _) = partial_generics.split_for_impl();
         let partial_serialize: syn::ItemImpl = parse_quote! {
             impl #partial_impl_generics #crate_path::PartialSerializeRowByName for #partial_struct_name #partial_ty_generics #partial_where_clause {
                 fn serialize_field(
@@ -353,7 +378,7 @@ impl Generator for ColumnSortingGenerator<'_> {
                 }
 
                 fn check_missing(self) -> ::std::result::Result<(), #crate_path::SerializationError> {
-                    if self.remaining_count == 0 {
+                    if self.__scylla_remaining_count == 0 {
                         return ::std::result::Result::Ok(());
                     }
 
@@ -387,11 +412,18 @@ impl Generator for ColumnSortingGenerator<'_> {
                         #(#flattened_fields: <_ as #crate_path::SerializeRowByName>::partial(&self.#flattened_fields),)*
                         #(#nonflattened_visited_flag_names: false,)*
                         #(#flattened_visited_flag_names: false,)*
-                        remaining_count: #num_fields,
+                        __scylla_remaining_count: #num_fields,
+                        __scylla_phantom: ::std::marker::PhantomData,
                     }
                 }
             }
         };
+
+        // The partial struct and its impl have their own `Self`, so `Self` in the
+        // field types and bounds copied there must be replaced.
+        let self_type = quote!(#struct_name #ty_generics);
+        let partial_struct = replace_self(partial_struct.into_token_stream(), &self_type);
+        let partial_serialize = replace_self(partial_serialize.into_token_stream(), &self_type);
 
         // 4. Implement SerializeRow
         parse_quote! {
@@ -420,6 +452,28 @@ impl Generator for ColumnSortingGenerator<'_> {
             }
         }
     }
+}
+
+/// Replaces `Self` in `tokens` with `self_type`.
+fn replace_self(
+    tokens: proc_macro2::TokenStream,
+    self_type: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    tokens
+        .into_iter()
+        .flat_map(|token| match token {
+            proc_macro2::TokenTree::Ident(ident) if ident == "Self" => self_type.clone(),
+            proc_macro2::TokenTree::Group(group) => {
+                let mut replaced = proc_macro2::Group::new(
+                    group.delimiter(),
+                    replace_self(group.stream(), self_type),
+                );
+                replaced.set_span(group.span());
+                proc_macro2::TokenTree::Group(replaced).into()
+            }
+            token => token.into(),
+        })
+        .collect()
 }
 
 // Generates an implementation of the trait which requires the columns
