@@ -592,17 +592,16 @@ impl Tablet {
     fn update_stale_nodes(&mut self, recreated_nodes: &HashMap<Uuid, Arc<Node>>) {
         // The replica list is shared with the previous `ClusterState`, so it is
         // only copied (by `make_mut`) if there is something to replace in it.
-        let any_stale = self
-            .replicas
-            .all
-            .iter()
-            .any(|(node, _)| recreated_nodes.contains_key(&node.host_id));
+        let any_stale = self.replicas.all.iter().any(|(node, _)| {
+            recreated_nodes
+                .get(&node.host_id)
+                .is_some_and(|new_node| !Arc::ptr_eq(new_node, node))
+        });
         if !any_stale {
             return;
         }
         for (node, _) in Arc::make_mut(&mut self.replicas.all).iter_mut() {
             if let Some(new_node) = recreated_nodes.get(&node.host_id) {
-                assert!(!Arc::ptr_eq(new_node, node));
                 *node = Arc::clone(new_node);
             }
         }
@@ -2136,6 +2135,53 @@ mod tests {
             pre.perform_maintenance(&SOME_KS, removed, all, recreated);
             assert_eq!(pre, post);
         }
+    }
+
+    // A tablet with an unknown replica gets it resolved to the new `Node`
+    // objects, and in the same refresh another of its replicas is recreated.
+    // Both replicas are then already up to date.
+    #[test]
+    fn maintenance_resolved_and_recreated_replica_test() {
+        setup_tracing();
+
+        let node1 = Arc::new(Node::new_for_test(
+            Some(Uuid::from_u128(1)),
+            None,
+            Some(DC1.to_owned()),
+            None,
+        ));
+        let node2_v2 = Arc::new(Node::new_for_test(
+            Some(Uuid::from_u128(2)),
+            None,
+            Some(DC2.to_owned()),
+            None,
+        ));
+
+        let mut table_tablets = TableTablets {
+            tablet_list: vec![Tablet::new_for_test(
+                0,
+                vec![node1.clone()],
+                Some(vec![node1.host_id, node2_v2.host_id]),
+            )],
+            has_unknown_replicas: true,
+        };
+
+        table_tablets.perform_maintenance(
+            &SOME_KS,
+            &HashSet::new(),
+            &node_map(&[&node1, &node2_v2]),
+            &node_map(&[&node2_v2]),
+        );
+
+        let expected = TableTablets {
+            tablet_list: vec![Tablet::new_for_test(
+                0,
+                vec![node1.clone(), node2_v2.clone()],
+                None,
+            )],
+            has_unknown_replicas: false,
+        };
+        assert_eq!(table_tablets, expected);
     }
 
     #[test]
