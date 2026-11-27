@@ -2395,6 +2395,13 @@ impl Session {
             .map(|ks| ks.shared_name().clone())
     }
 
+    /// Like [`Session::get_keyspace`], but borrows instead of cloning the `Arc`.
+    /// Unlike it, also tells whether the name is case sensitive.
+    #[expect(dead_code)]
+    pub(crate) fn load_keyspace(&self) -> arc_swap::Guard<Option<Arc<VerifiedKeyspaceName>>> {
+        self.keyspace_name.load()
+    }
+
     /// Returns the identifier of this session.
     ///
     /// Every connection the session opens reports this value to the cluster
