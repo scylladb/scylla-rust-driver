@@ -102,7 +102,7 @@ pub struct Session {
     schema_agreement_timeout: Duration,
     schema_agreement_automatic_waiting: bool,
     refresh_metadata_on_auto_schema_agreement: bool,
-    keyspace_name: Arc<ArcSwapOption<String>>,
+    keyspace_name: Arc<ArcSwapOption<VerifiedKeyspaceName>>,
     tracing_info_fetch_attempts: NonZeroU32,
     tracing_info_fetch_interval: Duration,
     tracing_info_fetch_consistency: Consistency,
@@ -2316,9 +2316,10 @@ impl Session {
         // Trying to pass keyspace as bound value in "USE ?" doesn't work
         // So we have to create a string for query: "USE " + new_keyspace
         // To avoid any possible CQL injections it's good to verify that the name is valid
-        let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name.clone(), case_sensitive)?;
+        let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name, case_sensitive)?;
 
-        self.keyspace_name.store(Some(Arc::new(keyspace_name)));
+        self.keyspace_name
+            .store(Some(Arc::new(verified_ks_name.clone())));
 
         self.cluster.use_keyspace(verified_ks_name).await
     }
@@ -2388,7 +2389,10 @@ impl Session {
     /// if `get_keyspace` is called concurrently with `use_keyspace`.
     #[inline]
     pub fn get_keyspace(&self) -> Option<Arc<String>> {
-        self.keyspace_name.load_full()
+        self.keyspace_name
+            .load()
+            .as_ref()
+            .map(|ks| ks.shared_name().clone())
     }
 
     /// Returns the identifier of this session.
