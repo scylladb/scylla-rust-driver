@@ -353,32 +353,33 @@ impl ControlConnection {
                         NodeInfoSource::Local => peer.as_ref().map(|peer| peer.host_id),
                         NodeInfoSource::Peer => None,
                     };
-                    (peer, cluster_name, local_host_id)
+                    Ok((peer, cluster_name, local_host_id))
                 }
-                Err(err) => {
-                    warn!(
-                        "system.peers or system.local has an invalid row, skipping it: {}",
-                        err
-                    );
-                    (None, None, None)
+                // Only a row that cannot be deserialized is skipped. Other errors mean
+                // that the query failed, so the result would be incomplete.
+                Err(MetadataFetchError {
+                    error: MetadataFetchErrorKind::NextRowError(NextRowError::RowDeserializationError(err)),
+                    table,
+                }) => {
+                    warn!("{table} has an invalid row, skipping it: {err}");
+                    Ok((None, None, None))
                 }
+                Err(err) => Err(err),
             }
         });
 
         let (peers, cluster_name, local_host_id) = translated_peers_futures
             .buffer_unordered(256)
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .fold(
+            .try_fold(
                 (Vec::new(), None, None),
                 |(mut peers, cluster_name, local_host_id), (peer, name, host_id)| {
                     if let Some(peer) = peer {
                         peers.push(peer);
                     }
-                    (peers, cluster_name.or(name), local_host_id.or(host_id))
+                    future::ok((peers, cluster_name.or(name), local_host_id.or(host_id)))
                 },
-            );
+            )
+            .await?;
 
         Ok((peers, cluster_name, local_host_id))
     }

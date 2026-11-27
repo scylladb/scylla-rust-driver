@@ -170,6 +170,99 @@ async fn assert_event_triggers_only_a_topology_fetch(
     }
 }
 
+/// A failed `system.peers` query must fail the whole topology fetch, so that the
+/// driver keeps the topology it already knows. Skipping it as an invalid row
+/// would leave only the local node and make the driver drop all the others.
+#[tokio::test]
+async fn failed_peers_query_does_not_shrink_the_topology() {
+    setup_tracing();
+
+    let res = test_with_3_node_cluster(
+        ShardAwareness::QueryNode,
+        async move |proxy_uris, translation_map, mut running_proxy| {
+            let rejected_node_ip = translation_map
+                .iter()
+                .find(|(_real_addr, proxy_addr)| proxy_addr.to_string() != proxy_uris[0])
+                .map(|(real_addr, _proxy_addr)| real_addr.ip())
+                .unwrap();
+            let filter = Arc::new(SwitchableRejectFilter::for_node(rejected_node_ip));
+
+            let session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map.clone()))
+                .host_filter(Arc::clone(&filter) as Arc<dyn HostFilter>)
+                .cluster_metadata_refresh_interval(Duration::from_secs(10_000))
+                .build()
+                .await
+                .unwrap();
+            wait_until_all_nodes_are_connected(3, &session).await;
+
+            let state_before = session.get_cluster_state();
+
+            // Fail the EXECUTE of the `system.peers` statement on the control
+            // connection (the only one registered for events).
+            let (failed_peers_tx, mut failed_peers_rx) = mpsc::unbounded_channel();
+            for node in running_proxy.running_nodes.iter_mut() {
+                node.prepend_request_rules(vec![RequestRule(
+                    Condition::ConnectionRegisteredAnyEvent
+                        .and(Condition::RequestOpcode(RequestOpcode::Execute))
+                        .and(Condition::ExecutedQueryContains("system.peers".into())),
+                    RequestReaction::forge()
+                        .overloaded()
+                        .with_feedback_when_performed(failed_peers_tx.clone()),
+                )]);
+            }
+
+            // This event triggers a topology fetch, in which `system.peers` fails.
+            let event_addr = SocketAddr::from(([127, 0, 0, 1], 9042));
+            inject_topology_change_new_node(&running_proxy, event_addr);
+            failed_peers_rx.recv().await.unwrap();
+
+            // Let the next fetch succeed. The filter makes it publish a new
+            // state, so that there is something to wait for.
+            running_proxy.turn_off_rules();
+            filter.start_rejecting();
+            inject_topology_change_new_node(&running_proxy, event_addr);
+
+            let state_after = wait_for_state(&session, |state| {
+                state
+                    .get_nodes_info()
+                    .iter()
+                    .any(|node| node.address.ip() == rejected_node_ip && !node.is_enabled())
+            })
+            .await;
+
+            // Nodes dropped by the failed fetch would be recreated by the next
+            // one, so the survivors being the same objects shows that nothing
+            // was dropped. The rejected node is recreated anyway, as disabled.
+            let nodes_after = state_after.get_nodes_info();
+            assert_eq!(nodes_after.len(), 3);
+            let all_nodes_kept = nodes_after
+                .iter()
+                .filter(|node| node.address.ip() != rejected_node_ip)
+                .all(|node| {
+                    state_before
+                        .get_nodes_info()
+                        .iter()
+                        .any(|old| Arc::ptr_eq(old, node))
+                });
+            assert!(
+                all_nodes_kept,
+                "the failed `system.peers` query shrank the topology"
+            );
+
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+}
+
 /// A SCHEMA_CHANGE event names the keyspace it concerns, so the driver must
 /// react by re-reading that keyspace's schema alone - not the whole metadata,
 /// as it used to on every periodic refresh.

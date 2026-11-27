@@ -4,6 +4,7 @@ use crate::frame::{
     self, FrameOpcode, FrameParams, RequestFrame, ResponseFrame, ResponseOpcode,
     read_response_frame, write_frame,
 };
+use crate::prepared_statements::{ConnectionPreparedStatements, PreparedStatements};
 use crate::{RequestOpcode, TargetShard, proxy_protocol};
 use bytes::Bytes;
 use compression::no_compression;
@@ -370,6 +371,7 @@ impl Proxy {
         let (finish_guard, finish_waiter) = mpsc::channel(1);
 
         let (error_propagator, error_sink) = mpsc::unbounded_channel();
+        let prepared_statements = PreparedStatements::default();
         let (addresses_and_doorkeepers, running_nodes): (Vec<_>, Vec<RunningNode>) = self
             .nodes
             .into_iter()
@@ -400,6 +402,7 @@ impl Proxy {
                         finish_guard.clone(),
                         error_propagator.clone(),
                         cc_event_sender,
+                        prepared_statements.clone(),
                     )
                 };
                 let address_and_doorkeeper = async move { Ok((proxy_addr, doorkeeper.await?)) };
@@ -688,6 +691,7 @@ struct Doorkeeper {
     shards_count: Option<u16>,
     error_propagator: ErrorPropagator,
     cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
+    prepared_statements: PreparedStatements,
     duplex_receiver: UnboundedReceiver<(DuplexStream, SocketAddr)>,
     // The other side of the `duplex_receiver`. Not used directly by the doorkeeper
     // but kept as a field in order to keep `duplex_receiver` open which allows
@@ -702,6 +706,7 @@ impl Doorkeeper {
         finish_guard: FinishGuard,
         error_propagator: ErrorPropagator,
         cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
+        prepared_statements: PreparedStatements,
     ) -> Result<UnboundedSender<(DuplexStream, SocketAddr)>, DoorkeeperError> {
         let listener = bind_listener(node.proxy_addr())
             .map_err(|err| DoorkeeperError::DriverConnectionAttempt(node.proxy_addr(), err))?;
@@ -738,6 +743,7 @@ impl Doorkeeper {
             finish_guard,
             error_propagator,
             cc_event_sender,
+            prepared_statements,
             duplex_receiver,
             _duplex_submitter: duplex_submitter.clone(),
         };
@@ -840,6 +846,7 @@ impl Doorkeeper {
         let (tx_cluster, rx_cluster) = mpsc::unbounded_channel::<RequestFrame>();
         let (tx_driver, rx_driver) = mpsc::unbounded_channel::<ResponseFrame>();
         let event_register_flag = Arc::new(AtomicBool::new(false));
+        let prepared_statements = self.prepared_statements.for_new_connection();
 
         let (
             compression_writer_request_processor,
@@ -870,6 +877,7 @@ impl Doorkeeper {
             let request_rules = Arc::clone(self.node.request_rules());
             let conn_close = connection_close_tx.clone();
             let event_flag = Arc::clone(&event_register_flag);
+            let prepared_statements = prepared_statements.clone();
             let tx_driver_clone = tx_driver.clone();
             let tx_cluster_clone = tx_cluster.clone();
             let cc_sender = Arc::clone(&self.cc_event_sender);
@@ -883,6 +891,7 @@ impl Doorkeeper {
                         request_rules,
                         conn_close,
                         event_flag,
+                        prepared_statements,
                         compression_writer_request_processor,
                         cc_sender,
                     )
@@ -915,6 +924,7 @@ impl Doorkeeper {
                 let response_rules = Arc::clone(response_rules);
                 let conn_close = connection_close_tx.clone();
                 let event_flag = Arc::clone(&event_register_flag);
+                let prepared_statements = prepared_statements.clone();
                 tokio::task::spawn(async move {
                     worker
                         .response_processor(
@@ -925,6 +935,7 @@ impl Doorkeeper {
                             response_rules,
                             conn_close,
                             event_flag,
+                            prepared_statements,
                         )
                         .await;
                 });
@@ -1537,6 +1548,7 @@ impl ProxyWorker {
         request_rules: Arc<Mutex<Vec<RequestRule>>>,
         connection_close_signaler: ConnectionCloseSignaler,
         event_registered_flag: Arc<AtomicBool>,
+        prepared_statements: ConnectionPreparedStatements,
         compression: CompressionWriter,
         cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
     ) {
@@ -1574,11 +1586,23 @@ impl ProxyWorker {
                             };
                         }
 
+                        let executed_query = {
+                            let statements = &prepared_statements;
+                            match request.opcode {
+                                RequestOpcode::Prepare => {
+                                    statements.on_prepare_request(request.params.stream, &request.body);
+                                    None
+                                }
+                                RequestOpcode::Execute => statements.query_of_execute(&request.body),
+                                _ => None,
+                            }
+                        };
                         let ctx = EvaluationContext {
                             connection_seq_no: connection_no,
                             opcode: FrameOpcode::Request(request.opcode),
                             frame_body: request.body.clone(),
                             connection_has_events: event_registered_flag.load(Ordering::Relaxed),
+                            executed_query,
                         };
                         let mut guard = request_rules.lock().unwrap();
                         '_ruleloop: for (i, request_rule) in guard.iter_mut().enumerate() {
@@ -1689,17 +1713,24 @@ impl ProxyWorker {
         response_rules: Arc<Mutex<Vec<ResponseRule>>>,
         connection_close_signaler: ConnectionCloseSignaler,
         event_registered_flag: Arc<AtomicBool>,
+        prepared_statements: ConnectionPreparedStatements,
     ) {
         let shard = self.shard;
         self.run_until_interrupted("response_processor", async move |driver_addr, _, real_addr| {
             'mainloop: loop {
                 match responses_rx.recv().await {
                     Some(response) => {
+                        prepared_statements.on_response(
+                            response.params.stream,
+                            response.opcode,
+                            &response.body,
+                        );
                         let ctx = EvaluationContext {
                             connection_seq_no: connection_no,
                             opcode: FrameOpcode::Response(response.opcode),
                             frame_body: response.body.clone(),
                             connection_has_events: event_registered_flag.load(Ordering::Relaxed),
+                            executed_query: None,
                         };
                         let mut guard = response_rules.lock().unwrap();
                         '_ruleloop: for (i, response_rule) in guard.iter_mut().enumerate() {
