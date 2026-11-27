@@ -279,8 +279,6 @@ impl Generator for FieldSortingGenerator<'_> {
             .iter()
             .map(|f| f.field_name())
             .collect::<Vec<_>>();
-        let rust_field_ignore_missing_flags =
-            self.ctx.fields.iter().map(|f| f.attrs.ignore_missing);
         let udt_field_names = rust_field_names.clone(); // For now, it's the same
         let field_types = self.ctx.fields.iter().map(|f| &f.typ).collect::<Vec<_>>();
 
@@ -342,18 +340,22 @@ impl Generator for FieldSortingGenerator<'_> {
             #(let mut #visited_flag_names = false;)*
         });
 
-        // An iterator over names of Rust fields that can't be ignored
+        // Visited flags and names of Rust fields that can't be ignored
         // (i.e., if UDT misses a corresponding field, an error should be raised).
+        let nonignorable_visited_flag_names = self
+            .ctx
+            .fields
+            .iter()
+            .filter(|f| !f.attrs.ignore_missing)
+            .map(|f| make_visited_flag_ident(&f.ident))
+            .collect::<Vec<_>>();
         let nonignorable_rust_field_names = self
             .ctx
             .fields
             .iter()
             .filter(|f| !f.attrs.ignore_missing)
-            .map(|f| &f.ident);
-        // An iterator over visited flags of Rust fields that can't be ignored
-        // (i.e., if UDT misses a corresponding field, an error should be raised).
-        let nonignorable_visited_flag_names =
-            nonignorable_rust_field_names.map(make_visited_flag_ident);
+            .map(|f| f.field_name())
+            .collect::<Vec<_>>();
 
         // Generate a variable that counts down visited fields.
         let field_count = self.ctx.fields.len();
@@ -413,10 +415,10 @@ impl Generator for FieldSortingGenerator<'_> {
         statements.push(parse_quote! {
             if remaining_count > 0 {
                 #(
-                    if !#nonignorable_visited_flag_names && !#rust_field_ignore_missing_flags {
+                    if !#nonignorable_visited_flag_names {
                         return ::std::result::Result::Err(mk_typck_err(
                             #crate_path::UdtTypeCheckErrorKind::ValueMissingForUdtField {
-                                field_name: <_ as ::std::string::ToString>::to_string(#rust_field_names),
+                                field_name: <_ as ::std::string::ToString>::to_string(#nonignorable_rust_field_names),
                             }
                         ));
                     }
