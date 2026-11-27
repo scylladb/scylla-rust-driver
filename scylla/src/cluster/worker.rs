@@ -605,34 +605,31 @@ impl ClusterWorker {
         host_listener: Option<&dyn HostListener>,
         node_status: &mut HashMap<Uuid, NodeConnectivityStatus>,
     ) {
-        // Nodes that were previously in the cluster but are not present anymore.
-        let removed_nodes =
-            hash_map_difference(known_nodes, new_known_nodes).filter(|(_host_id, node)| {
-                // If a host filter is configured, we only consider nodes that passed the filter
-                // as removed. Nodes that were filtered out are not considered part of the cluster,
-                // so their removal is not signaled.
-                node.is_enabled()
-            });
+        // A node is part of the cluster, from the listener's point of view, only if it is
+        // present and enabled. Nodes filtered out by the host filter are not considered part
+        // of the cluster, so their addition, removal and address changes are not signaled.
+        // A node that switches between enabled and disabled while keeping its host_id
+        // is handled like a removal or an addition, respectively.
+        let is_member = |nodes: &HashMap<Uuid, Arc<Node>>, host_id: &Uuid| {
+            nodes.get(host_id).is_some_and(|node| node.is_enabled())
+        };
+
+        // Nodes that were previously in the cluster but are not anymore.
+        let removed_nodes = known_nodes
+            .iter()
+            .filter(|(host_id, node)| node.is_enabled() && !is_member(new_known_nodes, host_id));
         // Nodes that weren't previously in the cluster but are present now.
-        let added_nodes =
-            hash_map_difference(new_known_nodes, known_nodes).filter(|(_host_id, node)| {
-                // If a host filter is configured, we only consider nodes that passed the filter
-                // as added. Nodes that were filtered out are not considered part of the cluster,
-                // so their addition is not signaled.
-                node.is_enabled()
-            });
-        // Nodes that were present in both old and new cluster state, but have changed address.
+        let added_nodes = new_known_nodes
+            .iter()
+            .filter(|(host_id, node)| node.is_enabled() && !is_member(known_nodes, host_id));
+        // Nodes that were members both before and after, but have changed address.
         let nodes_with_changed_address = known_nodes
             .iter()
-            .filter(|(_host_id, old_node)| {
-                // If a host filter is configured, we only consider nodes that passed the filter
-                // as candidates for address change notification. Nodes that were filtered out
-                // are not considered part of the cluster, so their address changes are not signaled.
-                old_node.is_enabled()
-            })
+            .filter(|(_host_id, old_node)| old_node.is_enabled())
             .filter_map(|(host_id, old_node)| {
                 new_known_nodes
                     .get(host_id)
+                    .filter(|new_node| new_node.is_enabled())
                     // We only consider nodes with changed SocketAddr. If only NodeAddr variant changed
                     // (which happens mainly when control connection moves from one node to another),
                     // we don't notify the host listener about that, as it operates on SocketAddr only.
@@ -883,15 +880,100 @@ pub(crate) fn use_keyspace_result(
     Err(broken_conn_error.unwrap())
 }
 
-/// Computes the difference between two hash maps, analogous to set difference.
-fn hash_map_difference<'present, 'absent, K, V>(
-    present_here: &'present HashMap<K, V>,
-    absent_here: &'absent HashMap<K, V>,
-) -> impl Iterator<Item = (&'present K, &'present V)> + use<'present, 'absent, K, V>
-where
-    K: std::hash::Hash + Eq,
-{
-    present_here
-        .iter()
-        .filter(|(k, _v)| !absent_here.contains_key(k))
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::cluster::NodeAddr;
+    use crate::cluster::metadata::PeerEndpoint;
+    use crate::network::ConnectionConfig;
+
+    #[derive(Default)]
+    struct RecordingListener(Mutex<Vec<String>>);
+
+    impl HostListener for RecordingListener {
+        fn on_event(&self, ctx: &HostEventContext, event: &HostEvent) {
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("{} {event:?}", ctx.addr()));
+        }
+    }
+
+    fn endpoint(host_id: Uuid, addr: SocketAddr) -> PeerEndpoint {
+        PeerEndpoint {
+            host_id,
+            address: NodeAddr::Translatable(addr),
+            datacenter: None,
+            rack: None,
+        }
+    }
+
+    fn enabled(host_id: Uuid, addr: SocketAddr) -> Arc<Node> {
+        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        Arc::new(Node::new(
+            endpoint(host_id, addr),
+            &ConnectionConfig::default(),
+            &PoolConfig::default(),
+            sender,
+            None,
+            Metrics::new(),
+        ))
+    }
+
+    fn disabled(host_id: Uuid, addr: SocketAddr) -> Arc<Node> {
+        Arc::new(Node::new_disabled(endpoint(host_id, addr)))
+    }
+
+    // A node keeping its host_id while switching between enabled and disabled
+    // is reported to the listener like a removal or an addition, and node_status
+    // is updated accordingly.
+    #[tokio::test]
+    async fn enabled_state_switch_is_reported_to_listener() {
+        let host_id = Uuid::new_v4();
+        let addr1: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let addr2: SocketAddr = "127.0.0.2:1".parse().unwrap();
+
+        // Runs handle_topology_changes for a single node, with the given
+        // initial node_status entry. Returns listener events and final node_status.
+        let run = |old: Arc<Node>, new: Arc<Node>, tracked: bool| {
+            let listener = RecordingListener::default();
+            let mut status = HashMap::new();
+            if tracked {
+                status.insert(host_id, NodeConnectivityStatus::Connected);
+            }
+            ClusterWorker::handle_topology_changes(
+                &HashMap::from([(host_id, old)]),
+                &HashMap::from([(host_id, new)]),
+                Some(&listener),
+                &mut status,
+            );
+            (
+                listener.0.into_inner().unwrap(),
+                status.contains_key(&host_id),
+            )
+        };
+
+        // Disabled -> enabled.
+        let (events, tracked) = run(disabled(host_id, addr1), enabled(host_id, addr1), false);
+        assert_eq!(events, ["127.0.0.1:1 Added", "127.0.0.1:1 Up"]);
+        assert!(tracked);
+
+        // Enabled -> disabled.
+        let (events, tracked) = run(enabled(host_id, addr1), disabled(host_id, addr1), true);
+        assert_eq!(events, ["127.0.0.1:1 Down", "127.0.0.1:1 Removed"]);
+        assert!(!tracked);
+
+        // Enabled -> disabled with a changed address.
+        let (events, tracked) = run(enabled(host_id, addr1), disabled(host_id, addr2), true);
+        assert_eq!(events, ["127.0.0.1:1 Down", "127.0.0.1:1 Removed"]);
+        assert!(!tracked);
+
+        // Disabled -> disabled with a changed address: nothing to report.
+        let (events, tracked) = run(disabled(host_id, addr1), disabled(host_id, addr2), false);
+        assert!(events.is_empty());
+        assert!(!tracked);
+    }
 }
