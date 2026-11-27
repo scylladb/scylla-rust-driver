@@ -2397,6 +2397,29 @@ mod derive_macros_integration {
                 b: &'a T,
             }
 
+            trait TestMarker {}
+            impl TestMarker for TestRowWithSelf {}
+
+            trait TestProject {
+                type Value;
+            }
+            impl TestProject for TestRowWithSelf {
+                type Value = i32;
+            }
+
+            // Checks that `Self` in field types and the `where` clause refers to
+            // the derived struct, not to the struct generated for the
+            // `match_by_name` flavor.
+            #[derive(SerializeRow)]
+            #[scylla(crate = crate)]
+            #[expect(dead_code)]
+            struct TestRowWithSelf
+            where
+                Self: TestMarker,
+            {
+                a: <Self as TestProject>::Value,
+            }
+
             #[derive(SerializeRow, Debug, PartialEq, Eq, Default)]
             #[scylla(crate = crate)]
             struct TestRowWithColumnSorting {

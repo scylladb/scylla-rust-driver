@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use darling::FromAttributes;
 use proc_macro::TokenStream;
-use quote::format_ident;
+use quote::{ToTokens, format_ident, quote};
 use syn::parse_quote;
 
 use crate::Flavor;
@@ -396,6 +396,12 @@ impl Generator for ColumnSortingGenerator<'_> {
             }
         };
 
+        // The partial struct and its impl have their own `Self`, so `Self` in the
+        // field types and bounds copied there must be replaced.
+        let self_type = quote!(#struct_name #ty_generics);
+        let partial_struct = replace_self(partial_struct.into_token_stream(), &self_type);
+        let partial_serialize = replace_self(partial_serialize.into_token_stream(), &self_type);
+
         // 4. Implement SerializeRow
         parse_quote! {
             fn serialize<'_scylla_ser_row_writer_buffer>(
@@ -423,6 +429,28 @@ impl Generator for ColumnSortingGenerator<'_> {
             }
         }
     }
+}
+
+/// Replaces `Self` in `tokens` with `self_type`.
+fn replace_self(
+    tokens: proc_macro2::TokenStream,
+    self_type: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    tokens
+        .into_iter()
+        .flat_map(|token| match token {
+            proc_macro2::TokenTree::Ident(ident) if ident == "Self" => self_type.clone(),
+            proc_macro2::TokenTree::Group(group) => {
+                let mut replaced = proc_macro2::Group::new(
+                    group.delimiter(),
+                    replace_self(group.stream(), self_type),
+                );
+                replaced.set_span(group.span());
+                proc_macro2::TokenTree::Group(replaced).into()
+            }
+            token => token.into(),
+        })
+        .collect()
 }
 
 // Generates an implementation of the trait which requires the columns
