@@ -230,6 +230,9 @@ impl Cluster {
     }
 
     /// Initializes the cluster by creating it via CCM.
+    ///
+    /// ScyllaDB clusters get `rf_rack_valid_keyspaces` and `enforce_rack_list` turned on. To turn
+    /// them off, set them to `false` with [`Cluster::updateconf`] before starting the cluster.
     pub async fn init(&mut self) -> Result<(), Error> {
         // `ccm create --nodes` would populate the cluster too, but it only takes node counts, so
         // create an empty cluster and add the nodes one by one, each with its own placement.
@@ -251,7 +254,15 @@ impl Cluster {
             // Reads `cassandra-topology.properties`.
             DBType::Cassandra => "org.apache.cassandra.locator.PropertyFileSnitch",
         };
-        self.updateconf([("endpoint_snitch", snitch)]).await?;
+
+        let mut config = vec![("endpoint_snitch", snitch)];
+        if self.opts.db_type == DBType::Scylla {
+            config.extend([
+                ("rf_rack_valid_keyspaces", "true"),
+                ("enforce_rack_list", "true"),
+            ]);
+        }
+        self.updateconf(config).await?;
 
         for node in self.nodes.iter() {
             self.ccm_cmd
