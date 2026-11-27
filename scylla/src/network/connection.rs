@@ -2430,6 +2430,10 @@ impl VerifiedKeyspaceName {
         self.name.as_str()
     }
 
+    pub(crate) fn shared_name(&self) -> &Arc<String> {
+        &self.name
+    }
+
     // "Keyspace names can have up to 48 alphanumeric characters and contain underscores;
     // only letters and numbers are supported as the first character."
     // https://docs.datastax.com/en/cql-oss/3.3/cql/cql_reference/cqlCreateKeyspace.html

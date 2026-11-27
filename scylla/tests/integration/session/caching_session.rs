@@ -7,6 +7,7 @@ use scylla::client::session_builder::SessionBuilder;
 use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
 use scylla::statement::batch::{Batch, BatchStatement, BatchType};
 use scylla::statement::prepared::PreparedStatement;
+use scylla::statement::unprepared::Statement;
 use scylla_cql::frame::request::Request;
 use scylla_cql::frame::request::execute::Execute;
 use scylla_proxy::Condition;
@@ -463,5 +464,158 @@ async fn test_caching_session_statement_cache() {
         Ok(()) => (),
         Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
         Err(err) => panic!("{}", err),
+    }
+}
+
+/// Cached prepared statements must not be reused after the session's keyspace changes.
+#[tokio::test]
+async fn test_caching_session_keyspace_change() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks_a = unique_keyspace_name();
+    let ks_b = unique_keyspace_name();
+    // Same name as `ks_a` except for case, so it is a different keyspace
+    // that can only be selected with a case sensitive `use_keyspace`.
+    let ks_c = ks_a.to_uppercase();
+    let ks_c_quoted = format!("\"{ks_c}\"");
+    // Table `t` has the same name in all keyspaces, but holds a different value.
+    for (ks, v) in [(&ks_a, 1), (&ks_b, 2), (&ks_c_quoted, 3)] {
+        session
+            .ddl(format!(
+                "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+            ))
+            .await
+            .unwrap();
+        session
+            .ddl(format!("CREATE TABLE {ks}.t (k int PRIMARY KEY, v int)"))
+            .await
+            .unwrap();
+        session
+            .query_unpaged(format!("INSERT INTO {ks}.t (k, v) VALUES (0, {v})"), ())
+            .await
+            .unwrap();
+    }
+
+    let session = CachingSession::from(session, 10);
+    let select_v = async |query: &str| -> i32 {
+        session
+            .execute_unpaged(query, ())
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .single_row::<(i32,)>()
+            .unwrap()
+            .0
+    };
+
+    // Unqualified statement.
+    let unqualified = "SELECT v FROM t";
+    session
+        .get_session()
+        .use_keyspace(&ks_a, false)
+        .await
+        .unwrap();
+    assert_eq!(select_v(unqualified).await, 1);
+
+    // Switch with `use_keyspace`.
+    session
+        .get_session()
+        .use_keyspace(&ks_b, false)
+        .await
+        .unwrap();
+    assert_eq!(select_v(unqualified).await, 2);
+
+    // Switch back.
+    session
+        .get_session()
+        .use_keyspace(&ks_a, false)
+        .await
+        .unwrap();
+    assert_eq!(select_v(unqualified).await, 1);
+
+    // Switch with a `USE` statement.
+    session
+        .get_session()
+        .query_unpaged(format!("USE {ks_b}"), ())
+        .await
+        .unwrap();
+    assert_eq!(select_v(unqualified).await, 2);
+
+    // Switch between keyspaces whose names differ only in case.
+    session
+        .get_session()
+        .use_keyspace(&ks_c, false)
+        .await
+        .unwrap();
+    assert_eq!(select_v(unqualified).await, 1);
+    session
+        .get_session()
+        .use_keyspace(&ks_c, true)
+        .await
+        .unwrap();
+    assert_eq!(select_v(unqualified).await, 3);
+
+    // Statement with an explicit keyspace. The value returned is the same either way, so check
+    // that it gets prepared again after a switch by comparing statement ids (ScyllaDB only).
+    let qualified = format!("SELECT v FROM {ks_a}.t");
+    let qualified_stmt = Statement::from(qualified.as_str());
+    session
+        .get_session()
+        .use_keyspace(&ks_a, false)
+        .await
+        .unwrap();
+    let id_in_a = session
+        .add_prepared_statement(&qualified_stmt)
+        .await
+        .unwrap()
+        .get_id()
+        .clone();
+    session
+        .get_session()
+        .use_keyspace(&ks_b, false)
+        .await
+        .unwrap();
+    let id_in_b = session
+        .add_prepared_statement(&qualified_stmt)
+        .await
+        .unwrap()
+        .get_id()
+        .clone();
+    // Since CASSANDRA-15252 Cassandra leaves the session keyspace out of the id of a statement
+    // with an explicit keyspace, so the ids are equal there.
+    if !cfg!(cassandra_tests) {
+        assert_ne!(id_in_b, id_in_a);
+    }
+    session
+        .get_session()
+        .use_keyspace(&ks_a, false)
+        .await
+        .unwrap();
+    assert_eq!(select_v(&qualified).await, 1);
+
+    // Batch (uses `prepare_batch`).
+    let mut batch = Batch::new(BatchType::Logged);
+    batch.append_statement("INSERT INTO t (k, v) VALUES (1, 10)");
+    session.batch(&batch, ((),)).await.unwrap();
+    session
+        .get_session()
+        .use_keyspace(&ks_b, false)
+        .await
+        .unwrap();
+    session.batch(&batch, ((),)).await.unwrap();
+    for (ks, expected) in [(&ks_a, 1), (&ks_b, 1)] {
+        let rows = session
+            .get_session()
+            .query_unpaged(format!("SELECT v FROM {ks}.t WHERE k = 1"), ())
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap();
+        assert_eq!(rows.rows_num(), expected, "batch did not write to {ks}");
+    }
+
+    for ks in [&ks_a, &ks_b, &ks_c_quoted] {
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
     }
 }

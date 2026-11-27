@@ -9,6 +9,7 @@ use crate::serialize::row::SerializeRow;
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::{PreparedStatement, UnconfiguredPreparedStatement};
 use crate::statement::unprepared::Statement;
+use arc_swap::ArcSwapOption;
 use dashmap::DashMap;
 use futures::future::try_join_all;
 use std::collections::hash_map::RandomState;
@@ -18,8 +19,19 @@ use std::sync::Arc;
 
 use crate::client::pager::QueryPager;
 use crate::client::session::Session;
+use crate::network::VerifiedKeyspaceName;
 
 /// Provides auto caching while executing queries
+///
+/// # Changing the keyspace
+///
+/// The server ties a prepared statement to the keyspace that was in use when it was prepared,
+/// so a statement prepared in one keyspace cannot be reused in another. Therefore, when the
+/// keyspace of the underlying [`Session`] changes (see [`Session::use_keyspace`]), the cache is
+/// cleared on the next use.
+///
+/// Do not change the keyspace while requests are being executed or prepared through the
+/// [`CachingSession`]: the driver cannot tell which keyspace such requests will use.
 pub struct CachingSession<S = RandomState>
 where
     S: Clone + BuildHasher,
@@ -31,6 +43,8 @@ where
     max_capacity: usize,
     cache: DashMap<String, UnconfiguredPreparedStatement, S>,
     use_cached_metadata: bool,
+    /// Keyspace that the statements in `cache` were prepared in.
+    cache_keyspace: ArcSwapOption<VerifiedKeyspaceName>,
 }
 
 impl<S> fmt::Debug for CachingSession<S>
@@ -61,6 +75,7 @@ where
             "prepared statement cache capacity must be greater than 0"
         );
         Self {
+            cache_keyspace: ArcSwapOption::new(session.load_keyspace().clone()),
             session: Arc::new(session),
             max_capacity: cache_size,
             cache: Default::default(),
@@ -85,6 +100,7 @@ where
             "prepared statement cache capacity must be greater than 0"
         );
         Self {
+            cache_keyspace: ArcSwapOption::new(session.load_keyspace().clone()),
             session: Arc::new(session),
             max_capacity: cache_size,
             cache: DashMap::with_hasher(hasher),
@@ -203,6 +219,8 @@ where
     ) -> Result<PreparedStatement, PrepareError> {
         let query = query.into();
 
+        self.clear_cache_if_keyspace_changed();
+
         if let Some(raw) = self.cache.get(&query.contents) {
             let page_size = query.get_validated_page_size();
             let mut stmt = raw.make_configured_handle(query.config, page_size);
@@ -242,6 +260,31 @@ where
 
             Ok(prepared)
         }
+    }
+
+    fn clear_cache_if_keyspace_changed(&self) {
+        let current = self.session.load_keyspace();
+        let remembered = self.cache_keyspace.load();
+        let same_arc = match (&*remembered, &*current) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        };
+        if same_arc {
+            return;
+        }
+        // Every `use_keyspace` stores a new `Arc`, so a different one does not mean that the
+        // keyspace is different (e.g. `USE` of the current keyspace). Compare the values.
+        if remembered.as_deref() == current.as_deref() {
+            // Remember the new `Arc` to take the fast path next time.
+            self.cache_keyspace.store(current.clone());
+            return;
+        }
+        // Statements prepared in the old keyspace must not be reused in the new one.
+        // Clear before publishing the new keyspace: a concurrent request that sees the new
+        // keyspace must also see the cleared cache. At worst, concurrent requests clear twice.
+        self.cache.clear();
+        self.cache_keyspace.store(current.clone());
     }
 
     /// Retrieves the maximum capacity of the prepared statements cache.
@@ -353,6 +396,7 @@ where
     /// Finishes configuration of [CachingSession].
     pub fn build(self) -> CachingSession<S> {
         CachingSession {
+            cache_keyspace: ArcSwapOption::new(self.session.load_keyspace().clone()),
             session: self.session,
             max_capacity: self.max_capacity,
             cache: DashMap::with_hasher(self.hasher),
