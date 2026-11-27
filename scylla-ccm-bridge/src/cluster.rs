@@ -1,4 +1,5 @@
 use crate::node::NodeOptions;
+use crate::topology::Topology;
 
 use super::cli_wrapper::DBType;
 use super::cli_wrapper::NodeStartOptions;
@@ -37,9 +38,8 @@ pub struct ClusterOptions {
     /// CCM allocates node ip addresses based on this prefix:
     /// if ip_prefix = `127.0.1.`, then `node1` address is `127.0.1.1`, `node2` address is `127.0.1.2`
     pub ip_prefix: NetPrefix,
-    /// Number of nodes to populate
-    /// \[1,2\] - DC1 contains 1 node, DC2 contains 2 nodes
-    pub nodes_per_dc: Vec<u8>,
+    /// The datacenters and racks to create the cluster with, and the number of nodes in each.
+    pub topology: Topology,
     /// Number of vCPU for Scylla to occupy
     pub smp: u16,
     /// Amount of MB for Scylla to occupy. Has to be bigger than `smp`*512.
@@ -55,7 +55,7 @@ impl Default for ClusterOptions {
             db_type: DBType::Scylla,
             version: "".to_string(),
             ip_prefix: NetPrefix::empty(),
-            nodes_per_dc: Vec::new(),
+            topology: Topology::default(),
             smp: DEFAULT_SMP,
             memory: DEFAULT_MEMORY,
             keep_on_drop: false,
@@ -153,6 +153,9 @@ impl Drop for Cluster {
 impl Cluster {
     /// Creates a new cluster instance with the given options.
     pub async fn new(opts: ClusterOptions) -> Result<Self, Error> {
+        // Before creating anything that dropping the `Cluster` would try to tear down.
+        opts.topology.validate_initial()?;
+
         let mut opts = opts.clone();
         let allocated_prefix = if opts.ip_prefix.is_empty() {
             opts.ip_prefix = IP_ALLOCATOR
@@ -206,17 +209,20 @@ impl Cluster {
             allocated_prefix,
         };
 
-        for (datacenter_id, dc_nodes_count) in opts.nodes_per_dc.iter().enumerate() {
-            for _ in 0..*dc_nodes_count {
-                let node_options = NodeOptions {
-                    id: cluster
-                        .nodes
-                        .get_free_node_id()
-                        .expect("No available node id"),
-                    datacenter_id: datacenter_id.try_into().expect("Too many datacenters"),
-                    ..NodeOptions::from_cluster_opts(&cluster.opts)
-                };
-                cluster.append_node(node_options);
+        for datacenter in opts.topology.datacenters() {
+            for rack in datacenter.racks() {
+                for _ in 0..rack.nodes() {
+                    let node_options = NodeOptions::from_cluster_opts(
+                        &cluster.opts,
+                        cluster
+                            .nodes
+                            .get_free_node_id()
+                            .expect("No available node id"),
+                        datacenter.name().to_owned(),
+                        rack.name().to_owned(),
+                    );
+                    cluster.append_node(node_options);
+                }
             }
         }
 
@@ -225,16 +231,44 @@ impl Cluster {
 
     /// Initializes the cluster by creating it via CCM.
     pub async fn init(&mut self) -> Result<(), Error> {
+        // `ccm create --nodes` would populate the cluster too, but it only takes node counts, so
+        // create an empty cluster and add the nodes one by one, each with its own placement.
         self.ccm_cmd
             .cluster_create(
                 self.opts.name.clone(),
                 self.opts.version.clone(),
                 self.opts.db_type,
             )
-            .populate(&self.opts.nodes_per_dc, Some(self.opts.ip_prefix))
             .run()
-            .await
-            .map(|_| ())
+            .await?;
+
+        // CCM writes each node's datacenter and rack to the topology file read by the snitch of
+        // the cluster's type, but `ccm add` doesn't configure that snitch. Set it for the whole
+        // cluster, so that every node added to it uses the snitch.
+        let snitch = match self.opts.db_type {
+            // Reads `cassandra-rackdc.properties`.
+            DBType::Scylla => "org.apache.cassandra.locator.GossipingPropertyFileSnitch",
+            // Reads `cassandra-topology.properties`.
+            DBType::Cassandra => "org.apache.cassandra.locator.PropertyFileSnitch",
+        };
+        self.updateconf([("endpoint_snitch", snitch)]).await?;
+
+        for node in self.nodes.iter() {
+            self.ccm_cmd
+                .cluster_add_node(
+                    self.opts.db_type,
+                    node.name(),
+                    node.datacenter().to_owned(),
+                    node.rack().to_owned(),
+                    node.broadcast_rpc_address().to_string(),
+                )
+                // Like `ccm create --nodes`, which makes every node a seed.
+                .seed()
+                .run()
+                .await?;
+        }
+
+        Ok(())
     }
 
     /// Executes `ccm updateconf` and applies it for all nodes in the cluster.
@@ -325,31 +359,29 @@ impl Cluster {
         self.nodes.0.last_mut().unwrap()
     }
 
-    /// Add a new node to the cluster in the given datacenter.
+    /// Add a new node to the cluster in the given datacenter and rack.
     ///
-    /// `datacenter_id` uses **1-based** CCM naming: `1` →  `dc1`, `2` →  `dc2`, etc.
-    /// The value stored in [`NodeOptions::datacenter_id`] is **0-based** (matching
-    /// the convention used by [`Cluster::new`]).
-    pub async fn add_node(&mut self, datacenter_id: Option<u16>) -> Result<&mut Node, Error> {
+    /// Either may be new to the cluster, in which case adding the node creates it.
+    pub async fn add_node(&mut self, datacenter: &str, rack: &str) -> Result<&mut Node, Error> {
+        anyhow::ensure!(!datacenter.is_empty(), "the datacenter name is empty");
+        anyhow::ensure!(!rack.is_empty(), "the rack name is empty");
+
         let id = self.nodes.get_free_node_id().expect("No available node id");
-        // CCM uses 1-based DC names: dc1, dc2, …
-        let ccm_dc_id = datacenter_id.unwrap_or(1);
-        let node_options = NodeOptions {
-            id,
-            // Store as 0-based to match the convention from Cluster::new().
-            datacenter_id: ccm_dc_id - 1,
-            ..NodeOptions::from_cluster_opts(&self.opts)
-        };
-        let datacenter_name = format!("dc{ccm_dc_id}");
+        let node_options =
+            NodeOptions::from_cluster_opts(&self.opts, id, datacenter.to_owned(), rack.to_owned());
         // Pass the node's IP explicitly via `-i`. Without it, CCM
         // auto-assigns based on `len(nodelist) + 1`, which diverges from
         // our `get_free_node_id()` when there are gaps (e.g., after a
         // decommission reuses a lower ID).
         let node_ip = self.opts.ip_prefix.to_ipaddress(id).to_string();
         self.ccm_cmd
-            .cluster_add_node(self.opts.db_type, node_options.name())
-            .dc(datacenter_name)
-            .address(node_ip)
+            .cluster_add_node(
+                self.opts.db_type,
+                node_options.name(),
+                datacenter.to_owned(),
+                rack.to_owned(),
+                node_ip,
+            )
             .run()
             .await?;
         Ok(self.append_node(node_options))
@@ -413,5 +445,24 @@ impl Cluster {
     /// Returns the cluster's configuration directory path.
     pub fn cluster_dir(&self) -> PathBuf {
         self.tmp_dir_guard.path().join(&self.opts.name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::topology::{Datacenter, Rack};
+
+    #[tokio::test]
+    async fn rejects_invalid_topology() {
+        let result = Cluster::new(ClusterOptions {
+            name: "invalid_topology".to_owned(),
+            topology: Topology::new([Datacenter::new("dc1", [Rack::new("rack1", 0)])]),
+            ..ClusterOptions::default()
+        })
+        .await;
+        // Rejected before anything that dropping the `Cluster` would try to remove with
+        // `ccm remove` is created.
+        assert!(result.is_err());
     }
 }

@@ -21,6 +21,7 @@ use scylla::errors::{
 };
 use scylla_ccm_bridge::CLUSTER_VERSION;
 use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
+use scylla_ccm_bridge::topology::Topology;
 
 const USER: &str = "cassandra";
 const PASSWORD: &str = "cassandra";
@@ -37,7 +38,7 @@ async fn main() -> Result<()> {
     let mut cluster = Cluster::new(ClusterOptions {
         name: "examples_auth".to_string(),
         version: CLUSTER_VERSION.clone(),
-        nodes_per_dc: vec![1],
+        topology: Topology::simple([1]),
         ..Default::default()
     })
     .await?;

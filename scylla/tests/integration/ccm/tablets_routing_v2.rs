@@ -49,6 +49,7 @@ use tokio::sync::mpsc;
 
 use scylla_ccm_bridge::CLUSTER_VERSION;
 use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
+use scylla_ccm_bridge::topology::Topology;
 
 use crate::utils::{
     PerformDDL, execute_batch_everywhere, execute_prepared_statement_everywhere,
@@ -64,7 +65,7 @@ fn cluster_3_nodes() -> ClusterOptions {
     ClusterOptions {
         name: "cluster_tablets_routing_v2".to_string(),
         version: CLUSTER_VERSION.clone(),
-        nodes_per_dc: vec![3],
+        topology: Topology::simple([3]),
         ..ClusterOptions::default()
     }
 }

@@ -6,6 +6,7 @@ use scylla::client::PoolSize;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
+use scylla_ccm_bridge::topology::Topology;
 use scylla_ccm_bridge::{CLUSTER_VERSION, run_ccm_test};
 use tracing::{info, warn};
 
@@ -19,7 +20,7 @@ fn cluster_2_dcs() -> ClusterOptions {
     ClusterOptions {
         name: "cluster_2_dcs".to_string(),
         version: CLUSTER_VERSION.clone(),
-        nodes_per_dc: vec![1, 2],
+        topology: Topology::simple([1, 2]),
         ..ClusterOptions::default()
     }
 }

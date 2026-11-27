@@ -23,6 +23,7 @@ use anyhow::{Context, Result};
 use scylla_ccm_bridge::CLUSTER_VERSION;
 use scylla_ccm_bridge::client_routes::{ClientRoute, publish_client_routes};
 use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
+use scylla_ccm_bridge::topology::Topology;
 use scylla_proxy::nlb::{NlbFrontend, RunningNlbFrontend};
 use uuid::Uuid;
 
@@ -59,7 +60,7 @@ impl ClientRoutesCluster {
         let mut cluster = Cluster::new(ClusterOptions {
             name: "examples_client_routes".to_string(),
             version: CLUSTER_VERSION.clone(),
-            nodes_per_dc: vec![1],
+            topology: Topology::simple([1]),
             ..Default::default()
         })
         .await?;

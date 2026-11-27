@@ -18,6 +18,7 @@ use scylla::policies::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use scylla::routing::Shard;
 use scylla_ccm_bridge::CLUSTER_VERSION;
 use scylla_ccm_bridge::cluster::{Cluster, ClusterOptions};
+use scylla_ccm_bridge::topology::Topology;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -85,7 +86,7 @@ async fn main() -> Result<()> {
         name: "examples_custom_lbp".to_string(),
         version: CLUSTER_VERSION.clone(),
         // Two datacenters, so that preferring one of them means something.
-        nodes_per_dc: vec![2, 2],
+        topology: Topology::simple([2, 2]),
         ..Default::default()
     })
     .await?;
@@ -94,8 +95,7 @@ async fn main() -> Result<()> {
     let session_builder = cluster.make_session_builder().await;
     // --- end of CI setup --------------------------------------------------
 
-    // CCM names the datacenters after their position in `nodes_per_dc`, so the
-    // cluster above has `dc1` and `dc2`. Prefer the second one.
+    // The cluster above has `dc1` and `dc2`. Prefer the second one.
     let fav_datacenter_name = "dc2".to_string();
 
     let policy = Arc::new(CustomLoadBalancingPolicy {
