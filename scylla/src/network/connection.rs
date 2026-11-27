@@ -41,9 +41,10 @@ use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::{PreparedStatement, RawPreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
+use crate::utils::background_tasks::{BackgroundTasks, TaskHandle};
 use bytes::Bytes;
 use futures::FutureExt;
-use futures::future::{BoxFuture, RemoteHandle};
+use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, TryStreamExt};
 use socket2::{SockRef, TcpKeepalive};
 use std::borrow::Cow;
@@ -107,7 +108,7 @@ pub enum WriteCoalescingDelay {
 const INTERNAL_STATEMENT_CONSISTENCY: Consistency = Consistency::LocalQuorum;
 
 pub(crate) struct Connection {
-    _worker_handle: RemoteHandle<()>,
+    _worker_handle: TaskHandle,
 
     connect_address: SocketAddr,
     config: HostConnectionConfig,
@@ -134,13 +135,64 @@ struct RouterHandle {
     keepalive_hint: Notify,
 }
 
+/// The part of [`HostConnectionConfig`] that the router uses.
+struct RouterConfig {
+    write_coalescing_delay: Option<WriteCoalescingDelay>,
+    keepalive_interval: Option<Duration>,
+    keepalive_timeout: Option<Duration>,
+    event_sender: Option<mpsc::Sender<Event>>,
+    compression: Option<Compression>,
+}
+
+impl RouterConfig {
+    fn new(config: &HostConnectionConfig) -> Self {
+        Self {
+            write_coalescing_delay: config.write_coalescing_delay.clone(),
+            keepalive_interval: config.keepalive_interval,
+            keepalive_timeout: config.keepalive_timeout,
+            event_sender: config
+                .event_sender
+                .as_ref()
+                .map(|(sender, _)| sender.clone()),
+            compression: config.compression,
+        }
+    }
+}
+
+/// Fails the requests of a connection when its router stops.
+///
+/// The router can be aborted while requests wait for their responses, for
+/// example by a session shutdown. An abort runs only `Drop`, so the error
+/// path at the end of `router` does not run.
+struct RouterGuard {
+    router_handle: Arc<RouterHandle>,
+    receiver: mpsc::Receiver<SerializedRequest>,
+}
+
+impl Drop for RouterGuard {
+    fn drop(&mut self) {
+        // After the error path of `router`, this changes nothing: `fail_all`
+        // keeps the error of its first call.
+        self.router_handle
+            .streams
+            .fail_all(&BrokenConnectionErrorKind::ChannelError.into());
+    }
+}
+
 impl RouterHandle {
     async fn send_request(
         &self,
         request: SerializedRequest,
     ) -> Result<TaskResponse, InternalRequestError> {
-        let channel_error =
-            || -> BrokenConnectionError { BrokenConnectionErrorKind::ChannelError.into() };
+        // The channel closes only when `RouterGuard` is dropped, after
+        // `fail_all` sets the error of the connection. Return this error, as
+        // `allocate` does. Then a request on a closed connection gets the same
+        // error. `ChannelError` is only a defensive fallback.
+        let closed_error = || -> BrokenConnectionError {
+            self.streams
+                .closed_error()
+                .unwrap_or_else(|| BrokenConnectionErrorKind::ChannelError.into())
+        };
         // Room in the channel is reserved before the stream id, so that requests
         // waiting for the writer don't hold stream ids.
         //
@@ -154,13 +206,13 @@ impl RouterHandle {
                         .submit_channel
                         .reserve()
                         .await
-                        .map_err(|_| channel_error())?;
+                        .map_err(|_| closed_error())?;
                     self.submit(permit, request)
                 })
                 .await?
             }
             Err(mpsc::error::TrySendError::Closed(())) => {
-                return Err(channel_error().into());
+                return Err(closed_error().into());
             }
         };
 
@@ -309,6 +361,10 @@ pub(crate) struct ConnectionConfig {
     /// Reported to the cluster in `STARTUP`, so that the `system.clients` rows
     /// of all connections belonging to one session can be correlated.
     pub(crate) session_id: Uuid,
+
+    /// Spawns the background tasks of the session: the workers, the pool
+    /// refillers and the connection routers. A graceful shutdown stops them.
+    pub(crate) background_tasks: BackgroundTasks,
 }
 
 impl ConnectionConfig {
@@ -379,6 +435,7 @@ impl ConnectionConfig {
             identity: self.identity.clone(),
             session_id: self.session_id,
             driver_config_reporter,
+            background_tasks: self.background_tasks.clone(),
             #[cfg(test)]
             transport_factory: None,
         }
@@ -411,6 +468,7 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) session_id: Uuid,
     // should be Some only in control connections
     pub(crate) driver_config_reporter: Option<Arc<DriverConfigReporter>>,
+    pub(crate) background_tasks: BackgroundTasks,
 
     #[cfg(test)]
     pub(crate) transport_factory: Option<Arc<scylla_proxy::TransportFactory>>,
@@ -446,6 +504,8 @@ impl Default for HostConnectionConfig {
             // Test connections do not report their configuration.
             driver_config_reporter: None,
 
+            background_tasks: BackgroundTasks::new(),
+
             #[cfg(test)]
             transport_factory: None,
         }
@@ -475,6 +535,8 @@ impl Default for ConnectionConfig {
 
             // Test connections do not correlate anything in `system.clients`.
             session_id: Uuid::nil(),
+
+            background_tasks: BackgroundTasks::new(),
         }
     }
 }
@@ -1577,7 +1639,7 @@ impl Connection {
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
         router_handle: Arc<RouterHandle>,
         node_address: SocketAddr,
-    ) -> Result<RemoteHandle<()>, std::io::Error> {
+    ) -> Result<TaskHandle, std::io::Error> {
         async fn spawn_router_and_get_handle(
             config: HostConnectionConfig,
             stream: impl AsyncRead + AsyncWrite + Send + 'static,
@@ -1585,18 +1647,19 @@ impl Connection {
             error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
             router_handle: Arc<RouterHandle>,
             node_address: SocketAddr,
-        ) -> RemoteHandle<()> {
-            let (task, handle) = Connection::router(
-                config,
-                stream,
-                receiver,
-                error_sender,
+        ) -> TaskHandle {
+            let guard = RouterGuard {
                 router_handle,
+                receiver,
+            };
+            // When the router stops, it drops the stream, which closes the socket.
+            config.background_tasks.spawn(Connection::router(
+                RouterConfig::new(&config),
+                stream,
+                guard,
+                error_sender,
                 node_address,
-            )
-            .remote_handle();
-            tokio::task::spawn(task);
-            handle
+            ))
         }
 
         if let Some(tls_config) = &config.tls_config {
@@ -1649,20 +1712,19 @@ impl Connection {
     }
 
     async fn router(
-        config: HostConnectionConfig,
+        config: RouterConfig,
         stream: impl AsyncRead + AsyncWrite + Send,
-        mut receiver: mpsc::Receiver<SerializedRequest>,
+        mut guard: RouterGuard,
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
-        router_handle: Arc<RouterHandle>,
         node_address: SocketAddr,
     ) {
         let (read_half, write_half) = split(stream);
-        let streams = &router_handle.streams;
+        let streams = &guard.router_handle.streams;
 
         let write_coalescing_delay = config.write_coalescing_delay;
 
         let k = Self::keepaliver(
-            Arc::clone(&router_handle),
+            Arc::clone(&guard.router_handle),
             config.keepalive_interval,
             config.keepalive_timeout,
             node_address,
@@ -1671,12 +1733,12 @@ impl Connection {
         let r = Self::reader(
             BufReader::with_capacity(8192, read_half),
             streams,
-            config.event_sender.map(|(sender, _)| sender),
+            config.event_sender,
             config.compression,
         );
         let w = Self::writer(
             BufWriter::with_capacity(8192, write_half),
-            &mut receiver,
+            &mut guard.receiver,
             write_coalescing_delay,
         );
         let o = Self::orphaner(streams);
@@ -1694,12 +1756,6 @@ impl Connection {
             Ok(_) => return, // Connection was dropped, we can return
             Err(err) => err,
         };
-
-        // Draining the closed channel waits for requests that reserved room in it.
-        // After it, each request either failed to reserve room (and got an error),
-        // or waits in its stream slot, and no more stream ids can be allocated.
-        receiver.close();
-        while receiver.recv().await.is_some() {}
 
         // Respond to all pending requests with the error
         streams.fail_all(&error);

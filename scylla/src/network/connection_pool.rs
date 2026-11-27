@@ -4,7 +4,8 @@ use super::connection::{
 };
 
 use crate::errors::{
-    BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, UseKeyspaceError,
+    BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, SessionShutDownError,
+    UseKeyspaceError,
 };
 #[cfg(test)]
 use crate::policies::reconnect::ExponentialReconnectPolicy;
@@ -18,12 +19,9 @@ use crate::observability::metrics::Metrics;
 use crate::cluster::{NodeAddr, use_keyspace_broke_connection};
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
+use crate::utils::background_tasks::TaskHandle;
 use arc_swap::ArcSwap;
-use futures::{
-    Future, FutureExt, StreamExt,
-    future::{OptionFuture, RemoteHandle},
-    stream::FuturesUnordered,
-};
+use futures::{Future, FutureExt, StreamExt, future::OptionFuture, stream::FuturesUnordered};
 use rand::Rng;
 use std::convert::TryInto;
 use std::num::NonZeroUsize;
@@ -134,6 +132,10 @@ enum MaybePoolConnections {
 
     // The pool has some connections which are usable (or will be removed soon)
     Ready(PoolConnections),
+
+    // The session was shut down. The refiller has stopped, and the pool holds
+    // no connections. It is never refilled.
+    Closed(SessionShutDownError),
 }
 
 impl std::fmt::Debug for MaybePoolConnections {
@@ -142,6 +144,7 @@ impl std::fmt::Debug for MaybePoolConnections {
             MaybePoolConnections::Initializing => write!(f, "Initializing"),
             MaybePoolConnections::Broken(err) => write!(f, "Broken({err:?})"),
             MaybePoolConnections::Ready(conns) => write!(f, "{conns:?}"),
+            MaybePoolConnections::Closed(_) => write!(f, "Closed"),
         }
     }
 }
@@ -202,7 +205,7 @@ impl std::fmt::Debug for PoolConnections {
 pub(crate) struct NodeConnectionPool {
     conns: Arc<ArcSwap<MaybePoolConnections>>,
     use_keyspace_request_sender: mpsc::Sender<UseKeyspaceRequest>,
-    _refiller_handle: Arc<RemoteHandle<()>>,
+    _refiller_handle: Arc<TaskHandle>,
     pool_updated_notify: Arc<Notify>,
     /// Signaled to make the pool refiller retry immediately, resetting
     /// its backoff. Used when client routes change makes previously
@@ -262,8 +265,9 @@ impl NodeConnectionPool {
         );
 
         let conns = refiller.get_shared_connections();
-        let (fut, refiller_handle) = refiller.run(use_keyspace_request_receiver).remote_handle();
-        tokio::spawn(fut);
+        let refiller_handle = connection_config
+            .background_tasks
+            .spawn(refiller.run(use_keyspace_request_receiver));
 
         Self {
             conns,
@@ -280,6 +284,7 @@ impl NodeConnectionPool {
         match maybe_conns.as_ref() {
             MaybePoolConnections::Initializing => false,
             MaybePoolConnections::Broken(_) => false,
+            MaybePoolConnections::Closed(_) => false,
             // Here we use the assumption that _pool_connections is always non-empty.
             MaybePoolConnections::Ready(_pool_connections) => true,
         }
@@ -443,16 +448,17 @@ impl NodeConnectionPool {
     ) -> Result<(), UseKeyspaceError> {
         let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
 
+        // The other end of these channels is in the PoolRefiller. The refiller can be
+        // gone only when the session or the runtime is shutting down.
         self.use_keyspace_request_sender
             .send(UseKeyspaceRequest {
                 keyspace_name,
                 response_sender,
             })
             .await
-            .expect("Bug in NodeConnectionPool::use_keyspace sending");
-        // Other end of this channel is in the PoolRefiller, can't be dropped while we have &self to _refiller_handle
+            .map_err(|_| SessionShutDownError)?;
 
-        response_receiver.await.unwrap() // PoolRefiller always responds
+        response_receiver.await.map_err(|_| SessionShutDownError)?
     }
 
     // Waits until the pool becomes initialized.
@@ -510,6 +516,7 @@ impl NodeConnectionPool {
                 last_connection_error: err.clone(),
             }),
             MaybePoolConnections::Initializing => Err(ConnectionPoolError::Initializing),
+            MaybePoolConnections::Closed(err) => Err(ConnectionPoolError::Closed(err.clone())),
         }
     }
 }
@@ -595,6 +602,24 @@ struct PoolRefiller {
     pool_empty_notifier: mpsc::Sender<()>,
 
     metrics: Metrics,
+}
+
+/// Closes the pool when the refiller task stops. The task stops when it is
+/// aborted, or when the pool is dropped. An abort runs only `Drop`.
+impl Drop for PoolRefiller {
+    fn drop(&mut self) {
+        // The refiller is gone, so it can not publish connections again.
+        // Release the connections now: user code can hold this pool
+        // (through a Node) after the session shuts down.
+        self.shared_conns
+            .store(Arc::new(MaybePoolConnections::Closed(SessionShutDownError)));
+        self.pool_updated_notify.notify_waiters();
+        // The connections are dropped with the refiller, so remove them from
+        // the metrics.
+        self.decrement_total_connections(
+            self.active_connection_count() + self.excess_connections.len(),
+        );
+    }
 }
 
 #[derive(Debug)]
@@ -1286,6 +1311,11 @@ impl PoolRefiller {
                 // Initially we optimistically assumed the node was alive,
                 // now we have a hint that it is not.
                 Some(ConnectivityChangeEvent::Lost { host_id })
+            }
+            (MaybePoolConnections::Closed(_), _) => {
+                unreachable!(
+                    "The pool is closed only after its refiller stops, so the refiller must not see it"
+                )
             }
         };
 
@@ -2392,7 +2422,7 @@ mod tests {
 
         drop(use_keyspace_sender);
         worker.await.unwrap();
-        assert_eq!(metrics.get_total_connections(), 1);
+        assert_eq!(metrics.get_total_connections(), 0);
         let _ = proxy.finish().await;
     }
 

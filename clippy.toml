@@ -1,6 +1,10 @@
 avoid-breaking-exported-api = false
 disallowed-methods = [
-    { path = "itertools::Itertools::format", reason = "Footgun: panics on double formatting.", replacement = "crate::utils::safe_format::IteratorSafeFormatExt::safe_format" }
+    { path = "itertools::Itertools::format", reason = "Footgun: panics on double formatting.", replacement = "crate::utils::safe_format::IteratorSafeFormatExt::safe_format" },
+    # A session shutdown stops only the tasks that BackgroundTasks spawns.
+    { path = "tokio::task::spawn", reason = "Session::shutdown() does not stop this task. Use BackgroundTasks." },
+    { path = "tokio::task::spawn_local", reason = "Session::shutdown() does not stop this task. Use BackgroundTasks." },
+    { path = "tokio::task::spawn_blocking", reason = "Session::shutdown() does not wait for this task. Use BackgroundTasks." },
 ]
 # Buf is a trait, but disallowed-methods takes neither traits nor wildcards.
 # Disallowing the trait also disallows calling its methods, as they need it in scope.

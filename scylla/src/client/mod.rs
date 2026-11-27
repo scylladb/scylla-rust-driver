@@ -19,6 +19,8 @@ pub mod execution_profile;
 
 mod execution;
 
+pub(crate) mod in_flight;
+
 pub(crate) mod driver_config;
 
 pub mod pager;

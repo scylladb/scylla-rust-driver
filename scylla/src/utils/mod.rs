@@ -3,6 +3,8 @@ pub(crate) mod test_utils;
 
 pub(crate) mod safe_format;
 
+pub(crate) mod background_tasks;
+
 /// Stores `value` in `slot`, reusing the slot's allocation if it has one.
 pub(crate) fn set_boxed<T>(slot: &mut Option<Box<T>>, value: T) {
     match slot {
